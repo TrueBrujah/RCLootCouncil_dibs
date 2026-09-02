@@ -1,0 +1,20 @@
+## Interface: 120100
+## Title: RCLootCouncil_dibs
+## Notes: Seasonal guild Dibs, Pre-Dibs, audit history, and optional RCLootCouncil integration.
+## Author: Contributors
+## Version: 0.1.0-dev
+## SavedVariables: RCLootCouncil_dibsDB
+## OptionalDeps: RCLootCouncil
+
+Core.lua
+modules/Seasons.lua
+modules/RankRules.lua
+modules/Ledger.lua
+modules/Permissions.lua
+modules/PreDibs.lua
+modules/Sync.lua
+modules/RaidRelay.lua
+integrations/EncounterJournal.lua
+integrations/RCLootCouncil.lua
+ui/PlayerUI.lua
+ui/OfficerUI.lua

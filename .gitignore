@@ -1,0 +1,24 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local tooling/cache
+.venv/
+__pycache__/
+*.pyc
+
+# Packaging
+dist/
+build/
+*.zip
+
+# Local test data / SavedVariables
+test-data/private/
+SavedVariables/
+
+# Never commit secrets
+.env
+.env.*
+!.env.example
