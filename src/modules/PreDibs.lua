@@ -9,6 +9,7 @@ end
 
 function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId)
   ensureState()
+  if not tonumber(itemID) or tonumber(itemID) <= 0 then return nil end
 
   local request = {
     requestId = Dibs.NewId("predib"),

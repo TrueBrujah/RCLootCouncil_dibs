@@ -1,0 +1,13 @@
+local loader = require("helpers.load_addon")
+
+describe("Candidate status", function()
+  it("marks pre-dib candidate as eligible", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local request = dibs.PreDibs.Create("Tester-Realm", 12345, "Item", dibs.GetCurrentSeasonId())
+    dibs.PreDibs.Confirm(request.requestId)
+    local status = dibs.RCLootCouncil.GetStatusForCandidate("Tester-Realm", 12345)
+    assert_true(status.hasPreDib)
+    assert_true(status.canUseDib)
+    assert_equal("pre-dib", status.status)
+  end)
+end)

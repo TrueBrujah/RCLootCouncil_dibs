@@ -5,9 +5,14 @@ Thumbs.db
 .idea/
 
 # Local tooling/cache
+node_modules/
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.tmp
+*.swp
+*.log
 
 # Packaging
 dist/

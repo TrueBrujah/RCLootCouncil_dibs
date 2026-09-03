@@ -26,6 +26,9 @@ function Dibs.Sync.RegisterPeer(peerId, state)
   if not peerId then
     return nil
   end
+  if Dibs.Sync.ContainsForbiddenLiveLootData and Dibs.Sync.ContainsForbiddenLiveLootData(state) then
+    return nil
+  end
 
   Dibs.db.sync.peerStates[peerId] = {
     lastSeen = time(),
@@ -65,17 +68,50 @@ end
 
 function Dibs.Sync.SyncSnapshot()
   ensureState()
+  local transactionFields = { "transactionId", "type", "playerKey", "playerId", "playerName", "seasonId", "amount", "createdAt", "reason", "source", "action", "actorId", "playerRank", "itemID", "itemLink", "awardRef" }
+  local requestFields = { "requestId", "playerKey", "playerName", "itemID", "itemName", "seasonId", "status", "createdAt", "updatedAt", "confirmedAt", "fulfilledAt", "cancelledAt" }
+  local function project(record, fields)
+    local copy = {}
+    for _, field in ipairs(fields) do
+      if record[field] ~= nil then copy[field] = record[field] end
+    end
+    return copy
+  end
+  local transactions = {}
+  for _, tx in ipairs(Dibs.Ledger and Dibs.Ledger.GetAllTransactions() or {}) do
+    table.insert(transactions, project(tx, transactionFields))
+  end
+  local requests = {}
+  for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory() or {}) do
+    table.insert(requests, project(request, requestFields))
+  end
   return {
     version = Dibs.VERSION,
     protocolVersion = Dibs.PROTOCOL_VERSION,
     season = Dibs.GetCurrentSeasonId(),
-    transactions = Dibs.Ledger and Dibs.Ledger.GetAllTransactions() or {},
-    preDibs = Dibs.PreDibs and Dibs.PreDibs.GetHistory() or {},
+    transactions = transactions,
+    preDibs = requests,
   }
+end
+
+function Dibs.Sync.ContainsForbiddenLiveLootData(value)
+  local forbidden = { candidates = true, votes = true, responses = true, lootTable = true, session = true, currentSession = true }
+  local function scan(node)
+    if type(node) ~= "table" then return false end
+    for key, item in pairs(node) do
+      if forbidden[key] then return true end
+      if type(item) == "table" and scan(item) then return true end
+    end
+    return false
+  end
+  return scan(value)
 end
 
 function Dibs.Sync.ApplySnapshot(snapshot)
   if type(snapshot) ~= "table" then
+    return false
+  end
+  if Dibs.Sync.ContainsForbiddenLiveLootData(snapshot) then
     return false
   end
 

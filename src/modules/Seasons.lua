@@ -45,7 +45,14 @@ function Dibs.Seasons.GetCurrent()
     return Dibs.db.seasons[Dibs.db.currentSeasonId]
   end
 
-  return Dibs.Seasons.GetOrCreateDefault()
+  if not next(Dibs.db.seasons) then
+    return Dibs.Seasons.Create("Season 1")
+  end
+  for _, season in pairs(Dibs.db.seasons) do
+    Dibs.db.currentSeasonId = season.id
+    return season
+  end
+  return nil
 end
 
 function Dibs.Seasons.GetOrCreateDefault()
@@ -55,16 +62,7 @@ function Dibs.Seasons.GetOrCreateDefault()
     return Dibs.Seasons.Create("Season 1")
   end
 
-  local current = Dibs.Seasons.GetCurrent()
-  if current then
-    return current
-  end
-
-  for _, season in pairs(Dibs.db.seasons) do
-    return season
-  end
-
-  return nil
+  return Dibs.Seasons.GetCurrent()
 end
 
 function Dibs.Seasons.SetCurrent(seasonId)

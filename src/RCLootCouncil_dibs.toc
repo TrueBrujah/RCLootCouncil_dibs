@@ -7,10 +7,13 @@
 ## OptionalDeps: RCLootCouncil
 
 Core.lua
+locales/enUS.lua
+locales/frFR.lua
 modules/Seasons.lua
 modules/RankRules.lua
 modules/Ledger.lua
 modules/Permissions.lua
+modules/ProtectedActions.lua
 modules/PreDibs.lua
 modules/Sync.lua
 modules/RaidRelay.lua

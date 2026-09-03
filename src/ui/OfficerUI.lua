@@ -14,6 +14,9 @@ function Dibs.OfficerUI.BuildStatusText()
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
   local seasons = Dibs.Seasons and Dibs.Seasons.List() or {}
   local overview = Dibs.OfficerUI.GetLedgerOverview()
+  local permissions = Dibs.GetDB().permissions or {}
+  local adminCount = 0
+  for _ in pairs(permissions.activeStandaloneAdmins or {}) do adminCount = adminCount + 1 end
   local rules = Dibs.RankRules and Dibs.RankRules.GetRulesForSeason(season and season.id or Dibs.GetCurrentSeasonId()) or {}
   local ruleText = ""
   local items = {}
@@ -30,6 +33,7 @@ function Dibs.OfficerUI.BuildStatusText()
   return "Season: " .. tostring(season and season.name or "None") .. "\n" ..
     "Seasons: " .. tostring(#seasons) .. "\n" ..
     "Transactions: " .. tostring(overview.count) .. "\n" ..
+    "Standalone admins: " .. tostring(adminCount) .. " (audit events: " .. tostring(#(permissions.adminEvents or {})) .. ")\n" ..
     "Role: " .. tostring(Dibs.Permissions and Dibs.Permissions.GetRole() or "player") .. "\n" ..
     "Rank rules: " .. ruleText
 end
@@ -69,7 +73,8 @@ function Dibs.OfficerUI.CreateWindow()
   newSeasonButton:SetPoint("BOTTOMLEFT", 16, 14)
   newSeasonButton:SetText("New Season")
   newSeasonButton:SetScript("OnClick", function()
-    local season = Dibs.Seasons and Dibs.Seasons.Create("Season " .. tostring((Dibs.Seasons and #Dibs.Seasons.List() or 0) + 1))
+    local result = Dibs.ProtectedActions.Execute("season.create", nil, { name = "Season " .. tostring((Dibs.Seasons and #Dibs.Seasons.List() or 0) + 1) })
+    local season = result.value
     if season then
       Dibs.Message("Created season: " .. tostring(season.name))
       frame:Refresh()
@@ -91,8 +96,8 @@ function Dibs.OfficerUI.CreateWindow()
   setRankButton:SetScript("OnClick", function()
     local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
     if Dibs.RankRules and Dibs.RankRules.SetAllocation then
-      Dibs.RankRules.SetAllocation(season and season.id or Dibs.GetCurrentSeasonId(), 1, "Rank 1", 1)
-      Dibs.Message("Rank 1 set to 1 Dib for the current season.")
+      local result = Dibs.ProtectedActions.Execute("rank.set", nil, { seasonId = season and season.id or Dibs.GetCurrentSeasonId(), rankIndex = 1, rankName = "Rank 1", allocation = 1 })
+      Dibs.Message(result.ok and "Rank 1 set to 1 Dib for the current season." or result.diagnostic)
       frame:Refresh()
     end
   end)
@@ -110,6 +115,22 @@ function Dibs.OfficerUI.CreateWindow()
   return frame
 end
 
+function Dibs.OfficerUI.ManageStandaloneAdmin(target, appoint)
+  return Dibs.ProtectedActions.Execute(appoint and "admin.appoint" or "admin.revoke", nil, { target = target, reason = "Officer UI" })
+end
+
+function Dibs.OfficerUI.GetCandidateFallback(playerName, itemID)
+  if not Dibs.RCLootCouncil or not Dibs.RCLootCouncil.GetStatusForCandidate then
+    return nil, (Dibs.L and Dibs.L.RC_STATUS_UNAVAILABLE) or "RCLootCouncil status is unavailable."
+  end
+  local status = Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID)
+  local availability = Dibs.RCLootCouncil.GetAvailability and Dibs.RCLootCouncil.GetAvailability() or "absent"
+  if availability ~= "operational" then
+    status.diagnostic = (Dibs.L and Dibs.L.RC_COMPATIBILITY_FALLBACK) or "RCLootCouncil candidate integration is unavailable; using the local Dibs display."
+  end
+  return status, status.diagnostic
+end
+
 function Dibs.OfficerUI.Show()
   local frame = Dibs.OfficerUI.CreateWindow()
   frame:Show()
@@ -124,6 +145,11 @@ function Dibs.OfficerUI.Show()
 end
 
 function Dibs.OfficerUI.Toggle(forceShow)
+  if type(InCombatLockdown) == "function" and InCombatLockdown() then
+    Dibs.OfficerUI.pendingToggle = forceShow ~= false
+    Dibs.Message((Dibs.L and Dibs.L.UI_DEFERRED_COMBAT) or "Officer UI will open after combat.")
+    return false
+  end
   local frame = Dibs.OfficerUI.CreateWindow()
   if forceShow then
     frame:Show()
@@ -143,9 +169,18 @@ function Dibs.OfficerUI.Toggle(forceShow)
 end
 
 function Dibs.OfficerUI.CreateSeason(name)
-  if not Dibs.Seasons then
+  if not Dibs.ProtectedActions then
     return nil
   end
-
-  return Dibs.Seasons.Create(name)
+  local result = Dibs.ProtectedActions.Execute("season.create", nil, { name = name })
+  return result.ok and result.value or nil, result
 end
+
+local combatFrame = CreateFrame("Frame")
+combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatFrame:SetScript("OnEvent", function()
+  if Dibs.OfficerUI.pendingToggle then
+    Dibs.OfficerUI.pendingToggle = nil
+    Dibs.OfficerUI.Toggle(true)
+  end
+end)

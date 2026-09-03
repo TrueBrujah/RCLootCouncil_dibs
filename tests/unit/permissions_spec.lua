@@ -1,0 +1,10 @@
+local loader = require("helpers.load_addon")
+
+describe("Permissions", function()
+  it("returns invalid action for malformed action id", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local decision = dibs.Permissions.Evaluate(nil)
+    assert_false(decision.allowed)
+    assert_equal("INVALID_ACTION", decision.reasonCode)
+  end)
+end)

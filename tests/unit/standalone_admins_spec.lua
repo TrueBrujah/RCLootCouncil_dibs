@@ -1,0 +1,12 @@
+local loader = require("helpers.load_addon")
+
+describe("Standalone admins", function()
+  it("authorizes appointed standalone admin when RC is absent", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local appoint = dibs.ProtectedActions.Execute("admin.appoint", nil, { target = "Alt-Realm", reason = "test" })
+    assert_true(appoint.ok)
+    local decision = dibs.Permissions.Evaluate("ledger.grant", { name = "Alt-Realm" })
+    assert_true(decision.allowed)
+    assert_equal("standalone", decision.authority)
+  end)
+end)

@@ -1,0 +1,10 @@
+local loader = require("helpers.load_addon")
+
+describe("Combat safety", function()
+  it("defers officer toggle during combat", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true, inCombat = true } })
+    local shown = dibs.OfficerUI.Toggle(true)
+    assert_false(shown)
+    assert_true(dibs.OfficerUI.pendingToggle == true)
+  end)
+end)

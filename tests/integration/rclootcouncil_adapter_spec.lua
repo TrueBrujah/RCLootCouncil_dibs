@@ -1,0 +1,11 @@
+local loader = require("helpers.load_addon")
+
+describe("RCLootCouncil adapter", function()
+  it("does not fallback to standalone after RC deny", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-ML" } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local decision = dibs.Permissions.Evaluate("ledger.grant", { guid = "Player-1-OTHER" })
+    assert_false(decision.allowed)
+    assert_equal("rclootcouncil", decision.authority)
+  end)
+end)

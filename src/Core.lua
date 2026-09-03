@@ -47,13 +47,18 @@ local function mergeDefaults(target, defaults)
 end
 
 local defaultDB = {
-  version = 1,
+  version = 2,
   currentSeasonId = nil,
   seasons = {},
   rankRules = {},
   ledger = {
     transactions = {},
     playerStates = {},
+    awardTransactions = {},
+  },
+  permissions = {
+    adminEvents = {},
+    activeStandaloneAdmins = {},
   },
   preDibs = {
     requests = {},
@@ -83,6 +88,14 @@ local function ensureDB()
 
   Dibs.db = persisted
   mergeDefaults(Dibs.db, defaultDB)
+  if (tonumber(Dibs.db.version) or 0) < 2 then
+    Dibs.db.permissions = Dibs.db.permissions or { adminEvents = {}, activeStandaloneAdmins = {} }
+    Dibs.db.permissions.adminEvents = Dibs.db.permissions.adminEvents or {}
+    Dibs.db.permissions.activeStandaloneAdmins = Dibs.db.permissions.activeStandaloneAdmins or {}
+    Dibs.db.ledger = Dibs.db.ledger or { transactions = {}, playerStates = {}, awardTransactions = {} }
+    Dibs.db.ledger.awardTransactions = Dibs.db.ledger.awardTransactions or {}
+    Dibs.db.version = 2
+  end
   _G[dbName] = Dibs.db
   _G.DibsDB = Dibs.db
 end
@@ -190,8 +203,8 @@ function Dibs.HandleSlashCommand(msg)
 
     local playerName = args[2]
     local amount = tonumber(args[3]) or 1
-    Dibs.Ledger.Grant(playerName, amount, "Officer grant", "slash", Dibs.GetCurrentSeasonId())
-    Dibs.Message("Granted " .. tostring(amount) .. " Dibs to " .. tostring(playerName or "player"))
+    local result = Dibs.ProtectedActions.Execute("ledger.grant", nil, { playerName = playerName, amount = amount, reason = "Officer grant", source = "slash" })
+    Dibs.Message(result.ok and ("Granted " .. tostring(amount) .. " Dibs to " .. tostring(playerName)) or result.diagnostic)
     return
   end
 
@@ -203,16 +216,34 @@ function Dibs.HandleSlashCommand(msg)
 
     local playerName = args[2]
     local amount = tonumber(args[3]) or 1
-    Dibs.Ledger.Use(playerName, amount, "Officer consumption", "slash", Dibs.GetCurrentSeasonId())
-    Dibs.Message("Consumed " .. tostring(amount) .. " Dibs from " .. tostring(playerName or "player"))
+    local result = Dibs.ProtectedActions.Execute("ledger.use", nil, { playerName = playerName, amount = amount, reason = "Officer consumption", source = "slash" })
+    Dibs.Message(result.ok and ("Consumed " .. tostring(amount) .. " Dibs from " .. tostring(playerName)) or result.diagnostic)
     return
   end
 
   if action == "pre" then
     local itemID = tonumber(args[2]) or 0
     local itemName = table.concat(args, " ", 3)
-    local request = Dibs.PreDibs.Create(Dibs.GetPlayerName(), itemID, itemName ~= "" and itemName or "Item " .. tostring(itemID), Dibs.GetCurrentSeasonId())
-    Dibs.Message("Pre-Dib created for item " .. tostring(itemID) .. " (status: " .. tostring(request.status) .. ")")
+     local request = Dibs.PreDibs.Create(Dibs.GetPlayerName(), itemID, itemName ~= "" and itemName or "Item " .. tostring(itemID), Dibs.GetCurrentSeasonId())
+     if request then Dibs.Message("Pre-Dib created for item " .. tostring(itemID) .. " (status: " .. tostring(request.status) .. ")") else Dibs.Message("A valid item ID is required.") end
+     return
+   end
+
+  if action == "admin" then
+    local mode, target = args[2] or "list", args[3]
+    if mode == "list" then
+      local result = Dibs.ProtectedActions.Execute("admin.list", nil, {})
+      if not result.ok then Dibs.Message(result.diagnostic) return end
+      local names = {}
+      for _, admin in ipairs(result.value) do table.insert(names, tostring(admin.playerName)) end
+      table.sort(names)
+      Dibs.Message("Standalone Dibs administrators: " .. (#names > 0 and table.concat(names, ", ") or "none"))
+      return
+    end
+    local actionId = mode == "add" and "admin.appoint" or (mode == "remove" and "admin.revoke" or nil)
+    if not actionId or not target then Dibs.Message("Usage: /dibs admin list|add|remove <Name-Realm>") return end
+    local result = Dibs.ProtectedActions.Execute(actionId, nil, { target = target, reason = "Slash command" })
+    Dibs.Message(result.ok and ("Standalone administrator updated: " .. target) or result.diagnostic)
     return
   end
 
@@ -220,7 +251,8 @@ function Dibs.HandleSlashCommand(msg)
     local mode = args[2] or "show"
     if mode == "create" then
       local name = table.concat(args, " ", 3)
-      local season = Dibs.Seasons and Dibs.Seasons.Create(name ~= "" and name or nil)
+       local result = Dibs.ProtectedActions.Execute("season.create", nil, { name = name ~= "" and name or nil })
+       local season = result.value
       if season then
         Dibs.Message("Created season: " .. tostring(season.name) .. " (" .. tostring(season.id) .. ")")
       else
@@ -231,7 +263,8 @@ function Dibs.HandleSlashCommand(msg)
 
     if mode == "set" then
       local seasonId = args[3]
-      if Dibs.Seasons and Dibs.Seasons.SetCurrent(seasonId) then
+       local result = Dibs.ProtectedActions.Execute("season.set", nil, { seasonId = seasonId })
+       if result.ok then
         Dibs.Message("Current season set to: " .. tostring(seasonId))
       else
         Dibs.Message("Season not found: " .. tostring(seasonId))
@@ -260,8 +293,10 @@ function Dibs.HandleSlashCommand(msg)
       local rankIndex = tonumber(args[3]) or 0
       local allocation = tonumber(args[4]) or 1
       local rankName = table.concat(args, " ", 5)
-      if Dibs.RankRules and Dibs.RankRules.SetAllocation then
-        local rule = Dibs.RankRules.SetAllocation(Dibs.GetCurrentSeasonId(), rankIndex, rankName ~= "" and rankName or "Rank " .. tostring(rankIndex), allocation)
+       if Dibs.ProtectedActions then
+         local result = Dibs.ProtectedActions.Execute("rank.set", nil, { seasonId = Dibs.GetCurrentSeasonId(), rankIndex = rankIndex, rankName = rankName ~= "" and rankName or "Rank " .. tostring(rankIndex), allocation = allocation })
+         local rule = result.value
+         if not result.ok then Dibs.Message(result.diagnostic) return end
         Dibs.Message("Rank " .. tostring(rankIndex) .. " set to " .. tostring(rule.allocation) .. " Dibs")
       end
       return

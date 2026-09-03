@@ -1,0 +1,12 @@
+local loader = require("helpers.load_addon")
+
+describe("ProtectedActions routing", function()
+  it("routes season and rank operations", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local season = dibs.ProtectedActions.Execute("season.create", nil, { name = "A" })
+    assert_true(season.ok)
+    local rank = dibs.ProtectedActions.Execute("rank.set", nil, { seasonId = season.value.id, rankIndex = 1, allocation = 3 })
+    assert_true(rank.ok)
+    assert_equal(3, rank.value.allocation)
+  end)
+end)

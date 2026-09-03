@@ -1,0 +1,39 @@
+{
+  "run_id": "c93e0995",
+  "workflow_id": "speckit",
+  "installed_workflow_id": "speckit",
+  "installed_registry_root": null,
+  "status": "failed",
+  "current_step_index": 0,
+  "current_step_id": "specify",
+  "step_results": {
+    "specify": {
+      "type": "command",
+      "integration": "codex",
+      "model": null,
+      "options": {},
+      "input": {
+        "args": "001-dibs-core"
+      },
+      "output": {
+        "command": "speckit.specify",
+        "integration": "codex",
+        "model": null,
+        "options": {},
+        "input": {
+          "args": "001-dibs-core"
+        },
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "",
+        "dispatched": true
+      },
+      "status": "failed",
+      "error": "Command exited with code 1"
+    }
+  },
+  "workflow_dir": "C:\\Users\\yc58\\OneDrive\\Documents\\GitHub\\RCLootCouncil_dibs\\.specify\\workflows\\speckit",
+  "created_at": "2026-09-03T07:08:05.431945+00:00",
+  "updated_at": "2026-09-03T07:08:12.178993+00:00",
+  "error": "Command exited with code 1"
+}

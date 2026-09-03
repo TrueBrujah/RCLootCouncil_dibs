@@ -1,0 +1,7 @@
+{
+  "inputs": {
+    "spec": "001-dibs-core",
+    "integration": "copilot",
+    "scope": "full"
+  }
+}
