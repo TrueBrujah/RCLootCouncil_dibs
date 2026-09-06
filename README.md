@@ -45,6 +45,10 @@ L’objectif principal est simple :
 - /dibs admin list
 - /dibs admin add <Nom-Royaume>
 - /dibs admin remove <Nom-Royaume>
+- /dibs dev on
+- /dibs dev off
+- /dibs dev status
+- /dibs testitem <itemID>
 
 ### Panneaux
 
@@ -67,11 +71,17 @@ L’objectif principal est simple :
 - les intégrations UI ne doivent pas porter la logique métier,
 - le noyau reste fonctionnel sans RCLootCouncil.
 
+Voir aussi [docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md) pour le flux de test local Developer Mode.
+
 ## Autorité et compatibilité RCLootCouncil
 
-RCLootCouncil est une dépendance optionnelle. Lorsqu’une instance compatible est chargée, activée et possède un maître du butin vérifiable, ce maître du butin est l’autorité exclusive pour toutes les actions Dibs protégées. Une décision négative n’est jamais remplacée par les permissions autonomes. Une installation présente mais incompatible ou incomplètement initialisée échoue de façon fermée et affiche un diagnostic.
+RCLootCouncil est une dépendance optionnelle. Le mode d’installation peut être `AUTO`, `STANDALONE` ou `RCLootCouncil`, et il est conservé dans les SavedVariables de la guilde. Dans les deux modes, seul le GM ou un officier vérifié dans le roster de guilde peut modifier les règles, le mode, les saisons, les allocations ou le ledger Dibs. Le statut de conseil, de chef de raid ou d’assistant de raid ne donne aucun droit d’administration Dibs.
 
-En l’absence de RCLootCouncil, seul le maître de guilde est autorisé par défaut. Il peut nommer ou révoquer explicitement des administrateurs Dibs avec les commandes `/dibs admin`. Le statut d’officier, de chef de raid ou d’assistant de raid n’accorde aucun droit Dibs automatiquement. Les nominations et révocations sont conservées dans un historique; l’identité utilise le GUID lorsque le client peut le fournir, avec `Nom-Royaume` comme solution de repli.
+La limite des rangs considérés comme officiers est configurable dans les options Dibs (`Highest officer rank index`); le rang 0 est toujours le GM et les rangs 1 à cette limite sont les officiers par défaut.
+
+RCLootCouncil reste responsable de sa propre session de butin. Dans Retail, son Master Looter est le Raid Leader; un Raid Assistant n’est pas automatiquement Master Looter. Le Master Looter peut gérer le butin et finaliser les décisions dans RCLootCouncil. Une décision finalisée dont la réponse est explicitement `DIB` peut déclencher la consommation automatique d’un Dib; cela ne permet pas au Master Looter d’ajouter, retirer ou régler arbitrairement des Dibs. Une installation RCLootCouncil chargée mais incompatible refuse les actions protégées dont l’autorité ne peut pas être vérifiée.
+
+Les commandes `/dibs admin add` et `/dibs admin remove` sont conservées pour l’historique des anciennes installations, mais ces nominations ne confèrent plus de droits à un joueur qui n’est ni GM ni officier.
 
 L’adaptateur actuel est testé contre des surfaces synthétiques correspondant à RCLootCouncil Retail 3.x : instance AceAddon récupérable, indicateur `enabled`, identité `masterLooter`, enregistrement de messages Ace et événement local `RCMLAwardSuccess`. Ces éléments sont détectés comme des capacités, et non considérés comme une API stable. Une version inconnue reste utilisable en standalone seulement si RCLootCouncil est réellement absent ou désactivé; si elle est chargée mais incompatible, les actions protégées sont refusées.
 
@@ -86,6 +96,25 @@ Les calculs métier et les écritures ordinaires dans le ledger restent synchron
 ## État de livraison
 
 Le dépôt contient le modèle d’autorité centralisé, l’administration standalone, l’enregistrement idempotent des attributions, la projection locale des candidats, les limites de synchronisation et les ressources de localisation. La validation complète en client WoW Retail et la certification de nouvelles versions de RCLootCouncil restent des activités de compatibilité continues; consultez le guide de validation de la fonctionnalité 003 avant une publication.
+
+## Workflow Spec-Kit (sans changer de branche)
+
+Spec-Kit est installé une seule fois à la racine du dépôt via `.specify/` et `.github/skills/`.
+Il ne doit pas être réinstallé dans chaque dossier `specs/*`.
+
+Pour changer de feature active sans changer de branche Git:
+
+```powershell
+pwsh scripts/select-spec.ps1 001-dibs-core
+# ou
+pwsh scripts/select-spec.ps1 003-rclootcouncil-integration
+```
+
+Notes:
+
+- cette commande met à jour `.specify/feature.json` seulement;
+- la branche Git courante reste inchangée;
+- les commandes `/speckit-*` doivent être lancées depuis Copilot Chat (intégration IDE), pas via un CLI Copilot externe.
 
 ## Licence
 

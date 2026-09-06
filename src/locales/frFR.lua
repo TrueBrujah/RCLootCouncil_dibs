@@ -1,4 +1,5 @@
 local Dibs = _G.Dibs
+if type(GetLocale) == "function" and GetLocale() ~= "frFR" then return end
 Dibs.L = Dibs.L or {}
 
 local L = Dibs.L
@@ -9,17 +10,26 @@ L.AUTHORITY_RC_UNVERIFIABLE = "L'autorite RCLootCouncil n'a pas pu etre verifiee
 L.AUTHORITY_RC_STATE_CHANGED = "L'autorite RCLootCouncil a change pendant l'evaluation."
 L.AUTHORITY_RC_AUTHORIZED = "Autorise par RCLootCouncil."
 L.AUTHORITY_RC_NOT_MASTER_LOOTER = "Seul le Master Looter actuel de RCLootCouncil peut effectuer cette action."
+L.AUTHORITY_RC_NOT_LOCAL = "Seul le Master Looter RCLootCouncil local peut finaliser cette action."
 L.AUTHORITY_STANDALONE_GUILD_MASTER = "Autorise en tant que maitre de guilde."
-L.AUTHORITY_STANDALONE_APPOINTED_ADMIN = "Autorise en tant qu'administrateur Dibs."
-L.AUTHORITY_STANDALONE_NOT_AUTHORIZED = "Vous n'etes pas autorise a effectuer cette action Dibs."
-L.STANDALONE_ADMIN_GM_ONLY = "Seul le maitre de guilde peut gerer les administrateurs Dibs."
+L.AUTHORITY_GUILD_OFFICER = "Autorise en tant qu'officier de guilde."
+L.AUTHORITY_STANDALONE_APPOINTED_ADMIN = "Ancien enregistrement d'administrateur; une autorite de GM ou d'officier reste requise."
+L.AUTHORITY_STANDALONE_NOT_AUTHORIZED = "Seul le maitre de guilde ou un officier peut effectuer cette action Dibs."
+L.STANDALONE_ADMIN_GM_ONLY = "Seul le maitre de guilde ou un officier peut gerer les anciens enregistrements d'administrateurs."
 L.PROTECTED_ACTION_DENIED = "Action refusee."
 L.PROTECTED_ACTION_UNAVAILABLE = "Module requis indisponible."
 L.SEASON_CREATE_FAILED = "Echec de creation de la saison."
 L.SEASON_NOT_FOUND = "Saison introuvable."
 L.AWARD_NOT_FINAL = "Le loot n'est pas finalise; aucun Dib n'est consomme."
+L.AWARD_DIB_RESPONSE_REQUIRED = "Seule une reponse DIB finalisee peut consommer un Dib."
+L.AWARD_TEST_MODE = "Les loots de test ne peuvent pas consommer les Dibs de production."
 L.AWARD_INVALID = "Le payload du loot n'a pas les champs requis."
 L.AWARD_CONSUME_FAILED = "Impossible de consommer un Dib pour ce loot."
+L.PREDIB_NO_ACTIVE_SEASON = "Aucune saison Dibs active n'est disponible."
+L.PREDIB_INVALID_STATUS_TRANSITION = "Ce Pre-Dib ne peut pas passer a ce statut."
+L.PREDIB_PUBLIC_DISABLED = "Les Pre-Dibs publics sont desactives."
+L.EJ_NON_RAID_CONTEXT = "Les demandes de Dib sont disponibles seulement pour les raids."
+L.PREDIB_UNAVAILABLE = "Le service Pre-Dib est indisponible."
 L.UI_DEFERRED_COMBAT = "L'interface officier s'ouvrira apres le combat."
 L.RC_STATUS_UNAVAILABLE = "Le statut RCLootCouncil est indisponible."
 L.RC_COMPATIBILITY_FALLBACK = "L'integration candidats RCLootCouncil est indisponible; affichage local Dibs utilise."

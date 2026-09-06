@@ -1,0 +1,28 @@
+local loader = require("helpers.load_addon")
+
+describe("Public pre-dibs", function()
+  it("creates a confirmed request when public pre-dibs are enabled", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local request = dibs.PreDibs.CreatePublic("Tester-Realm", 20001, "Item 20001", dibs.GetCurrentSeasonId(), "test")
+    assert_true(request ~= nil)
+    assert_equal("confirmed", request.status)
+    assert_equal(20001, request.itemID)
+  end)
+
+  it("reuses active request for same player, item, and season", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local first = dibs.PreDibs.CreatePublic("Tester-Realm", 20002, "Item 20002", dibs.GetCurrentSeasonId(), "test")
+    local second = dibs.PreDibs.CreatePublic("Tester-Realm", 20002, "Item 20002", dibs.GetCurrentSeasonId(), "test")
+    assert_true(first ~= nil)
+    assert_equal(first.requestId, second.requestId)
+    assert_equal(1, #dibs.PreDibs.GetRequestsForItem(20002))
+  end)
+
+  it("rejects public request when disabled", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    dibs.GetDB().settings.allowPublicPreDibs = false
+    local request, reason = dibs.PreDibs.CreatePublic("Tester-Realm", 20003, "Item 20003", dibs.GetCurrentSeasonId(), "test")
+    assert_true(request == nil)
+    assert_equal("PUBLIC_PRE_DIBS_DISABLED", reason)
+  end)
+end)

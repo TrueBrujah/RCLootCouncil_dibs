@@ -13,6 +13,10 @@ __pycache__/
 *.tmp
 *.swp
 *.log
+.specify/workflows/runs/
+.specify/integrations/.cache/
+specs/**/.specify/
+specs/**/.github/
 
 # Packaging
 dist/

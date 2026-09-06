@@ -1,11 +1,20 @@
 local loader = require("helpers.load_addon")
 
 describe("RCLootCouncil adapter", function()
-  it("does not fallback to standalone after RC deny", function()
+  it("keeps Dibs administration guild-only when RC denies an actor", function()
     local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-ML" } })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
     local decision = dibs.Permissions.Evaluate("ledger.grant", { guid = "Player-1-OTHER" })
     assert_false(decision.allowed)
-    assert_equal("rclootcouncil", decision.authority)
+    assert_equal("guild", decision.authority)
+    assert_equal("GUILD_ADMIN_REQUIRED", decision.reasonCode)
+  end)
+
+  it("keeps the guild master authority when RC is degraded", function()
+    local rc = { enabled = true, masterLooter = nil }
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local decision = dibs.Permissions.Evaluate("ledger.grant", nil)
+    assert_true(decision.allowed)
+    assert_equal("guild", decision.authority)
   end)
 end)

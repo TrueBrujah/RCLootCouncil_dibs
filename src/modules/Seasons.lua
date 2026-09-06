@@ -17,11 +17,35 @@ function Dibs.Seasons.Create(name)
   end
 
   local seasonName = name and name ~= "" and name or ("Season " .. tostring(count + 1))
+
+  local function nextSeasonId()
+    local candidate = nil
+    if Dibs.NewId then
+      candidate = Dibs.NewId("season")
+    end
+    if not candidate or candidate == "" then
+      candidate = "season-" .. tostring(time()) .. "-" .. tostring(math.random(100000, 999999))
+    end
+    return tostring(candidate)
+  end
+
+  local seasonId = nextSeasonId()
+  local guard = 0
+  while Dibs.db.seasons[seasonId] and guard < 10 do
+    seasonId = nextSeasonId()
+    guard = guard + 1
+  end
+
+  if Dibs.db.seasons[seasonId] then
+    seasonId = seasonId .. "-" .. tostring(time())
+  end
+
   local season = {
-    id = "season-" .. tostring(time()) .. "-" .. tostring(math.random(100, 999)),
+    id = seasonId,
     name = seasonName,
     createdAt = time(),
     isActive = true,
+    isArchived = false,
     note = "Created by Dibs",
   }
 
@@ -41,7 +65,7 @@ end
 
 function Dibs.Seasons.GetCurrent()
   ensureState()
-  if Dibs.db.currentSeasonId and Dibs.db.seasons[Dibs.db.currentSeasonId] then
+  if Dibs.db.currentSeasonId and Dibs.db.seasons[Dibs.db.currentSeasonId] and not Dibs.db.seasons[Dibs.db.currentSeasonId].isArchived then
     return Dibs.db.seasons[Dibs.db.currentSeasonId]
   end
 
@@ -49,9 +73,13 @@ function Dibs.Seasons.GetCurrent()
     return Dibs.Seasons.Create("Season 1")
   end
   for _, season in pairs(Dibs.db.seasons) do
-    Dibs.db.currentSeasonId = season.id
-    return season
+    if not season.isArchived then
+      Dibs.db.currentSeasonId = season.id
+      return season
+    end
   end
+
+  Dibs.db.currentSeasonId = nil
   return nil
 end
 
@@ -67,7 +95,7 @@ end
 
 function Dibs.Seasons.SetCurrent(seasonId)
   ensureState()
-  if Dibs.db.seasons[seasonId] then
+  if Dibs.db.seasons[seasonId] and not Dibs.db.seasons[seasonId].isArchived then
     Dibs.db.currentSeasonId = seasonId
     return true
   end
@@ -75,11 +103,13 @@ function Dibs.Seasons.SetCurrent(seasonId)
   return false
 end
 
-function Dibs.Seasons.List()
+function Dibs.Seasons.List(includeArchived)
   ensureState()
   local seasons = {}
   for _, season in pairs(Dibs.db.seasons) do
-    table.insert(seasons, season)
+    if includeArchived or not season.isArchived then
+      table.insert(seasons, season)
+    end
   end
 
   table.sort(seasons, function(a, b)
@@ -87,4 +117,50 @@ function Dibs.Seasons.List()
   end)
 
   return seasons
+end
+
+function Dibs.Seasons.CreateSeason(name)
+  return Dibs.Seasons.Create(name)
+end
+
+function Dibs.Seasons.SetActiveSeason(seasonId)
+  local ok = Dibs.Seasons.SetCurrent(seasonId)
+  if not ok then
+    return nil
+  end
+  return Dibs.Seasons.GetById(seasonId)
+end
+
+function Dibs.Seasons.ListSeasons()
+  return Dibs.Seasons.List()
+end
+
+function Dibs.Seasons.ArchiveSeason(seasonId)
+  ensureState()
+  local season = seasonId and Dibs.db.seasons[seasonId] or nil
+  if not season then
+    return nil
+  end
+
+  season.isArchived = true
+  season.archivedAt = time()
+  season.isActive = false
+  if Dibs.db.currentSeasonId == seasonId then
+    Dibs.db.currentSeasonId = nil
+  end
+
+  Dibs.Seasons.GetCurrent()
+  return season
+end
+
+function Dibs.Seasons.RenameSeason(seasonId, newName)
+  ensureState()
+  local season = seasonId and Dibs.db.seasons[seasonId] or nil
+  local name = tostring(newName or ""):match("^%s*(.-)%s*$")
+  if not season or name == "" then
+    return nil
+  end
+  season.name = name
+  season.updatedAt = time()
+  return season
 end

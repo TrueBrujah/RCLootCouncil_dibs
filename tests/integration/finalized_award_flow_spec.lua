@@ -44,4 +44,68 @@ describe("Finalize award flow", function()
     local fulfilled = dibs.PreDibs.GetHistory()[1]
     assert_equal("fulfilled", fulfilled.status)
   end)
+
+  it("uses award difficulty when available and retains legacy matching when absent", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local seasonId = dibs.GetCurrentSeasonId()
+    local normal = dibs.PreDibs.CreatePublic("Tester-Realm", 19020, "Normal", seasonId, "test", { difficulty = "Normal" })
+    local heroic = dibs.PreDibs.CreatePublic("Tester-Realm", 19020, "Heroic", seasonId, "test", { difficulty = "Heroic" })
+
+    local result = dibs.ProtectedActions.FinalizeAward(nil, {
+      awardRef = "award-difficulty", playerName = "Tester-Realm", itemID = 19020,
+      sourceStatus = "awarded", finalized = true, difficulty = 15,
+    })
+
+    assert_true(result.ok)
+    assert_equal("confirmed", normal.status)
+    assert_equal("fulfilled", heroic.status)
+  end)
+
+  it("requires a DIB response for RCLootCouncil awards and ignores test awards", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = false, guildMembers = { "Tester-Realm" }, guildRankIndices = { [1] = 3 } } })
+    dibs.GetDB().settings.allowPublicPreDibs = false
+    local before = dibs.Ledger.GetBalance("Tester-Realm")
+
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19021", "Need")
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "test_mode", "item:19022", "Dib")
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19023", "Dib")
+    assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19023", "Dib")
+    assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
+  end)
+
+  it("does not consume from a degraded or explicitly standalone RC callback", function()
+    local degraded = { enabled = true, masterLooter = nil }
+    local _, dibs = loader.load({ rclootcouncil = degraded, wow = { guildLeader = true } })
+    local before = dibs.Ledger.GetBalance("Tester-Realm")
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19024", "DIB")
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+
+    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
+    local _, standalone = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    standalone.ProtectedActions.Execute("installation.mode.set", nil, { mode = "STANDALONE" })
+    local standaloneBefore = standalone.Ledger.GetBalance("Tester-Realm")
+    standalone.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19025", "DIB")
+    assert_equal(standaloneBefore, standalone.Ledger.GetBalance("Tester-Realm"))
+  end)
+
+  it("does not let a non-ML client replay the ML callback into its local ledger", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-2-ML", name = "Other-Realm" } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = {
+      guildLeader = false,
+      guildMembers = { "Tester-Realm" },
+      guildRankIndices = { [1] = 3 },
+    } })
+    dibs.GetDB().settings.allowPublicPreDibs = false
+    local before = dibs.Ledger.GetBalance("Tester-Realm")
+
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19026", "DIB")
+
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+  end)
 end)

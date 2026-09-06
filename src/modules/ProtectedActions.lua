@@ -8,7 +8,11 @@ end
 local VALID_ACTIONS = {
   ["season.create"] = true,
   ["season.set"] = true,
+  ["season.rename"] = true,
+  ["season.archive"] = true,
   ["rank.set"] = true,
+  ["settings.modify"] = true,
+  ["installation.mode.set"] = true,
   ["ledger.grant"] = true,
   ["ledger.use"] = true,
   ["ledger.refund"] = true,
@@ -17,6 +21,7 @@ local VALID_ACTIONS = {
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,
   ["award.finalize"] = true,
+  ["predib.mode.set"] = true,
 }
 
 local function isValidAction(actionId)
@@ -69,7 +74,12 @@ local function executeSeasonCreate(actor, payload, decision)
   if not Dibs.Seasons or not Dibs.Seasons.Create then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local season = Dibs.Seasons.Create(payload and payload.name)
+  local name = payload and payload.name
+  if name ~= nil then
+    name = tostring(name):match("^%s*(.-)%s*$")
+    if name == "" or #name > 80 then return reject(decision, "A valid season name is required.") end
+  end
+  local season = Dibs.Seasons.Create(name)
   return buildResult(season ~= nil, season, decision, season and nil or text("SEASON_CREATE_FAILED", "Failed to create season."))
 end
 
@@ -86,15 +96,15 @@ local function executeSeasonSet(actor, payload, decision)
 end
 
 local function executeRankSet(actor, payload, decision)
-  if not Dibs.RankRules or not Dibs.RankRules.SetAllocation then
+  if not Dibs.RankRules or not Dibs.RankRules.SetRankAllocation then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
   local seasonId = payload and payload.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
   local rankIndex = payload and payload.rankIndex
   local allocation = payload and payload.allocation
   local rankName = payload and payload.rankName
-  local rule = Dibs.RankRules.SetAllocation(seasonId, rankIndex, rankName, allocation)
-  return buildResult(rule ~= nil, rule, decision)
+  local rule, reason = Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName)
+  return buildResult(rule ~= nil, rule, decision, reason)
 end
 
 local function executeLedgerGrant(actor, payload, decision)
@@ -165,24 +175,48 @@ local function isFinalAward(payload)
     return false
   end
   if payload.finalized == true then
-    return true
+    local forcedStatus = tostring(payload.sourceStatus or ""):lower()
+    return forcedStatus ~= "test_mode" and forcedStatus ~= "test"
   end
   local status = tostring(payload.sourceStatus or ""):lower()
   return status == "awarded" or status == "success" or status == "complete" or status == "finalized"
+    or status == "normal" or status == "indirect" or status == "manually_added"
+end
+
+local function executeSeasonRename(actor, payload, decision)
+  local seasonId = payload and payload.seasonId
+  local name = tostring(payload and payload.name or ""):match("^%s*(.-)%s*$")
+  if name == "" or #name > 80 then
+    return reject(decision, "A valid season name is required.")
+  end
+  if not Dibs.Seasons or type(Dibs.Seasons.RenameSeason) ~= "function" then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  local season = Dibs.Seasons.RenameSeason(seasonId, name)
+  return buildResult(season ~= nil, season, decision, season and nil or text("SEASON_NOT_FOUND", "Season not found."))
+end
+
+local function executeSeasonArchive(actor, payload, decision)
+  if not Dibs.Seasons or type(Dibs.Seasons.ArchiveSeason) ~= "function" or type(Dibs.Seasons.List) ~= "function" then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  if #Dibs.Seasons.List() <= 1 then
+    return reject(decision, "At least one season must remain.")
+  end
+  local season = Dibs.Seasons.ArchiveSeason(payload and payload.seasonId)
+  return buildResult(season ~= nil, season, decision, season and nil or text("SEASON_NOT_FOUND", "Season not found."))
 end
 
 function Dibs.ProtectedActions.FinalizeAward(actor, payload)
   local command = payload or {}
+  if tostring(command.sourceStatus or ""):lower() == "test_mode" or command.testMode == true then
+    return buildResult(false, nil, nil, text("AWARD_TEST_MODE", "Test awards cannot consume production Dibs."))
+  end
   if not isFinalAward(command) then
     return buildResult(false, nil, nil, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
   end
   if not command.awardRef or not command.playerName or not tonumber(command.itemID) then
     return buildResult(false, nil, nil, text("AWARD_INVALID", "Award payload is missing required fields."))
-  end
-
-  local existing = Dibs.Ledger and Dibs.Ledger.GetTransactionForAward and Dibs.Ledger.GetTransactionForAward(command.awardRef)
-  if existing then
-    return buildResult(true, existing, nil)
   end
 
   local result = Dibs.ProtectedActions.Execute("award.finalize", actor, command)
@@ -191,7 +225,7 @@ function Dibs.ProtectedActions.FinalizeAward(actor, payload)
   end
 
   if Dibs.PreDibs and Dibs.PreDibs.GetConfirmedRequestForPlayer and Dibs.PreDibs.Fulfill then
-    local request = Dibs.PreDibs.GetConfirmedRequestForPlayer(command.playerName, command.itemID)
+    local request = Dibs.PreDibs.GetConfirmedRequestForPlayer(command.playerName, command.itemID, command.seasonId, command.difficulty)
     if request and request.requestId then
       Dibs.PreDibs.Fulfill(request.requestId)
     end
@@ -202,6 +236,9 @@ end
 
 local function executeAwardFinalize(actor, payload, decision)
   local command = payload or {}
+  if command.source == "rclootcouncil" and command.responseValidated ~= true then
+    return buildResult(false, nil, decision, text("AWARD_DIB_RESPONSE_REQUIRED", "Only a finalized DIB response can consume a Dib."))
+  end
   if not isFinalAward(command) then
     return buildResult(false, nil, decision, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
   end
@@ -209,8 +246,32 @@ local function executeAwardFinalize(actor, payload, decision)
   if existing then
     return buildResult(true, existing, decision)
   end
+  if Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetStatusForCandidate then
+    local candidate = Dibs.RCLootCouncil.GetStatusForCandidate(command.playerName, command.itemID, nil, {
+      ignorePublicPreDibRequirement = true,
+    })
+    if not candidate or candidate.canUseDib ~= true then
+      return buildResult(false, nil, decision, text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+    end
+  end
   local tx = Dibs.Ledger.Use(command.playerName, 1, command.reason or "Finalized loot award", command.source or "rclootcouncil", command.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()), buildAudit("award.finalize", actor, command, decision))
   return buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+end
+
+local function executePreDibModeSet(actor, payload, decision)
+  if not Dibs.PreDibs or not Dibs.PreDibs.SetModePolicy then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  local policy, reason = Dibs.PreDibs.SetModePolicy(payload and payload.seasonId, payload and payload.mode, actor)
+  return buildResult(policy ~= nil, policy, decision, reason)
+end
+
+local function executeInstallationModeSet(actor, payload, decision)
+  if not Dibs.Permissions or not Dibs.Permissions.SetInstallationMode then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  local mode, reason = Dibs.Permissions.SetInstallationMode(payload and payload.mode, actor)
+  return buildResult(mode ~= nil, mode, decision, reason)
 end
 
 function Dibs.ProtectedActions.Execute(actionId, actor, payload)
@@ -229,6 +290,8 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
 
   if actionId == "season.create" then return executeSeasonCreate(actor, command, decision) end
   if actionId == "season.set" then return executeSeasonSet(actor, command, decision) end
+  if actionId == "season.rename" then return executeSeasonRename(actor, command, decision) end
+  if actionId == "season.archive" then return executeSeasonArchive(actor, command, decision) end
   if actionId == "rank.set" then return executeRankSet(actor, command, decision) end
   if actionId == "ledger.grant" then return executeLedgerGrant(actor, command, decision) end
   if actionId == "ledger.use" then return executeLedgerUse(actor, command, decision) end
@@ -238,6 +301,9 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "admin.appoint" then return executeAdminChange(actor, command, true, decision) end
   if actionId == "admin.revoke" then return executeAdminChange(actor, command, false, decision) end
   if actionId == "award.finalize" then return executeAwardFinalize(actor, command, decision) end
+  if actionId == "predib.mode.set" then return executePreDibModeSet(actor, command, decision) end
+  if actionId == "installation.mode.set" then return executeInstallationModeSet(actor, command, decision) end
+  if actionId == "settings.modify" then return buildResult(true, true, decision) end
 
   return buildResult(false, nil, decision, text("AUTHORITY_INVALID_ACTION", "Unknown protected action."))
 end

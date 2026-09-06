@@ -6,6 +6,7 @@
 ## SavedVariables: RCLootCouncil_dibsDB
 ## OptionalDeps: RCLootCouncil
 
+embeds.xml
 Core.lua
 locales/enUS.lua
 locales/frFR.lua
@@ -15,9 +16,17 @@ modules/Ledger.lua
 modules/Permissions.lua
 modules/ProtectedActions.lua
 modules/PreDibs.lua
+modules/LootPipeline.lua
 modules/Sync.lua
 modules/RaidRelay.lua
+modules/RaidPrompts.lua
+integrations/Ace3.lua
+integrations/DeveloperMode.lua
 integrations/EncounterJournal.lua
 integrations/RCLootCouncil.lua
+ui/AceGUI.lua
+ui/LogsUI.lua
+ui/DebugLogsUI.lua
 ui/PlayerUI.lua
 ui/OfficerUI.lua
+integrations/RCLootCouncilOptions.lua
