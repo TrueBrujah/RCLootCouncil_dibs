@@ -2,17 +2,17 @@
 
 <!--
 Sync Impact Report
-Version change: 1.2.0 -> 2.0.0
+Version change: 2.0.0 -> 2.1.0
 Modified principles: VII. RCLootCouncil Compatibility; XI. Authority and Trust;
-  XVII. Multi-Character and Multi-Guild Data Isolation; Governance
-Added sections: Core Principles container, matching the resolved template hierarchy
+  XVII. Multi-Character and Multi-Guild Data Isolation; XIX. Change Notes and Addon
+  Versioning; Governance
+Added sections: XIX. Change Notes and Addon Versioning
 Removed sections: none
-Rationale for MAJOR bump: arbitrary configured administrative authority is replaced by
-  exclusive guild GM/Officer authority in both installation modes; ML authority is
-  limited to RCLC loot management and validated automatic Dib consumption.
-Dependent documents: README, feature specifications/plans/tasks, and the earlier review
-  require reconciliation with this authority policy before implementation. Templates
-  and application code are unchanged by this constitution amendment.
+Rationale for MINOR bump: a new mandatory release-traceability principle requires a
+  change note and an addon version increment for every shipped addon change.
+Dependent documents: the addon TOC, release checklist, and repository changelog process
+  must follow this versioning rule for future changes. Templates and application code are
+  unchanged by this constitution amendment.
 Follow-up TODOs: TODO(RATIFICATION_DATE) remains because the original adoption date is unknown.
 -->
 
@@ -342,6 +342,24 @@ Diagnostics MUST NOT disclose live loot-session candidate, vote, response, or cr
 
 All user-facing controls, tabs, fields, buttons, tooltips, status labels, and voting-frame Dibs indicators MUST provide concise help text. Localization MUST support the WoW client language and an explicit English or French override; English MUST remain the fallback when a translation is missing. Help text MUST explain the action's authority and whether it changes the ledger or consumes a Dib.
 
+### XIX. Change Notes and Addon Versioning
+
+Every committed change that modifies the addon source, behavior, user interface, security
+policy, SavedVariables, protocol, embedded dependencies, or release configuration MUST
+include a dated change note in the repository changelog. The note MUST state what changed,
+why it changed, and any compatibility, migration, or player-facing impact.
+
+Every shipped addon change MUST increment the `## Version` value in
+`src/RCLootCouncil_dibs.toc`. The version MUST follow `MAJOR.MINOR.PATCH` semantics, with
+an explicit development suffix permitted for unreleased builds. A commit that changes
+addon behavior MUST NOT leave the addon version unchanged. Documentation-only edits that
+do not alter the addon build still require a changelog note but MAY retain the addon
+version.
+
+The changelog entry and TOC version update MUST be reviewed together before a release is
+accepted. SavedVariables or protocol migrations MUST identify their compatibility impact
+in the same change note.
+
 ## Governance
 
 This constitution governs all specifications, plans, tasks, and implementations in this repository.
@@ -353,7 +371,9 @@ Architecture decisions affecting ledger integrity, synchronization, authority, R
 Amendments MUST record the approved policy, affected principles, compatibility impact,
 and dependent-document follow-up in the Sync Impact Report. Versioning MUST use MAJOR
 for incompatible principle changes, MINOR for new or materially expanded principles,
-and PATCH for non-semantic clarifications. Specifications, plans, tasks, and code reviews
-MUST check compliance with the current constitution before implementation is accepted.
+and PATCH for non-semantic clarifications. Every addon change MUST also follow Principle
+XIX: add a dated changelog note and increment the addon TOC version when the addon build
+or behavior changes. Specifications, plans, tasks, release notes, and code reviews MUST
+check compliance with the current constitution before implementation is accepted.
 
-**Version**: 2.0.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-06
+**Version**: 2.1.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-06
