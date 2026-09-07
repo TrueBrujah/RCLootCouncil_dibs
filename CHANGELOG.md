@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1-dev - 2026-09-06
+
+- Initialize the shared `Dibs.Permissions` namespace in `Core.lua` so static
+  analyzers recognize the field before the permissions module is loaded.
+- Preserve the existing permissions table during reloads; runtime authority and
+  standalone/RCLootCouncil permission rules are unchanged.
+
 ## 0.2.0-dev - 2026-09-06
 
 - Harden the optional RCLootCouncil integration with capability detection and explicit

@@ -6,9 +6,15 @@ _G.RCLootCouncil_dibs = RCLootCouncil_dibs
 Dibs = _G.Dibs or RCLootCouncil_dibs
 _G.Dibs = Dibs
 
+-- Keep the shared namespace explicit for editors and for Core's early guards.
+-- Permissions.lua fills this table with the authoritative implementation once
+-- the ordered module list reaches it; initializing it here is intentionally
+-- side-effect free and preserves an existing table during reloads.
+Dibs.Permissions = Dibs.Permissions or {}
+
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.2.0-dev"
+Dibs.VERSION = "0.2.1-dev"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
 Dibs.SAVED_VARIABLE_NAME = "RCLootCouncil_dibsDB"
