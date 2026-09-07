@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Reprendre la feature 002-predibs-encounter-journal. Le Dibs Core est deja implemente et valide. La feature doit couvrir le flux Pre-Dib autonome, les demandes publiques et leur deduplication, confirmation, annulation et fulfillment, integration Adventure Guide / Encounter Journal, bouton Dib uniquement pour les raids, aucun bouton pour les dungeons, matrice configurable des sous-categories, inconnues visibles par defaut, integration optionnelle avec RCLootCouncil, fonctionnement sans RCLootCouncil, respect du ledger Dibs comme source d'autorite."
+**Input**: User description: "Resume feature 002-predibs-encounter-journal. The Dibs Core is already implemented and validated. The feature must cover the standalone Pre-Dib flow, public requests and deduplication, confirmation, cancellation and fulfillment, Adventure Guide / Encounter Journal integration, a Dib button for raids only, no button for dungeons, a configurable sub-category matrix, unknown categories visible by default, optional RCLootCouncil integration, operation without RCLootCouncil, and the Dibs ledger as the authority source."
 
 ## User Scenarios & Testing
 
