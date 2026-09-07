@@ -27,10 +27,11 @@ function Dibs.DebugLogs.Open(actor)
   local shell = Dibs.AceGUI.CreateWindow("Dibs Debug Logs", 900, 650, { "CENTER", 0, 0 })
   if not shell then return false end
   local query, sortKey, descending = "", "timestamp", true
+  local filterLevel
+  local refresh
   local tabs = Dibs.AceGUI.AddTabs(shell, {
     { text = "All", value = "all" }, { text = "Errors", value = "1" }, { text = "Warnings", value = "2" }, { text = "Info", value = "3" }, { text = "Debug", value = "4" }, { text = "Verbose", value = "5" },
-  }, function(value) filterLevel = value == "all" and nil or tonumber(value); refresh() end)
-  local refresh
+  }, function(value) filterLevel = value == "all" and nil or tonumber(value); if refresh then refresh() end end)
   refresh = function()
     Dibs.AceGUI.Clear(tabs)
     local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.3-dev - 2026-09-06
+
+- Add the WoW Lua Language Server project configuration so vendored libraries
+  and test fixtures do not inflate addon diagnostics.
+- Declare the complete shared Dibs module namespace in `Core.lua`, leaving the
+  analyzer with no addon-source diagnostics while preserving module load order.
+- Fix the remaining source-level type, scope, and API-contract diagnostics.
+
 ## 0.2.2-dev - 2026-09-06
 
 - Declare the `ProtectedActions` and `PreDibs` namespaces before Core's early

@@ -50,7 +50,7 @@ end
 function Dibs.RankRules.GetPlayerRankInfo(playerName)
   local targetName = playerName or Dibs.GetPlayerName()
   if type(GetNumGuildMembers) == "function" then
-    local count = GetNumGuildMembers(true)
+    local count = GetNumGuildMembers()
     local targetKey = string.lower(tostring(targetName or ""))
     local targetShort = targetKey:match("^([^-]+)")
     local shortMatch

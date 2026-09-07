@@ -526,9 +526,9 @@ local function getLootScrollButtons()
   -- part of the current Encounter Journal frame contract. Keep the optional
   -- probe dynamic so current API annotations do not treat it as guaranteed.
   scanContainer(info["lootScroll"])
-  scanContainer(info.lootContainer)
-  scanContainer(info.LootContainer)
-  scanContainer(info.lootFrame)
+  scanContainer(info["lootContainer"])
+  scanContainer(info["LootContainer"])
+  scanContainer(info["lootFrame"])
 
   if #found == 0 then
     return nil
@@ -874,12 +874,6 @@ function Dibs.EncounterJournal.DumpVisibleLootDebug()
   end
 
   local function getLootInfoByIndex(index)
-    if type(EJ_GetLootInfoByIndex) == "function" then
-      local ok, info = pcall(EJ_GetLootInfoByIndex, index)
-      if ok and type(info) == "table" then
-        return info
-      end
-    end
     if type(C_EncounterJournal) == "table" and type(C_EncounterJournal.GetLootInfoByIndex) == "function" then
       local ok, info = pcall(C_EncounterJournal.GetLootInfoByIndex, index)
       if ok and type(info) == "table" then
@@ -898,13 +892,10 @@ function Dibs.EncounterJournal.DumpVisibleLootDebug()
     local instanceID = getCurrentJournalInstanceID()
     if tonumber(instanceID) and tonumber(instanceID) > 0 then
       scannedByEncounter = true
-      local previousEncounter = nil
-      if type(EJ_GetCurrentEncounter) == "function" then
-        local okPrev, prev = pcall(EJ_GetCurrentEncounter)
-        if okPrev and tonumber(prev) and tonumber(prev) > 0 then
-          previousEncounter = tonumber(prev)
-        end
-      end
+      local currentInfo = _G.EncounterJournal
+        and _G.EncounterJournal.encounter
+        and _G.EncounterJournal.encounter.info
+      local previousEncounter = type(currentInfo) == "table" and tonumber(currentInfo["encounterID"]) or nil
 
       for encounterIndex = 1, 200 do
         local okEncounter, encounterID = pcall(EJ_GetEncounterInfoByIndex, encounterIndex, instanceID)
@@ -945,12 +936,7 @@ function Dibs.EncounterJournal.DumpVisibleLootDebug()
   end
 
   if fromApiCount == 0 then
-    local apiFn = nil
-    if type(EJ_GetLootInfoByIndex) == "function" then
-      apiFn = EJ_GetLootInfoByIndex
-    elseif type(C_EncounterJournal) == "table" and type(C_EncounterJournal.GetLootInfoByIndex) == "function" then
-      apiFn = C_EncounterJournal.GetLootInfoByIndex
-    end
+    local apiFn = type(C_EncounterJournal) == "table" and C_EncounterJournal.GetLootInfoByIndex or nil
 
     if type(apiFn) == "function" then
       local emptyStreak = 0

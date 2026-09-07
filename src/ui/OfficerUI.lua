@@ -165,7 +165,7 @@ local function getGuildRankNames()
   end
 
   if next(names) == nil and type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
-    local memberCount = _G.GetNumGuildMembers(true)
+    local memberCount = _G.GetNumGuildMembers()
     local count = tonumber(memberCount) or 0
     for i = 1, count do
       local _, rankName, rankIndex = _G.GetGuildRosterInfo(i)
@@ -191,7 +191,7 @@ local function getCurrentGuildMemberNames()
   end
 
   local memberNames = {}
-  local memberCount = _G.GetNumGuildMembers(true)
+  local memberCount = _G.GetNumGuildMembers()
   local count = tonumber(memberCount) or 0
   for index = 1, count do
     local name = _G.GetGuildRosterInfo(index)
@@ -862,13 +862,13 @@ local function createAceWindow()
       end, 520)
       setControlText(self.reminderTemplateInput, templates.reminder)
       self.publicAnnouncementChannel = Dibs.AceGUI.AddDropdown(shell, tabs, "Public channel", ANNOUNCEMENT_CHANNEL_VALUES, function(value)
-        local current = Dibs.PreDibs.GetAnnouncementSettings()
-        Dibs.PreDibs.SetAnnouncementChannels(value, current.officerChannel)
+        local announcementState = Dibs.PreDibs.GetAnnouncementSettings()
+        Dibs.PreDibs.SetAnnouncementChannels(value, announcementState.officerChannel)
       end, 180)
       Dibs.AceGUI.SetValue(self.publicAnnouncementChannel, announcementSettings.publicChannel)
       self.officerAnnouncementChannel = Dibs.AceGUI.AddDropdown(shell, tabs, "Officer channel", ANNOUNCEMENT_CHANNEL_VALUES, function(value)
-        local current = Dibs.PreDibs.GetAnnouncementSettings()
-        Dibs.PreDibs.SetAnnouncementChannels(current.publicChannel, value)
+        local announcementState = Dibs.PreDibs.GetAnnouncementSettings()
+        Dibs.PreDibs.SetAnnouncementChannels(announcementState.publicChannel, value)
       end, 180)
       Dibs.AceGUI.SetValue(self.officerAnnouncementChannel, announcementSettings.officerChannel)
       Dibs.AceGUI.AddButton(shell, tabs, "Test public channel", function()
@@ -924,11 +924,11 @@ local function createAceWindow()
       Dibs.AceGUI.AddLabel(shell, tabs, Dibs.BuildDebugReport(), true)
       for _, entry in ipairs({ { "All", "all" }, { "Announcements", "announce" }, { "Sync", "sync" }, { "UI", "ui" }, { "Adventure Guide", "encounter_journal" } }) do
         local key, label = entry[2], entry[1]
-        local current = tonumber(Dibs.GetDebugLevels()[key]) or tonumber(Dibs.GetDebugLevels().all) or 1
+        local debugLevel = tonumber(Dibs.GetDebugLevels()[key]) or tonumber(Dibs.GetDebugLevels().all) or 1
         local control = Dibs.AceGUI.AddDropdown(shell, tabs, label .. " level", { [0]="0 - hidden", [1]="1 - normal", [2]="2", [3]="3", [4]="4", [5]="5 - maximum" }, function(value)
           Dibs.SetDebugLevel(key, tonumber(value) or 0); self:Refresh()
         end, 220)
-        Dibs.AceGUI.SetValue(control, current)
+        Dibs.AceGUI.SetValue(control, debugLevel)
       end
       Dibs.AceGUI.AddButton(shell, tabs, "Copy report to chat", function() Dibs.Message(Dibs.BuildDebugReport()) end, 180)
       return

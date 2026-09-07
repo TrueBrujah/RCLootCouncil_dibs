@@ -24,7 +24,7 @@ local function getRosterPlayerName(playerName)
     return candidate
   end
 
-  local memberCount = GetNumGuildMembers(true)
+  local memberCount = GetNumGuildMembers()
   local count = tonumber(memberCount) or 0
   local candidateKey = string.lower(candidate)
   local candidateShortName = candidateKey:match("^([^-]+)")

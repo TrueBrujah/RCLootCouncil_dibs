@@ -29,11 +29,11 @@ local function normalizeButtonLabel(value)
 end
 
 local function normalizeTypeKey(value)
-  local text = tostring(value or "default")
-  if text == "" then
-    text = "default"
+  local valueText = tostring(value or "default")
+  if valueText == "" then
+    valueText = "default"
   end
-  return text
+  return valueText
 end
 
 local function getDibTypeSettings()
@@ -83,11 +83,11 @@ end
 
 local function addTypeCandidate(target, seen, value)
   if value == nil then return end
-  local text = tostring(value)
-  if text == "" then return end
-  if seen[text] then return end
-  seen[text] = true
-  table.insert(target, text)
+  local valueText = tostring(value)
+  if valueText == "" then return end
+  if seen[valueText] then return end
+  seen[valueText] = true
+  table.insert(target, valueText)
 end
 
 local function normalizeKey(value)
@@ -1748,12 +1748,12 @@ local function playerNameIdentity(value)
   end
   if value == nil and Dibs.GetPlayerName then value = Dibs.GetPlayerName() end
   if not value then return nil end
-  local text = tostring(value)
-  if not text:find("-", 1, true) and type(GetRealmName) == "function" then
+  local valueText = tostring(value)
+  if not valueText:find("-", 1, true) and type(GetRealmName) == "function" then
     local realm = tostring(GetRealmName() or ""):gsub("[%s%-]", "")
-    if realm ~= "" then text = text .. "-" .. realm end
+    if realm ~= "" then valueText = valueText .. "-" .. realm end
   end
-  return string.lower(text)
+  return string.lower(valueText)
 end
 
 local function stableSessionIdentity(rc)

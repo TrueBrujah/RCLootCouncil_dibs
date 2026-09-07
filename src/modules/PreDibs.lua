@@ -28,6 +28,9 @@ local function announcementDebug(message)
   end
 end
 
+local DEFAULT_PREDIB_TEMPLATE = "[Dibs] %player requested %item (%difficulty) - %date %time"
+local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]"
+
 local function isRaidDibsChannelAvailable()
   local clubId, streamId = Dibs.PreDibs.GetRaidDibsChannel()
   return clubId ~= nil and streamId ~= nil
@@ -57,8 +60,9 @@ function Dibs.PreDibs.GetRaidDibsChannel()
       clubId = clubKey
     end
     announcementDebug("club[" .. tostring(clubKey) .. "] id=" .. tostring(clubId))
-    local streamOk, streams = pcall(clubs.GetStreams, clubId)
-    announcementDebug("GetStreams(" .. tostring(clubId) .. ") ok=" .. tostring(streamOk) .. " type=" .. type(streams))
+    local streamClubId = tostring(clubId or "")
+    local streamOk, streams = pcall(clubs.GetStreams, streamClubId)
+    announcementDebug("GetStreams(" .. streamClubId .. ") ok=" .. tostring(streamOk) .. " type=" .. type(streams))
     if streamOk and type(streams) == "table" then
       for streamKey, stream in pairs(streams) do
         local streamId = type(stream) == "table" and (stream.streamId or stream.streamID) or streamKey
@@ -122,9 +126,6 @@ end
 
 local VALID_MODES = { WILD_OPEN = true, ENCOUNTER = true }
 local DIFFICULTY_NAMES = { [14] = "Normal", [15] = "Heroic", [16] = "Mythic" }
-local DEFAULT_PREDIB_TEMPLATE = "[Dibs] %player requested %item (%difficulty) - %date %time"
-local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]"
-
 local function formatDateTime(format, timestamp)
   if type(date) == "function" then
     return date(format, timestamp)

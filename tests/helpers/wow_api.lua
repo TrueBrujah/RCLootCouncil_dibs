@@ -226,7 +226,7 @@ function M.install(opts)
       }
     end,
     GetStreams = function(clubId)
-      if raidDibsChannel and clubId == 2044801 then
+      if raidDibsChannel and tostring(clubId) == "2044801" then
         return { [3] = { streamName = " Raid Dibs " } }
       end
       return {}
