@@ -2,7 +2,7 @@
 ## Title: RCLootCouncil_dibs
 ## Notes: Seasonal guild Dibs, Pre-Dibs, audit history, and optional RCLootCouncil integration.
 ## Author: Contributors
-## Version: 0.2.2-dev
+## Version: 0.2.3-dev
 ## SavedVariables: RCLootCouncil_dibsDB
 ## OptionalDeps: RCLootCouncil
 
