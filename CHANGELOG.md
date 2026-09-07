@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.4-dev - 2026-09-07
+## 0.3.4 - 2026-09-07
 
 - Add the RCLootCouncil Dibs logo to the addon metadata and AceGUI windows.
 - Package a WoW-compatible 128px texture while retaining the original PNG in
