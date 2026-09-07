@@ -1144,6 +1144,19 @@ function Dibs.RCOptions.Open()
 end
 
 local function reorderCategoryBeforeMaster()
+  -- Retail's Settings API owns the category/subcategory tree.  Mutating the
+  -- legacy Interface Options array after a canvas subcategory is registered
+  -- can leave the selected panel and its AceConfig tab state out of sync (the
+  -- Master Looter tabs then appear clickable but immediately return to the
+  -- first page).  Let Settings keep its native ordering on modern clients.
+  local settings = _G.Settings
+  if type(settings) == "table"
+    and type(settings.GetCategory) == "function"
+    and type(settings.RegisterCanvasLayoutSubcategory) == "function"
+  then
+    return
+  end
+
   local categories = _G.INTERFACEOPTIONS_ADDONCATEGORIES
   if type(categories) ~= "table" then
     return

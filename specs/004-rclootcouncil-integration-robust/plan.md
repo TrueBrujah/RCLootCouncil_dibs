@@ -22,9 +22,10 @@ RCLootCouncil history, and exposes useful degraded/unsupported diagnostics.
 **Primary Dependencies**: WoW Retail addon APIs; optional RCLootCouncil Retail 3.x-shaped
 capability surface; embedded Ace3 services through LibStub when available
 
-**Storage**: Dibs-owned `RCLootCouncil_dibsDB` SavedVariables for ledger and audit data;
-RCLootCouncil SavedVariables remain read-only; runtime capability and hook state is not
-authoritative persistence
+**Storage**: Dibs-owned `RCLootCouncil_dibsDB` SavedVariables for ledger and audit data.
+RCLootCouncil remains non-authoritative: the adapter may apply a narrow local Master Looter
+button/response compatibility projection, while history, candidate/session data, and wire
+state remain untouched.
 
 **Testing**: Fengari/Lua test harness through `tests/run.lua`; focused unit, contract, and
 integration fixtures; manual WoW Retail smoke tests with one and two clients
@@ -186,7 +187,9 @@ callback can bypass that path or become a new source of authority.
 
 ### Phase 2C: UI, options, and diagnostics
 
-- Keep the Dibs response/status projection read-only from RCLootCouncil's perspective.
+- Keep candidate/status projections read-only from RCLootCouncil's perspective. The only
+  local configuration mutation is the locked indexed DIB button/response projection; it must
+  preserve existing active responses and never rewrite RCLootCouncil history or session data.
 - Expose capability state, supported assumptions, and rejection reasons without exposing
   live candidate, vote, or session data to ordinary players.
 - Preserve the same options in Standalone mode, hide officer controls from unauthorized
@@ -224,7 +227,9 @@ All design gates remain passed:
   Raid Assistant, council, or ML status into guild administration.
 - The ML exception is an event provenance check limited to one finalized DIB debit.
 - Award records remain append-only and replay-safe; ambiguous input is rejected.
-- Dibs SavedVariables remain the accounting authority; RCLootCouncil state is read-only.
+- Dibs SavedVariables remain the accounting authority; the narrow local DIB button/response
+  projection is compatibility configuration, while RCLootCouncil history and session state
+  remain read-only.
 - Cross-raid payloads contain no live RCLootCouncil session data.
 - Standalone initialization, optional Ace3 services, combat safety, and player privacy are
   covered by explicit implementation and validation work.

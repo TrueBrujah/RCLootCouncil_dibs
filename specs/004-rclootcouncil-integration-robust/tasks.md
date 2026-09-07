@@ -152,7 +152,7 @@ inspect player/officer visibility, and process partial metadata safely.
 
 - [X] T046 [P] [US4] Add unrelated-history preservation and Dibs-provenance marker tests in `tests/integration/rclootcouncil_history_spec.lua`.
 - [X] T047 [P] [US4] Add player/officer privacy and diagnostic visibility tests in `tests/integration/rclootcouncil_options_fallback_spec.lua` and existing UI privacy coverage.
-- [X] T048 [P] [US4] Add partial item/winner/session metadata and read-only projection tests in `tests/integration/rclootcouncil_projection_spec.lua`.
+- [X] T048 [P] [US4] Add partial item/winner/session metadata and read-only candidate projection tests in `tests/integration/rclootcouncil_projection_spec.lua`.
 
 ### Implementation for User Story 4
 
@@ -162,7 +162,9 @@ inspect player/officer visibility, and process partial metadata safely.
 - [X] T052 [US4] Display integration state and rejection reasons without exposing officer-only or live-session data in `src/ui/PlayerUI.lua`, `src/ui/OfficerUI.lua`, `src/ui/DebugLogsUI.lua`, and `src/Core.lua`.
 - [X] T053 [US4] Keep options and voting-frame integration usable in Standalone mode and defer protected UI refreshes during combat in `src/integrations/RCLootCouncilOptions.lua` and `src/integrations/RCLootCouncil.lua`.
 
-**Checkpoint**: RCLootCouncil history is preserved, projections are read-only, and each player sees only data allowed by the Dibs visibility policy.
+**Checkpoint**: RCLootCouncil history and session projections are preserved, the local DIB
+button/response projection is locked and idempotent, and each player sees only data allowed
+by the Dibs visibility policy.
 
 ---
 

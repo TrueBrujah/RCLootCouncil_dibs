@@ -1,21 +1,46 @@
 local Dibs = _G.Dibs
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 
+-- Change log 0.3.4-dev (2026-09-07): add the addon logo to metadata and
+-- AceGUI windows while keeping the original source image in docs/assets.
+-- Change log 0.3.3-dev (2026-09-07): treat wildcard AceDB defaults as
+-- inherited values instead of repeatedly deleting a phantom legacy DIB key.
+-- Change log 0.3.2-dev (2026-09-07): keep native Retail Settings category
+-- ownership intact so RCLootCouncil Master Looter tabs remain selectable.
+-- Also keep the eagerly-created Dibs windows hidden until explicitly opened,
+-- preventing their dialog frame from intercepting Settings clicks.
+-- Change log 0.3.1-dev (2026-09-07): reuse injected loot buttons after RC
+-- rebuilds its entry list and avoid repeated frame creation during updates.
+-- Change log 0.3.0-dev (2026-09-07): correct lib-st cell arguments, release
+-- UI references after refresh, and keep slash/status output visible.
+-- Change log 0.2.7-dev (2026-09-07): stabilize the options refresh path,
+-- resolve candidate identities for the Dibs voting column, and bound malformed
+-- response counts before iterating saved configuration.
+
 local function text(key, fallback) return (Dibs.L and Dibs.L[key]) or fallback end
 
 local function getRCAddon()
-  if LibStub == nil then return nil end
-  local okStub, aceAddon = pcall(LibStub, "AceAddon-3.0", true)
-  if not okStub then return nil end
-  if not aceAddon or type(aceAddon.GetAddon) ~= "function" then return nil end
-  local okAddon, addon = pcall(aceAddon.GetAddon, aceAddon, "RCLootCouncil", true)
-  return okAddon and addon or nil
+  if type(LibStub) == "function" or type(LibStub) == "table" then
+    local okStub, aceAddon = pcall(LibStub, "AceAddon-3.0", true)
+    if okStub and aceAddon and type(aceAddon.GetAddon) == "function" then
+      for _, addonName in ipairs({ "RCLootCouncil", "RCLootCouncil2" }) do
+        local okAddon, addon = pcall(aceAddon.GetAddon, aceAddon, addonName, true)
+        if okAddon and type(addon) == "table" then
+          return addon
+        end
+      end
+    end
+  end
+  -- Some packaged builds do not expose AceAddon through LibStub, while the
+  -- global addon object is still available. Keep that supported fallback.
+  return type(_G.RCLootCouncil) == "table" and _G.RCLootCouncil
+    or (type(_G.RCLootCouncil2) == "table" and _G.RCLootCouncil2 or nil)
 end
 
 local function isLoaded()
   if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
     local ok, first, second = pcall(C_AddOns.IsAddOnLoaded, "RCLootCouncil")
-    if ok then return second == true or first == true end
+    if ok and (second == true or first == true) then return true end
   end
   return type(_G.RCLootCouncil) == "table" or type(getRCAddon()) == "table"
 end
@@ -424,6 +449,7 @@ local FORCED_DIB_TEXT = "Dib"
 local FORCED_DIB_WHISPER_KEY = "dib"
 local FORCED_DIB_COLOR = { 0.15, 0.85, 1, 1 }
 local FORCED_DIB_SORT = 1
+local FORCED_DIB_MAX_BUTTONS = 10
 
 local function getRCMLModule(rc)
   if type(rc) ~= "table" or type(rc.GetModule) ~= "function" then return nil end
@@ -445,22 +471,42 @@ local function collectRCDBs(rc)
     table.insert(list, candidate)
   end
 
-  local ml = getRCMLModule(rc)
-  if ml and type(ml.db) == "table" and type(ml.db.profile) == "table" then
-    add(ml.db.profile)
+  local function addContainer(candidate)
+    if type(candidate) ~= "table" then return end
+    if type(candidate.profile) == "table" then
+      add(candidate.profile)
+    end
+    -- Older forks expose the active profile directly on `db` or `profile`.
+    if candidate.buttons ~= nil or candidate.responses ~= nil or candidate.enabledButtons ~= nil then
+      add(candidate)
+    end
   end
 
-  if type(rc) == "table" and type(rc.Getdb) == "function" then
-    local ok, db = pcall(rc.Getdb, rc)
-    if ok and type(db) == "table" then add(db) end
+  local ml = getRCMLModule(rc)
+  if ml then
+    addContainer(ml.db)
+    addContainer(ml.profile)
+    for _, methodName in ipairs({ "Getdb", "GetDB" }) do
+      if type(ml[methodName]) == "function" then
+        local ok, db = pcall(ml[methodName], ml)
+        if ok then addContainer(db) end
+      end
+    end
+  end
+
+  if type(rc) == "table" then
+    for _, methodName in ipairs({ "Getdb", "GetDB" }) do
+      if type(rc[methodName]) == "function" then
+        local ok, db = pcall(rc[methodName], rc)
+        if ok then addContainer(db) end
+      end
+    end
+    addContainer(rc.db)
+    addContainer(rc.profile)
   end
 
   if type(rc) == "table" and type(rc.mldb) == "table" then
-    add(rc.mldb)
-  end
-
-  if type(rc) == "table" and type(rc.db) == "table" and type(rc.db.profile) == "table" then
-    add(rc.db.profile)
+    addContainer(rc.mldb)
   end
 
   return list
@@ -561,9 +607,17 @@ local function insertAtFront(list, value)
   list[1] = value
 end
 
-local function findDibButtonIndex(buttons)
+local function trimArrayToCount(list, count)
+  if type(list) ~= "table" then return end
+  while #list > count do
+    list[#list] = nil
+  end
+end
+
+local function findDibButtonIndex(buttons, activeCount)
   if type(buttons) ~= "table" then return nil end
-  for index = 1, #buttons do
+  local count = tonumber(activeCount) or math.max(#buttons, tonumber(buttons.numButtons) or 0)
+  for index = 1, count do
     local button = buttons[index]
     if type(button) == "table" and (button.dibsLocked == true or isDibLabel(button.text)) then
       return index
@@ -572,9 +626,10 @@ local function findDibButtonIndex(buttons)
   return nil
 end
 
-local function findDibResponseIndex(responses)
+local function findDibResponseIndex(responses, activeCount)
   if type(responses) ~= "table" then return nil end
-  for index = 1, #responses do
+  local count = tonumber(activeCount) or math.max(#responses, tonumber(responses.numButtons) or 0)
+  for index = 1, count do
     local response = responses[index]
     if type(response) == "table" and isDibLabel(response.text) then
       return index
@@ -583,23 +638,70 @@ local function findDibResponseIndex(responses)
   return nil
 end
 
-local function ensureForcedDibForSet(buttons, responses)
+local function ensureForcedDibForSet(buttons, responses, maxButtons)
   if type(buttons) ~= "table" or type(responses) ~= "table" then return false end
   local changed = false
-
-  local existingButtonIndex = findDibButtonIndex(buttons)
-  if existingButtonIndex and existingButtonIndex ~= FORCED_DIB_BUTTON_INDEX then
-    local existing = buttons[existingButtonIndex]
-    removeArrayIndex(buttons, existingButtonIndex)
-    insertAtFront(buttons, existing)
+  -- RCLootCouncil keeps default entries for all maxButtons slots even when
+  -- only the first few are active. Use numButtons as the active count so those
+  -- inactive defaults do not falsely report a full configuration.
+  maxButtons = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS, math.floor(tonumber(maxButtons) or FORCED_DIB_MAX_BUTTONS)))
+  local configuredCount = tonumber(buttons.numButtons)
+  if configuredCount == nil then
+    configuredCount = math.max(#buttons, #responses)
+  end
+  configuredCount = math.max(0, math.min(maxButtons, math.floor(configuredCount)))
+  -- SavedVariables are user-editable and may contain a stale or corrupted
+  -- button count. Bound it before iterating so malformed data cannot make the
+  -- adapter spend unbounded time allocating response entries.
+  if tonumber(buttons.numButtons) ~= configuredCount then
+    buttons.numButtons = configuredCount
     changed = true
   end
 
-  local existingResponseIndex = findDibResponseIndex(responses)
-  if existingResponseIndex and existingResponseIndex ~= FORCED_DIB_BUTTON_INDEX then
-    local existing = responses[existingResponseIndex]
-    removeArrayIndex(responses, existingResponseIndex)
-    insertAtFront(responses, existing)
+  -- A newly enabled additional set can have only its `enabledButtons` marker.
+  -- Populate the active prefix before the DIB insertion so RCLootCouncil's
+  -- dynamic options builder can safely read every parallel entry.
+  for index = 1, configuredCount do
+    if type(buttons[index]) ~= "table" then
+      buttons[index] = { text = "Button " .. tostring(index), whisperKey = tostring(index) }
+      changed = true
+    end
+    if type(responses[index]) ~= "table" then
+      responses[index] = {
+        text = buttons[index].text or ("Button " .. tostring(index)),
+        color = { 0.7, 0.7, 0.7, 1 },
+        sort = index,
+      }
+      changed = true
+    end
+  end
+
+  -- Buttons and responses are parallel arrays. Move the pair together so an
+  -- existing response can never be associated with the wrong button.
+  local existingIndex = findDibButtonIndex(buttons, configuredCount)
+    or findDibResponseIndex(responses, configuredCount)
+  if existingIndex and existingIndex ~= FORCED_DIB_BUTTON_INDEX then
+    local existingButton = buttons[existingIndex]
+    local existingResponse = responses[existingIndex]
+    removeArrayIndex(buttons, existingIndex)
+    removeArrayIndex(responses, existingIndex)
+    if existingButton ~= nil then insertAtFront(buttons, existingButton) end
+    if existingResponse ~= nil then insertAtFront(responses, existingResponse) end
+    changed = true
+  elseif not existingIndex then
+    -- Never overwrite a user response just to make room for DIB. RCLootCouncil
+    -- exposes maxButtons (normally 10); when that limit is full, the runtime
+    -- button remains the safe fallback and the user's configured responses are
+    -- left untouched.
+    if configuredCount >= maxButtons then return false, "DIB_BUTTON_CAPACITY" end
+    buttons.numButtons = configuredCount + 1
+    configuredCount = configuredCount + 1
+    insertAtFront(buttons, {})
+    insertAtFront(responses, {})
+    -- Keep the inactive default tail bounded by RCLootCouncil's own limit;
+    -- all active entries are before this boundary and remain intact.
+    trimArrayToCount(buttons, maxButtons)
+    trimArrayToCount(responses, maxButtons)
     changed = true
   end
 
@@ -645,22 +747,37 @@ local function ensureForcedDibForSet(buttons, responses)
     changed = true
   end
 
-  if type(responses.DIB) ~= "table" then
-    responses.DIB = {
-      text = FORCED_DIB_TEXT,
-      color = { FORCED_DIB_COLOR[1], FORCED_DIB_COLOR[2], FORCED_DIB_COLOR[3], FORCED_DIB_COLOR[4] },
-      sort = FORCED_DIB_SORT,
-    }
+  -- RCLootCouncil reads the indexed response array. A keyed `responses.DIB`
+  -- entry is not part of its schema and makes the additional-button discovery
+  -- code treat DIB as a loot slot, so remove the legacy projection if present.
+  -- AceDB wildcard defaults can make `responses.DIB` look present through a
+  -- metatable even when no raw legacy entry exists.  Use rawget so the
+  -- cleanup is idempotent; otherwise every watcher pass would report a
+  -- change, notify AceConfig, and reset the Settings scroll position.
+  if rawget(responses, "DIB") ~= nil then
+    responses.DIB = nil
     changed = true
   end
 
   local buttonCount = tonumber(buttons.numButtons) or 0
-  if buttonCount < FORCED_DIB_BUTTON_INDEX then
+  if buttonCount < configuredCount then
+    buttons.numButtons = configuredCount
+    changed = true
+  elseif buttonCount < FORCED_DIB_BUTTON_INDEX then
     buttons.numButtons = FORCED_DIB_BUTTON_INDEX
     changed = true
   end
 
-  return changed
+  -- RCLootCouncil treats response sort as the stable array order. Keep the
+  -- surviving active responses ordered after moving/inserting DIB.
+  for index = 1, configuredCount do
+    if type(responses[index]) == "table" and tonumber(responses[index].sort) ~= index then
+      responses[index].sort = index
+      changed = true
+    end
+  end
+
+  return changed, nil
 end
 
 local function ensureForcedDibConfigForDB(db)
@@ -672,37 +789,88 @@ local function ensureForcedDibConfigForDB(db)
   db.responses.default = db.responses.default or {}
 
   local changed = false
+  local maxButtons = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS, math.floor(tonumber(db.maxButtons) or FORCED_DIB_MAX_BUTTONS)))
 
-  if ensureForcedDibForSet(db.buttons.default, db.responses.default) then
+  if ensureForcedDibForSet(db.buttons.default, db.responses.default, maxButtons) then
     changed = true
   end
 
-  for typeKey, typeButtons in pairs(db.buttons) do
-    if type(typeKey) == "string" and typeKey ~= "default" and typeKey ~= "*" and type(typeButtons) == "table" then
-      if Dibs.RCLootCouncil.IsDibEnabledForType(typeKey) then
-        db.responses[typeKey] = db.responses[typeKey] or {}
-        if ensureForcedDibForSet(typeButtons, db.responses[typeKey]) then
-          changed = true
-        end
+  -- Additional button sets are enabled through `enabledButtons` and may be
+  -- created lazily by RCLootCouncil's options page. Walk the union of all
+  -- three registries so a newly enabled slot receives a complete pair of
+  -- arrays even when one side has not been initialized yet.
+  local typeKeys = {}
+  local function collectTypeKeys(source, onlyEnabled)
+    if type(source) ~= "table" then return end
+    for typeKey, value in pairs(source) do
+      if type(typeKey) == "string"
+        and typeKey ~= "default"
+        and typeKey ~= "*"
+        and typeKey ~= "**"
+        and (not onlyEnabled or value == true)
+      then
+        typeKeys[typeKey] = true
       end
+    end
+  end
+  collectTypeKeys(db.enabledButtons, true)
+  collectTypeKeys(db.buttons, false)
+  collectTypeKeys(db.responses, false)
+
+  for typeKey in pairs(typeKeys) do
+    local typeButtons = db.buttons[typeKey]
+    local typeResponses = db.responses[typeKey]
+    if type(typeButtons) ~= "table" then
+      typeButtons = {}
+      db.buttons[typeKey] = typeButtons
+    end
+    if type(typeResponses) ~= "table" then
+      typeResponses = {}
+      db.responses[typeKey] = typeResponses
+    end
+    if tonumber(typeButtons.numButtons) == nil then
+      local existingEntries = math.max(#typeButtons, #typeResponses)
+      local defaultCount = tonumber(db.buttons.default.numButtons) or 1
+      -- A newly enabled set should have the same final active count as the
+      -- default set. Reserve one slot for the DIB that is added below.
+      typeButtons.numButtons = existingEntries > 0
+        and existingEntries
+        or math.max(0, defaultCount - 1)
+      changed = true
+    end
+    if ensureForcedDibForSet(typeButtons, typeResponses, maxButtons) then
+      changed = true
     end
   end
 
   return changed
 end
 
+local function alwaysDisabled()
+  return true
+end
+
+local FORCED_DIB_OPTION_KEYS = {
+  "button1", "picker1", "text1", "requireNotes1", "move_up1", "move_down1",
+}
+
 local function forceDisableOption(option)
   if type(option) ~= "table" then return false end
-  option.disabled = function()
-    return true
+  -- The options lock is checked by the lifecycle watcher.  Do not allocate a
+  -- new closure on every pass: that retained one closure per option and made
+  -- the addon grow continuously while the game was running.
+  if option.__dibsForcedDisabled == true and option.disabled == alwaysDisabled then
+    return false
   end
+  option.disabled = alwaysDisabled
+  option.__dibsForcedDisabled = true
   return true
 end
 
 local function lockButtonOptionArgs(args, index)
   if type(args) ~= "table" then return false end
   local changed = false
-  local keys = {
+  local keys = index == FORCED_DIB_BUTTON_INDEX and FORCED_DIB_OPTION_KEYS or {
     "button" .. tostring(index),
     "picker" .. tostring(index),
     "text" .. tostring(index),
@@ -743,7 +911,6 @@ local function lockForcedDibOptionsForTable(options)
         and groupKey ~= "optionsDesc"
         and type(groupOption) == "table"
         and type(groupOption.args) == "table"
-        and Dibs.RCLootCouncil.IsDibEnabledForType(groupKey)
       then
         if lockButtonOptionArgs(groupOption.args, FORCED_DIB_BUTTON_INDEX) then
           changed = true
@@ -773,33 +940,44 @@ local function ensureForcedDibOptionsLock(rc)
 end
 
 local ensureForcedDibConfig
+local deferForcedDibRefresh
+
+local function notifyForcedDibConfigChanged(rc)
+  local changedKeys = { buttons = true, responses = true }
+  local ml = getRCMLModule(rc)
+  -- Prefer the core method: it broadcasts the change to the ML module after
+  -- it is enabled. Calling ML:ConfigTableChanged directly during startup can
+  -- run UpdateMLdb before its runtime state exists.
+  local owner = type(rc.ConfigTableChanged) == "function" and rc or ml
+  if type(owner) == "table" and type(owner.ConfigTableChanged) == "function" then
+    pcall(owner.ConfigTableChanged, owner, changedKeys)
+    return true
+  end
+  return false
+end
 
 local function startForcedConfigWatcher()
-  if Dibs.RCLootCouncil.configWatcherActive then return end
+  if Dibs.RCLootCouncil.configWatcherActive or Dibs.RCLootCouncil.configWatcherStopped then return end
   if not C_Timer or type(C_Timer.After) ~= "function" then return end
 
   Dibs.RCLootCouncil.configWatcherActive = true
+  local attempts = 0
+  local maxAttempts = 40
   local function tick()
     if not Dibs.RCLootCouncil.configWatcherActive then
       return
     end
+    attempts = attempts + 1
     local rc = getRC()
     if type(rc) == "table" then
-      ensureForcedDibConfig(rc, true)
+      local changed = ensureForcedDibConfig(rc, true)
+      if changed then notifyForcedDibConfigChanged(rc) end
       ensureForcedDibOptionsLock(rc)
-      for _, db in ipairs(collectRCDBs(rc)) do
-        local buttons = db.buttons and db.buttons.default
-        local responses = db.responses and db.responses.default
-        if type(buttons) == "table" and type(buttons[FORCED_DIB_BUTTON_INDEX]) == "table" then
-          buttons[FORCED_DIB_BUTTON_INDEX].text = FORCED_DIB_TEXT
-          buttons[FORCED_DIB_BUTTON_INDEX].dibsLocked = true
-          buttons[FORCED_DIB_BUTTON_INDEX].whisperKey = FORCED_DIB_WHISPER_KEY
-        end
-        if type(responses) == "table" and type(responses[FORCED_DIB_BUTTON_INDEX]) == "table" then
-          responses[FORCED_DIB_BUTTON_INDEX].text = FORCED_DIB_TEXT
-          responses[FORCED_DIB_BUTTON_INDEX].sort = FORCED_DIB_SORT
-        end
-      end
+    end
+    if attempts >= maxAttempts then
+      Dibs.RCLootCouncil.configWatcherActive = false
+      Dibs.RCLootCouncil.configWatcherStopped = true
+      return
     end
     C_Timer.After(0.75, tick)
   end
@@ -815,19 +993,135 @@ ensureForcedDibConfig = function(rc, suppressNotify)
     end
   end
 
+  if changed then
+    -- Keep this bit separate from the RC message.  RCLootCouncil may rebuild
+    -- its AceConfig table after the message has fired, so the deferred pass
+    -- can request exactly one registry refresh without doing it every tick.
+    Dibs.RCLootCouncil.forcedDibOptionsRefreshPending = true
+  end
+
   if changed and not suppressNotify then
-    if type(rc.ConfigTableChanged) == "function" then
-      pcall(rc.ConfigTableChanged, rc, "buttons")
-      pcall(rc.ConfigTableChanged, rc, "responses")
-    end
-    local ml = getRCMLModule(rc)
-    if ml and type(ml.ConfigTableChanged) == "function" then
-      pcall(ml.ConfigTableChanged, ml, "buttons")
-      pcall(ml.ConfigTableChanged, ml, "responses")
-    end
+    -- ConfigTableChanged expects a table of changed keys. Passing a string
+    -- works in neither the core nor ML module (both iterate it with pairs),
+    -- which previously made the projection fail silently in the live addon.
+    notifyForcedDibConfigChanged(rc)
   end
 
   return changed
+end
+
+local function getProjectionSetStatus(buttons, responses)
+  if type(buttons) ~= "table" or type(responses) ~= "table" then
+    return nil
+  end
+  local activeCount = tonumber(buttons.numButtons) or math.max(#buttons, #responses)
+  activeCount = math.max(0, math.min(FORCED_DIB_MAX_BUTTONS, math.floor(activeCount)))
+  return {
+    activeButtons = activeCount,
+    buttonDibIndex = findDibButtonIndex(buttons, activeCount),
+    responseDibIndex = findDibResponseIndex(responses, activeCount),
+    buttonOneText = type(buttons[1]) == "table" and buttons[1].text or nil,
+    responseOneText = type(responses[1]) == "table" and responses[1].text or nil,
+  }
+end
+
+local function getProjectionStatus(rc)
+  local status = {
+    addonFound = type(rc) == "table",
+    profileCount = 0,
+    default = nil,
+    additional = {},
+  }
+  if not status.addonFound then return status end
+
+  local function addAdditionalKeys(target, source)
+    if type(source) ~= "table" then return end
+    for key, value in pairs(source) do
+      if type(key) == "string" and key ~= "default" and key ~= "*" and key ~= "**" then
+        target[key] = value
+      end
+    end
+  end
+
+  for _, db in ipairs(collectRCDBs(rc)) do
+    status.profileCount = status.profileCount + 1
+    if not status.default then
+      status.default = getProjectionSetStatus(db.buttons and db.buttons.default, db.responses and db.responses.default)
+    end
+    local keys = {}
+    addAdditionalKeys(keys, db.enabledButtons)
+    addAdditionalKeys(keys, db.buttons)
+    addAdditionalKeys(keys, db.responses)
+    for key in pairs(keys) do
+      local entry = getProjectionSetStatus(db.buttons and db.buttons[key], db.responses and db.responses[key])
+      if entry then
+        entry.enabled = db.enabledButtons and db.enabledButtons[key] == true or false
+        status.additional[key] = entry
+      end
+    end
+  end
+  return status
+end
+
+function Dibs.RCLootCouncil.GetConfigProjectionStatus()
+  return getProjectionStatus(getRC())
+end
+
+function Dibs.RCLootCouncil.RefreshConfigProjection()
+  local rc = getRC()
+  if type(rc) ~= "table" then
+    return false, "RC_INSTANCE_UNAVAILABLE"
+  end
+  local changed = ensureForcedDibConfig(rc, false)
+  ensureForcedDibOptionsLock(rc)
+  deferForcedDibRefresh(rc, true)
+  return true, changed == true
+end
+
+deferForcedDibRefresh = function(rc, notifyConfig)
+  if Dibs.RCLootCouncil.forcedDibRefreshPending then return end
+  Dibs.RCLootCouncil.forcedDibRefreshPending = true
+  local function refresh()
+    Dibs.RCLootCouncil.forcedDibRefreshPending = nil
+    local changed = ensureForcedDibConfig(rc, true)
+    if changed and notifyConfig ~= false then
+      notifyForcedDibConfigChanged(rc)
+    end
+    ensureForcedDibOptionsLock(rc)
+    local pendingOptionsRefresh = Dibs.RCLootCouncil.forcedDibOptionsRefreshPending == true
+    Dibs.RCLootCouncil.forcedDibOptionsRefreshPending = nil
+    if notifyConfig == false or not pendingOptionsRefresh
+      or (type(LibStub) ~= "function" and type(LibStub) ~= "table") then return end
+    local okRegistry, registry = pcall(LibStub, "AceConfigRegistry-3.0", true)
+    if okRegistry and type(registry) == "table" and type(registry.NotifyChange) == "function" then
+      -- A late-loaded RC may have already built its options table before the
+      -- profile became available. Ask AceConfig to rebuild those dynamic
+      -- button fields after the safe deferred mutation.
+      pcall(registry.NotifyChange, registry, "RCLootCouncil")
+    end
+  end
+  if C_Timer and type(C_Timer.After) == "function" then
+    C_Timer.After(0, refresh)
+  else
+    refresh()
+  end
+end
+
+local function hookForcedDibLifecycle(owner, methodName, rc)
+  if type(owner) ~= "table" or type(hooksecurefunc) ~= "function" then return false end
+  if type(owner[methodName]) ~= "function" then return false end
+  local marker = "__dibsForcedDibHooked_" .. tostring(methodName)
+  if owner[marker] then return true end
+
+  local ok = pcall(hooksecurefunc, owner, methodName, function()
+    -- RCLootCouncil rebuilds its AceDB profile and ML database from these
+    -- lifecycle methods. Reapply after the original method has completed so
+    -- the projection survives profile changes, /reload, and late module load.
+    deferForcedDibRefresh(rc, true)
+  end)
+  if not ok then return false end
+  owner[marker] = true
+  return true
 end
 
 local function hookConfigChanged(owner, rc)
@@ -835,15 +1129,7 @@ local function hookConfigChanged(owner, rc)
   if owner.__dibsConfigHooked then return true end
   if type(owner.ConfigTableChanged) ~= "function" then return false end
 
-  hooksecurefunc(owner, "ConfigTableChanged", function()
-    ensureForcedDibConfig(rc, true)
-    if C_Timer and type(C_Timer.After) == "function" then
-      C_Timer.After(0, function()
-        ensureForcedDibConfig(rc, true)
-        ensureForcedDibOptionsLock(rc)
-      end)
-    end
-  end)
+  hooksecurefunc(owner, "ConfigTableChanged", function() deferForcedDibRefresh(rc) end)
   owner.__dibsConfigHooked = true
   return true
 end
@@ -852,18 +1138,35 @@ local function installForcedDibConfigHook()
   local rc = getRC()
   if type(rc) ~= "table" then return false end
 
+  -- Loot-frame Update can run once per visible item.  Once the current RC
+  -- profile has been found and lifecycle hooks are installed, do not schedule
+  -- another deferred projection pass from every update.
+  if Dibs.RCLootCouncil.forcedConfigHookOwner == rc
+    and Dibs.RCLootCouncil.forcedConfigHookReady == true
+  then
+    return true
+  end
+
+  local ml = getRCMLModule(rc)
+  local configReady = #collectRCDBs(rc) > 0
+  local lifecycleHooked = false
+  for _, methodName in ipairs({ "OnInitialize", "OnEnable", "UpdateDB", "OptionsTable" }) do
+    lifecycleHooked = hookForcedDibLifecycle(rc, methodName, rc) or lifecycleHooked
+    lifecycleHooked = hookForcedDibLifecycle(ml, methodName, rc) or lifecycleHooked
+  end
+
   ensureForcedDibConfig(rc, false)
   ensureForcedDibOptionsLock(rc)
-  if C_Timer and type(C_Timer.After) == "function" then
-    C_Timer.After(0, function()
-      ensureForcedDibConfig(rc, true)
-      ensureForcedDibOptionsLock(rc)
-    end)
-  end
+  deferForcedDibRefresh(rc, true)
   startForcedConfigWatcher()
   local rcHooked = hookConfigChanged(rc, rc)
-  local mlHooked = hookConfigChanged(getRCMLModule(rc), rc)
-  return rcHooked or mlHooked
+  local mlHooked = hookConfigChanged(ml, rc)
+  local ready = configReady or lifecycleHooked or rcHooked or mlHooked
+  if ready then
+    Dibs.RCLootCouncil.forcedConfigHookOwner = rc
+    Dibs.RCLootCouncil.forcedConfigHookReady = true
+  end
+  return ready
 end
 
 local function parseItemID(itemLink)
@@ -1123,6 +1426,27 @@ local function ensureDibsButton(entry, lootFrame)
   if type(entry) ~= "table" then return nil end
   if entry.type == "roll" then return nil end
   if type(entry.buttons) ~= "table" then return nil end
+
+  -- RCLootCouncil may rebuild `entry.buttons` on every loot-frame update.
+  -- Keep the injected frame attached to the entry and restore it to the new
+  -- list instead of creating another button (and another closure) each time.
+  local remembered = entry.dibsButton
+  if isDibsButton(remembered) then
+    local present = false
+    for _, button in ipairs(entry.buttons) do
+      if button == remembered then
+        present = true
+        break
+      end
+    end
+    if not present then
+      table.insert(entry.buttons, 1, remembered)
+    end
+    remembered.dibsButton = true
+    installDibsTooltip(remembered, entry)
+    return remembered
+  end
+
   for _, button in ipairs(entry.buttons) do
     if isDibsButton(button) then
       button.dibsButton = true
@@ -1355,26 +1679,100 @@ local function installLootFrameHook()
   return true
 end
 
+local function cleanCandidateIdentity(value)
+  if value == nil then return nil end
+  local valueText = tostring(value)
+  if valueText == "" then return nil end
+
+  -- RCLootCouncil normally stores a plain name, but some versions expose a
+  -- class-coloured or player-hyperlink value in the scrolling table.  Ledger
+  -- keys must use the actual player identity, never the display markup.
+  local linkedName = valueText:match("|Hplayer:([^:|]+)")
+  if linkedName and linkedName ~= "" then
+    return linkedName
+  end
+  valueText = valueText:gsub("|c%x%x%x%x%x%x%x%x", "")
+    :gsub("|r", "")
+    :gsub("|T.-|t", "")
+    :gsub("|H.-|h", "")
+    :gsub("|h", "")
+    :gsub("^%s+", "")
+    :gsub("%s+$", "")
+  valueText = valueText:gsub("^%[(.-)%]$", "%1")
+  return valueText ~= "" and valueText or nil
+end
+
+local CANDIDATE_IDENTITY_KEYS = {
+  "name", "playerName", "player", "playerGuid", "guid", "playerKey", "key", "id",
+}
+
+local function getCandidateIdentity(rowData)
+  if type(rowData) == "string" then
+    return cleanCandidateIdentity(rowData)
+  end
+  if type(rowData) ~= "table" then return nil end
+
+  -- `name` is the official RCLootCouncil row key.  The other fields keep the
+  -- integration compatible with forks that expose the GUID under a different
+  -- field while building the same scrolling table.
+  for _, key in ipairs(CANDIDATE_IDENTITY_KEYS) do
+    local identity = cleanCandidateIdentity(rowData[key])
+    if identity then return identity end
+  end
+  return nil
+end
+
 local function getRemainingDibsText(playerName)
-  if not Dibs.Ledger or type(Dibs.Ledger.GetPlayerSeasonState) ~= "function" then
+  if not playerName or not Dibs.Ledger then
     return "0/0", 0
   end
   local seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
-  local state = Dibs.Ledger.GetPlayerSeasonState(seasonId, playerName)
-  local remaining = tonumber(state and state.remainingBalance) or 0
-  local maximum = tonumber(state and state.baseAllocation) or 0
+  local state
+  if type(Dibs.Ledger.GetPlayerSeasonState) == "function" then
+    local ok, value = pcall(Dibs.Ledger.GetPlayerSeasonState, seasonId, playerName)
+    if ok and type(value) == "table" then state = value end
+  end
+  local remaining = tonumber(state and state.remainingBalance)
+  local maximum = tonumber(state and state.baseAllocation)
+  local historyCount = tonumber(state and state.historySummary and state.historySummary.count) or 0
+  -- A guild member can appear in the RCLootCouncil voting table before the
+  -- Dibs ledger has created a per-player state.  In that case the rank rule is
+  -- the authoritative initial allocation and should be visible immediately.
+  if maximum == 0 and historyCount == 0
+    and Dibs.RankRules and type(Dibs.RankRules.GetAllocationForPlayer) == "function"
+  then
+    local ok, rankAllocation = pcall(Dibs.RankRules.GetAllocationForPlayer, playerName, seasonId)
+    if ok and tonumber(rankAllocation) then
+      maximum = tonumber(rankAllocation)
+      remaining = maximum
+    end
+  end
+  if remaining == nil and type(Dibs.Ledger.GetBalance) == "function" then
+    local ok, value = pcall(Dibs.Ledger.GetBalance, playerName, seasonId)
+    if ok then remaining = tonumber(value) end
+  end
+  remaining = remaining or 0
+  maximum = maximum or 0
   return formatCount(remaining) .. "/" .. formatCount(maximum), remaining
 end
 
-local function setDibsColumnCell(frame, data, cols, row, realrow, column)
-  if not data or not data[realrow] or not frame or not frame.text then return end
-  local candidateName = data[realrow].name
-  local textValue, sortValue = getRemainingDibsText(candidateName)
-  frame.text:SetText(textValue)
-  frame.text:SetTextColor(1, 1, 1, 1)
+local function setDibsColumnCell(rowFrame, cellFrame, data, cols, row, realrow, column, fShow, tableArg)
+  if not fShow or not data or not data[realrow] or not cellFrame or not cellFrame.text then return end
+  local textValue, sortValue = Dibs.RCLootCouncil.GetDibsColumnValue(data[realrow])
+  cellFrame.text:SetText(textValue)
+  cellFrame.text:SetTextColor(1, 1, 1, 1)
   if data[realrow].cols and data[realrow].cols[column] then
     data[realrow].cols[column].value = sortValue
   end
+end
+
+-- Read-only adapter used by the voting-frame cell and diagnostics/tests.  It
+-- deliberately accepts the complete row so the display keeps working when a
+-- RCLootCouncil fork adds a GUID or hyperlink beside the official `name` key.
+function Dibs.RCLootCouncil.GetDibsColumnValue(rowData)
+  local candidateName = getCandidateIdentity(rowData)
+  local textValue, sortValue = getRemainingDibsText(candidateName)
+  return textValue, sortValue, candidateName
 end
 
 local function getVotingSessionInfo(votingFrame)
@@ -1444,32 +1842,38 @@ local function convertCandidateToNormal(votingFrame, candidateName)
   end
 end
 
-local function setDibConvertCell(frame, data, cols, row, realrow, column, fShow, tableArg)
-  if not data or not data[realrow] or type(frame) ~= "table" then return end
+local function setDibConvertCell(rowFrame, cellFrame, data, cols, row, realrow, column, fShow, tableArg)
+  if not fShow or not data or not data[realrow] or type(cellFrame) ~= "table" then return end
   local rc = getRC()
   local votingFrame = getVotingFrameModule(rc)
   if type(votingFrame) ~= "table" then return end
   local session, current = getVotingSessionInfo(votingFrame)
   if not session or not current then return end
 
-  local candidateName = data[realrow].name
+  local candidateName = getCandidateIdentity(data[realrow])
+  if not candidateName then return end
   local responseValue = type(votingFrame.GetCandidateData) == "function" and votingFrame:GetCandidateData(session, candidateName, "response") or nil
   local typeCode = current.typeCode or current.equipLoc or "default"
   local canConvert = responseIsDib(rc, typeCode, responseValue)
   local normalResponse = getFirstNormalResponse(rc, typeCode)
 
-  local button = frame.convertBtn
+  local button = cellFrame.convertBtn
   if not button then
-    button = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    button:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    button:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
-    frame.convertBtn = button
+    button = CreateFrame("Button", nil, cellFrame, "UIPanelButtonTemplate")
+    button:SetPoint("TOPLEFT", cellFrame, "TOPLEFT", 0, 0)
+    button:SetPoint("BOTTOMRIGHT", cellFrame, "BOTTOMRIGHT", 0, 0)
+    cellFrame.convertBtn = button
   end
 
   button:SetText("Normal")
-  button:SetScript("OnClick", function()
-    convertCandidateToNormal(votingFrame, candidateName)
-  end)
+  button.__dibsVotingFrame = votingFrame
+  button.__dibsCandidateName = candidateName
+  if not button.__dibsConvertHandlerInstalled then
+    button:SetScript("OnClick", function(self)
+      convertCandidateToNormal(self.__dibsVotingFrame, self.__dibsCandidateName)
+    end)
+    button.__dibsConvertHandlerInstalled = true
+  end
 
   if canConvert then
     button:Show()
@@ -1529,7 +1933,12 @@ local function installVotingFrameColumn()
         end
       end
     end
-    refreshVotingColumns(votingFrame)
+    -- RCLootCouncil calls Update frequently while a session is active.  Once
+    -- the scrolling table already uses this spec, refreshing it on every
+    -- Update only rebuilds rows and creates avoidable garbage.
+    if not rendered then
+      refreshVotingColumns(votingFrame)
+    end
     votingFrame.__dibsRemainingColumnInstalled = true
     return true
   end
@@ -1590,7 +1999,9 @@ local function installDibConvertColumn()
         end
       end
     end
-    refreshVotingColumns(votingFrame)
+    if not rendered then
+      refreshVotingColumns(votingFrame)
+    end
     votingFrame.__dibsConvertColumnInstalled = true
     return true
   end
@@ -1645,6 +2056,24 @@ local function installVotingFrameColumns()
   end
   if type(votingFrame) == "table" and not votingFrame.__dibsOnUpdateHooked and type(hooksecurefunc) == "function" then
     hooksecurefunc(votingFrame, "Update", function()
+      local hasDibsColumn, hasConvertColumn = false, false
+      for _, column in ipairs(votingFrame.scrollCols or {}) do
+        if type(column) == "table" then
+          hasDibsColumn = hasDibsColumn or column.colName == "dibsRemaining"
+          hasConvertColumn = hasConvertColumn or column.colName == "dibsConvert"
+        end
+      end
+      local tableHasDibs, tableHasConvert = false, false
+      local tableView = votingFrame.frame and votingFrame.frame.st
+      for _, column in ipairs(tableView and tableView.cols or {}) do
+        if type(column) == "table" then
+          tableHasDibs = tableHasDibs or column.colName == "dibsRemaining"
+          tableHasConvert = tableHasConvert or column.colName == "dibsConvert"
+        end
+      end
+      if hasDibsColumn and hasConvertColumn and tableHasDibs and tableHasConvert then
+        return
+      end
       if not votingFrame.__dibsUpdatePending then
         votingFrame.__dibsUpdatePending = true
         local function apply()

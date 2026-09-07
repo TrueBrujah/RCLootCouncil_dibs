@@ -45,6 +45,11 @@ local function parseItemInput(raw)
   return nil
 end
 
+local PLAYER_NAV_TREE = {
+  { text = "Summary", value = "summary" },
+  { text = "History", value = "history" },
+}
+
 local function submitPublicPreDib(rawItem)
   local itemID = parseItemInput(rawItem)
   if not itemID then
@@ -188,7 +193,7 @@ function Dibs.PlayerUI.GetHistory(playerName)
 end
 
 local function createAceWindow()
-  local shell = Dibs.AceGUI.CreateWindow("Dibs", 560, 560, { "CENTER", 0, 0 })
+  local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Player", 720, 620, { "CENTER", 0, 0 })
   if not shell then return nil end
   local frame = shell.frame
   if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
@@ -226,14 +231,17 @@ local function createAceWindow()
     frame:Refresh()
   end
 
-  local tabs = Dibs.AceGUI.AddTabs(shell, {
-    { text = "Summary", value = "summary" },
-    { text = "History", value = "history" },
-  }, function(value)
+  local tabs = Dibs.AceGUI.AddTree(shell, PLAYER_NAV_TREE, function(value)
     frame.playerTab = value
     frame:Refresh()
-  end)
+  end, 170)
   frame.aceTabs = tabs
+  frame.SelectTab = function(tab)
+    if not Dibs.AceGUI.SelectTree(tabs, tab) then
+      frame.playerTab = tab
+      frame:Refresh()
+    end
+  end
 
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
@@ -357,6 +365,7 @@ local function createAceWindow()
   frame:HookScript("OnShow", function(self) self:Refresh() end)
   _G.DibsPlayerFrame = frame
   frame:Refresh()
+  Dibs.AceGUI.SelectTree(tabs, frame.playerTab)
   return frame
 end
 
@@ -385,7 +394,7 @@ function Dibs.PlayerUI.CreateWindow()
 
   local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   title:SetPoint("TOP", 0, -12)
-  title:SetText("Dibs")
+   title:SetText("RCLootCouncil - Dibs | Player")
 
   local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
   closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -6)

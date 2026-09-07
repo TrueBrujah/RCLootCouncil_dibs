@@ -35,7 +35,8 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.2.3-dev"
+Dibs.VERSION = "0.3.4-dev"
+Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
 Dibs.SAVED_VARIABLE_NAME = "RCLootCouncil_dibsDB"
@@ -402,7 +403,12 @@ function Dibs.Message(text)
     module, level = "core", 1
   end
   if Dibs.DebugLogs and Dibs.DebugLogs.Add then Dibs.DebugLogs.Add(module, level, value) end
-  if Dibs.DebugEnabled and not Dibs.DebugEnabled(module, level) then return end
+  -- User-facing command/status messages must remain visible even when an
+  -- officer sets a diagnostic module to level 0.  Only explicit diagnostic
+  -- messages use the debug-level filter.
+  local isDiagnostic = value:match("^%[([^%]]*[Dd]ebug[^%]]*)%]") ~= nil
+    or value:match("^EJDBG") ~= nil
+  if isDiagnostic and Dibs.DebugEnabled and not Dibs.DebugEnabled(module, level) then return end
   if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
     DEFAULT_CHAT_FRAME:AddMessage("|cff8b5cf6Dibs|r " .. value)
   end
@@ -441,12 +447,17 @@ function Dibs.BuildDebugReport()
   end
   local rc = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
   local vote = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetVotingIntegrationStatus and Dibs.RCLootCouncil.GetVotingIntegrationStatus() or {}
+  local projection = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetConfigProjectionStatus and Dibs.RCLootCouncil.GetConfigProjectionStatus() or {}
+  local projectionDefault = projection.default or {}
+  local additionalCount = 0
+  for _ in pairs(projection.additional or {}) do additionalCount = additionalCount + 1 end
   local lines = {
     "Dibs debug report",
     "Version: " .. tostring(Dibs.VERSION),
     "Framework: " .. Dibs.GetFrameworkStatus(),
     "RCLootCouncil: " .. tostring(rc and (rc.diagnostic or rc.status or "available") or "absent") .. " reason=" .. tostring(rc and rc.reasonCode or "RC_ABSENT"),
     "RCLootCouncil capabilities: " .. tostring(rc and rc.capabilities and (rc.capabilities.masterLooter and "masterLooter " or "") .. (rc.capabilities.awardCallback and "awardCallback " or "") .. (rc.capabilities.awardIdentity and "awardIdentity" or "none") or "none"),
+    "Config projection: addon=" .. tostring(projection.addonFound == true) .. " profiles=" .. tostring(projection.profileCount or 0) .. " defaultButtons=" .. tostring(projectionDefault.activeButtons or "none") .. " dibButton=" .. tostring(projectionDefault.buttonDibIndex or "none") .. " dibResponse=" .. tostring(projectionDefault.responseDibIndex or "none") .. " additionalSets=" .. tostring(additionalCount),
     "Voting frame: module=" .. tostring(vote.moduleFound) .. " AddColumn=" .. tostring(vote.addColumn) .. " scrollCols=" .. tostring(vote.scrollColumns) .. " count=" .. tostring(vote.scrollColumnCount) .. " hasDibs=" .. tostring(vote.scrollHasDibs) .. " renderedDibs=" .. tostring(vote.renderedHasDibs) .. " DibsColumn=" .. tostring(vote.dibsColumnInstalled),
     "Season: " .. tostring(Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or "none"),
     "Raid Dibs: " .. (clubId and ("available clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId)) or "unavailable"),
@@ -506,6 +517,17 @@ function Dibs.HandleSlashCommand(msg)
     end
     if module == "report" then
       Dibs.Message(Dibs.BuildDebugReport())
+      return
+    end
+    if module == "rc" or module == "projection" then
+      if Dibs.RCLootCouncil and Dibs.RCLootCouncil.RefreshConfigProjection then
+        local ok, changedOrReason = Dibs.RCLootCouncil.RefreshConfigProjection()
+        if ok then
+          Dibs.Message("RCLootCouncil DIB projection refreshed (changed=" .. tostring(changedOrReason == true) .. "). Run /dibs debug report for the detected profile.")
+        else
+          Dibs.Message("RCLootCouncil DIB projection unavailable: " .. tostring(changedOrReason))
+        end
+      end
       return
     end
     local level = tonumber(args[3])
@@ -796,13 +818,39 @@ function Dibs.HandleSlashCommand(msg)
 end
 
 function Dibs.SetupSlashCommands()
-  if _G.SlashCmdList then
-    _G.SlashCmdList["DIBS"] = function(msg)
-      Dibs.HandleSlashCommand(msg)
-    end
-    _G.SLASH_DIBS1 = "/dibs"
-    _G.SLASH_DIBS2 = "/dib"
-    _G.SLASH_DIBS3 = "/dids"
+  -- SlashCmdList is normally present while the TOC is loading, but a
+  -- load-on-demand/early-login path can expose it a little later.  Creating
+  -- the table and repeating this idempotently at Initialize makes the command
+  -- available in both paths.
+  _G.SlashCmdList = _G.SlashCmdList or {}
+  _G.SlashCmdList["DIBS"] = function(msg)
+    return Dibs.HandleSlashCommand(msg)
+  end
+  _G.SLASH_DIBS1 = "/dibs"
+  _G.SLASH_DIBS2 = "/dib"
+  _G.SLASH_DIBS3 = "/dids"
+
+  -- Retail resolves chat input through a cached uppercase hash.  Importing
+  -- the registries is the supported path, but keep the direct entries in sync
+  -- as a fallback for clients that expose the hash before ChatFrameUtil does.
+  local slashHash = _G.hash_SlashCmdList
+  if type(slashHash) == "table" then
+    pcall(function()
+      slashHash["/DIBS"] = "DIBS"
+      slashHash["/DIB"] = "DIBS"
+      slashHash["/DIDS"] = "DIBS"
+    end)
+  end
+
+  -- Retail's chat frame keeps a second hash registry for slash commands.  It
+  -- is normally populated during Blizzard startup, but this addon can load
+  -- after that point (or after a load-on-demand reload).  Re-importing is
+  -- idempotent and makes all three aliases immediately executable.
+  local chatUtil = _G.ChatFrameUtil
+  if type(chatUtil) == "table" and type(chatUtil.ImportAllListsToHash) == "function" then
+    pcall(chatUtil.ImportAllListsToHash)
+  elseif type(_G.ChatFrame_ImportAllListsToHash) == "function" then
+    pcall(_G.ChatFrame_ImportAllListsToHash)
   end
 end
 
@@ -928,6 +976,28 @@ local function onRuntimeEvent(event, ...)
     end
     return
   end
+  if event == "ADDON_LOADED" then
+    local loadedAddon = ...
+    -- RCLootCouncil can be enabled load-on-demand after Dibs. Re-run only the
+    -- optional adapter when its addon becomes available; Standalone mode is
+    -- unaffected.
+    if loadedAddon == "RCLootCouncil"
+      and Dibs.RCLootCouncil
+      and Dibs.RCLootCouncil.TryUseRCModule
+    then
+      Dibs.RCLootCouncil.TryUseRCModule()
+    end
+    return
+  end
+  if event == "PLAYER_ENTERING_WORLD"
+    and Dibs.RCLootCouncil
+    and Dibs.RCLootCouncil.TryUseRCModule
+  then
+    -- A reload can restore RCLootCouncil's AceDB after ADDON_LOADED. Retry at
+    -- the first world entry so its profile and ML module are ready before the
+    -- Master Looter options are opened.
+    Dibs.RCLootCouncil.TryUseRCModule()
+  end
   if event == "CHAT_MSG_ADDON" and Dibs.Sync and Dibs.Sync.OnAddonMessage then return Dibs.Sync.OnAddonMessage(...) end
   if event == "GROUP_ROSTER_UPDATE" and Dibs.Sync and Dibs.Sync.OnRosterChanged then Dibs.Sync.OnRosterChanged() end
   if Dibs.RaidPrompts and Dibs.RaidPrompts.OnEvent then Dibs.RaidPrompts.OnEvent(event) end
@@ -935,7 +1005,7 @@ end
 
 function Dibs.SetupRuntimeEvents()
   if Dibs.runtimeEventsRegistered then return true end
-  local events = { "PLAYER_LOGIN", "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_REGEN_ENABLED" }
+  local events = { "PLAYER_LOGIN", "ADDON_LOADED", "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_REGEN_ENABLED" }
   local usingAceEvent = Dibs.Ace3 and Dibs.Ace3.RegisterEvent
   if usingAceEvent then
     for _, event in ipairs(events) do Dibs.Ace3.RegisterEvent(event, onRuntimeEvent) end

@@ -28,6 +28,41 @@ describe("Ace3 options integration", function()
     assert_true(dibs.RCOptions.EnsureRegistered(1))
     assert_not_nil(dibs.Ace3.libs.comm)
   end)
+
+  it("leaves the legacy category list untouched on Retail Settings", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    local categories = {
+      { parent = "RCLootCouncil", name = "Master Looter" },
+      { parent = "RCLootCouncil", name = "Dibs" },
+    }
+    _G.INTERFACEOPTIONS_ADDONCATEGORIES = categories
+    -- Registration ran once during initialization; repeat it after installing
+    -- the sentinel list so the guard is exercised directly.
+    dibs.RCOptions.registered = nil
+    assert_true(dibs.RCOptions.EnsureRegistered(1))
+    assert_equal("Master Looter", categories[1].name)
+    assert_equal("Dibs", categories[2].name)
+  end)
+
+  it("does not leave Player or Officer dialog frames over Blizzard Settings", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    assert_true(dibs.PlayerUI.CreateWindow() ~= nil)
+    assert_true(dibs.OfficerUI.CreateWindow() ~= nil)
+    assert_false(_G.DibsPlayerFrame:IsShown())
+    assert_false(_G.DibsOfficerFrame:IsShown())
+  end)
+
+  it("adds the packaged Dibs logo to AceGUI windows", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("Logo test", 500, 400, { "CENTER", 0, 0 })
+    assert_not_nil(shell)
+    assert_not_nil(shell.frame.dibsLogoTexture)
+    assert_equal(dibs.ICON_TEXTURE, shell.frame.dibsLogoTexture._texture)
+    assert_false(shell.frame:IsShown())
+  end)
 end)
 
 describe("Unified Dibs options", function()

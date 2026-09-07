@@ -3,6 +3,7 @@ Dibs.AceGUI = Dibs.AceGUI or {}
 
 local Adapter = Dibs.AceGUI
 local unpackValues = table.unpack or unpack
+local LOGO_TEXTURE = Dibs.ICON_TEXTURE or "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 
 Adapter.windowShellEnabled = true
 
@@ -30,6 +31,18 @@ local function applyRCLootCouncilTheme(frame)
   if type(frame.SetBackdropBorderColor) == "function" then
     frame:SetBackdropBorderColor(0.62, 0.52, 0.22, 1)
   end
+end
+
+local function addAddonLogo(frame)
+  if not frame or type(frame.CreateTexture) ~= "function" then return nil end
+  local texture = frame:CreateTexture(nil, "ARTWORK")
+  if not texture then return nil end
+  if type(texture.SetTexture) == "function" then texture:SetTexture(LOGO_TEXTURE) end
+  if type(texture.SetTexCoord) == "function" then texture:SetTexCoord(0.04, 0.96, 0.04, 0.96) end
+  if type(texture.SetSize) == "function" then texture:SetSize(30, 30) end
+  if type(texture.SetPoint) == "function" then texture:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -7) end
+  frame.dibsLogoTexture = texture
+  return texture
 end
 
 function Adapter.IsAvailable()
@@ -72,11 +85,20 @@ function Adapter.CreateWindow(title, width, height, point)
   end
   call(window, "SetLayout", "Fill")
   applyRCLootCouncilTheme(window.frame)
+  addAddonLogo(window.frame)
+  -- AceGUI Frame widgets are shown by OnAcquire.  PlayerUI and OfficerUI are
+  -- created during addon initialization, so leave them hidden until the user
+  -- explicitly opens a window; otherwise their FULLSCREEN_DIALOG frame can
+  -- intercept clicks in Blizzard/RCLootCouncil Settings underneath it.
+  call(window, "Hide")
   if point and window.frame.SetPoint then
     if window.frame.ClearAllPoints then window.frame:ClearAllPoints() end
     window.frame:SetPoint(unpackValues(point))
   end
-  local shell = { gui = gui, window = window, frame = window.frame, widgets = {} }
+  -- Children are owned by their AceGUI container.  Do not mirror every page
+  -- widget in the shell: Refresh() releases and recreates those widgets, and
+  -- a tracking array would retain the historical numeric slots forever.
+  local shell = { gui = gui, window = window, frame = window.frame }
   call(window, "SetCallback", "OnClose", function(widget)
     if shell and shell.frame == widget.frame then
       shell.frame = nil
@@ -98,7 +120,6 @@ function Adapter.Create(shell, kind, parent)
   elseif shell.window and type(shell.window.AddChild) == "function" then
     shell.window:AddChild(widget)
   end
-  table.insert(shell.widgets, widget)
   return widget
 end
 
@@ -213,7 +234,7 @@ function Adapter.AddEditBox(shell, parent, label, callback, width)
   local edit = Adapter.Create(shell, "EditBox", parent)
   if not edit then return nil end
   call(edit, "SetLabel", label or "")
-  if width then call(edit, "SetWidth", width) end
+  call(edit, "SetWidth", width or 420)
   call(edit, "SetCallback", "OnTextChanged", function(_, _, value)
     if callback then callback(value or "") end
   end)
@@ -225,11 +246,36 @@ function Adapter.AddDropdown(shell, parent, label, values, callback, width)
   if not dropdown then return nil end
   call(dropdown, "SetLabel", label or "")
   call(dropdown, "SetList", values or {})
-  if width then call(dropdown, "SetWidth", width) end
+  call(dropdown, "SetWidth", width or 360)
   call(dropdown, "SetCallback", "OnValueChanged", function(_, _, value)
     if callback then callback(value) end
   end)
   return dropdown
+end
+
+function Adapter.AddCheckBox(shell, parent, label, value, callback, width)
+  local checkbox = Adapter.Create(shell, "CheckBox", parent)
+  if not checkbox then return nil end
+  call(checkbox, "SetLabel", label or "")
+  if width then call(checkbox, "SetWidth", width) else call(checkbox, "SetFullWidth", true) end
+  if value ~= nil then Adapter.SetValue(checkbox, value == true) end
+  call(checkbox, "SetCallback", "OnValueChanged", function(_, _, checked)
+    if callback then callback(checked == true) end
+  end)
+  return checkbox
+end
+
+function Adapter.AddRange(shell, parent, label, minimum, maximum, step, value, callback, width)
+  local slider = Adapter.Create(shell, "Slider", parent)
+  if not slider then return nil end
+  call(slider, "SetLabel", label or "")
+  call(slider, "SetSliderValues", tonumber(minimum) or 0, tonumber(maximum) or 100, tonumber(step) or 1)
+  call(slider, "SetWidth", width or 420)
+  if value ~= nil then Adapter.SetValue(slider, value) end
+  call(slider, "SetCallback", "OnMouseUp", function(_, _, changed)
+    if callback then callback(changed) end
+  end)
+  return slider
 end
 
 function Adapter.AddTabs(shell, tabs, onSelect)
@@ -244,8 +290,226 @@ function Adapter.AddTabs(shell, tabs, onSelect)
     if onSelect then onSelect(value) end
   end)
   call(shell.window, "AddChild", group)
-  table.insert(shell.widgets, group)
   return group
+end
+
+function Adapter.AddHeading(shell, parent, text, description)
+  local heading = Adapter.Create(shell, "Heading", parent)
+  if not heading then return Adapter.AddHeader(shell, parent, text, description) end
+  call(heading, "SetFullWidth", true)
+  call(heading, "SetText", text or "")
+  return Adapter.AddTooltip(heading, text, description)
+end
+
+-- Add a navigation tree with a content panel.  TreeGroup is the same
+-- navigation pattern used by Blizzard's options and RCLootCouncil: the
+-- selected entry stays visible on the left while the page is rendered on
+-- the right.  Keep this helper in the adapter so PlayerUI and OfficerUI use
+-- the same shell without coupling their page content.
+function Adapter.AddTree(shell, tree, onSelect, treeWidth)
+  if not shell or not shell.gui then return nil end
+  local ok, group = pcall(shell.gui.Create, shell.gui, "TreeGroup")
+  if not ok or not group then return nil end
+  call(group, "SetFullWidth", true)
+  call(group, "SetFullHeight", true)
+  -- TreeGroup owns a separate content frame for the selected page.  Its
+  -- children must use a stacked layout; Fill would place every control at
+  -- the same coordinates and leave the page looking empty.
+  call(group, "SetLayout", "List")
+  if treeWidth then
+    call(group, "SetTreeWidth", treeWidth, false)
+  end
+  call(group, "SetTree", tree or {})
+  call(group, "SetCallback", "OnGroupSelected", function(_, _, value)
+    if onSelect then onSelect(value) end
+  end)
+  call(shell.window, "AddChild", group)
+  return group
+end
+
+function Adapter.SelectTree(tree, value)
+  if tree and type(tree.Select) == "function" then
+    return pcall(tree.Select, tree, value)
+  end
+  return false
+end
+
+-- Render an AceConfig group in the same AceGUI surface used by the Officer
+-- window.  Keeping this renderer data driven means every option exposed by
+-- RCLootCouncilOptions.lua appears in both Blizzard's Settings panel and the
+-- standalone Officer window without maintaining a second copy of the rules.
+function Adapter.RenderOptionsGroup(shell, parent, group, context)
+  if not shell or not parent or type(group) ~= "table" then return false end
+  context = context or {}
+
+  local function evaluate(value, ...)
+    if type(value) == "function" then
+      local ok, result = pcall(value, ...)
+      if ok then return result end
+      return nil
+    end
+    return value
+  end
+
+  local function optionName(option, key)
+    local value = evaluate(option and option.name)
+    return tostring(value or key or "")
+  end
+
+  local function isHidden(option)
+    return evaluate(option and option.hidden) == true
+  end
+
+  local function isDisabled(option)
+    return evaluate(option and option.disabled) == true
+  end
+
+  local function getValue(option, key)
+    if type(option and option.get) ~= "function" then return nil end
+    local ok, value = pcall(option.get, nil, key)
+    if ok then return value end
+    return nil
+  end
+
+  local function setValue(option, key, value)
+    if type(option and option.set) ~= "function" then return false end
+    local ok = pcall(option.set, nil, key, value)
+    return ok
+  end
+
+  local function valuesFor(option)
+    local values = evaluate(option and option.values)
+    return type(values) == "table" and values or {}
+  end
+
+  local function register(key, control)
+    if context.controlMap and key ~= nil then context.controlMap[key] = control end
+    if context.onControl then context.onControl(key, control) end
+  end
+
+  local function changed(option, kind)
+    -- Rebuild pages after selection changes and actions.  Text, checkboxes and
+    -- sliders keep their local value so typing or dragging is not interrupted.
+    if context.onChanged and (kind == "select" or kind == "execute") then
+      context.onChanged(option, kind)
+    end
+  end
+
+  local function sortedKeys(args)
+    local keys = {}
+    for key, option in pairs(args or {}) do
+      if type(option) == "table" and not isHidden(option) then keys[#keys + 1] = key end
+    end
+    table.sort(keys, function(left, right)
+      local a, b = args[left], args[right]
+      local ao, bo = tonumber(a.order) or 100, tonumber(b.order) or 100
+      if ao ~= bo then return ao < bo end
+      return tostring(left) < tostring(right)
+    end)
+    return keys
+  end
+
+  local function render(args, target)
+    for _, key in ipairs(sortedKeys(args)) do
+      local option = args[key]
+      local kind = tostring(option.type or "description")
+      local label = optionName(option, key)
+      local description = evaluate(option.desc)
+
+      if kind == "group" then
+        if label ~= "" then Adapter.AddHeader(shell, target, label, description) end
+        render(option.args, target)
+      elseif kind == "description" or kind == "header" then
+        local control = Adapter.AddLabel(shell, target, label, true)
+        Adapter.AddTooltip(control, label, description)
+        register(key, control)
+      elseif kind == "select" then
+        local control = Adapter.AddDropdown(shell, target, label, valuesFor(option), function(value)
+          setValue(option, nil, value)
+          changed(option, kind)
+        end, option.width == "double" and 360 or nil)
+        if control then
+          Adapter.SetValue(control, getValue(option))
+          Adapter.SetDisabled(control, isDisabled(option))
+          Adapter.AddTooltip(control, label, description)
+          register(key, control)
+        end
+      elseif kind == "range" then
+        local control = Adapter.AddRange(shell, target, label, option.min, option.max, option.step, getValue(option), function(value)
+          setValue(option, nil, value)
+        end, option.width == "double" and 360 or nil)
+        if control then
+          Adapter.SetDisabled(control, isDisabled(option))
+          Adapter.AddTooltip(control, label, description)
+          register(key, control)
+        end
+      elseif kind == "toggle" then
+        local control = Adapter.AddCheckBox(shell, target, label, getValue(option), function(value)
+          setValue(option, nil, value)
+        end, option.width == "double" and 360 or nil)
+        if control then
+          Adapter.SetDisabled(control, isDisabled(option))
+          Adapter.AddTooltip(control, label, description)
+          register(key, control)
+        end
+      elseif kind == "input" then
+        local control = Adapter.AddEditBox(shell, target, label, function(value)
+          setValue(option, nil, value)
+        end, option.width == "double" and 360 or nil)
+        if control then
+          Adapter.SetText(control, getValue(option) or "")
+          Adapter.SetDisabled(control, isDisabled(option))
+          Adapter.AddTooltip(control, label, description)
+          register(key, control)
+        end
+      elseif kind == "execute" then
+        local control = Adapter.AddButton(shell, target, label, function()
+          if type(option.func) == "function" then pcall(option.func) end
+          changed(option, kind)
+        end, option.width == "half" and 180 or 220)
+        if control then
+          Adapter.SetDisabled(control, isDisabled(option))
+          Adapter.AddTooltip(control, label, description)
+          register(key, control)
+        end
+      elseif kind == "multiselect" then
+        local values = valuesFor(option)
+        local keys = {}
+        for valueKey in pairs(values) do keys[#keys + 1] = valueKey end
+        table.sort(keys, function(left, right) return tostring(values[left]) < tostring(values[right]) end)
+        local list = Adapter.AddScrollableList(shell, target, math.min(360, math.max(100, #keys * 28 + 20)))
+        if list then
+          Adapter.AddHeader(shell, list, label, description)
+          for _, valueKey in ipairs(keys) do
+            local checkbox = Adapter.AddCheckBox(shell, list, values[valueKey], getValue(option, valueKey), function(value)
+              setValue(option, valueKey, value)
+            end)
+            if checkbox then
+              Adapter.SetDisabled(checkbox, isDisabled(option))
+              register(valueKey, checkbox)
+            end
+          end
+          register(key, list)
+        end
+      end
+    end
+  end
+
+  local groupTitle = evaluate(group.name)
+  if groupTitle and tostring(groupTitle) ~= "" then
+    Adapter.AddHeading(shell, parent, tostring(groupTitle))
+  end
+
+  -- Long pages such as Rank Rules and Settings need their own scroll frame;
+  -- TreeGroup only scrolls the navigation column.  Fall back to the content
+  -- panel when an older AceGUI build does not provide ScrollFrame.
+  local target = parent
+  if context.scroll ~= false then
+    target = Adapter.AddScrollableList(shell, parent, context.pageHeight or 680) or parent
+  end
+  render(group.args, target)
+  if context.onRendered then context.onRendered(target) end
+  return true
 end
 
 function Adapter.AddScrollableList(shell, parent, height)
@@ -268,7 +532,6 @@ function Adapter.AddSearch(shell, onChanged)
   call(search, "SetCallback", "OnTextChanged", function(_, _, value)
     if onChanged then onChanged(value) end
   end)
-  table.insert(shell.widgets, search)
   return search
 end
 
@@ -283,7 +546,6 @@ function Adapter.AddPagination(shell, onPrevious, onNext)
         if definition[2] then definition[2]() end
       end)
       Adapter.AddTooltip(button, definition[1], definition[1] == "Previous" and "Show the previous page." or "Show the next page.")
-      table.insert(shell.widgets, button)
       table.insert(controls, button)
     end
   end

@@ -111,6 +111,8 @@ local function makeAce3()
     function widget:SetCallback(name, callback) self.callbacks[name] = callback end
     function widget:AddChild(child) table.insert(self.children, child) end
     function widget:ReleaseChildren() self.children = {} end
+    function widget:Hide() self.frame:Hide() end
+    function widget:Show() self.frame:Show() end
     return widget
   end
   return {

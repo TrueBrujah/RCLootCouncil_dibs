@@ -25,6 +25,30 @@ local ANNOUNCEMENT_CHANNEL_VALUES = {
 local DEFAULT_PREDIB_TEMPLATE = "[Dibs] %player requested %item (%difficulty) - %date %time"
 local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]"
 
+local OFFICER_NAV_TREE = {
+  { text = "Overview", value = "overview" },
+  { text = "Seasons", value = "seasons" },
+  { text = "Rank Rules", value = "ranks" },
+  { text = "Settings", value = "settings" },
+  { text = "Pre-Dibs", value = "preDibs" },
+  { text = "Announcements", value = "announcements" },
+  { text = "Developer", value = "developer" },
+  { text = "RCLootCouncil", value = "integration" },
+  { text = "Debug", value = "debug" },
+}
+
+-- Keep the old programmatic names working for macros and existing tests while
+-- presenting the same Officer tree as the RCLootCouncil options panel.
+local OFFICER_TAB_ALIASES = {
+  dashboard = "overview",
+  lootTypes = "integration",
+  predibs = "preDibs",
+}
+
+local function normalizeOfficerTab(tab)
+  return OFFICER_TAB_ALIASES[tab] or tab
+end
+
 -- Officer views contain the guild-wide ledger, Pre-Dibs history and rank
 -- diagnostics.  Keep the authorization check at the read boundary so a
 -- normal player cannot bypass the UI by calling these Lua functions directly.
@@ -770,12 +794,12 @@ local function splitPipeLine(line, expected)
 end
 
 local function createAceWindow()
-  local shell = Dibs.AceGUI.CreateWindow("Dibs Officer", 800, 720, { "CENTER", 280, 0 })
+  local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Officer", 980, 760, { "CENTER", 280, 0 })
   if not shell then return nil end
   local frame = shell.frame
   if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
   frame.dibsAceGUIShell = shell
-  frame.activeTab = "dashboard"
+  frame.activeTab = "overview"
   frame.ledgerPage = 1
   frame.rankRows = {}
   frame.rankDrafts = {}
@@ -800,24 +824,22 @@ local function createAceWindow()
     frame:Refresh()
   end
 
-  local tabs = Dibs.AceGUI.AddTabs(shell, {
-    { text = "Dashboard", value = "dashboard" }, { text = "Players", value = "players" },
-    { text = "Pre-Dibs", value = "predibs" }, { text = "History", value = "history" },
-    { text = "Statistics", value = "statistics" }, { text = "Announcements", value = "announcements" },
-    { text = "Settings", value = "settings" }, { text = "Loot types", value = "lootTypes" }, { text = "Debug", value = "debug" },
-  }, function(value)
-    frame.activeTab, frame.ledgerPage = value, 1
+  local tabs = Dibs.AceGUI.AddTree(shell, OFFICER_NAV_TREE, function(value)
+    frame.activeTab, frame.ledgerPage = normalizeOfficerTab(value), 1
     frame:Refresh()
-  end)
+  end, 190)
   frame.aceTabs = tabs
   frame.SelectTab = function(tab)
-    frame.activeTab, frame.ledgerPage = tab, 1
-    frame:Refresh()
+    local normalized = normalizeOfficerTab(tab)
+    if not Dibs.AceGUI.SelectTree(tabs, normalized) then
+      frame.activeTab, frame.ledgerPage = normalized, 1
+      frame:Refresh()
+    end
   end
 
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
-    Dibs.AceGUI.AddButton(shell, tabs, "RCLootCouncil - Dibs options", function() Dibs.RCOptions.Open() end, 240)
+    Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Officer controls use the same shared options as RCLootCouncil.")
     local seasons = getSeasonList()
     local current = getSelectedSeason(self)
     if not current and #seasons > 0 then
@@ -825,6 +847,50 @@ local function createAceWindow()
       self.selectedSeasonId = current.id
     end
     local currentId = current and current.id or nil
+
+    -- Render the canonical Officer options directly from the shared
+    -- AceConfig table.  This keeps Seasons, Rank Rules, Settings, Pre-Dibs,
+    -- Announcements, Developer, RCLootCouncil and Debug in lockstep with the
+    -- options visible in RCLootCouncil's own panel.
+    local optionGroup
+    local optionsTable
+    if Dibs.RCOptions and Dibs.RCOptions.GetOptionsTable then
+      optionsTable = Dibs.RCOptions.GetOptionsTable()
+      local groups = optionsTable and optionsTable.args and optionsTable.args.dibsSettings and optionsTable.args.dibsSettings.args
+      if groups then
+        optionGroup = self.activeTab == "overview" and groups.overview
+          or (groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
+      end
+    end
+    if optionGroup and Dibs.AceGUI.RenderOptionsGroup then
+      self.lootTypeControls = self.activeTab == "integration" and {} or nil
+      local controlMap = self.lootTypeControls
+      Dibs.AceGUI.RenderOptionsGroup(shell, tabs, optionGroup, {
+        controlMap = controlMap,
+        onChanged = function()
+          self:Refresh()
+        end,
+      })
+      if self.activeTab == "overview" then
+        local officerRoot = optionsTable and optionsTable.args and optionsTable.args.dibsSettings
+          and optionsTable.args.dibsSettings.args and optionsTable.args.dibsSettings.args.officer
+        local openLogs = officerRoot and officerRoot.args and officerRoot.args.openLogs
+        if Dibs.RCOptions and Dibs.RCOptions.Open then
+          Dibs.AceGUI.AddButton(shell, tabs, "Open full options", function() Dibs.RCOptions.Open() end, 180)
+        end
+        if openLogs then
+          Dibs.AceGUI.AddHeader(shell, tabs, "Officer management", "Open the detailed player, Pre-Dib and history logs.")
+          Dibs.AceGUI.AddButton(shell, tabs, tostring(type(openLogs.name) == "function" and openLogs.name() or openLogs.name or "Open logs window"), function()
+            if type(openLogs.func) == "function" then pcall(openLogs.func) end
+          end, 220)
+        end
+      end
+      if self.activeTab == "integration" and controlMap then
+        self.enableLootTypes = controlMap.enable
+        self.defaultLootTypes = controlMap.disable
+      end
+      return
+    end
 
     if self.activeTab == "announcements" then
       local templates = Dibs.PreDibs.GetAnnouncementTemplates()
@@ -1066,6 +1132,7 @@ local function createAceWindow()
   frame:HookScript("OnShow", function(self) self:Refresh() end)
   _G.DibsOfficerFrame = frame
   frame:Refresh()
+  Dibs.AceGUI.SelectTree(tabs, frame.activeTab)
   return frame
 end
 
@@ -1073,10 +1140,10 @@ function Dibs.OfficerUI.CreateWindow()
   if _G.DibsOfficerFrame then
     local existingShell = _G.DibsOfficerFrame.dibsAceGUIShell
     if existingShell and existingShell.window then
-      existingShell.window:SetWidth(800)
-      existingShell.window:SetHeight(720)
+      existingShell.window:SetWidth(980)
+      existingShell.window:SetHeight(760)
     else
-      _G.DibsOfficerFrame:SetSize(800, 720)
+      _G.DibsOfficerFrame:SetSize(980, 760)
     end
     return _G.DibsOfficerFrame
   end
@@ -1101,7 +1168,7 @@ function Dibs.OfficerUI.CreateWindow()
 
   local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   title:SetPoint("TOP", 0, -12)
-  title:SetText("Dibs Officer")
+   title:SetText("RCLootCouncil - Dibs | Officer")
 
   local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
   closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -6)

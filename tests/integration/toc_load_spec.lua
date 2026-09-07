@@ -34,6 +34,25 @@ describe("TOC load integrity", function()
 
     assert_not_nil(_G.SlashCmdList.DIBS)
     assert_equal("/dibs", _G.SLASH_DIBS1)
+    assert_equal("DIBS", _G.hash_SlashCmdList["/DIBS"])
+    assert_equal("DIBS", _G.hash_SlashCmdList["/DIB"])
+    assert_equal("DIBS", _G.hash_SlashCmdList["/DIDS"])
+    assert_true((_G.__slashImports or 0) >= 1)
+  end)
+
+  it("keeps slash command output visible when diagnostic logging is disabled", function()
+    local loader = require("helpers.load_addon")
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    dibs.GetDB().settings.debugLevels.all = 0
+
+    assert_not_nil(_G.SlashCmdList.DIBS)
+    _G.SlashCmdList.DIBS("")
+    assert_true(#(_G.__dibsMessages or {}) >= 1)
+    local found = false
+    for _, message in ipairs(_G.__dibsMessages or {}) do
+      if string.find(message, "Dibs commands", 1, true) then found = true break end
+    end
+    assert_true(found)
   end)
 
   it("reports embedded Ace3 service availability", function()

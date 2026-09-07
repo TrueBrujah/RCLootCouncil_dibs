@@ -3,8 +3,10 @@
 ## Purpose
 
 The adapter is an optional boundary between Dibs and RCLootCouncil. It detects supported
-capabilities, exposes a compatibility state, projects read-only loot information, and
-converts a trusted finalized award into the protected Dibs finalization command.
+capabilities, exposes a compatibility state, projects loot information, and converts a
+trusted finalized award into the protected Dibs finalization command. Its only local
+RCLootCouncil configuration write is a locked indexed DIB button/response entry for the
+Master Looter UI.
 
 ## Capability Contract
 
@@ -13,7 +15,7 @@ The adapter MUST expose a status equivalent to:
 | State | Meaning | Allowed behavior |
 |---|---|---|
 | `absent` | RCLootCouncil is not loaded or installed | Standalone Dibs remains available |
-| `operational` | All required capabilities are verified | Read-only projections and validated award path are available |
+| `operational` | All required capabilities are verified | Read-only session projections, locked DIB UI projection, and validated award path are available |
 | `degraded` | Some optional or runtime capability is unavailable | Standalone Dibs remains available; affected integration action is denied |
 | `unsupported` | The loaded surface cannot be safely mapped | No protected integration action; diagnostic explains the mismatch |
 
@@ -41,7 +43,9 @@ surface MUST NOT disable Standalone Dibs or grant a fallback authority.
 - Retry work MUST be bounded and MUST stop after the capability state is known to be
   unsupported.
 - A frame refresh MUST NOT call the same update hook recursively.
-- The adapter MUST NOT modify RCLootCouncil core source, registries, or unrelated history.
+- The adapter MUST NOT modify RCLootCouncil core source, registries, wire messages, or
+  unrelated history. Its local DIB button/response projection MUST preserve existing active
+  responses, remain idempotent, and fail without overwriting when `maxButtons` is full.
 - Every protected award action MUST re-evaluate state and Master Looter identity.
 
 ## Failure Contract

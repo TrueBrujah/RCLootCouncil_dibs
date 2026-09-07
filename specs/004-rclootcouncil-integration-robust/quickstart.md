@@ -128,7 +128,9 @@ player identities, or live loot payloads.
 ## Current implementation evidence
 
 - Branch: `feature/rclootcouncil-integration-robust`
-- Addon version: `0.2.3-dev` (`src/Core.lua` and `src/RCLootCouncil_dibs.toc`)
-- Automated result: 149 passed, 0 failed, 43 files (2026-09-06)
+- Addon version: `0.3.4-dev` (`src/Core.lua` and `src/RCLootCouncil_dibs.toc`)
+- Automated result: 157 passed, 0 failed, 44 files (2026-09-07)
 - `git diff --check`: passed on 2026-09-06; no Retail client or two-client evidence is available in this environment.
-- Remaining release limitation: Retail validation must confirm the exact RC 3.x callback/history surface and the visual behavior of the read-only projections before a production version is published.
+- Remaining release limitation: Retail validation must confirm the exact RC 3.x callback/history
+  surface, the locked DIB response in the Master Looter options, and the visual behavior of
+  the read-only candidate projections before a production version is published.

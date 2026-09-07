@@ -37,6 +37,8 @@ local function makeFrame()
     SetClampedToScreen = function() end,
     SetToplevel = function() end,
     SetFrameStrata = function() end,
+    GetFrameLevel = function() return 1 end,
+    SetFrameLevel = function() end,
     SetMovable = function() end,
     EnableMouse = function() end,
     RegisterForDrag = function() end,
@@ -50,6 +52,14 @@ local function makeFrame()
     RegisterEvent = function(self, event) self._events = self._events or {}; self._events[event] = true end,
     SetScript = function(_, name, fn) scripts[name] = fn end,
     HookScript = function(_, name, fn) scripts[name] = fn end,
+    CreateTexture = function()
+      return {
+        SetTexture = function(self, value) self._texture = value end,
+        SetTexCoord = function(self, ...) self._texCoord = { ... } end,
+        SetSize = function(self, width, height) self._size = { width, height } end,
+        SetPoint = function(self, ...) self._point = { ... } end,
+      }
+    end,
     CreateFontString = function()
       return {
         SetPoint = function() end,
@@ -91,6 +101,11 @@ function M.install(opts)
   }
   _G.__sentChatMessages = {}
   _G.SlashCmdList = {}
+  _G.hash_SlashCmdList = {}
+  _G.__slashImports = 0
+  _G.ChatFrameUtil = {
+    ImportAllListsToHash = function() _G.__slashImports = _G.__slashImports + 1 end,
+  }
   _G.UIParent = {}
 
   _G.time = function()
@@ -253,6 +268,12 @@ function M.install(opts)
     RegisterCanvasLayoutCategory = function(panel)
       return { panel = panel }
     end,
+    GetCategory = function(id)
+      return { id = id }
+    end,
+    RegisterCanvasLayoutSubcategory = function(parent, panel, name)
+      return { parent = parent, panel = panel, name = name, ID = name }
+    end,
     RegisterAddOnCategory = function() end,
   }
 end
@@ -273,6 +294,8 @@ function M.resetGlobals()
   _G.__dibsMessages = nil
   _G.__sentChatMessages = nil
   _G.__sentAddonMessages = nil
+  _G.ChatFrameUtil = nil
+  _G.__slashImports = nil
   _G.__dibsFrameCreations = nil
   _G.__dibsAceWidgets = nil
   _G.__ejNavigation = nil
