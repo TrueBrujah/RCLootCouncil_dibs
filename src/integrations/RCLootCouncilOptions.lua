@@ -28,9 +28,10 @@ end
 local function getRCAddon()
   local addon = _G.RCLootCouncil
   if LibStub ~= nil then
-    local aceAddon = LibStub("AceAddon-3.0", true)
-    if aceAddon and type(aceAddon.GetAddon) == "function" then
-      addon = aceAddon:GetAddon("RCLootCouncil", true) or addon
+    local okStub, aceAddon = pcall(LibStub, "AceAddon-3.0", true)
+    if okStub and aceAddon and type(aceAddon.GetAddon) == "function" then
+      local okAddon, resolved = pcall(aceAddon.GetAddon, aceAddon, "RCLootCouncil", true)
+      if okAddon then addon = resolved or addon end
     end
   end
   return addon
@@ -877,6 +878,20 @@ end
 local function execute(order, name, callback)
   return { type = "execute", order = order, name = name, width = "full", func = callback }
 end
+local function integrationStatusText()
+  local status = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {
+    status = "absent", reasonCode = "RC_ABSENT", diagnostic = "RCLootCouncil is absent; Dibs is running in Standalone mode.", capabilities = {},
+  }
+  local capabilities = status.capabilities or {}
+  local verified = {}
+  for _, key in ipairs({ "discovery", "enabledState", "masterLooter", "awardCallback", "awardIdentity", "responseValidation" }) do
+    if capabilities[key] == true then table.insert(verified, key) end
+  end
+  return "RCLootCouncil: " .. tostring(status.status or status.availability or "absent") ..
+    " | reason: " .. tostring(status.reasonCode or "UNKNOWN") ..
+    "\n" .. tostring(status.diagnostic or "") ..
+    "\nVerified capabilities: " .. (#verified > 0 and table.concat(verified, ", ") or "none")
+end
 local function auditAction(action, scope, detail)
   local db = Dibs.GetDB()
   db.settings.actionAudit = db.settings.actionAudit or {}
@@ -898,6 +913,7 @@ end
 -- Window actions live in their corresponding tabs, not in Overview.
 groups.overview.args.player = nil
 groups.overview.args.officer = nil
+groups.overview.args.integrationStatus = description(4, integrationStatusText)
 groups.announcements = { type = "group", name = "Announcements", order = 6, args = {
   publicChannel = groups.preDibs.args.preDibAnnouncementChannel,
   officerChannel = groups.preDibs.args.preDibOfficerAnnouncementChannel,
@@ -1010,6 +1026,7 @@ groups.developer = { type = "group", name = "Developer", order = 9, args = {
   end),
 } }
 groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args = {
+  status = description(0, integrationStatusText),
   types = { type = "multiselect", name = "Dib loot types", order = 1, width = "full",
     values = getDibTypeValues,
     get = function(_, key) return getDibTypeSettings()[key] ~= false end,
@@ -1101,6 +1118,10 @@ groups.player.hidden = nil
 
 function Dibs.RCOptions.GetLootTypeOptions()
   return groups.integration.args
+end
+
+function Dibs.RCOptions.GetOptionsTable()
+  return optionsTable
 end
 
 function Dibs.RCOptions.Open()

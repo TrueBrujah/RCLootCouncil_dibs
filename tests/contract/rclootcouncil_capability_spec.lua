@@ -1,0 +1,68 @@
+local loader = require("helpers.load_addon")
+
+describe("RCLootCouncil capability contract", function()
+  it("reports the required operational capabilities", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER" } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local snapshot = dibs.RCLootCouncil.GetCapabilities()
+
+    assert_equal("operational", snapshot.state)
+    assert_true(snapshot.capabilities.discovery)
+    assert_true(snapshot.capabilities.enabledState)
+    assert_true(snapshot.capabilities.masterLooter)
+    assert_true(snapshot.capabilities.awardCallback)
+    assert_true(snapshot.capabilities.awardIdentity)
+    assert_true(snapshot.capabilities.responseValidation)
+  end)
+
+  it("degrades when the callback or award identity cannot be verified", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, currentSessionId = false })
+    rc.RegisterMessage = nil
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local snapshot = dibs.RCLootCouncil.GetCapabilities()
+
+    assert_equal("degraded", snapshot.state)
+    assert_equal("RC_AWARD_CALLBACK_UNAVAILABLE", snapshot.reasonCode)
+    assert_false(snapshot.capabilities.awardCallback)
+    assert_false(snapshot.capabilities.awardIdentity)
+  end)
+
+  it("does not downgrade Dibs administration when RC is degraded", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, currentSessionId = false })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local before = dibs.Ledger.GetBalance("Tester-Realm")
+    local decision = dibs.Permissions.Evaluate("ledger.grant", nil)
+
+    assert_true(decision.allowed)
+    assert_equal("guild", decision.authority)
+    assert_equal("degraded", dibs.RCLootCouncil.GetAvailability())
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+  end)
+
+  it("fails safely when an external LibStub surface is malformed", function()
+    local _, dibs = loader.load({ libStub = {}, wow = { guildLeader = true } })
+    local ok, snapshot = pcall(dibs.RCLootCouncil.GetCapabilities)
+    assert_true(ok)
+    assert_equal("absent", snapshot.state)
+    assert_equal("RC_ABSENT", snapshot.reasonCode)
+  end)
+
+  it("does not trust a history getter that throws or returns a non-table", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, currentSessionId = false })
+    rc.GetHistoryDB = function() error("history unavailable") end
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local snapshot = dibs.RCLootCouncil.GetCapabilities()
+    assert_equal("degraded", snapshot.state)
+    assert_equal("RC_AWARD_IDENTITY_UNAVAILABLE", snapshot.reasonCode)
+    assert_false(snapshot.capabilities.awardIdentity)
+  end)
+
+  it("reports unsupported when the response-validation contract is unavailable", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    dibs.RCLootCouncil.IsDibResponse = nil
+    local snapshot = dibs.RCLootCouncil.GetCapabilities()
+    assert_equal("unsupported", snapshot.state)
+    assert_equal("RC_RESPONSE_UNSUPPORTED", snapshot.reasonCode)
+  end)
+end)

@@ -55,6 +55,8 @@ When availability is `operational`, the adapter verifies the current RCLootCounc
 
 The adapter observes compatible local Ace messages and maps a valid `RCMLAwardSuccess` event to one idempotent finalized-award command. It does not replace candidate getters, write RCLootCouncil registries or SavedVariables, or inject RCLootCouncil wire messages. Candidate status is a read-only projection; an explicit local Dibs display is the compatibility fallback.
 
+The capability snapshot exposes `absent`, `operational`, `degraded`, and `unsupported` states with a reason code, observed release label, and verified probes. The supported surface is the Retail 3.x-shaped AceAddon: enabled state, canonical Master Looter identity, award callback registration, stable history/session identity, and explicit DIB response mapping. A callback is accepted only with a stable `entry:`, `history:`, or `session:` award reference, an item link matching the item ID, a finalized status, and local Master Looter authority. Duplicate references return the existing ledger result; missing or ambiguous provenance is ignored.
+
 ### AuditUI
 Presents history appropriate to the current user's permissions.
 

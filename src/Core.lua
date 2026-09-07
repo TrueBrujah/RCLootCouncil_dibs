@@ -8,7 +8,7 @@ _G.Dibs = Dibs
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.1.0-dev"
+Dibs.VERSION = "0.2.0-dev"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
 Dibs.SAVED_VARIABLE_NAME = "RCLootCouncil_dibsDB"
@@ -418,7 +418,8 @@ function Dibs.BuildDebugReport()
     "Dibs debug report",
     "Version: " .. tostring(Dibs.VERSION),
     "Framework: " .. Dibs.GetFrameworkStatus(),
-    "RCLootCouncil: " .. tostring(rc and (rc.diagnostic or rc.status or "available") or "absent"),
+    "RCLootCouncil: " .. tostring(rc and (rc.diagnostic or rc.status or "available") or "absent") .. " reason=" .. tostring(rc and rc.reasonCode or "RC_ABSENT"),
+    "RCLootCouncil capabilities: " .. tostring(rc and rc.capabilities and (rc.capabilities.masterLooter and "masterLooter " or "") .. (rc.capabilities.awardCallback and "awardCallback " or "") .. (rc.capabilities.awardIdentity and "awardIdentity" or "none") or "none"),
     "Voting frame: module=" .. tostring(vote.moduleFound) .. " AddColumn=" .. tostring(vote.addColumn) .. " scrollCols=" .. tostring(vote.scrollColumns) .. " count=" .. tostring(vote.scrollColumnCount) .. " hasDibs=" .. tostring(vote.scrollHasDibs) .. " renderedDibs=" .. tostring(vote.renderedHasDibs) .. " DibsColumn=" .. tostring(vote.dibsColumnInstalled),
     "Season: " .. tostring(Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or "none"),
     "Raid Dibs: " .. (clubId and ("available clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId)) or "unavailable"),
@@ -892,11 +893,13 @@ end
 local eventFrame = CreateFrame("Frame")
 local function onRuntimeEvent(event, ...)
   if event == "PLAYER_LOGIN" then
-    if Dibs.RCLootCouncil and Dibs.RCLootCouncil.TryUseRCModule and Dibs.RCLootCouncil.TryUseRCModule() then
-      return
-    end
-
     Dibs.Initialize()
+    -- Core initialization must never depend on the optional adapter.  A late
+    -- RCLootCouncil load is rechecked after Dibs is ready, while Standalone
+    -- mode still receives the normal database, UI, and slash-command setup.
+    if Dibs.RCLootCouncil and Dibs.RCLootCouncil.TryUseRCModule then
+      Dibs.RCLootCouncil.TryUseRCModule()
+    end
     return
   end
   if event == "CHAT_MSG_ADDON" and Dibs.Sync and Dibs.Sync.OnAddonMessage then return Dibs.Sync.OnAddonMessage(...) end

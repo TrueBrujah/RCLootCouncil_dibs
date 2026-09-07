@@ -5,15 +5,17 @@ local function text(key, fallback) return (Dibs.L and Dibs.L[key]) or fallback e
 
 local function getRCAddon()
   if LibStub == nil then return nil end
-  local aceAddon = LibStub("AceAddon-3.0", true)
+  local okStub, aceAddon = pcall(LibStub, "AceAddon-3.0", true)
+  if not okStub then return nil end
   if not aceAddon or type(aceAddon.GetAddon) ~= "function" then return nil end
-  return aceAddon:GetAddon("RCLootCouncil", true)
+  local okAddon, addon = pcall(aceAddon.GetAddon, aceAddon, "RCLootCouncil", true)
+  return okAddon and addon or nil
 end
 
 local function isLoaded()
   if C_AddOns and type(C_AddOns.IsAddOnLoaded) == "function" then
-    local first, second = C_AddOns.IsAddOnLoaded("RCLootCouncil")
-    return second == true or first == true
+    local ok, first, second = pcall(C_AddOns.IsAddOnLoaded, "RCLootCouncil")
+    if ok then return second == true or first == true end
   end
   return type(_G.RCLootCouncil) == "table" or type(getRCAddon()) == "table"
 end
@@ -494,11 +496,53 @@ end
 
 local function isDibLabel(value)
   local label = normalizeButtonLabel(value)
+  -- Accept the canonical response with harmless display punctuation (for
+  -- example "[DIB]") while rejecting descriptive or mixed responses that
+  -- could be mistaken for an explicit DIB decision.
+  label = label:gsub("^[%p%s]+", ""):gsub("[%p%s]+$", "")
   return label == "DIB" or label == "DIBS"
 end
 
+local function responseFieldValues(value)
+  if type(value) ~= "table" then return { value } end
+  local values = {}
+  for _, key in ipairs({ "text", "responseText", "response", "name", "label", "value" }) do
+    if value[key] ~= nil then table.insert(values, value[key]) end
+  end
+  return values
+end
+
+local function normalizeDibResponse(value, rc, responseType)
+  local candidate = value
+  if (type(candidate) == "number" or (type(candidate) == "string" and candidate:match("^%s*%d+%s*$")))
+    and type(rc) == "table" and type(rc.GetResponse) == "function" then
+    local ok, response = pcall(rc.GetResponse, rc, responseType or "default", tonumber(candidate))
+    if ok then candidate = response end
+  end
+
+  local found = nil
+  local values = responseFieldValues(candidate)
+  for _, item in ipairs(values) do
+    if isDibLabel(item) then
+      if found and found ~= "DIB" then return nil, "AMBIGUOUS_RESPONSE" end
+      found = "DIB"
+    elseif type(item) == "string" and normalizeButtonLabel(item) ~= "" then
+      if found then return nil, "AMBIGUOUS_RESPONSE" end
+      found = false
+    end
+  end
+  if found == "DIB" then return "DIB" end
+  if found == false then return nil, "NON_DIB_RESPONSE" end
+  return nil, "EMPTY_RESPONSE"
+end
+
+function Dibs.RCLootCouncil.NormalizeDibResponse(value, responseType)
+  return normalizeDibResponse(value, getRC(), responseType)
+end
+
 function Dibs.RCLootCouncil.IsDibResponse(value)
-  return isDibLabel(value)
+  local normalized = normalizeDibResponse(value, nil)
+  return normalized == "DIB"
 end
 
 local function removeArrayIndex(list, index)
@@ -1712,14 +1756,142 @@ local function playerNameIdentity(value)
   return string.lower(text)
 end
 
-function Dibs.RCLootCouncil.GetAvailability()
-  if not isLoaded() then return "absent" end
+local function stableSessionIdentity(rc)
+  if type(rc) ~= "table" then return nil end
+  for _, key in ipairs({ "currentSessionId", "lootSessionId", "sessionID" }) do
+    local value = rc[key]
+    if (type(value) == "string" or type(value) == "number") and tostring(value) ~= "" then
+      return tostring(value)
+    end
+  end
+  return nil
+end
+
+local function hasHistoryIdentitySurface(rc)
+  if type(rc) ~= "table" or type(rc.GetHistoryDB) ~= "function" then return false end
+  local ok, historyDB = pcall(rc.GetHistoryDB, rc)
+  return ok and type(historyDB) == "table"
+end
+
+local REASON_DIAGNOSTIC_KEYS = {
+  RC_ABSENT = "RC_REASON_ABSENT",
+  RC_DISABLED = "RC_REASON_DISABLED",
+  RC_INSTANCE_UNAVAILABLE = "RC_REASON_INSTANCE_UNAVAILABLE",
+  RC_ENABLED_STATE_UNVERIFIABLE = "RC_REASON_ENABLED_STATE_UNVERIFIABLE",
+  RC_MASTER_LOOTER_UNVERIFIABLE = "RC_REASON_MASTER_LOOTER_UNVERIFIABLE",
+  RC_AWARD_CALLBACK_UNAVAILABLE = "RC_REASON_AWARD_CALLBACK_UNAVAILABLE",
+  RC_AWARD_IDENTITY_UNAVAILABLE = "RC_REASON_AWARD_IDENTITY_UNAVAILABLE",
+  RC_RESPONSE_UNSUPPORTED = "RC_REASON_RESPONSE_UNSUPPORTED",
+  RC_OPERATIONAL = "RC_REASON_OPERATIONAL",
+  AWARD_INVALID = "AWARD_INVALID",
+  NON_DIB_RESPONSE = "AWARD_NON_DIB_RESPONSE",
+  AMBIGUOUS_RESPONSE = "AWARD_AMBIGUOUS_RESPONSE",
+  EMPTY_RESPONSE = "AWARD_EMPTY_RESPONSE",
+  AWARD_TEST_MODE = "AWARD_TEST_MODE",
+  AWARD_INVALID_ITEM = "AWARD_INVALID_ITEM",
+  STANDALONE_MODE = "AWARD_STANDALONE_MODE",
+  AWARD_IDENTITY_UNAVAILABLE = "AWARD_IDENTITY_UNAVAILABLE",
+  AWARD_IDENTITY_AMBIGUOUS = "AWARD_IDENTITY_AMBIGUOUS",
+}
+
+local REASON_DIAGNOSTIC_FALLBACKS = {
+  RC_ABSENT = "RCLootCouncil is absent; Dibs is running in Standalone mode.",
+  RC_DISABLED = "RCLootCouncil is disabled; Dibs is running in Standalone mode.",
+  RC_INSTANCE_UNAVAILABLE = "RCLootCouncil was detected but its addon instance is unavailable.",
+  RC_ENABLED_STATE_UNVERIFIABLE = "RCLootCouncil enabled state could not be verified.",
+  RC_MASTER_LOOTER_UNVERIFIABLE = "The current RCLootCouncil Master Looter could not be verified.",
+  RC_AWARD_CALLBACK_UNAVAILABLE = "RCLootCouncil does not expose the required award callback.",
+  RC_AWARD_IDENTITY_UNAVAILABLE = "RCLootCouncil did not expose a stable award identity.",
+  RC_RESPONSE_UNSUPPORTED = "RCLootCouncil response mapping is unsupported.",
+  RC_OPERATIONAL = "RCLootCouncil integration is operational.",
+  AWARD_INVALID = "The finalized award payload is incomplete.",
+  NON_DIB_RESPONSE = "The award response was not an explicit DIB.",
+  AMBIGUOUS_RESPONSE = "The award response contained conflicting values.",
+  EMPTY_RESPONSE = "The award response was empty.",
+  AWARD_TEST_MODE = "Test awards cannot consume production Dibs.",
+  AWARD_INVALID_ITEM = "The award item identity is missing or malformed.",
+  STANDALONE_MODE = "Automatic award accounting is disabled in Standalone mode.",
+  AWARD_IDENTITY_UNAVAILABLE = "The finalized award identity could not be verified.",
+  AWARD_IDENTITY_AMBIGUOUS = "More than one history entry matched this award; no Dib was consumed.",
+}
+
+local function reasonDiagnostic(reasonCode)
+  local key = REASON_DIAGNOSTIC_KEYS[reasonCode]
+  return text(key, REASON_DIAGNOSTIC_FALLBACKS[reasonCode] or tostring(reasonCode or "Integration action ignored."))
+end
+
+local function capabilitySnapshot()
+  local snapshot = {
+    state = "absent",
+    checkedAt = nowSeconds(),
+    addonLoaded = false,
+    capabilities = {},
+    reasonCode = nil,
+    observedVersion = nil,
+    compatibility = {
+      supportedRelease = "RCLootCouncil Retail 3.x-shaped capability surface",
+      historyReadOnly = true,
+      liveSessionSync = false,
+    },
+  }
+
+  if not isLoaded() then
+    snapshot.reasonCode = "RC_ABSENT"
+    return snapshot
+  end
+  snapshot.addonLoaded = true
+
   local rc = getRC()
-  if type(rc) ~= "table" then return "degraded" end
-  if rc.enabled == false then return "absent" end
-  if rc.enabled ~= true then return "degraded" end
-  if not playerIdentity(rc.masterLooter) then return "degraded" end
-  return "operational"
+  if type(rc) ~= "table" then
+    snapshot.state = "degraded"
+    snapshot.reasonCode = "RC_INSTANCE_UNAVAILABLE"
+    return snapshot
+  end
+  snapshot.observedVersion = rc.version or rc.VERSION or rc.revision
+  if rc.enabled == false then
+    snapshot.reasonCode = "RC_DISABLED"
+    return snapshot
+  end
+  if rc.enabled ~= true then
+    snapshot.state = "degraded"
+    snapshot.reasonCode = "RC_ENABLED_STATE_UNVERIFIABLE"
+    return snapshot
+  end
+
+  snapshot.capabilities.discovery = true
+  snapshot.capabilities.enabledState = true
+  snapshot.capabilities.masterLooter = playerIdentity(rc.masterLooter) ~= nil
+  snapshot.capabilities.awardCallback = type(rc.RegisterMessage) == "function"
+    and Dibs.RCLootCouncil.callbackOwner == rc
+  snapshot.capabilities.awardIdentity = hasHistoryIdentitySurface(rc)
+    or stableSessionIdentity(rc) ~= nil
+  snapshot.capabilities.responseValidation = type(Dibs.RCLootCouncil.IsDibResponse) == "function"
+
+  if not snapshot.capabilities.masterLooter then
+    snapshot.state = "degraded"
+    snapshot.reasonCode = "RC_MASTER_LOOTER_UNVERIFIABLE"
+  elseif not snapshot.capabilities.awardCallback then
+    snapshot.state = "degraded"
+    snapshot.reasonCode = "RC_AWARD_CALLBACK_UNAVAILABLE"
+  elseif not snapshot.capabilities.awardIdentity then
+    snapshot.state = "degraded"
+    snapshot.reasonCode = "RC_AWARD_IDENTITY_UNAVAILABLE"
+  elseif not snapshot.capabilities.responseValidation then
+    snapshot.state = "unsupported"
+    snapshot.reasonCode = "RC_RESPONSE_UNSUPPORTED"
+  else
+    snapshot.state = "operational"
+    snapshot.reasonCode = "RC_OPERATIONAL"
+  end
+  return snapshot
+end
+
+function Dibs.RCLootCouncil.GetCapabilities()
+  return capabilitySnapshot()
+end
+
+function Dibs.RCLootCouncil.GetAvailability()
+  return capabilitySnapshot().state
 end
 
 function Dibs.RCLootCouncil.IsAvailable()
@@ -1834,69 +2006,110 @@ local function getAwardIdentity(rc, session, winner, itemID, itemLink)
     return "entry:" .. tostring(unique)
   end
 
-  -- RCLootCouncil writes an immutable history id for completed awards. Prefer it
-  -- when the callback is delivered after the history row is persisted, because a
-  -- raid/instance name is not a unique loot-session identifier.
+  local sessionKey = stableSessionIdentity(rc)
+  local winnerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+    and Dibs.Permissions.CanonicalPlayerId(winner) or playerNameIdentity(winner)
+  if sessionKey and winnerId and tonumber(itemID) then
+    return "session:" .. sessionKey .. ":" .. tostring(session or "unknown") .. ":"
+      .. tostring(winnerId) .. ":" .. tostring(tonumber(itemID))
+  end
+
+  -- RCLootCouncil writes an immutable history id for completed awards. Use it only
+  -- when exactly one matching row exists; choosing the newest matching row can map
+  -- a delayed callback to a different award of the same item.
   if rc and type(rc.GetHistoryDB) == "function" then
     local ok, historyDB = pcall(rc.GetHistoryDB, rc)
     if ok and type(historyDB) == "table" then
-      local winnerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(winner)
+      local matches = {}
       for playerKey, entries in pairs(historyDB) do
         if type(entries) == "table" and (not winnerId or not Dibs.Permissions or not Dibs.Permissions.CanonicalPlayerId
           or Dibs.Permissions.CanonicalPlayerId(playerKey) == winnerId) then
-          for index = #entries, 1, -1 do
-            local historyEntry = entries[index]
+          for _, historyEntry in ipairs(entries) do
             if type(historyEntry) == "table" and historyEntry.id then
               local historyItem = historyEntry.lootWon or historyEntry.itemLink or historyEntry.item
               local historyItemId = tonumber(historyEntry.itemID) or parseItemID(historyItem)
               if historyItemId == tonumber(itemID) then
-                return "history:" .. tostring(historyEntry.id)
+                table.insert(matches, "history:" .. tostring(historyEntry.id))
               end
             end
           end
         end
       end
+      if #matches == 1 then
+        return matches[1]
+      elseif #matches > 1 then
+        return nil, "AWARD_IDENTITY_AMBIGUOUS"
+      end
     end
   end
 
-  local sessionKey = rc and (rc.currentSessionId or rc.lootSessionId or rc.sessionID or rc.lastEncounterID)
-  if sessionKey then
-    return "session:" .. tostring(sessionKey) .. ":" .. tostring(session) .. ":" .. tostring(winner) .. ":" .. tostring(itemID) .. ":" .. tostring(itemLink)
-  end
+  return nil, "AWARD_IDENTITY_UNAVAILABLE"
+end
 
-  -- The event does not always expose a persistent loot identity. Keep a runtime
-  -- reference in that case so duplicate callbacks in one session remain idempotent.
-  Dibs.runtime = Dibs.runtime or {}
-  Dibs.runtime.rclcAwardRefs = Dibs.runtime.rclcAwardRefs or {}
-  local key = table.concat({ tostring(session), tostring(winner), tostring(itemID), tostring(itemLink) }, ":")
-  if not Dibs.runtime.rclcAwardRefs[key] then
-    Dibs.runtime.rclcAwardRefs[key] = Dibs.NewId("award")
+local function ignoredAward(reasonCode)
+  local diagnostic = reasonDiagnostic(reasonCode)
+  if Dibs.DebugLogs and type(Dibs.DebugLogs.Add) == "function" then
+    Dibs.DebugLogs.Add("RCLootCouncil", 3, tostring(reasonCode or "INTEGRATION_IGNORED"))
   end
-  return Dibs.runtime.rclcAwardRefs[key]
+  return { ok = false, ignored = true, outcome = "ignored", reasonCode = reasonCode, diagnostic = diagnostic }
 end
 
 function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink, responseText)
-  if not Dibs.ProtectedActions or not winner or not itemLink then return end
-  if not isDibLabel(responseText) then return end
-  local mode = Dibs.Permissions and Dibs.Permissions.GetInstallationMode and Dibs.Permissions.GetInstallationMode() or "AUTO"
-  if mode == "STANDALONE" then return end
-  if type(Dibs.RCLootCouncil.GetAvailability) ~= "function" or Dibs.RCLootCouncil.GetAvailability() ~= "operational" then return end
-  local itemID = tonumber(tostring(itemLink):match("item:(%d+)"))
-  if not itemID then return end
+  if not Dibs.ProtectedActions or not winner or not itemLink then
+    return ignoredAward("AWARD_INVALID")
+  end
   local rc = getRC()
+  local normalizedResponse, responseReason = normalizeDibResponse(responseText, rc)
+  if not normalizedResponse then
+    return ignoredAward(responseReason or "NON_DIB_RESPONSE")
+  end
+  local statusKey = string.lower(tostring(status or ""))
+  if statusKey == "test_mode" or statusKey == "test" then
+    return ignoredAward("AWARD_TEST_MODE")
+  end
+  local mode = Dibs.Permissions and Dibs.Permissions.GetInstallationMode and Dibs.Permissions.GetInstallationMode() or "AUTO"
+  if mode == "STANDALONE" then return ignoredAward("STANDALONE_MODE") end
+  local capabilities = capabilitySnapshot()
+  if capabilities.state ~= "operational" then
+    local reasonCode = capabilities.reasonCode == "RC_AWARD_IDENTITY_UNAVAILABLE"
+      and "AWARD_IDENTITY_UNAVAILABLE" or (capabilities.reasonCode or "RC_AWARD_PATH_UNAVAILABLE")
+    return ignoredAward(reasonCode)
+  end
+  local itemID = tonumber(tostring(itemLink):match("item:(%d+)"))
+  if not itemID then return ignoredAward("AWARD_INVALID_ITEM") end
   local actor = rc and rc.masterLooter
-  if not actor then return end
-  local ref = getAwardIdentity(rc, session, winner, itemID, itemLink)
-  Dibs.ProtectedActions.FinalizeAward(actor, { awardRef = ref, playerName = winner, itemID = itemID, itemLink = itemLink, sourceStatus = status, source = "rclootcouncil", response = responseText, responseValidated = true })
+  if not actor then return ignoredAward("RC_MASTER_LOOTER_UNVERIFIABLE") end
+  local ref, identityReason = getAwardIdentity(rc, session, winner, itemID, itemLink)
+  if not ref then
+    return ignoredAward(identityReason or "AWARD_IDENTITY_UNAVAILABLE")
+  end
+  local result = Dibs.ProtectedActions.FinalizeAward(actor, { awardRef = ref, playerName = winner, itemID = itemID, itemLink = itemLink, sourceStatus = status, source = "rclootcouncil", response = normalizedResponse, responseValidated = true })
+  if result and result.ok == false and Dibs.DebugLogs and type(Dibs.DebugLogs.Add) == "function" then
+    Dibs.DebugLogs.Add("RCLootCouncil", 2, tostring(result.reasonCode or "AWARD_REJECTED"))
+  end
+  return result
 end
 
 function Dibs.RCLootCouncil.Initialize()
-  if Dibs.RCLootCouncil.initialized then return true end
   local rc = getRC()
   if type(rc) ~= "table" then return false end
+  if Dibs.RCLootCouncil.initialized then
+    -- Re-run only idempotent probes when RC modules or frames become
+    -- available after Dibs.  No Dibs state is recreated or migrated here.
+    installForcedDibConfigHook()
+    installLootFrameHook()
+    installVotingFrameColumns()
+    ensureRuntimeHooks(120)
+    return true
+  end
   sanitizeRCLootCouncilHistory(rc)
-  if type(rc.RegisterMessage) == "function" then
-    pcall(rc.RegisterMessage, rc, "RCMLAwardSuccess", Dibs.RCLootCouncil.OnAwardSuccess)
+  if type(rc.RegisterMessage) == "function" and Dibs.RCLootCouncil.callbackOwner ~= rc then
+    local ok, result = pcall(rc.RegisterMessage, rc, "RCMLAwardSuccess", Dibs.RCLootCouncil.OnAwardSuccess)
+    if ok and result ~= false then
+      Dibs.RCLootCouncil.callbackOwner = rc
+    else
+      Dibs.RCLootCouncil.callbackOwner = nil
+    end
   end
   installForcedDibConfigHook()
   installLootFrameHook()
@@ -1907,10 +2120,20 @@ function Dibs.RCLootCouncil.Initialize()
 end
 
 function Dibs.RCLootCouncil.TryUseRCModule()
-  Dibs.RCLootCouncil.Initialize()
-  return false
+  return Dibs.RCLootCouncil.Initialize()
 end
 
 function Dibs.RCLootCouncil.GetLocalStatus()
-  return { availability = Dibs.RCLootCouncil.GetAvailability(), protocolVersion = Dibs.PROTOCOL_VERSION, initialized = Dibs.RCLootCouncil.initialized == true }
+  local capabilities = capabilitySnapshot()
+  return {
+    availability = capabilities.state,
+    status = capabilities.state,
+    reasonCode = capabilities.reasonCode,
+    capabilities = capabilities.capabilities,
+    compatibility = capabilities.compatibility,
+    diagnostic = reasonDiagnostic(capabilities.reasonCode),
+    observedVersion = capabilities.observedVersion,
+    protocolVersion = Dibs.PROTOCOL_VERSION,
+    initialized = Dibs.RCLootCouncil.initialized == true,
+  }
 end

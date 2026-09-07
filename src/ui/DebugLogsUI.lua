@@ -33,6 +33,11 @@ function Dibs.DebugLogs.Open(actor)
   local refresh
   refresh = function()
     Dibs.AceGUI.Clear(tabs)
+    local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
+    if integration then
+      Dibs.AceGUI.AddLabel(shell, tabs, "RCLootCouncil: " .. tostring(integration.status or integration.availability or "absent") ..
+        " | " .. tostring(integration.reasonCode or "UNKNOWN") .. "\n" .. tostring(integration.diagnostic or ""), true)
+    end
     local searchBox = Dibs.AceGUI.AddEditBox(shell, tabs, "Search", function(value) query = value; refresh() end, 420)
     Dibs.AceGUI.AddTooltip(searchBox, "Search logs", "Search module names, severity labels and message text.")
     local sort = Dibs.AceGUI.AddDropdown(shell, tabs, "Sort by", { timestamp = "Time", module = "Module", level = "Severity" }, function(value) sortKey = value; refresh() end, 180)

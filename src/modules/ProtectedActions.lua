@@ -66,7 +66,11 @@ local function buildAudit(actionId, actor, payload, decision)
     itemLink = payload and payload.itemLink,
     awardRef = payload and payload.awardRef,
     playerName = payload and payload.playerName,
+    playerGuid = payload and (payload.playerGuid or payload.playerId),
     seasonId = payload and payload.seasonId,
+    sourceStatus = payload and payload.sourceStatus,
+    response = payload and payload.response,
+    responseValidated = payload and payload.responseValidated == true or nil,
   }
 end
 
@@ -183,6 +187,13 @@ local function isFinalAward(payload)
     or status == "normal" or status == "indirect" or status == "manually_added"
 end
 
+local function isStableRCLootCouncilReference(value)
+  local reference = tostring(value or "")
+  return reference:match("^entry:") ~= nil
+    or reference:match("^history:") ~= nil
+    or reference:match("^session:") ~= nil
+end
+
 local function executeSeasonRename(actor, payload, decision)
   local seasonId = payload and payload.seasonId
   local name = tostring(payload and payload.name or ""):match("^%s*(.-)%s*$")
@@ -209,18 +220,45 @@ end
 
 function Dibs.ProtectedActions.FinalizeAward(actor, payload)
   local command = payload or {}
+  if command.source == "rclootcouncil" then
+    if command.responseValidated ~= true or not isStableRCLootCouncilReference(command.awardRef) then
+      local result = buildResult(false, nil, nil, text("AWARD_DIB_RESPONSE_REQUIRED", "Only a finalized DIB response can consume a Dib."))
+      result.outcome = "rejected"
+      result.reasonCode = "AWARD_PROVENANCE_INVALID"
+      return result
+    end
+    local linkedItem = tostring(command.itemLink or ""):match("item:(%d+)")
+    if not linkedItem or tonumber(linkedItem) ~= tonumber(command.itemID) then
+      local result = buildResult(false, nil, nil, text("AWARD_INVALID", "Award payload is missing required fields."))
+      result.outcome = "rejected"
+      result.reasonCode = "AWARD_INVALID_ITEM"
+      return result
+    end
+  end
   if tostring(command.sourceStatus or ""):lower() == "test_mode" or command.testMode == true then
-    return buildResult(false, nil, nil, text("AWARD_TEST_MODE", "Test awards cannot consume production Dibs."))
+    local result = buildResult(false, nil, nil, text("AWARD_TEST_MODE", "Test awards cannot consume production Dibs."))
+    result.outcome = "ignored"
+    result.ignored = true
+    result.reasonCode = "AWARD_TEST_MODE"
+    return result
   end
   if not isFinalAward(command) then
-    return buildResult(false, nil, nil, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
+    local result = buildResult(false, nil, nil, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
+    result.outcome = "ignored"
+    result.ignored = true
+    result.reasonCode = "AWARD_NOT_FINAL"
+    return result
   end
   if not command.awardRef or not command.playerName or not tonumber(command.itemID) then
-    return buildResult(false, nil, nil, text("AWARD_INVALID", "Award payload is missing required fields."))
+    local result = buildResult(false, nil, nil, text("AWARD_INVALID", "Award payload is missing required fields."))
+    result.outcome = "rejected"
+    result.reasonCode = "AWARD_INVALID"
+    return result
   end
 
   local result = Dibs.ProtectedActions.Execute("award.finalize", actor, command)
   if not result.ok then
+    result.outcome = result.outcome or (result.ignored and "ignored" or "rejected")
     return result
   end
 
@@ -237,25 +275,40 @@ end
 local function executeAwardFinalize(actor, payload, decision)
   local command = payload or {}
   if command.source == "rclootcouncil" and command.responseValidated ~= true then
-    return buildResult(false, nil, decision, text("AWARD_DIB_RESPONSE_REQUIRED", "Only a finalized DIB response can consume a Dib."))
+    local result = buildResult(false, nil, decision, text("AWARD_DIB_RESPONSE_REQUIRED", "Only a finalized DIB response can consume a Dib."))
+    result.outcome = "rejected"
+    result.reasonCode = "AWARD_PROVENANCE_INVALID"
+    return result
   end
   if not isFinalAward(command) then
-    return buildResult(false, nil, decision, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
+    local result = buildResult(false, nil, decision, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
+    result.outcome = "ignored"
+    result.ignored = true
+    result.reasonCode = "AWARD_NOT_FINAL"
+    return result
   end
   local existing = Dibs.Ledger and Dibs.Ledger.GetTransactionForAward and Dibs.Ledger.GetTransactionForAward(command.awardRef)
   if existing then
-    return buildResult(true, existing, decision)
+    local replay = buildResult(true, existing, decision)
+    replay.duplicate = true
+    replay.outcome = "duplicate"
+    return replay
   end
   if Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetStatusForCandidate then
     local candidate = Dibs.RCLootCouncil.GetStatusForCandidate(command.playerName, command.itemID, nil, {
       ignorePublicPreDibRequirement = true,
     })
     if not candidate or candidate.canUseDib ~= true then
-      return buildResult(false, nil, decision, text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+      local result = buildResult(false, nil, decision, text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+      result.outcome = "rejected"
+      result.reasonCode = "AWARD_INELIGIBLE"
+      return result
     end
   end
   local tx = Dibs.Ledger.Use(command.playerName, 1, command.reason or "Finalized loot award", command.source or "rclootcouncil", command.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()), buildAudit("award.finalize", actor, command, decision))
-  return buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+  local result = buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+  result.outcome = tx and "awarded" or "rejected"
+  return result
 end
 
 local function executePreDibModeSet(actor, payload, decision)

@@ -1,0 +1,21 @@
+local loader = require("helpers.load_addon")
+
+describe("RCLootCouncil options fallback", function()
+  it("exposes a standalone diagnostic when RC is absent", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local overview = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.overview.args
+    local text = overview.integrationStatus.name()
+    assert_true(tostring(text):find("absent", 1, true) ~= nil)
+    assert_true(tostring(text):find("RC_ABSENT", 1, true) ~= nil)
+  end)
+
+  it("exposes capability details without exposing loot-session data", function()
+    local _, dibs = loader.load({ rclootcouncil = loader.makeRCLootCouncil({ enabled = true }) })
+    local integration = dibs.RCOptions.GetLootTypeOptions()
+    local text = integration.status.name()
+    assert_true(tostring(text):find("operational", 1, true) ~= nil)
+    assert_true(tostring(text):find("masterLooter", 1, true) ~= nil)
+    assert_true(tostring(text):find("currentSessionId", 1, true) == nil)
+    assert_true(tostring(text):find("candidate", 1, true) == nil)
+  end)
+end)

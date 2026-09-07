@@ -32,6 +32,8 @@ Suggested logical classes:
 
 Payloads containing live drops, candidates, votes, responses, or loot-session fields are rejected. Incoming request records must match the sender identity, retain immutable origin fields when updating known records, accept only newer revisions, and cannot introduce `fulfilled` state.
 
+RCLootCouncil award callbacks never enter this synchronization protocol. They are handled locally by the adapter and produce a Dibs-owned ledger transaction only after capability, local Master Looter, explicit DIB response, item/winner, final-status, and stable award-reference checks. Award references are persisted in `awardTransactions` so reloads and reconnects are idempotent. No current session ID, candidate list, vote, or response payload is broadcast between raids.
+
 ## Difficulty and acquisitions
 
 Persisted request records include normalized `Normal`, `Heroic`, `Mythic`, or `UNKNOWN` difficulty. This field is part of active-request identity and is transferred with the request record. Award fulfillment applies an award difficulty only when the award context supplies one, retaining legacy matching for awards without difficulty.

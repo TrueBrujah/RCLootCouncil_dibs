@@ -126,10 +126,17 @@ end
 
 local function makeRC(opts)
   opts = opts or {}
+  local currentSessionId = opts.currentSessionId
+  if currentSessionId == nil then
+    currentSessionId = "test-session-1"
+  end
   return {
     enabled = opts.enabled ~= false,
     optionsFrame = opts.optionsFrame,
     masterLooter = opts.masterLooter or { guid = "Player-1-TESTER", name = "Tester-Realm" },
+    currentSessionId = currentSessionId,
+    sessionID = opts.sessionID,
+    lootSessionId = opts.lootSessionId,
     _handlers = {},
     RegisterMessage = function(self, event, fn)
       self._handlers[event] = fn
@@ -149,6 +156,10 @@ function M.load(opts)
   opts = opts or {}
   wow.resetGlobals()
   wow.install(opts.wow)
+
+  if type(opts.savedVariables) == "table" then
+    _G.RCLootCouncil_dibsDB = opts.savedVariables
+  end
 
   local rc = opts.rclootcouncil
   if rc then

@@ -4,6 +4,8 @@ Open AddOns > RCLootCouncil > Dibs, or use `/dibs options`. The player and offic
 
 The tree includes Seasons, Rank Rules, Settings, Pre-Dibs, Announcements, Player, Officer, Developer, and RCLootCouncil loot-type policy. Controls use existing Dibs services and SavedVariables. Changing an announcement template/channel in one surface is reflected when the other surface is refreshed or reopened. Officer views reuse the existing seasonal filters, pagination, dashboard and statistics. Existing protected actions continue to enforce authority: GM/officer for Dibs policy and ledger changes; the verified RCLootCouncil Master Looter may manage the loot session and finalize a qualifying DIB award, but cannot grant or remove Dibs.
 
+Overview and the RCLootCouncil policy tab show a capability snapshot (`absent`, `operational`, `degraded`, or `unsupported`), a stable reason code, and only the probes that were verified. In Standalone mode the player sees a clear fallback status and continues to use local Dibs views. The status does not expose candidates, votes, responses, or live session identifiers.
+
 Raid Dibs is a community stream, distinct from RAID chat. Its selection remains visible even when the stream cannot be found. Announcements shows discovery status and the detected club/stream identifiers. Test buttons use the announcement service and do not create requests or ledger entries. A successful local API call still requires in-game confirmation that the message was delivered.
 
 ## Retail validation remaining
@@ -18,7 +20,7 @@ Raid Dibs is a community stream, distinct from RAID chat. Its selection remains 
 
 ## Automated validation
 
-2026-09-06: full Lua suite passed: 120 tests, 0 failures, 33 files. Coverage includes authority boundaries, officer-view read privacy, finalized DIB award idempotency, local Master Looter enforcement, sync snapshot privacy/limits, community stream routing, unavailable channel display, shared settings, reminder diagnostics, category ID navigation, combat deferral, standalone options and RC loot policy cache invalidation. Retail visual and delivery checks remain pending.
+2026-09-06: full Lua suite passed: 149 tests, 0 failures, 43 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, sync privacy, options fallback, combat deferral, standalone operation, and RC loot policy cache invalidation. Retail visual and delivery checks remain pending.
 
 The `/dibs officer` window also has a **Loot types** tab with the same dynamic type list, checkboxes and both presets as the RCLootCouncil options. Changes use the same callbacks; reopening or refreshing either view reads the current values. Focused options and combat/UI regression validation: 20 tests passed.
 

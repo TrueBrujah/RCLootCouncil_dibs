@@ -98,6 +98,13 @@ function M.install(opts)
     return now
   end
 
+  _G.date = function(format)
+    if format == "*t" then
+      return { year = 2026, month = 9, day = 6, hour = 12, min = 0, sec = 0 }
+    end
+    return "2026-09-06 12:00:00"
+  end
+
   _G.UnitName = function(unit)
     if unit == "player" then return currentPlayerName end
     return "UnknownPlayer"
@@ -270,6 +277,26 @@ function M.dispatch(event, ...)
       frame._scripts.OnEvent(frame, event, ...)
     end
   end
+end
+
+function M.makeRCLootCouncilAward(opts)
+  opts = opts or {}
+  return {
+    session = opts.session,
+    winner = opts.winner or currentPlayerName,
+    status = opts.status or "normal",
+    itemLink = opts.itemLink or "item:19019",
+    response = opts.response or "DIB",
+  }
+end
+
+function M.replayRCLootCouncilAward(callback, event, count)
+  if type(callback) ~= "function" or type(event) ~= "table" then return 0 end
+  local deliveries = math.max(1, tonumber(count) or 1)
+  for _ = 1, deliveries do
+    callback(nil, event.session, event.winner, event.status, event.itemLink, event.response)
+  end
+  return deliveries
 end
 
 function M.setCombat(value) inCombat = value == true end

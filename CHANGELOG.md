@@ -1,0 +1,19 @@
+# Changelog
+
+## 0.2.0-dev - 2026-09-06
+
+- Harden the optional RCLootCouncil integration with capability detection and explicit
+  degraded/unsupported states.
+- Require a verified local Master Looter, an explicit finalized `DIB` response, and a
+  stable award identity before automatic Dib accounting.
+- Reject ambiguous or non-DIB awards and keep duplicate delivery idempotent across reloads
+  when RCLootCouncil provides a stable session or history identity.
+- Normalize explicit DIB responses from text, response tables, and numeric RC response IDs;
+  reject empty or conflicting response values and test-mode awards with reason codes.
+- Recheck late-loaded RC modules through idempotent hook markers, keep `PLAYER_LOGIN`
+  initialization independent of the optional addon, and reject forged callback provenance.
+- Expose capability diagnostics in player/officer options and debug reports without live
+  candidate, vote, response, or session payloads.
+- Preserve unrelated RCLootCouncil history and keep Standalone Dibs administration
+  independent of integration availability.
+- Add compatibility, authority, award-provenance, privacy, and Retail validation coverage.

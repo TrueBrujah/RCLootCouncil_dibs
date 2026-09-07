@@ -291,6 +291,11 @@ local function createAceWindow()
     end
 
     Dibs.AceGUI.AddHeader(shell, tabs, "Season summary", "Your current season balance and Pre-Dib status.")
+    local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
+    if integration then
+      Dibs.AceGUI.AddLabel(shell, tabs, "RCLootCouncil: " .. tostring(integration.status or integration.availability or "absent") ..
+        " (" .. tostring(integration.reasonCode or "UNKNOWN") .. ")\n" .. tostring(integration.diagnostic or ""), true)
+    end
     Dibs.AceGUI.AddTable(shell, tabs, {
       { title = "Metric", width = 180, tooltip = "Summary field." },
       { title = "Value", width = 280, tooltip = "Current value." },

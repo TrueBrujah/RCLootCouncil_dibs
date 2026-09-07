@@ -756,7 +756,8 @@ function Dibs.OfficerUI.BuildStatusText(selectedSeason)
     "Seasons: " .. tostring(#seasons) .. " | Ledger transactions (all seasons): " .. tostring(overview.count) .. "\n" ..
     "Rank transitions: " .. tostring(rankDiagnostics.playersWithRankTransitions) .. "/" .. tostring(rankDiagnostics.totalPlayersInLedger) .. " players\n" ..
     "Standalone admins: " .. tostring(adminCount) .. " (events: " .. tostring(#(permissions.adminEvents or {})) .. ")\n" ..
-    "Role: " .. tostring(Dibs.Permissions and Dibs.Permissions.GetRole() or "player")
+    "Role: " .. tostring(Dibs.Permissions and Dibs.Permissions.GetRole() or "player") .. "\n" ..
+    "RCLootCouncil: " .. tostring(Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetAvailability and Dibs.RCLootCouncil.GetAvailability() or "absent")
 end
 
 local function splitPipeLine(line, expected)
