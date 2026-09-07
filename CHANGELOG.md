@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.2-dev - 2026-09-06
+
+- Declare the `ProtectedActions` and `PreDibs` namespaces before Core's early
+  guards and commands access them.
+- Replace deprecated global item APIs with the current `C_Item` APIs, while
+  preserving asynchronous item loading and test coverage.
+- Remove the deprecated `InterfaceOptions_AddCategory` fallback for the Retail
+  Settings registration path.
+- Keep the legacy Encounter Journal loot-scroll probe dynamic so it remains an
+  optional compatibility path without claiming an unsupported frame field.
+
 ## 0.2.1-dev - 2026-09-06
 
 - Initialize the shared `Dibs.Permissions` namespace in `Core.lua` so static

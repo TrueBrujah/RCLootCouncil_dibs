@@ -52,8 +52,8 @@ local function submitPublicPreDib(rawItem)
   end
 
   local itemName = "Item " .. tostring(itemID)
-  if type(GetItemInfo) == "function" then
-    local _, link = GetItemInfo(itemID)
+  if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+    local _, link = C_Item.GetItemInfo(itemID)
     itemName = link or itemName
   end
 

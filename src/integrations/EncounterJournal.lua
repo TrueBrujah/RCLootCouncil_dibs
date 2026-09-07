@@ -33,8 +33,8 @@ local function extractItemFromLink(link)
   if type(link) ~= "string" then return nil, nil end
   local itemID = tonumber(link:match("item:(%d+)"))
   local itemName = link
-  if type(GetItemInfo) == "function" then
-    local name = GetItemInfo(link)
+  if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+    local name = C_Item.GetItemInfo(link)
     if name then itemName = name end
   end
   return itemID, itemName
@@ -282,8 +282,8 @@ local function collectExtendedItemFacts(item)
   local itemID = tonumber(item.itemID)
   local itemLink = item.itemLink
 
-  if type(GetItemInfo) == "function" then
-    local ok, name, link, quality, iLevel, reqLevel, itemClass, itemSubClass, maxStack, equipLoc, icon, sellPrice, classID, subClassID, bindType, expacID, setID, isCraftingReagent = pcall(GetItemInfo, itemLink or itemID)
+  if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+    local ok, name, link, quality, iLevel, reqLevel, itemClass, itemSubClass, maxStack, equipLoc, icon, sellPrice, classID, subClassID, bindType, expacID, setID, isCraftingReagent = pcall(C_Item.GetItemInfo, itemLink or itemID)
     if ok then
       facts.name = name
       facts.link = link
@@ -324,8 +324,8 @@ local function inferItemSubCategory(item, tooltipLines)
   local equipLoc = ""
   local classID = nil
   local subClassID = nil
-  if itemID and type(GetItemInfoInstant) == "function" then
-    local _, cName, scName, eLoc, _, cID, scID = GetItemInfoInstant(itemID)
+  if itemID and type(C_Item) == "table" and type(C_Item.GetItemInfoInstant) == "function" then
+    local _, cName, scName, eLoc, _, cID, scID = C_Item.GetItemInfoInstant(itemID)
     className = safeLower(cName)
     subClassName = safeLower(scName)
     equipLoc = safeLower(eLoc)
@@ -403,8 +403,8 @@ local function buildItemDebugDetails(item)
   end
 
   local itemID = tonumber(item.itemID)
-  if type(GetItemInfoInstant) == "function" then
-    local _, cName, scName, eLoc, _, cID, scID = GetItemInfoInstant(itemID)
+  if type(C_Item) == "table" and type(C_Item.GetItemInfoInstant) == "function" then
+    local _, cName, scName, eLoc, _, cID, scID = C_Item.GetItemInfoInstant(itemID)
     details.className = tostring(cName or "")
     details.subClassName = tostring(scName or "")
     details.equipLoc = tostring(eLoc or "")
@@ -522,7 +522,10 @@ local function getLootScrollButtons()
     addFromChildren(container.ScrollTarget)
   end
 
-  scanContainer(info.lootScroll)
+  -- `lootScroll` is a legacy implementation detail and is intentionally not
+  -- part of the current Encounter Journal frame contract. Keep the optional
+  -- probe dynamic so current API annotations do not treat it as guaranteed.
+  scanContainer(info["lootScroll"])
   scanContainer(info.lootContainer)
   scanContainer(info.LootContainer)
   scanContainer(info.lootFrame)
@@ -544,8 +547,8 @@ local function getLootButtonItem(button)
       return fromButton
     end
 
-    if type(GetItemInfoInstant) == "function" and tonumber(id) then
-      local _, _, _, equipLoc, _, classID = GetItemInfoInstant(tonumber(id))
+    if type(C_Item) == "table" and type(C_Item.GetItemInfoInstant) == "function" and tonumber(id) then
+      local _, _, _, equipLoc, _, classID = C_Item.GetItemInfoInstant(tonumber(id))
       if type(equipLoc) == "string" and equipLoc ~= "" then
         return equipLoc
       end

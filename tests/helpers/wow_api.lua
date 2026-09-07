@@ -182,6 +182,13 @@ function M.install(opts)
     return entry.name
   end
 
+  -- Retail exposes item metadata through C_Item. Keep the legacy globals above
+  -- as fixtures for older tests, but make the current API available to addon code.
+  _G.C_Item = {
+    GetItemInfo = _G.GetItemInfo,
+    GetItemInfoInstant = _G.GetItemInfoInstant,
+  }
+
   _G.Item = {
     CreateFromItemID = function(itemID)
       local id = tonumber(itemID)
@@ -261,6 +268,7 @@ function M.resetGlobals()
   _G.RCLootCouncil = nil
   _G.LibStub = nil
   _G.Item = nil
+  _G.C_Item = nil
   _G.C_Timer = nil
   _G.__dibsMessages = nil
   _G.__sentChatMessages = nil

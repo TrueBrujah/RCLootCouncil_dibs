@@ -11,10 +11,12 @@ _G.Dibs = Dibs
 -- the ordered module list reaches it; initializing it here is intentionally
 -- side-effect free and preserves an existing table during reloads.
 Dibs.Permissions = Dibs.Permissions or {}
+Dibs.ProtectedActions = Dibs.ProtectedActions or {}
+Dibs.PreDibs = Dibs.PreDibs or {}
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.2.1-dev"
+Dibs.VERSION = "0.2.2-dev"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
 Dibs.SAVED_VARIABLE_NAME = "RCLootCouncil_dibsDB"
@@ -840,11 +842,10 @@ function Dibs.RegisterOptionsPanel()
     end
   end)
 
-  if _G.Settings and _G.Settings.RegisterCanvasLayoutCategory then
+  if _G.Settings and type(_G.Settings.RegisterCanvasLayoutCategory) == "function"
+    and type(_G.Settings.RegisterAddOnCategory) == "function" then
     local category = _G.Settings.RegisterCanvasLayoutCategory(panel, panel.name)
     _G.Settings.RegisterAddOnCategory(category)
-  elseif _G.InterfaceOptions_AddCategory then
-    _G.InterfaceOptions_AddCategory(panel)
   end
 
   _G.DibsOptionsPanel = panel

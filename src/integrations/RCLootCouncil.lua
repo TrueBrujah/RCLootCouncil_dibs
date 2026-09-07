@@ -213,8 +213,8 @@ local function collectItemTypeCandidates(itemID, responseType)
   end
 
   local targetItem = tonumber(itemID)
-  if targetItem and type(GetItemInfoInstant) == "function" then
-    local _, itemClassName, itemSubClassName, equipLoc, _, classID, subClassID = GetItemInfoInstant(targetItem)
+  if targetItem and type(C_Item) == "table" and type(C_Item.GetItemInfoInstant) == "function" then
+    local _, itemClassName, itemSubClassName, equipLoc, _, classID, subClassID = C_Item.GetItemInfoInstant(targetItem)
     addTypeCandidate(values, seen, equipLoc)
     addTypeCandidate(values, seen, itemClassName)
     addTypeCandidate(values, seen, itemSubClassName)

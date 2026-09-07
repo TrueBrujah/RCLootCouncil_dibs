@@ -37,8 +37,8 @@ function Dibs.LootPipeline.ResolveItem(input, callback)
   local fromLink = tonumber(token:match("item:(%d+)"))
   local fromNumber = tonumber(token:match("^(%d+)$"))
   local itemID = tonumber(fromLink or fromNumber)
-  if (not itemID or itemID <= 0) and type(GetItemInfo) == "function" then
-    local _, guessedLink = GetItemInfo(token)
+  if (not itemID or itemID <= 0) and type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+    local _, guessedLink = C_Item.GetItemInfo(token)
     if type(guessedLink) == "string" then
       itemID = tonumber(guessedLink:match("item:(%d+)"))
     end
@@ -52,8 +52,8 @@ function Dibs.LootPipeline.ResolveItem(input, callback)
     local itemName = name
     local itemLink = link
 
-    if (itemName == nil or itemName == "") and type(GetItemInfo) == "function" then
-      local liveName, liveLink = GetItemInfo(itemID)
+    if (itemName == nil or itemName == "") and type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+      local liveName, liveLink = C_Item.GetItemInfo(itemID)
       itemName = liveName or itemName
       itemLink = liveLink or itemLink
     end
@@ -75,12 +75,8 @@ function Dibs.LootPipeline.ResolveItem(input, callback)
     done({ itemID = itemID, itemName = itemName, itemLink = itemLink }, nil)
   end
 
-  if type(GetItemInfoInstant) == "function" then
-    local instantName = select(1, GetItemInfoInstant(itemID))
-    local instantLink = nil
-    if type(GetItemInfo) == "function" then
-      instantLink = select(2, GetItemInfo(itemID))
-    end
+  if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+    local instantName, instantLink = C_Item.GetItemInfo(itemID)
     if instantName or instantLink then
       finalize(instantName, instantLink)
       return true
@@ -92,8 +88,8 @@ function Dibs.LootPipeline.ResolveItem(input, callback)
     if ok and type(itemObject) == "table" and type(itemObject.ContinueOnItemLoad) == "function" then
       itemObject:ContinueOnItemLoad(function()
         local loadedName, loadedLink = nil, nil
-        if type(GetItemInfo) == "function" then
-          loadedName, loadedLink = GetItemInfo(itemID)
+        if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+          loadedName, loadedLink = C_Item.GetItemInfo(itemID)
         end
         finalize(loadedName, loadedLink)
       end)
