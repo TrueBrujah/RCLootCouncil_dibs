@@ -1,0 +1,71 @@
+name: Package RCLootCouncil_dibs
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Build WoW addon package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Read addon metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^## Version: //p' src/RCLootCouncil_dibs.toc | head -n 1 | tr -d '\r')"
+          if [[ -z "$version" ]]; then
+            echo "Could not read ## Version from src/RCLootCouncil_dibs.toc" >&2
+            exit 1
+          fi
+          short_sha="${GITHUB_SHA:0:7}"
+          package_name="RCLootCouncil_dibs-${version}-${GITHUB_REF_NAME}-${short_sha}"
+          {
+            echo "version=$version"
+            echo "package_name=$package_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build package
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/$PACKAGE_NAME/RCLootCouncil_dibs"
+          mkdir -p "$staging"
+          cp -a src/. "$staging/"
+
+          test -f "$staging/RCLootCouncil_dibs.toc"
+          test -f "$staging/media/RCLootCouncil_Dibs_Logo.tga"
+
+          package_zip="$GITHUB_WORKSPACE/$PACKAGE_NAME.zip"
+          (
+            cd "$RUNNER_TEMP/$PACKAGE_NAME"
+            zip -X -r "$package_zip" RCLootCouncil_dibs >/dev/null
+          )
+          sha256sum "$package_zip" > "$package_zip.sha256"
+
+          echo "Created $package_zip"
+          unzip -Z1 "$package_zip" | grep -Fx 'RCLootCouncil_dibs/RCLootCouncil_dibs.toc'
+          unzip -Z1 "$package_zip" | grep -Fx 'RCLootCouncil_dibs/media/RCLootCouncil_Dibs_Logo.tga'
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.metadata.outputs.package_name }}
+          path: |
+            ${{ steps.metadata.outputs.package_name }}.zip
+            ${{ steps.metadata.outputs.package_name }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 90

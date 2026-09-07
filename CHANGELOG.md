@@ -5,6 +5,8 @@
 - Add the RCLootCouncil Dibs logo to the addon metadata and AceGUI windows.
 - Package a WoW-compatible 128px texture while retaining the original PNG in
   `docs/assets` for CurseForge and project documentation.
+- Add a GitHub Actions workflow that packages `dev` and `main` pushes as
+  verified ZIP artifacts with a SHA-256 checksum.
 
 ## 0.3.3-dev - 2026-09-07
 
