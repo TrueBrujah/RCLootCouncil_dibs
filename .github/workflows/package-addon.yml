@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Read addon metadata
         id: metadata
@@ -61,7 +61,7 @@ jobs:
           unzip -Z1 "$package_zip" | grep -Fx 'RCLootCouncil_dibs/media/RCLootCouncil_Dibs_Logo.tga'
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.metadata.outputs.package_name }}
           path: |
