@@ -9,6 +9,8 @@
   verified ZIP artifacts with a SHA-256 checksum.
 - Update the packaging actions to Node.js 24-compatible releases and remove
   the GitHub Actions Node.js 20 deprecation warning.
+- Publish versioned tags as GitHub Releases with the addon ZIP and checksum so
+  users can download tagged builds from the repository's Releases page.
 
 ## 0.3.3-dev - 2026-09-07
 

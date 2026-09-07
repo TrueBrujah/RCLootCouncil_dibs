@@ -1,0 +1,89 @@
+name: Release RCLootCouncil_dibs
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish tagged WoW addon release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+
+      - name: Read addon metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^## Version: //p' src/RCLootCouncil_dibs.toc | head -n 1 | tr -d '\r')"
+          tag="$GITHUB_REF_NAME"
+          if [[ -z "$version" ]]; then
+            echo "Could not read ## Version from src/RCLootCouncil_dibs.toc" >&2
+            exit 1
+          fi
+          if [[ "$tag" != "v$version" && "$tag" != "v$version."* ]]; then
+            echo "Tag $tag does not match addon version $version" >&2
+            exit 1
+          fi
+          package_name="RCLootCouncil_dibs-$tag"
+          {
+            echo "version=$version"
+            echo "package_name=$package_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build release package
+        shell: bash
+        env:
+          PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
+        run: |
+          set -euo pipefail
+          staging="$RUNNER_TEMP/$PACKAGE_NAME/RCLootCouncil_dibs"
+          mkdir -p "$staging"
+          cp -a src/. "$staging/"
+
+          test -f "$staging/RCLootCouncil_dibs.toc"
+          test -f "$staging/media/RCLootCouncil_Dibs_Logo.tga"
+
+          package_zip="$GITHUB_WORKSPACE/$PACKAGE_NAME.zip"
+          (
+            cd "$RUNNER_TEMP/$PACKAGE_NAME"
+            zip -X -r "$package_zip" RCLootCouncil_dibs >/dev/null
+          )
+          sha256sum "$package_zip" > "$package_zip.sha256"
+
+          unzip -Z1 "$package_zip" | grep -Fx 'RCLootCouncil_dibs/RCLootCouncil_dibs.toc'
+          unzip -Z1 "$package_zip" | grep -Fx 'RCLootCouncil_dibs/media/RCLootCouncil_Dibs_Logo.tga'
+          echo "Created $package_zip"
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ steps.metadata.outputs.package_name }}
+        run: |
+          set -euo pipefail
+          package_zip="$GITHUB_WORKSPACE/$PACKAGE_NAME.zip"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$package_zip" "$package_zip.sha256" --clobber
+          else
+            release_args=(
+              "$GITHUB_REF_NAME"
+              "$package_zip"
+              "$package_zip.sha256"
+              --title "RCLootCouncil_dibs $GITHUB_REF_NAME"
+              --generate-notes
+            )
+            if [[ "$GITHUB_REF_NAME" == *-dev* || "$GITHUB_REF_NAME" == *-rc* ]]; then
+              release_args+=(--prerelease)
+            fi
+            gh release create "${release_args[@]}"
+          fi
