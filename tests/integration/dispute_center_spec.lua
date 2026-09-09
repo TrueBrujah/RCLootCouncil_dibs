@@ -117,6 +117,44 @@ describe("Dispute center", function()
     assert_not_nil(officer.disputeSearchBox)
   end)
 
+  it("corrects a wrong item or player with an auditable target change", function()
+    local dibs, season = setup({ guildLeader = true })
+    local original = dibs.Ledger.AddTransaction(fixtures.transaction("Tester-Realm", season.id, {
+      transactionId = "tx-target-correction",
+      itemID = 19019,
+      itemLink = "|Hitem:19019::::::::::::|h[Old Item]|h|r",
+    }))
+    local oldBalance = dibs.Ledger.GetBalance("Tester-Realm", season.id)
+    local newBalance = dibs.Ledger.GetBalance("Recipient-Realm", season.id)
+    local request, requestReason = dibs.Disputes.CreateReport({
+      category = "wrong_item_player",
+      transactionRef = original.transactionId,
+      note = "The award was recorded against the wrong player and item.",
+    })
+    assert_not_nil(request, tostring(requestReason))
+    local result, reason = dibs.Disputes.Resolve(request.requestId, "correct_target", {
+      confirmed = true,
+      reason = "Officer verified the award history.",
+      playerName = "Recipient-Realm",
+      itemLink = "|Hitem:19020::::::::::::|h[Correct Item]|h|r",
+    }, nil)
+    assert_true(result and result.ok, tostring(reason))
+    assert_true(result.changedBalance)
+    assert_equal("Resolved", result.request.status)
+    assert_equal("Recipient-Realm", result.request.targetCorrection.correctedPlayer)
+    assert_equal(19020, result.request.targetCorrection.correctedItemID)
+    assert_equal(oldBalance + 1, dibs.Ledger.GetBalance("Tester-Realm", season.id))
+    assert_equal(newBalance - 1, dibs.Ledger.GetBalance("Recipient-Realm", season.id))
+    local replay, replayReason = dibs.Disputes.Resolve(request.requestId, "correct_target", {
+      confirmed = true,
+      reason = "Officer verified the award history.",
+      playerName = "Recipient-Realm",
+      itemLink = "|Hitem:19020::::::::::::|h[Correct Item]|h|r",
+    }, nil)
+    assert_nil(replay)
+    assert_equal("REQUEST_ALREADY_RESOLVED", replayReason)
+  end)
+
   it("routes advanced corrections through protected ledger actions", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     for _, action in ipairs({ "refund", "revoke", "historical_import", "adjustment" }) do

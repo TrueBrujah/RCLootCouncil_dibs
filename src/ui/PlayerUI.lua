@@ -292,9 +292,14 @@ local function createAceWindow()
 
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
-    Dibs.AceGUI.AddButton(shell, tabs, "RCLootCouncil - Dibs options", function() Dibs.RCOptions.Open() end, 240)
     local summary = Dibs.PlayerUI.GetSummary()
     if self.playerTab == "requests" then
+      -- Keep the report form, request list and details in one bounded page so
+      -- the lower controls remain reachable on smaller screens.
+      local tabs = Dibs.AceGUI.AddScrollableList(shell, tabs, 535) or tabs
+      Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Player reports and request history.")
+      local toolbar = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+      Dibs.AceGUI.AddButton(shell, toolbar, "Open shared options", function() Dibs.RCOptions.Open() end, 170)
       Dibs.AceGUI.AddHeader(shell, tabs, "Report a problem", "Report a Dibs or loot history problem and follow its resolution.")
       Dibs.AceGUI.AddLabel(shell, tabs, "My review requests", true)
       local categories = sortedLabels(Dibs.Disputes and Dibs.Disputes.GetCategories and Dibs.Disputes.GetCategories() or { other = "Other" })
@@ -409,6 +414,9 @@ local function createAceWindow()
       end
       return
     end
+    Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Player controls and personal history.")
+    local toolbar = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+    Dibs.AceGUI.AddButton(shell, toolbar, "Open shared options", function() Dibs.RCOptions.Open() end, 170)
     if self.playerTab == "history" then
       Dibs.AceGUI.AddLabel(shell, tabs, "History (condensed)", true)
       Dibs.AceGUI.AddButton(shell, tabs, "Report a problem", function()

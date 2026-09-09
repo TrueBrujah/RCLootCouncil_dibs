@@ -57,6 +57,7 @@ L.READINESS_NOT_CHECKED = "Lancez la verification pour voir l'environnement actu
 L.READINESS_GUILD_ADMIN_REQUIRED = "Seul le maitre de guilde ou un officier verifie peut lancer cette verification."
 L.READINESS_DRY_RUN_NO_CHANGES = "Simulation terminee. Aucun loot, chat, registre ou etat RCLootCouncil n'a ete modifie."
 L.DISPUTE_ACTION_CORRECT = "Corriger le solde"
+L.DISPUTE_ACTION_CORRECT_TARGET = "Corriger l'objet ou le joueur"
 L.DISPUTE_ACTION_NO_CORRECTION = "Aucune correction"
 L.DISPUTE_ACTION_ASK_INFORMATION = "Demander des informations"
 L.DISPUTE_ACTION_DUPLICATE = "Marquer comme doublon"

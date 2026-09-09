@@ -56,6 +56,7 @@ L.READINESS_NOT_CHECKED = "Run the readiness check to inspect the current enviro
 L.READINESS_GUILD_ADMIN_REQUIRED = "Only a verified guild master or officer may run this administrative check."
 L.READINESS_DRY_RUN_NO_CHANGES = "Dry-run complete. No live loot, chat, ledger, or RCLootCouncil state was changed."
 L.DISPUTE_ACTION_CORRECT = "Correct balance"
+L.DISPUTE_ACTION_CORRECT_TARGET = "Correct item or player"
 L.DISPUTE_ACTION_NO_CORRECTION = "No correction"
 L.DISPUTE_ACTION_ASK_INFORMATION = "Ask for information"
 L.DISPUTE_ACTION_DUPLICATE = "Mark duplicate"

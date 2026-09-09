@@ -33,6 +33,7 @@ Disputes.STATUSES = {
 
 Disputes.ACTIONS = {
   CORRECT_BALANCE = "correct_balance",
+  CORRECT_TARGET = "correct_target",
   NO_CORRECTION = "no_correction",
   ASK_INFORMATION = "ask_information",
   DUPLICATE = "duplicate",
@@ -454,6 +455,7 @@ end
 function Disputes.GetActionLabels()
   return {
     correct_balance = text("DISPUTE_ACTION_CORRECT", "Correct balance"),
+    correct_target = text("DISPUTE_ACTION_CORRECT_TARGET", "Correct item or player"),
     no_correction = text("DISPUTE_ACTION_NO_CORRECTION", "No correction"),
     ask_information = text("DISPUTE_ACTION_ASK_INFORMATION", "Ask for information"),
     duplicate = text("DISPUTE_ACTION_DUPLICATE", "Mark duplicate"),
@@ -684,6 +686,175 @@ local function correctionDetails(request, action, options)
   }
 end
 
+local function parseItemID(value)
+  return tonumber(tostring(value or ""):match("item:(%d+)"))
+end
+
+-- Target corrections are deliberately separate from balance corrections.  The
+-- original evidence and ledger rows remain immutable; the request records the
+-- corrected item/player and, when a linked ledger entry exists, appends a
+-- balanced transfer between the old and new player.
+local function targetCorrectionDetails(request, options)
+  options = options or {}
+  local evidence = primaryEvidence(request) or {}
+  local original = evidence.transactionRef and findTransaction(evidence.transactionRef) or nil
+  local targetPlayer = bounded(options.playerName or options.correctPlayer or options.targetPlayer, 80)
+  local targetItem = bounded(options.itemLink or options.itemName or options.item, 180)
+  local targetItemID = tonumber(options.itemID or options.itemId or options.correctItemID or options.targetItemID)
+  local linkedItemID = parseItemID(targetItem)
+  if not targetItemID and tonumber(targetItem) then targetItemID = tonumber(targetItem) end
+  if not targetItemID and linkedItemID then targetItemID = linkedItemID end
+  if targetItemID and linkedItemID and targetItemID ~= linkedItemID then return nil, "CORRECTION_ITEM_MISMATCH" end
+  if targetPlayer == "" then targetPlayer = nil end
+  if targetItem == "" then targetItem = nil end
+  if not targetPlayer and not targetItemID and not targetItem then return nil, "CORRECTION_TARGET_REQUIRED" end
+
+  local oldPlayer = original and original.playerName or evidence.winner or (request.player and request.player.name)
+  local playerChanged = targetPlayer and not samePlayer(targetPlayer, oldPlayer) or false
+  local itemChanged = (targetItemID and tonumber(targetItemID) ~= tonumber(evidence.itemID))
+    or (targetItem and tostring(targetItem) ~= tostring(evidence.item or ""))
+  if not playerChanged and not itemChanged then return nil, "CORRECTION_NO_CHANGE" end
+
+  local amount = original and tonumber(original.amount or original.quantityDelta) or nil
+  if amount == 0 then amount = nil end
+  return {
+    evidence = evidence,
+    original = original,
+    oldPlayer = oldPlayer,
+    targetPlayer = targetPlayer,
+    targetItem = targetItem,
+    targetItemID = targetItemID,
+    playerChanged = playerChanged,
+    itemChanged = itemChanged == true,
+    transferAmount = playerChanged and amount or nil,
+  }
+end
+
+local function applyTargetCorrection(request, action, actor, options)
+  options = type(options) == "table" and options or {}
+  if options.confirmed ~= true and options.confirmation ~= true then return nil, "CONFIRMATION_REQUIRED" end
+  local reason = requireReason(options)
+  if not reason then return nil, "REASON_REQUIRED" end
+  local details, detailReason = targetCorrectionDetails(request, options)
+  if not details then return nil, detailReason end
+
+  local key = table.concat({
+    request.requestId,
+    tostring(details.evidence.evidenceId or "unknown"),
+    action,
+    tostring(details.targetPlayer or ""),
+    tostring(details.targetItemID or ""),
+    tostring(details.targetItem or ""),
+  }, "|")
+  local state = ensureState()
+  local existing = state.corrections[key]
+  if existing then
+    return {
+      ok = true,
+      idempotentReplay = true,
+      request = copy(request),
+      transactions = copy(type(existing) == "table" and existing.transactions or nil),
+      changedBalance = type(existing) == "table" and existing.changedBalance == true or false,
+    }
+  end
+
+  local transactionIds = {}
+  if details.playerChanged and details.transferAmount and details.oldPlayer and details.targetPlayer then
+    if not Dibs.ProtectedActions or type(Dibs.ProtectedActions.Execute) ~= "function" then return nil, "PROTECTED_ACTION_UNAVAILABLE" end
+    local common = {
+      amount = details.transferAmount,
+      source = "dispute-center",
+      seasonId = request.attachedContext and request.attachedContext.seasonId
+        or request.seasonId
+        or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()),
+      reviewRequestId = request.requestId,
+      evidenceId = details.evidence.evidenceId,
+      originalTransactionId = details.original and details.original.transactionId or details.evidence.transactionRef,
+      correctionKey = key,
+      confirmation = true,
+      itemID = details.targetItemID or details.evidence.itemID,
+      itemLink = details.targetItem or details.evidence.item,
+    }
+    local reversePayload = copy(common)
+    reversePayload.playerName = details.oldPlayer
+    reversePayload.amount = -details.transferAmount
+    reversePayload.reason = "Review " .. request.requestId .. ": return delta from incorrect player - " .. reason
+    local reverse = Dibs.ProtectedActions.Execute("ledger.adjust", actor, reversePayload)
+    if not reverse or reverse.ok ~= true or not reverse.value then
+      return nil, reverse and (reverse.reasonCode or reverse.diagnostic) or "TARGET_TRANSFER_FAILED"
+    end
+    table.insert(transactionIds, reverse.value.transactionId)
+
+    local applyPayload = copy(common)
+    applyPayload.playerName = details.targetPlayer
+    applyPayload.reason = "Review " .. request.requestId .. ": apply delta to corrected player - " .. reason
+    local applied = Dibs.ProtectedActions.Execute("ledger.adjust", actor, applyPayload)
+    if not applied or applied.ok ~= true or not applied.value then
+      -- Restore the original balance if the second append is rejected.  This
+      -- keeps a failed transfer from silently leaving the old player short.
+      local rollback = copy(common)
+      rollback.playerName = details.oldPlayer
+      rollback.amount = details.transferAmount
+      rollback.reason = "Review " .. request.requestId .. ": rollback incomplete target correction"
+      rollback.correctionKey = key .. ":rollback"
+      Dibs.ProtectedActions.Execute("ledger.adjust", actor, rollback)
+      return nil, applied and (applied.reasonCode or applied.diagnostic) or "TARGET_TRANSFER_FAILED"
+    end
+    table.insert(transactionIds, applied.value.transactionId)
+  end
+
+  local evidence = details.evidence
+  if details.itemChanged then
+    evidence.originalItemID = evidence.originalItemID or evidence.itemID
+    evidence.originalItem = evidence.originalItem or evidence.item
+    if details.targetItemID then evidence.itemID = details.targetItemID end
+    if details.targetItem then evidence.item = details.targetItem end
+  end
+  if details.playerChanged then
+    evidence.originalWinner = evidence.originalWinner or evidence.winner
+    evidence.winner = details.targetPlayer
+  end
+  request.targetCorrection = {
+    correctedPlayer = details.playerChanged and details.targetPlayer or nil,
+    correctedItemID = details.itemChanged and details.targetItemID or nil,
+    correctedItem = details.itemChanged and details.targetItem or nil,
+    originalPlayer = details.playerChanged and details.oldPlayer or nil,
+    originalItemID = details.itemChanged and (evidence.originalItemID or evidence.itemID) or nil,
+    originalItem = details.itemChanged and (evidence.originalItem or evidence.item) or nil,
+    transactionIds = copy(transactionIds),
+  }
+  local previous = request.status
+  request.status = Disputes.STATUSES.RESOLVED
+  if #transactionIds > 0 then request.correctionTransactionId = transactionIds[1] end
+  request.resolution = {
+    action = action,
+    actorId = identity(actor) or localIdentity(),
+    createdAt = now(),
+    reason = reason,
+    changedBalance = #transactionIds > 0,
+    transactionIds = copy(transactionIds),
+    targetCorrection = copy(request.targetCorrection),
+  }
+  state.corrections[key] = {
+    transactions = copy(transactionIds),
+    changedBalance = #transactionIds > 0,
+  }
+  audit(request, action, actor, previous, request.status, reason, {
+    correctedPlayer = request.targetCorrection.correctedPlayer,
+    correctedItemID = request.targetCorrection.correctedItemID,
+    correctedItem = request.targetCorrection.correctedItem,
+    originalPlayer = request.targetCorrection.originalPlayer,
+    originalItemID = request.targetCorrection.originalItemID,
+    transferTransactions = copy(transactionIds),
+  })
+  return {
+    ok = true,
+    request = copy(request),
+    transactions = copy(transactionIds),
+    changedBalance = #transactionIds > 0,
+  }
+end
+
 local function applyCorrection(request, action, actor, options)
   options = type(options) == "table" and options or {}
   if options.confirmed ~= true and options.confirmation ~= true then return nil, "CONFIRMATION_REQUIRED" end
@@ -763,6 +934,9 @@ function Disputes.Resolve(requestId, action, options, actor)
   then
     return applyCorrection(request, action, actor, options)
   end
+  if action == Disputes.ACTIONS.CORRECT_TARGET then
+    return applyTargetCorrection(request, action, actor, options)
+  end
   if action == Disputes.ACTIONS.NO_CORRECTION then
     local explanation = requireReason(options)
     if not explanation then return nil, "REASON_REQUIRED" end
@@ -823,6 +997,10 @@ function Disputes.CorrectBalance(requestId, options, actor)
   return Disputes.Resolve(requestId, Disputes.ACTIONS.CORRECT_BALANCE, options, actor)
 end
 
+function Disputes.CorrectTarget(requestId, options, actor)
+  return Disputes.Resolve(requestId, Disputes.ACTIONS.CORRECT_TARGET, options, actor)
+end
+
 function Disputes.Reopen(requestId, reason, actor)
   return Disputes.Resolve(requestId, Disputes.ACTIONS.REOPEN, { reason = reason }, actor)
 end
@@ -854,6 +1032,12 @@ function Disputes.BuildSafeView(request)
     reason = request.resolution.reason,
     changedBalance = request.resolution.changedBalance == true,
     createdAt = request.resolution.createdAt,
+    targetCorrection = request.resolution.targetCorrection and {
+      correctedItemID = request.resolution.targetCorrection.correctedItemID,
+      correctedItem = request.resolution.targetCorrection.correctedItem,
+      correctedPlayer = isLocalIdentity(request.resolution.targetCorrection.correctedPlayer)
+        and request.resolution.targetCorrection.correctedPlayer or nil,
+    } or nil,
   } or nil
   return {
     requestId = request.requestId,
@@ -918,6 +1102,11 @@ function Disputes.BuildReport(requestId, scope, actor)
     "Evidence confidence: " .. tostring(evidence.confidence or "unavailable"),
     "Resolution: " .. tostring(view.resolution and view.resolution.reason or "pending"),
   }
+  if view.resolution and view.resolution.targetCorrection then
+    local target = view.resolution.targetCorrection
+    table.insert(lines, "Corrected item: " .. tostring(target.correctedItem or target.correctedItemID or "unchanged"))
+    table.insert(lines, "Corrected player: " .. tostring(target.correctedPlayer or "unchanged"))
+  end
   if scope == "officer" then
     table.insert(lines, "Timeline events: " .. tostring(#(view.timeline or {})))
   end

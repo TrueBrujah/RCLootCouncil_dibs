@@ -167,6 +167,28 @@ function Adapter.AddHeader(shell, parent, text, description)
   return Adapter.AddTooltip(header, text, description)
 end
 
+-- A titled section keeps related controls together while still allowing the
+-- parent page to use a simple vertical layout.  InlineGroup is part of AceGUI
+-- on Retail; the SimpleGroup fallback keeps the same layout in reduced test
+-- or standalone environments.
+function Adapter.AddSection(shell, parent, title, description)
+  local section = Adapter.Create(shell, "InlineGroup", parent)
+  if not section then section = Adapter.Create(shell, "SimpleGroup", parent) end
+  if not section then return parent end
+  call(section, "SetFullWidth", true)
+  call(section, "SetLayout", "Flow")
+  if title and title ~= "" then call(section, "SetTitle", tostring(title)) end
+  return Adapter.AddTooltip(section, title, description)
+end
+
+function Adapter.AddInlineGroup(shell, parent)
+  local group = Adapter.Create(shell, "SimpleGroup", parent)
+  if not group then return parent end
+  call(group, "SetFullWidth", true)
+  call(group, "SetLayout", "Flow")
+  return group
+end
+
 function Adapter.AddLabel(shell, parent, text, fullWidth)
   local label = Adapter.Create(shell, "Label", parent)
   if not label then return nil end
@@ -205,11 +227,24 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions)
   local headers = {}
   for _, column in ipairs(columns or {}) do table.insert(headers, column.title or "") end
   Adapter.AddHeader(shell, scroll, formatRow(headers), "Hover the column names for details.")
+  local totalWidth = 0
+  for _, column in ipairs(columns or {}) do totalWidth = totalWidth + (tonumber(column.width) or 100) end
   for _, row in ipairs(rows or {}) do
-    Adapter.AddLabel(shell, scroll, formatRow(row), true)
+    local rowGroup = rowActions and Adapter.Create(shell, "SimpleGroup", scroll) or nil
+    if rowGroup then
+      call(rowGroup, "SetFullWidth", true)
+      call(rowGroup, "SetLayout", "Flow")
+    end
+    local rowParent = rowGroup or scroll
+    local label = Adapter.AddLabel(shell, rowParent, formatRow(row), not rowGroup)
+    if rowGroup and label then
+      local available = rowGroup.frame and rowGroup.frame.GetWidth and rowGroup.frame:GetWidth() or 0
+      local labelWidth = math.max(260, (available > 0 and available or math.min(totalWidth, 760)) - 96)
+      call(label, "SetWidth", labelWidth)
+    end
     if rowActions then
       local action = rowActions(row)
-      if action then Adapter.AddButton(shell, scroll, action.text or "Action", action.callback, 90) end
+      if action then Adapter.AddButton(shell, rowParent, action.text or "Action", action.callback, 86) end
     end
   end
   return scroll

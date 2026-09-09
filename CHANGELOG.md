@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.8-dev - 2026-09-09
+
+- Improve the Player and Officer review pages with bounded scrolling, titled
+  sections, compact queue rows, and grouped actions so details remain usable
+  on smaller screens.
+- Add a protected `Correct item or player` resolution for wrong-target reports.
+  The original evidence stays preserved, corrected metadata is recorded in the
+  audit timeline, and a linked player balance is transferred with two audited
+  ledger adjustments.
+
 ## 0.3.7-dev - 2026-09-09
 
 - Added the Officer Audit and Dispute Center: players can submit bounded,
