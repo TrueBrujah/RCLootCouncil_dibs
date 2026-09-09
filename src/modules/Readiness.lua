@@ -210,7 +210,9 @@ function Readiness.Evaluate(options)
   end
 
   local authority = isOfficer()
-  addProbe(result, "authority", authority and "ready" or "unavailable", authority and nil or "GUILD_ADMIN_REQUIRED",
+  local authorityReason
+  if not authority then authorityReason = "GUILD_ADMIN_REQUIRED" end
+  addProbe(result, "authority", authority and "ready" or "unavailable", authorityReason,
     authority and "This character can run detailed readiness checks." or "Only a guild master or officer can run detailed checks.",
     authority and "No action required." or "Ask a guild master or officer to run the administrative check.", false)
 
@@ -224,6 +226,7 @@ function Readiness.Evaluate(options)
   end
 
   local rcState = tostring(rcStatus.status or rcStatus.availability or "absent")
+  local projectionBlocked = false
   result.integrationStatus = "Unavailable"
   if mode == "STANDALONE" then
     addProbe(result, "rclootcouncil", "skipped", "RC_STANDALONE_MODE",
@@ -234,19 +237,28 @@ function Readiness.Evaluate(options)
       "RCLootCouncil is not available in this client session.",
       "Install and enable RCLootCouncil for live award integration; local Dibs remains usable.", false)
   elseif rcState ~= "operational" then
-    result.integrationStatus = "Blocked"
-    addProbe(result, "rclootcouncil", "blocked", rcStatus.reasonCode or "RC_STATUS_UNAVAILABLE",
-      "Live Dibs consumption is blocked until RCLootCouncil award provenance is verifiable.",
-      "Repair the RCLootCouncil Master Looter, callback, identity, or response configuration, then run the check again.", true)
+    if not context.inRaid and rcStatus.reasonCode == "RC_MASTER_LOOTER_UNVERIFIABLE" then
+      addProbe(result, "rclootcouncil", "unavailable", "NO_RAID_CONTEXT",
+        "RCLootCouncil is loaded, but no live Master Looter exists outside a loot session.",
+        "This is expected outside a raid; run the check again after entering the intended raid.", false)
+    else
+      result.integrationStatus = "Blocked"
+      addProbe(result, "rclootcouncil", "blocked", rcStatus.reasonCode or "RC_STATUS_UNAVAILABLE",
+        "Live Dibs consumption is blocked until RCLootCouncil award provenance is verifiable.",
+        "Repair the RCLootCouncil Master Looter, callback, identity, or response configuration, then run the check again.", true)
+    end
   else
     result.integrationStatus = "Ready"
-    addProbe(result, "rclootcouncil", "ready", rcStatus.reasonCode == "RC_OPERATIONAL" and nil or rcStatus.reasonCode,
+    local rcReason
+    if rcStatus.reasonCode ~= "RC_OPERATIONAL" then rcReason = rcStatus.reasonCode end
+    addProbe(result, "rclootcouncil", "ready", rcReason,
       "RCLootCouncil exposes the required live award capabilities.", "No action required.", true)
     if projectionReady(projection) then
       addProbe(result, "dib_response_projection", "ready", nil,
         "The configured Dibs response is visible in the active RCLootCouncil profile.", "No action required.", true)
     else
       result.integrationStatus = "Blocked"
+      projectionBlocked = true
       addProbe(result, "dib_response_projection", "blocked", "RC_RESPONSE_PROJECTION_UNAVAILABLE",
         "The Dibs response is not verifiable in the active RCLootCouncil profile.",
         "Open RCLootCouncil Master Looter > Buttons and Responses, then refresh the Dibs projection.", true)
@@ -265,7 +277,7 @@ function Readiness.Evaluate(options)
     addProbe(result, "raid_context", "unavailable", "NO_RAID_CONTEXT",
       "No raid group is active, so live-session checks cannot run yet.",
       "This is expected outside a raid; local administration and dry-run remain available.", false)
-    if result.integrationStatus == "Blocked" then
+    if projectionBlocked then
       -- A profile projection cannot be exercised without a live RC loot
       -- session. Keep this expected no-group context distinct from a broken
       -- production capability; the next in-raid check will validate it.
@@ -282,7 +294,9 @@ function Readiness.Evaluate(options)
   end
 
   local syncReady = Dibs.Sync and Dibs.Sync.transportRegistered == true
-  addProbe(result, "local_services", syncReady and "ready" or "degraded", syncReady and nil or "SYNC_TRANSPORT_UNAVAILABLE",
+  local syncReason
+  if not syncReady then syncReason = "SYNC_TRANSPORT_UNAVAILABLE" end
+  addProbe(result, "local_services", syncReady and "ready" or "degraded", syncReason,
     syncReady and "Local framework and synchronization services are available." or "The optional synchronization transport is unavailable.",
     syncReady and "No action required." or "Local Dibs checks remain available; repair Ace3 communication before cross-raid sync.", false)
 

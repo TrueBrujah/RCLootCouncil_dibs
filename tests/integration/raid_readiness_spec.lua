@@ -21,6 +21,9 @@ describe("Raid readiness", function()
     assert_equal("Unavailable", result.status)
     assert_true(result.freshnessMarker ~= nil)
     assert_true(#(result.probes or {}) >= 5)
+    for _, probe in ipairs(result.probes) do
+      if probe.state == "ready" then assert_nil(probe.reasonCode) end
+    end
     assert_true(dibs.Readiness.CanProcessLiveAward())
   end)
 
