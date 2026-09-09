@@ -176,7 +176,9 @@ npx --yes fengari tests/run.lua
 ```
 
 See [docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md) and
-[docs/RC_OPTIONS.md](docs/RC_OPTIONS.md) for focused validation steps.
+[docs/RC_OPTIONS.md](docs/RC_OPTIONS.md) for focused validation steps. The full
+[guild test plan](docs/TEST_PLAN.md) lists the manual scenarios, evidence to
+record, and future Curio/Tier Set/main-alt checks.
 
 ## Repository layout
 
