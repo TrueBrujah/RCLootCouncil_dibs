@@ -381,11 +381,13 @@ local function createAceWindow()
         if selected then
           Dibs.AceGUI.AddHeader(shell, tabs, "Request details", disputeStatusLabel(selected))
           local evidence = selected.evidence and selected.evidence[1] or {}
-          Dibs.AceGUI.AddLabel(shell, tabs, "Status: " .. tostring(selected.status) ..
-            "\nCategory: " .. tostring(selected.categoryLabel or selected.category) ..
-            "\nItem: " .. tostring(evidence.item or selected.attachedContext and selected.attachedContext.item or "Unavailable") ..
-            "\nEvidence: " .. tostring(evidence.source or "unavailable") ..
-            "\nNote: " .. tostring(selected.note or ""), true)
+          Dibs.AceGUI.AddPropertyTable(shell, tabs, {
+            { "Status", tostring(selected.status) },
+            { "Category", tostring(selected.categoryLabel or selected.category) },
+            { "Item", tostring(evidence.item or selected.attachedContext and selected.attachedContext.item or "Unavailable") },
+            { "Evidence", tostring(evidence.source or "unavailable") },
+            { "Note", tostring(selected.note or "") },
+          }, 180)
           if selected.question and selected.status == "Need information" then
             Dibs.AceGUI.AddLabel(shell, tabs, "Officer question: " .. tostring(selected.question), true)
             self.disputeReply = self.disputeReply or ""

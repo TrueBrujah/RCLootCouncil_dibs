@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.9-dev - 2026-09-09
+
+- Replace simulated text columns with real aligned AceGUI table cells and
+  responsive widths so request lists, timelines, and detail views remain easy
+  to scan at different window sizes.
+- Keep form sections and resolution details inside bounded scrollable panels.
+
 ## 0.3.8-dev - 2026-09-09
 
 - Improve the Player and Officer review pages with bounded scrolling, titled

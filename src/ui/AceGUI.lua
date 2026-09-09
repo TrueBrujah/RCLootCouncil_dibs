@@ -197,57 +197,70 @@ function Adapter.AddLabel(shell, parent, text, fullWidth)
   return label
 end
 
-local function addTableCell(shell, parent, text, width, tooltip)
-  local cell = Adapter.AddLabel(shell, parent, text, false)
-  if cell and width then call(cell, "SetWidth", width) end
-  if tooltip then Adapter.AddTooltip(cell, text, tooltip) end
-  return cell
-end
-
 function Adapter.AddTable(shell, parent, columns, rows, height, rowActions)
   local scroll = Adapter.AddScrollableList(shell, parent, height)
   if not scroll then return nil end
-  local function formatRow(values)
-    local cells = {}
-    local totalWidth = 0
-    for _, column in ipairs(columns or {}) do totalWidth = totalWidth + (tonumber(column.width) or 100) end
-    local frameWidth = scroll.frame and scroll.frame.GetWidth and scroll.frame:GetWidth() or 0
-    local totalCharacters = math.max(48, math.floor((frameWidth > 0 and frameWidth or 640) / 7))
-    for index, column in ipairs(columns or {}) do
-      local value = tostring(values[index] or "")
-      local characters = math.max(8, math.floor(((tonumber(column.width) or 100) / math.max(1, totalWidth)) * totalCharacters))
-      if #value > characters then
-        value = value:sub(1, math.max(1, characters - 3)) .. "..."
-      end
-      table.insert(cells, string.format("%-" .. tostring(characters) .. "s", value))
-    end
-    return table.concat(cells, " | ")
+  local definitions = columns or {}
+  local desiredWidth = 0
+  for _, column in ipairs(definitions) do desiredWidth = desiredWidth + (tonumber(column.width) or 100) end
+  local frameWidth = scroll.frame and scroll.frame.GetWidth and scroll.frame:GetWidth() or 0
+  if frameWidth <= 0 and parent and parent.frame and parent.frame.GetWidth then frameWidth = parent.frame:GetWidth() or 0 end
+  if frameWidth <= 0 and shell and shell.frame and shell.frame.GetWidth then frameWidth = (shell.frame:GetWidth() or 760) - 220 end
+  frameWidth = math.max(360, frameWidth > 0 and frameWidth - 8 or math.min(desiredWidth, 760))
+  local scale = desiredWidth > frameWidth and (frameWidth / desiredWidth) or 1
+  local widths = {}
+  local actualWidth = 0
+  for index, column in ipairs(definitions) do
+    local width = math.floor((tonumber(column.width) or 100) * scale)
+    if index == #definitions then width = math.max(48, frameWidth - actualWidth) end
+    widths[index] = width
+    actualWidth = actualWidth + width
   end
 
-  local headers = {}
-  for _, column in ipairs(columns or {}) do table.insert(headers, column.title or "") end
-  Adapter.AddHeader(shell, scroll, formatRow(headers), "Hover the column names for details.")
-  local totalWidth = 0
-  for _, column in ipairs(columns or {}) do totalWidth = totalWidth + (tonumber(column.width) or 100) end
-  for _, row in ipairs(rows or {}) do
-    local rowGroup = rowActions and Adapter.Create(shell, "SimpleGroup", scroll) or nil
-    if rowGroup then
-      call(rowGroup, "SetFullWidth", true)
-      call(rowGroup, "SetLayout", "Flow")
+  local function cellText(value, width)
+    local result = tostring(value or "")
+    local characters = math.max(8, math.floor((width or 100) / 7))
+    if #result > characters then result = result:sub(1, math.max(1, characters - 3)) .. "..." end
+    return result
+  end
+
+  local function addGridRow(values, action, header)
+    local rowGroup = Adapter.Create(shell, "SimpleGroup", scroll)
+    if not rowGroup then return end
+    call(rowGroup, "SetFullWidth", true)
+    call(rowGroup, "SetLayout", "Flow")
+    local columnCount = action and math.max(0, #definitions - 1) or #definitions
+    for index = 1, columnCount do
+      local column = definitions[index]
+      local value = header and column.title or values[index]
+      local cell = Adapter.AddLabel(shell, rowGroup, cellText(value, widths[index]), false)
+      if cell then
+        call(cell, "SetWidth", widths[index])
+        if cell.SetJustifyH then cell:SetJustifyH("LEFT") end
+        Adapter.AddTooltip(cell, value, column.tooltip)
+      end
     end
-    local rowParent = rowGroup or scroll
-    local label = Adapter.AddLabel(shell, rowParent, formatRow(row), not rowGroup)
-    if rowGroup and label then
-      local available = rowGroup.frame and rowGroup.frame.GetWidth and rowGroup.frame:GetWidth() or 0
-      local labelWidth = math.max(260, (available > 0 and available or math.min(totalWidth, 760)) - 96)
-      call(label, "SetWidth", labelWidth)
-    end
-    if rowActions then
-      local action = rowActions(row)
-      if action then Adapter.AddButton(shell, rowParent, action.text or "Action", action.callback, 86) end
+    if action then
+      -- The action lives in the final cell's visual column, so it stays on
+      -- the same row as its request even when the table is narrow.
+      local button = Adapter.AddButton(shell, rowGroup, action.text or "Action", action.callback, math.max(70, widths[#definitions] or 86))
+      if button then call(button, "SetWidth", math.max(70, widths[#definitions] or 86)) end
     end
   end
+
+  addGridRow({}, nil, true)
+  for _, row in ipairs(rows or {}) do
+    local action = rowActions and rowActions(row) or nil
+    addGridRow(row, action, false)
+  end
   return scroll
+end
+
+function Adapter.AddPropertyTable(shell, parent, rows, height)
+  return Adapter.AddTable(shell, parent, {
+    { title = "Field", width = 150, tooltip = "Property name." },
+    { title = "Value", width = 520, tooltip = "Recorded value." },
+  }, rows, height or 190)
 end
 
 function Adapter.AddButton(shell, parent, text, callback, width)

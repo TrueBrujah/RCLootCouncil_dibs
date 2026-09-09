@@ -1012,17 +1012,18 @@ local function createAceWindow()
           local evidence = selected.evidence and selected.evidence[1] or {}
           local detailSection = Dibs.AceGUI.AddSection(shell, tabs, "Selected request", disputeStatusText(selected))
           local unavailable = evidence.unavailableFields and table.concat(evidence.unavailableFields, ", ") or "none"
-          Dibs.AceGUI.AddLabel(shell, detailSection, "Player: " .. tostring(selected.player and selected.player.name or "Unknown") ..
-            "\nCategory: " .. tostring(selected.categoryLabel or selected.category) ..
-            "\nStatus: " .. tostring(selected.status) ..
-            "\nNote: " .. tostring(selected.note or "") ..
-            "\nEvidence source: " .. tostring(evidence.source or "unknown") ..
-            "\nIntegration: " .. tostring(evidence.integrationStatus or "standalone/unavailable") ..
-            " (" .. tostring(evidence.integrationReason or "") .. ")" ..
-            "\nItem: " .. tostring(evidence.item or "Unavailable") ..
-            "\nTransaction: " .. tostring(evidence.transactionRef or "Unavailable") ..
-            "\nAward/history reference: " .. tostring(evidence.awardRef or evidence.historyRef or "Unavailable") ..
-            "\nUnavailable fields: " .. unavailable, true)
+          Dibs.AceGUI.AddPropertyTable(shell, detailSection, {
+            { "Player", tostring(selected.player and selected.player.name or "Unknown") },
+            { "Category", tostring(selected.categoryLabel or selected.category) },
+            { "Status", tostring(selected.status) },
+            { "Note", tostring(selected.note or "") },
+            { "Evidence source", tostring(evidence.source or "unknown") },
+            { "Integration", tostring(evidence.integrationStatus or "standalone/unavailable") .. " (" .. tostring(evidence.integrationReason or "") .. ")" },
+            { "Item", tostring(evidence.item or "Unavailable") },
+            { "Transaction", tostring(evidence.transactionRef or "Unavailable") },
+            { "Award/history reference", tostring(evidence.awardRef or evidence.historyRef or "Unavailable") },
+            { "Unavailable fields", unavailable },
+          }, 260)
 
           local resolutionSection = Dibs.AceGUI.AddSection(shell, tabs, "Resolution", "Every decision requires a clear reason. Ledger-changing actions also require explicit confirmation.")
           self.disputeReason = self.disputeReason or ""
@@ -1050,8 +1051,10 @@ local function createAceWindow()
           local targetButton
           if selected.category == "wrong_item_player" then
             local targetSection = Dibs.AceGUI.AddSection(shell, tabs, "Correct item or player", "Use this for a wrong-item or wrong-player report. Leave a field blank to keep its current value. A linked ledger entry is moved to the corrected player with two auditable entries.")
-            Dibs.AceGUI.AddLabel(shell, targetSection, "Current player: " .. tostring(evidence.winner or selected.player and selected.player.name or "Unavailable") ..
-              "\nCurrent item: " .. tostring(evidence.item or evidence.itemID or "Unavailable"), true)
+            Dibs.AceGUI.AddPropertyTable(shell, targetSection, {
+              { "Current player", tostring(evidence.winner or selected.player and selected.player.name or "Unavailable") },
+              { "Current item", tostring(evidence.item or evidence.itemID or "Unavailable") },
+            }, 90)
             self.disputeCorrectPlayer = self.disputeCorrectPlayer or ""
             self.disputeCorrectItem = self.disputeCorrectItem or ""
             local correctedPlayer = Dibs.AceGUI.AddEditBox(shell, targetSection, "Correct player (optional)", function(value) self.disputeCorrectPlayer = value or "" end, 250)
