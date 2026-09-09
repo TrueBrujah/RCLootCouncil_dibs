@@ -76,6 +76,11 @@ Source: [Wowhead raid lockout and transmog guide](https://www.wowhead.com/guide/
    become guild acquisition records.
 8. Keep player-facing explanations narrow and officer-facing history complete. This
    prevents an alt policy from becoming an unintended account-identity disclosure.
+9. Preserve the Adventure Guide's semantic item categories in the policy model:
+   Curios map to `TOKEN`, class-based Tier Set tokens map to `TOKEN_SET`, and
+   `CATALYST` stays outside Dibs because Catalyst progress is personal to each
+   player. Equipment slots are only a compatibility projection for RCLootCouncil
+   buttons and must not define the protected-loot family.
 
 ## Questions deferred for planning
 

@@ -94,24 +94,177 @@ local function getRCButtonsTable()
   return nil
 end
 
+-- RCLootCouncil exposes two different concepts in the Additional Buttons
+-- menu: semantic item families (for example Armor Token) and equipment-slot
+-- overrides (for example Head or Trinket). Dibs policies stay semantic; slot
+-- sets only control which RCLC response group receives the injected button.
+local RCLC_BUTTON_SET_DEFINITIONS = {
+  { key = "CATALYST_ITEMS", label = "Catalyst Items", dibsType = nil, state = "resolved", note = "RCLC group is item-dependent: personal Catalyst is blocked, while Curios and Tier Set tokens are classified as TOKEN or TOKEN_SET." },
+  { key = "ARMOR_TOKEN", label = "Armor Token", dibsType = "TOKEN_SET", state = "semantic", note = "Class-based Tier Set token." },
+  { key = "MOUNTS", label = "Mounts", dibsType = "MOUNTS", state = "semantic", note = "Mount collection item." },
+  { key = "PETS", label = "Pets", dibsType = "PETS", state = "semantic", note = "Battle pet or companion item." },
+  { key = "RECIPES", label = "Recipes", dibsType = "RECIPE", state = "semantic", note = "Profession recipe, pattern, plan or formula." },
+  { key = "DECOR", label = "Decor", dibsType = "DECOR", state = "semantic", note = "Housing decor; disabled by the default Encounter Journal matrix." },
+  { key = "COSMETIC_ITEMS", label = "Cosmetic Items", dibsType = "COSMETIC", state = "blocked", note = "Cosmetic-only item; not a Dibs progression category." },
+  { key = "RARE_ITEMS", label = "Rare items", dibsType = "OTHER", state = "alias", note = "RCLC rarity group; Dibs treats it as the configurable Other family." },
+  { key = "SPECIAL_EFFECTS_ITEMS", label = "Items /w special effects", dibsType = "OTHER", state = "alias", note = "RCLC qualifier; Dibs treats it as the configurable Other family." },
+  { key = "SLOTS", label = "Chest, Back, Feet, Finger, Hands, Head, Legs, Neck, Shoulder, Trinket, Waist, Wrist, Weapon", dibsType = nil, state = "slot", note = "Equipment-slot specificity only; it inherits the semantic Dibs decision." },
+}
+
+-- RCLootCouncil has used both INVTYPE_* keys and readable labels for the
+-- equipment-slot button sets. Keep every spelling in the compatibility guide
+-- so a profile created by an older release is still explained correctly.
+local RCLC_SLOT_SET_KEYS = {
+  BACK = true, CLOAK = true, CHEST = true, FEET = true, FINGER = true,
+  HAND = true, HANDS = true, HEAD = true, HOLDABLE = true, LEGS = true,
+  NECK = true, QUIVER = true, RANGED = true, RANGEDRIGHT = true,
+  RELIC = true, ROBE = true, SHIELD = true, SHOULDER = true, THROWN = true,
+  TRINKET = true, WAIST = true, WEAPON = true, WEAPONS = true,
+  WEAPONMAINHAND = true, WEAPONOFFHAND = true, WEAPONPET = true,
+  TWOHWEAPON = true, ["2H_WEAPON"] = true, ["2HWEAPON"] = true,
+}
+
+local RCLC_BUTTON_SET_ALIASES = {
+  CATALYST = "CATALYST_ITEMS",
+  CATALYSTS = "CATALYST_ITEMS",
+  CATALYSTITEMS = "CATALYST_ITEMS",
+  ARMORTOKEN = "ARMOR_TOKEN",
+  MOUNT = "MOUNTS",
+  PET = "PETS",
+  RECIPE = "RECIPES",
+  RECIPE_PATTERN = "RECIPES",
+  DECORS = "DECOR",
+  COSMETIC = "COSMETIC_ITEMS",
+  COSMETICITEMS = "COSMETIC_ITEMS",
+  RARE = "RARE_ITEMS",
+  SPECIAL_EFFECTS = "SPECIAL_EFFECTS_ITEMS",
+  SPECIALEFFECTSITEMS = "SPECIAL_EFFECTS_ITEMS",
+}
+
+local RCLC_BUTTON_SET_BY_KEY = {}
+for _, definition in ipairs(RCLC_BUTTON_SET_DEFINITIONS) do
+  RCLC_BUTTON_SET_BY_KEY[definition.key] = definition
+end
+
+local function normalizeButtonSetKey(value)
+  local key = string.upper(tostring(value or ""))
+  key = key:gsub("[%s%-]", "_"):gsub("_+", "_")
+  return key
+end
+
+local function canonicalSemanticTypeKey(value)
+  local key = normalizeButtonSetKey(value)
+  local compact = key:gsub("_", "")
+  if key == "" or key == "DEFAULT" then return "default" end
+  if key == "CATALYST" or key == "CATALYSTS" or key == "CATALYST_ITEMS" or key == "CATALYSTITEMS" then
+    return nil
+  end
+  if key == "COSMETIC" or key == "COSMETIC_ITEMS" or key == "COSMETICITEMS" then
+    return nil
+  end
+  if key == "ARMOR_TOKEN" or compact == "ARMORTOKEN" then return "TOKEN_SET" end
+  if key == "MOUNT" or key == "MOUNTS" then return "MOUNTS" end
+  if key == "PET" or key == "PETS" then return "PETS" end
+  if key == "RECIPE" or key == "RECIPES" or key == "RECIPE_PATTERN" then return "RECIPE" end
+  if key == "DECORS" then return "DECOR" end
+  if key == "RARE_ITEMS" or key == "RARE" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or compact == "SPECIALEFFECTSITEMS" then return "OTHER" end
+  if key == "TOKEN" or key == "TOKENS" then return "TOKEN" end
+  if key == "TOKEN_SET" or key == "TOKEN_SETS" or key == "TOKENSET" then return "TOKEN_SET" end
+  if key == "OTHER" or key == "OTHERS" then return "OTHER" end
+  return tostring(value)
+end
+
+local function getButtonSetDefinition(value)
+  local normalized = normalizeButtonSetKey(value)
+  local compact = normalized:gsub("_", "")
+  local canonical = RCLC_BUTTON_SET_ALIASES[normalized] or RCLC_BUTTON_SET_ALIASES[compact] or normalized
+  if canonical:match("^INVTYPE_") or RCLC_SLOT_SET_KEYS[canonical] or RCLC_SLOT_SET_KEYS[compact] then
+    return RCLC_BUTTON_SET_BY_KEY.SLOTS
+  end
+  return RCLC_BUTTON_SET_BY_KEY[canonical]
+end
+
+local function getDibTypeLabel(value)
+  local key = normalizeButtonSetKey(value)
+  if key == "DEFAULT" then return "Default fallback" end
+  if key == "TOKEN" then return "Curio tokens (TOKEN)" end
+  if key == "TOKEN_SET" then return "Tier Set tokens (TOKEN_SET)" end
+  if key == "MOUNTS" then return "Mounts (MOUNTS)" end
+  if key == "PETS" then return "Pets (PETS)" end
+  if key == "RECIPE" or key == "RECIPES" then return "Recipes (RECIPE)" end
+  if key == "DECOR" then return "Decor (DECOR)" end
+  if key == "OTHER" then return "Other (OTHER)" end
+  local definition = getButtonSetDefinition(value)
+  if definition and definition.dibsType then
+    if definition.state == "blocked" then
+      return definition.label .. " (blocked: personal/cosmetic)"
+    end
+    return definition.label .. " -> " .. tostring(definition.dibsType)
+  end
+  if definition and definition.state == "slot" then
+    return key:gsub("^INVTYPE_", "") .. " (RCLC slot)"
+  end
+  if key:match("^INVTYPE_") then
+    return key:gsub("^INVTYPE_", "") .. " (RCLC slot)"
+  end
+  return tostring(value)
+end
+
+local function buildButtonSetMappingText()
+  local lines = {
+    "RCLootCouncil button sets choose where the Dibs response is displayed; Dibs eligibility remains semantic.",
+    "Curio = TOKEN  |  Tier Set class token = TOKEN_SET  |  Catalyst = personal and always blocked.",
+  }
+  for _, definition in ipairs(RCLC_BUTTON_SET_DEFINITIONS) do
+    local target = definition.dibsType and (" -> " .. definition.dibsType) or ""
+    local marker = definition.state == "blocked" and " [blocked]"
+      or (definition.state == "slot" and " [compatibility]")
+      or (definition.state == "resolved" and " [resolved]")
+      or ""
+    table.insert(lines, definition.label .. target .. marker .. " -> " .. definition.note)
+  end
+  return table.concat(lines, "\n")
+end
+
+local function buildConfiguredButtonSetsText()
+  local buttons = getRCButtonsTable()
+  if type(buttons) ~= "table" then
+    return "Configured RCLootCouncil sets: unavailable until the Master Looter profile is loaded."
+  end
+  local keys = {}
+  for key, spec in pairs(buttons) do
+    if key ~= "default" and key ~= "*" and type(spec) == "table" then
+      table.insert(keys, tostring(key))
+    end
+  end
+  table.sort(keys)
+  if #keys == 0 then
+    return "Configured RCLootCouncil sets: Default only."
+  end
+  local labels = { "Default" }
+  for _, key in ipairs(keys) do table.insert(labels, getDibTypeLabel(key)) end
+  return "Configured RCLootCouncil sets: " .. table.concat(labels, ", ")
+end
+
 local function getDibTypeValues()
   local values = {
-    default = "Default",
+    default = "Default fallback",
   }
 
   local function addValue(key)
     if key == nil then return end
-    local text = tostring(key)
+    local text = canonicalSemanticTypeKey(key)
+    if text == nil then return end
     if text == "" or text == "*" then return end
     if values[text] ~= nil then return end
-    values[text] = text
+    values[text] = getDibTypeLabel(text)
   end
 
   -- Always expose core categories even when RC has not populated per-type button sets yet.
   addValue("MOUNTS")
   addValue("PETS")
   addValue("TOKEN")
-  addValue("CATALYST")
+  addValue("TOKEN_SET")
   addValue("RECIPE")
   addValue("DECOR")
   addValue("OTHER")
@@ -137,9 +290,15 @@ local function setDibTypeEnabled(typeKey, enabled)
     setStatus("Only the guild master or an officer may change Dibs settings.")
     return false
   end
+  local semanticKey = canonicalSemanticTypeKey(typeKey)
+  if semanticKey == nil then
+    setStatus("This RCLootCouncil item family is not eligible for Dibs.")
+    return false, "PERSONAL_ITEM_TYPE"
+  end
+  typeKey = semanticKey
   if Dibs.RCLootCouncil and Dibs.RCLootCouncil.SetDibEnabledForType then
-    local ok = Dibs.RCLootCouncil.SetDibEnabledForType(typeKey, enabled == true)
-    return ok ~= nil
+    local ok, reason = Dibs.RCLootCouncil.SetDibEnabledForType(typeKey, enabled == true)
+    return ok ~= nil, reason
   else
     getDibTypeSettings()[tostring(typeKey)] = enabled == true
     return true
@@ -173,6 +332,98 @@ local function applyDibTypePreset(allEnabled)
     end
   end
   setStatus("DIB policy preset applied: All disabled except default.")
+end
+
+local DIBS_SEMANTIC_TEMPLATE_KEYS = {
+  "default", "TOKEN", "TOKEN_SET", "MOUNTS", "PETS", "RECIPE", "DECOR", "OTHER",
+}
+
+local DIBS_SEMANTIC_TEMPLATES = {
+  progression = {
+    label = "Curio + Tier Set",
+    enabled = { TOKEN = true, TOKEN_SET = true },
+    description = "Only Curio and class-based Tier Set tokens can create a Dibs action. Unknown, cosmetic and personal items stay out.",
+  },
+  broad = {
+    label = "Standard loot",
+    enabled = { TOKEN = true, TOKEN_SET = true, MOUNTS = true, PETS = true, RECIPE = true, OTHER = true },
+    description = "Enables Curio, Tier Set, mounts, pets, recipes and Other. Decor remains disabled until an officer enables it.",
+  },
+}
+
+local function applyDibSemanticTemplate(templateKey)
+  if not canEditDibsSettings() then
+    setStatus("Only the guild master or an officer may change Dibs settings.")
+    return false
+  end
+  local template = DIBS_SEMANTIC_TEMPLATES[templateKey]
+  if not template then
+    setStatus("Unknown Dibs semantic template.")
+    return false
+  end
+
+  for _, key in ipairs(DIBS_SEMANTIC_TEMPLATE_KEYS) do
+    local enabled = template.enabled[key] == true
+    local ok, reason = setDibTypeEnabled(key, enabled)
+    if not ok then
+      setStatus(reason or ("Unable to apply template to " .. tostring(key) .. "."))
+      return false
+    end
+  end
+  setStatus("DIB semantic template applied: " .. template.label .. ".")
+  return true
+end
+
+-- The installation assistant applies a Dibs policy and then asks the
+-- integration to refresh its locked DIB projection.  It deliberately does
+-- not rewrite RCLootCouncil's existing response text, colours or ordering;
+-- the projection only adds/reuses the dedicated DIB entry in sets that the
+-- Master Looter already configured.
+local function applyInstallationPreset(templateKey)
+  if not applyDibSemanticTemplate(templateKey) then
+    return false
+  end
+
+  local integration = Dibs.RCLootCouncil
+  if integration and type(integration.RefreshConfigProjection) == "function" then
+    local available, changed = integration.RefreshConfigProjection()
+    if available then
+      setStatus((templateKey == "progression" and "Curio + Tier Set" or "Standard loot") ..
+        " preset applied; the Dibs button is prepared in the configured RCLootCouncil sets." ..
+        (changed == true and "" or " Existing button configuration was already ready."))
+      return true
+    end
+  end
+
+  setStatus((templateKey == "progression" and "Curio + Tier Set" or "Standard loot") ..
+    " preset applied. RCLootCouncil is unavailable, so Dibs will use its standalone controls.")
+  return true
+end
+
+local function buildSetupAssistantStatus()
+  local integration = Dibs.RCLootCouncil
+  if not integration or type(integration.GetConfigProjectionStatus) ~= "function" then
+    return "RCLootCouncil is not loaded. Choose a Dibs preset now; the button will be prepared automatically when RCLootCouncil becomes available."
+  end
+
+  local ok, projection = pcall(integration.GetConfigProjectionStatus)
+  if not ok or type(projection) ~= "table" or projection.addonFound ~= true then
+    return "RCLootCouncil is unavailable. Dibs remains usable in Standalone mode."
+  end
+
+  local default = projection.default
+  local defaultReady = default and default.buttonDibIndex and default.responseDibIndex
+  local enabledAdditional, readyAdditional = 0, 0
+  for _, entry in pairs(projection.additional or {}) do
+    if entry.enabled == true then
+      enabledAdditional = enabledAdditional + 1
+      if entry.buttonDibIndex and entry.responseDibIndex then
+        readyAdditional = readyAdditional + 1
+      end
+    end
+  end
+  return "Dibs button: " .. (defaultReady and "ready in the default set" or "not ready in the default set") ..
+    ". Additional sets ready: " .. tostring(readyAdditional) .. "/" .. tostring(enabledAdditional) .. "."
 end
 
 local function getEJSubCategoryValues()
@@ -1027,12 +1278,46 @@ groups.developer = { type = "group", name = "Developer", order = 9, args = {
 } }
 groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args = {
   status = description(0, integrationStatusText),
-  types = { type = "multiselect", name = "Dib loot types", order = 1, width = "full",
+  setup = { type = "group", name = "Installation assistant", order = 0, inline = true, args = {
+    intro = description(1, "Choose a starting policy for your guild. The assistant configures Dibs semantic loot families and prepares the locked Dibs button in RCLootCouncil sets that are already enabled."),
+    status = description(2, buildSetupAssistantStatus),
+    progression = execute(3, "Recommended: Curio + Tier Set", function() applyInstallationPreset("progression") end),
+    standard = execute(4, "Standard loot + collections", function() applyInstallationPreset("broad") end),
+    refresh = execute(5, "Refresh Dibs buttons", function()
+      local integration = Dibs.RCLootCouncil
+      if integration and type(integration.RefreshConfigProjection) == "function" then
+        local available, changed = integration.RefreshConfigProjection()
+        setStatus(available and (changed == true and "Dibs buttons refreshed in RCLootCouncil." or "Dibs buttons were already ready.") or "RCLootCouncil is unavailable; standalone Dibs controls remain active.")
+      else
+        setStatus("RCLootCouncil integration is unavailable; standalone Dibs controls remain active.")
+      end
+    end),
+  } },
+  mapping = { type = "group", name = "RCLootCouncil button-set mapping", order = 1, inline = true, args = {
+    guide = description(1, buildButtonSetMappingText),
+    configured = description(2, buildConfiguredButtonSetsText),
+  } },
+  types = { type = "multiselect", name = "Dib semantic loot types", order = 2, width = "full",
     values = getDibTypeValues,
-    get = function(_, key) return getDibTypeSettings()[key] ~= false end,
+    get = function(_, key)
+      local semanticKey = canonicalSemanticTypeKey(key)
+      if semanticKey == nil then return false end
+      local settings = getDibTypeSettings()
+      if settings[key] ~= nil then return settings[key] ~= false end
+      if settings[semanticKey] ~= nil then return settings[semanticKey] ~= false end
+      if Dibs.RCLootCouncil and Dibs.RCLootCouncil.IsDibEnabledForType then
+        return Dibs.RCLootCouncil.IsDibEnabledForType(semanticKey) == true
+      end
+      return true
+    end,
     set = function(_, key, value) setDibTypeEnabled(key, value) end },
-  enable = execute(2, "Enable all loot types", function() applyDibTypePreset(true) end),
-  disable = execute(3, "Default loot type only", function() applyDibTypePreset(false) end),
+  templates = { type = "group", name = "Recommended semantic templates", order = 3, inline = true, args = {
+    templateHelp = description(1, "Templates set Dibs semantic families only. The Installation assistant also refreshes the locked Dibs button projection."),
+    progression = execute(2, "Curio + Tier Set", function() applyDibSemanticTemplate("progression") end),
+    broad = execute(3, "Standard loot", function() applyDibSemanticTemplate("broad") end),
+  } },
+  enable = execute(4, "Enable all loot types", function() applyDibTypePreset(true) end),
+  disable = execute(5, "Default loot type only", function() applyDibTypePreset(false) end),
 } }
 groups.debug = { type = "group", name = "Debug", order = 11, args = {
   intro = description(1, "Levels: 0 hides a module, 1 normal, 5 maximum diagnostics. Changes apply immediately."),

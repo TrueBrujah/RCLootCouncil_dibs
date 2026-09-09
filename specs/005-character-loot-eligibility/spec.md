@@ -42,6 +42,10 @@ As a GM or Officer, I want to choose which loot families are tracked and how dif
 4. **Given** an authorized Officer edits Curio rules, **when** they define the slot-completion threshold and upgrade-track behavior, **then** a character reaching 4/4 can be marked complete while a higher-track Mythic Curio can be configured to reopen eligibility.
 5. **Given** an item cannot be confidently mapped to a configured loot family, **when** it appears for award, **then** the addon shows an unknown-family warning and follows the configured unknown-data behavior without silently treating it as a confirmed duplicate.
 6. **Given** a policy change would affect future eligibility, **when** it is saved, **then** it does not rewrite prior acquisitions or historical awards.
+7. **Given** a Catalyst item is shown in the Adventure Guide or an RCLootCouncil
+   session, **when** Dibs eligibility is evaluated, **then** no Dibs action is
+   offered because Catalyst progress is personal to the player; Curios and
+   class-based Tier Set tokens remain distinct semantic families.
 
 ### User Story 3 - Declare and review main/alt relationships (Priority: P1)
 
@@ -136,6 +140,8 @@ As a player or loot administrator, I want a clear explanation when a request is 
 - **FR-024**: The feature MUST provide a migration or manual-entry path for confirmed historical Curio and Tier Set acquisitions without rewriting existing ledger transactions.
 - **FR-025**: Policy and relationship changes MUST apply prospectively unless a GM/Officer explicitly chooses a documented retroactive evaluation; historical acquisition records MUST remain unchanged.
 - **FR-026**: The feature MUST include localized labels and help text for tracked family, class/token group, round progress, difficulty scope, matching scope, completion status, probation status, exceptions, and unknown-data decisions.
+- **FR-027**: The feature MUST classify Curios as the semantic `TOKEN` family and class-based Tier Set tokens as `TOKEN_SET`; it MUST NOT classify either family by equipment slot alone.
+- **FR-028**: `CATALYST` MUST be treated as personal player progress and MUST be excluded from Dibs buttons, Pre-Dibs, policy enablement, protected awards, and ledger consumption. A saved or local Catalyst override MUST NOT re-enable Dibs for it.
 
 ### Key Entities
 
@@ -169,7 +175,7 @@ As a player or loot administrator, I want a clear explanation when a request is 
 - Guild policy is the authority for fairness; the feature does not claim to reproduce Blizzard's personal loot, collection, or raid-lockout rules.
 - Curios and Tier Set are the first protected families, but the policy model is extensible to other guild-defined families later.
 - A player's linked characters cannot be reliably discovered from the addon alone. The player must declare the relationship and a verified GM/Officer must approve it, unless a future trusted data source is explicitly added.
-- The default policy is season-scoped, tracks Tier Set across all configured difficulties, groups Tier Set eligibility by configured class/token groups, uses lowest-progress round priority, treats Curios as one guild-wide non-class pool, considers 4/4 slots complete, and applies a 14-day no-main-spec protected-loot probation after an approved main change.
+- The default policy is season-scoped, tracks Tier Set across all configured difficulties, groups Tier Set eligibility by configured class/token groups, uses lowest-progress round priority, treats Curios as one guild-wide non-class `TOKEN` pool, considers 4/4 slots complete, and applies a 14-day no-main-spec protected-loot probation after an approved main change. `TOKEN_SET` is reserved for class-based Tier Set tokens, and `CATALYST` is always personal and excluded from Dibs.
 - A Tier Set round is satisfied when all active eligible members in that group reach the current minimum piece count or have an authorized no-need status; a new member with less progress joins the lowest active round.
 - Curio completion and higher-track behavior are policy decisions. The default treats a character at 4/4 as complete for the baseline track, while a stronger Mythic track can be configured to reopen need or require review.
 - Existing RCLootCouncil finalized-award validation remains the source for automatic records when the integration is operational; standalone or historical records require explicit confirmation.

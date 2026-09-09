@@ -234,6 +234,16 @@ function Dibs.ProtectedActions.FinalizeAward(actor, payload)
       result.reasonCode = "AWARD_INVALID_ITEM"
       return result
     end
+    if Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.IsItemDibTypeAllowed) == "function"
+      and command.responseType
+      and not Dibs.RCLootCouncil.IsItemDibTypeAllowed(command.itemID, command.responseType)
+    then
+      local result = buildResult(false, nil, nil, text("AWARD_PERSONAL_ITEM", "Personal Catalyst items cannot consume Dibs."))
+      result.outcome = "ignored"
+      result.ignored = true
+      result.reasonCode = "AWARD_PERSONAL_ITEM"
+      return result
+    end
   end
   if tostring(command.sourceStatus or ""):lower() == "test_mode" or command.testMode == true then
     local result = buildResult(false, nil, nil, text("AWARD_TEST_MODE", "Test awards cannot consume production Dibs."))
@@ -295,7 +305,7 @@ local function executeAwardFinalize(actor, payload, decision)
     return replay
   end
   if Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetStatusForCandidate then
-    local candidate = Dibs.RCLootCouncil.GetStatusForCandidate(command.playerName, command.itemID, nil, {
+    local candidate = Dibs.RCLootCouncil.GetStatusForCandidate(command.playerName, command.itemID, command.responseType, {
       ignorePublicPreDibRequirement = true,
     })
     if not candidate or candidate.canUseDib ~= true then

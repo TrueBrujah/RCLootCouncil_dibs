@@ -1,121 +1,227 @@
 # RCLootCouncil_dibs
 
-RCLootCouncil_dibs est un addon World of Warcraft pour la gestion des Dibs de guilde, avec:
+RCLootCouncil_dibs is a World of Warcraft Retail addon for seasonal guild Dibs
+and Pre-Dib loot management. It can run on its own or integrate with
+RCLootCouncil when that addon is installed.
 
-- saisons,
-- allocations par rang,
-- historique comptable,
-- pré-réservations,
-- intégration optionnelle avec RCLootCouncil,
-- synchronisation de structure de données entre raids.
+RCLootCouncil manages the local loot session. RCLootCouncil_dibs manages the
+guild Dibs ledger, reservations, permissions, and audit history.
 
-L’objectif principal est simple :
+## Downloads
 
-> RCLootCouncil gère la session locale de loot. RCLootCouncil_dibs gère le livre de comptes des Dibs de guilde.
+- [Stable release v0.3.5](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.5)
+- [Development release v0.3.4-dev](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.4-dev)
 
-## Fonctionnalités livrées
+Each release includes a WoW-ready ZIP and a SHA-256 checksum. The repository is
+currently private, so GitHub download links require repository access. A public
+test mirror can be used for guild testers without exposing the source repository.
 
-- gestion d’une saison courante,
-- règle d’allocation par rang,
-- calcul du solde déduit du ledger,
-- historique des transactions,
-- création de pré-Dibs,
-- commandes slash /dibs,
-- panneau joueur,
-- panneau officier,
-- support d’intégration RCLootCouncil et Encounter Journal,
-- stockage SavedVariables versionné.
+## Features
 
-## Utilisation
+- Independent seasonal Dibs balances.
+- Configurable allocations by guild rank.
+- Append-only ledger and auditable transaction history.
+- Player Pre-Dib requests with optional raid and Encounter Journal flows.
+- Player and Officer interfaces with shared settings.
+- Standalone operation when RCLootCouncil is absent.
+- Optional RCLootCouncil Master Looter integration.
+- RCLootCouncil item-family mapping and an installation assistant for Dibs buttons.
+- Multi-raid synchronization of guild Dibs state without sharing live loot votes.
+- Developer Mode for local item and request testing.
+- SavedVariables migrations and localized English/French runtime strings.
 
-### Commandes slash
+## How to use
 
-- /dibs help
-- /dibs balance
-- /dibs ui
-- /dibs officer
-- /dibs grant <joueur> <montant>
-- /dibs use <joueur> <montant>
-- /dibs pre <itemID> [nom]
-- /dibs season create [nom]
-- /dibs season set <id>
-- /dibs season list
-- /dibs rank set <index> <montant> [nom]
-- /dibs rank list
-- /dibs admin list
-- /dibs admin add <Nom-Royaume>
-- /dibs admin remove <Nom-Royaume>
-- /dibs dev on
-- /dibs dev off
-- /dibs dev status
-- /dibs testitem <itemID>
+### Installation
 
-### Panneaux
+1. Download the stable or development ZIP from the release links above.
+2. Extract it into `World of Warcraft/_retail_/Interface/AddOns/`.
+3. Confirm that the extracted folder is named `RCLootCouncil_dibs` and contains
+   `RCLootCouncil_dibs.toc` directly inside it.
+4. Enable **RCLootCouncil_dibs** on the character-selection AddOns screen.
+5. Reload the interface with `/reload` after installing or updating.
 
-- panneau joueur : état de saison, solde et pré-Dibs actifs,
-- panneau officier : saisons, historique des transactions et règles de rang.
+Install RCLootCouncil separately when the guild wants the integrated loot
+workflow. RCLootCouncil remains optional for the Dibs core.
 
-## Structure du dépôt
+### First-time setup for a GM or Officer
 
-- src/Core.lua : point d’entrée et initialisation,
-- src/modules : moteur de logique métier,
-- src/integrations : connecteurs optionnels,
-- src/ui : interfaces joueur/officier,
-- src/locales : fichiers de localisation anglais et français chargés depuis la racine de l’addon empaqueté,
-- docs : documentation du projet et architecture.
+1. Run `/dibs options`.
+2. Open **Settings** and choose the installation mode: `AUTO`, `STANDALONE`, or
+   `RCLootCouncil`.
+3. Create a season under **Seasons** and make it active.
+4. Configure the guild rank allocations under **Rank Rules**.
+5. Open **RCLootCouncil > Dibs > RCLootCouncil > Installation assistant** and
+   choose **Curio + Tier Set** or **Standard loot + collections**. Use **Refresh
+   Dibs buttons** after changing RCLootCouncil's enabled button sets.
+6. Choose the Pre-Dib mode, announcement channels, and supported loot types.
+7. Review **Overview** to confirm the season, permissions, and integration status.
 
-## Notes de design
+Only the current guild master and officers selected by the configured guild
+rank policy can change Dibs settings, seasons, rank rules, modes, or balances.
 
-- le ledger est la source de vérité,
-- les transactions sont immuables,
-- les intégrations UI ne doivent pas porter la logique métier,
-- le noyau reste fonctionnel sans RCLootCouncil.
+### Player workflow
 
-Voir aussi [docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md) pour le flux de test local Developer Mode.
+1. Open `/dibs ui` or `/dibs options` and select the Player view.
+2. Review the active season, current balance, and active Pre-Dibs.
+3. Use the Encounter Journal or an RCLootCouncil loot row when a supported item
+   offers a Dibs action.
+4. Submit a Pre-Dib before the drop when the active season allows it.
+5. Review your transaction history after an award, refund, or adjustment.
 
-## Autorité et compatibilité RCLootCouncil
+A Pre-Dib is a reservation request. It does not spend a Dib until a qualifying
+award is finalized. A request that does not win remains active unless guild
+policy or the player cancels it.
 
-RCLootCouncil est une dépendance optionnelle. Le mode d’installation peut être `AUTO`, `STANDALONE` ou `RCLootCouncil`, et il est conservé dans les SavedVariables de la guilde. Dans les deux modes, seul le GM ou un officier vérifié dans le roster de guilde peut modifier les règles, le mode, les saisons, les allocations ou le ledger Dibs. Le statut de conseil, de chef de raid ou d’assistant de raid ne donne aucun droit d’administration Dibs.
+### Officer workflow
 
-La limite des rangs considérés comme officiers est configurable dans les options Dibs (`Highest officer rank index`); le rang 0 est toujours le GM et les rangs 1 à cette limite sont les officiers par défaut.
+Open `/dibs officer` for the full Officer interface. Its navigation mirrors the
+RCLootCouncil layout:
 
-RCLootCouncil reste responsable de sa propre session de butin. Dans Retail, son Master Looter est le Raid Leader; un Raid Assistant n’est pas automatiquement Master Looter. Le Master Looter peut gérer le butin et finaliser les décisions dans RCLootCouncil. Une décision finalisée dont la réponse est explicitement `DIB` peut déclencher la consommation automatique d’un Dib; cela ne permet pas au Master Looter d’ajouter, retirer ou régler arbitrairement des Dibs. Une installation RCLootCouncil chargée mais incompatible refuse les actions protégées dont l’autorité ne peut pas être vérifiée.
+- Overview
+- Seasons
+- Rank Rules
+- Settings
+- Pre-Dibs
+- Announcements
+- Developer
+- RCLootCouncil
+- Debug
 
-Les commandes `/dibs admin add` et `/dibs admin remove` sont conservées pour l’historique des anciennes installations, mais ces nominations ne confèrent plus de droits à un joueur qui n’est ni GM ni officier.
+Officer pages use the same protected callbacks and SavedVariables as the main
+options panel. The Officer view can inspect the complete ledger and history,
+manage seasons and allocations, configure announcements, and review diagnostics.
 
-L’adaptateur actuel est testé contre des surfaces synthétiques correspondant à RCLootCouncil Retail 3.x : instance AceAddon récupérable, indicateur `enabled`, identité `masterLooter`, enregistrement de messages Ace et événement local `RCMLAwardSuccess`. Ces éléments sont détectés comme des capacités, et non considérés comme une API stable. Une version inconnue reste utilisable en standalone seulement si RCLootCouncil est réellement absent ou désactivé; si elle est chargée mais incompatible, les actions protégées sont refusées.
+### RCLootCouncil workflow
 
-Les attributions finales compatibles sont traduites en transactions Dibs identifiées par une référence idempotente. Les réponses en attente, les échecs et les événements mal formés ne consomment aucun Dib. Le ledger Dibs demeure suffisant pour reconstruire les soldes et l’historique.
+When RCLootCouncil is installed, Dibs adds a `DIB` response to the supported
+Master Looter response sets without overwriting existing responses. The local
+RCLootCouncil Master Looter manages the loot session and finalizes awards using
+RCLootCouncil's own permissions.
 
-La projection du solde et du Pré-Dib des candidats est disponible localement. L’intégration directe dans une surface RCLootCouncil est conditionnée à la détection d’une capacité compatible; sinon, l’interface Dibs locale sert de repli. Les candidats, votes, réponses et données de session ne sont jamais envoyés aux autres raids par la synchronisation.
+For the supported Retail integration, RCLootCouncil identifies the Raid Leader
+as its Master Looter. Raid Assistant or council status alone does not grant
+Master Looter authority or Dibs administration.
 
-## Sécurité en combat
+After a verified Master Looter finalizes a qualifying `DIB` award, the adapter
+records one protected Dibs debit. Normal, test, failed, pending, or duplicate
+award events do not consume production Dibs. The Dibs ledger remains the
+authoritative source for balances and history.
 
-Les calculs métier et les écritures ordinaires dans le ledger restent synchrones pendant le combat. Seules les opérations pouvant créer, afficher, déplacer ou reconfigurer une interface protégée sont reportées jusqu’à `PLAYER_REGEN_ENABLED`. L’addon n’automatise aucune action protégée de World of Warcraft et ne remplace pas les fonctions internes de RCLootCouncil.
+### Slash commands
 
-## État de livraison
+```text
+/dibs help
+/dibs balance
+/dibs ui
+/dibs officer
+/dibs options
+/dibs grant <player> <amount>
+/dibs use <player> <amount>
+/dibs pre <itemID> [name]
+/dibs season create [name]
+/dibs season set <id>
+/dibs season list
+/dibs rank set <index> <amount> [name]
+/dibs rank list
+/dibs admin list
+/dibs admin add <Name-Realm>
+/dibs admin remove <Name-Realm>
+/dibs dev on
+/dibs dev off
+/dibs dev status
+/dibs testitem <itemID>
+/dibs debug report
+/dibs debug rc
+```
 
-Le dépôt contient le modèle d’autorité centralisé, l’administration standalone, l’enregistrement idempotent des attributions, la projection locale des candidats, les limites de synchronisation et les ressources de localisation. La validation complète en client WoW Retail et la certification de nouvelles versions de RCLootCouncil restent des activités de compatibilité continues; consultez le guide de validation de la fonctionnalité 003 avant une publication.
+The legacy `admin add` and `admin remove` commands remain for migration history;
+they do not grant authority to a character who is not a verified guild GM or
+Officer.
 
-## Workflow Spec-Kit (sans changer de branche)
+## Authority and security
 
-Spec-Kit est installé une seule fois à la racine du dépôt via `.specify/` et `.github/skills/`.
-Il ne doit pas être réinstallé dans chaque dossier `specs/*`.
+Guild GM and Officer authority is the same in Standalone and RCLootCouncil
+modes. The verified RCLootCouncil Master Looter has a narrow exception: a
+finalized qualifying DIB award may consume the configured Dib cost. The Master
+Looter cannot grant, remove, refund, or configure Dibs unless that character is
+also a verified guild GM or Officer.
 
-Pour changer de feature active sans changer de branche Git:
+Council membership, Raid Leader status, and Raid Assistant status alone do not
+grant Dibs administration. Unknown or unverifiable authority fails closed.
+
+Live RCLootCouncil candidates, votes, responses, and loot-session data never
+cross raid groups. Synchronization is limited to guild Dibs state and recovery
+metadata. Protected UI work is deferred while the player is in combat.
+
+See [docs/SECURITY_DESIGN_REVIEW_2026-09-06.md](docs/SECURITY_DESIGN_REVIEW_2026-09-06.md)
+for the security and design review, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+for module boundaries, and [docs/PROTOCOL.md](docs/PROTOCOL.md) for the sync
+protocol.
+
+## Developer testing
+
+Developer Mode tests the request flow locally without a raid, Master Looter,
+RCLootCouncil event injection, or production ledger changes:
+
+```text
+/dibs dev on
+/dibs testitem 275658
+```
+
+Run the repository test harness from PowerShell:
+
+```powershell
+$files = Get-ChildItem tests -Recurse -File -Filter "*_spec.lua" |
+  Sort-Object FullName |
+  ForEach-Object { $_.FullName.Replace((Get-Location).Path + "\\", "").Replace("\\", "/") }
+$env:DIBS_TEST_FILES = ($files -join ";")
+npx --yes fengari tests/run.lua
+```
+
+See [docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md) and
+[docs/RC_OPTIONS.md](docs/RC_OPTIONS.md) for focused validation steps. The full
+[guild test plan](docs/TEST_PLAN.md) lists the manual scenarios, evidence to
+record, and future Curio/Tier Set/main-alt checks.
+
+## Repository layout
+
+- `src/Core.lua`: addon entry point, initialization, and slash commands.
+- `src/modules/`: seasons, rank rules, ledger, Pre-Dibs, permissions, and sync.
+- `src/integrations/`: optional RCLootCouncil and Encounter Journal adapters.
+- `src/ui/`: Player and Officer interfaces.
+- `src/locales/`: runtime localization files.
+- `docs/`: architecture, protocol, options, security, and roadmap documentation.
+- `specs/`: Spec-Kit feature specifications and validation artifacts.
+
+The Dibs core does not depend on RCLootCouncil. Integrations are adapters and
+must not own business rules or rewrite RCLootCouncil data.
+
+## Spec-Kit workflow
+
+Spec-Kit is installed once at the repository root through `.specify/`. Select an
+active feature without changing the current Git branch:
 
 ```powershell
 pwsh scripts/select-spec.ps1 001-dibs-core
-# ou
-pwsh scripts/select-spec.ps1 003-rclootcouncil-integration
+pwsh scripts/select-spec.ps1 004-rclootcouncil-integration-robust
 ```
 
-Notes:
+Use the feature workflow in this order:
 
-- cette commande met à jour `.specify/feature.json` seulement;
-- la branche Git courante reste inchangée;
-- les commandes `/speckit-*` doivent être lancées depuis Copilot Chat (intégration IDE), pas via un CLI Copilot externe.
+```text
+/speckit.specify
+/speckit.clarify
+/speckit.plan
+/speckit.tasks
+/speckit.analyze
+/speckit.implement
+/speckit.converge
+```
 
-## Licence
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution rules and architecture
+constraints.
+
+## License
 
 MIT.

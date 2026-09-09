@@ -8,7 +8,7 @@ local EJ_ITEM_DEBUG_CACHE_TTL = 120
 local EJ_TOOLTIP_MAX_DEBUG_LINES = 60
 
 local EJ_SUBCATEGORY_MATRIX = {
-  CATALYST = { allow = true, note = "Tier catalyst item" },
+  CATALYST = { allow = false, note = "Personal player item; never a Dibs category" },
   COSMETIC = { allow = false, note = "Cosmetic-only item" },
   DECOR = { allow = false, note = "Housing decor item" },
   MOUNT = { allow = false, note = "Mount item" },
@@ -76,6 +76,11 @@ end
 
 local function isSubCategoryBlocked(value)
   local key = normalizeSubCategoryKey(value)
+  -- Catalyst progress is personal to the player and cannot be converted into
+  -- a guild Dibs request, even when an old saved override says otherwise.
+  if key == "CATALYST" or key == "CATALYSTS" then
+    return true
+  end
   local _, blocked = getSubCategorySettings()
   if blocked[key] ~= nil then
     return blocked[key] == true
@@ -361,6 +366,15 @@ local function inferItemSubCategory(item, tooltipLines)
     end
   end
 
+  -- Retail Curios use the stable Context Token class/subclass pair and
+  -- class-set tokens are registered by RCLootCouncil's token table. Resolve
+  -- those before the broad Miscellaneous (class 15) mount fallback.
+  if classID == 5 and subClassID == 2 then
+    return "TOKEN"
+  end
+  if itemID and type(_G.RCTokenTable) == "table" and _G.RCTokenTable[itemID] then
+    return "TOKEN_SET"
+  end
   if classID == 9 then
     return "RECIPE"
   end
@@ -1054,6 +1068,11 @@ function Dibs.EncounterJournal.HandleSubCategorySlash(rest)
     end
     if key == "UNKNOWN" and rawKey == "" then
       Dibs.Message("Usage: /dibs ejsub allow <SUB_CATEGORY>")
+      return
+    end
+    if key == "CATALYST" or key == "CATALYSTS" then
+      Dibs.Message("EJ sub-category CATALYST is personal and always blocked from Dibs.")
+      refreshLootRowButtons(true)
       return
     end
     local saved = setSubCategoryBlocked(key, false)

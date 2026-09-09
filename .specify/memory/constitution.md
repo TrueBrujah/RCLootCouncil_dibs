@@ -2,17 +2,19 @@
 
 <!--
 Sync Impact Report
-Version change: 2.0.0 -> 2.1.0
-Modified principles: VII. RCLootCouncil Compatibility; XI. Authority and Trust;
-  XVII. Multi-Character and Multi-Guild Data Isolation; XIX. Change Notes and Addon
-  Versioning; Governance
-Added sections: XIX. Change Notes and Addon Versioning
+Version change: 2.2.0 -> 2.3.0
+Modified principles: VII. RCLootCouncil Compatibility; VIII. Encounter Journal;
+  XIX. Change Notes and Addon Versioning; Governance
+Added sections: XX. RCLootCouncil Item Mapping and Installation Safety
 Removed sections: none
-Rationale for MINOR bump: a new mandatory release-traceability principle requires a
-  change note and an addon version increment for every shipped addon change.
-Dependent documents: the addon TOC, release checklist, and repository changelog process
-  must follow this versioning rule for future changes. Templates and application code are
-  unchanged by this constitution amendment.
+Rationale for MINOR bump: formalize the RCLootCouncil item-family mapping and make
+  the installation assistant's button projection safe, repeatable, and compatible
+  with existing guild response configurations.
+Dependent documents: the addon TOC, release checklist, repository changelog process,
+  RCLootCouncil type-policy adapter, Encounter Journal matrix, options guide, and
+  installation test plan must follow this rule. Existing ledger and SavedVariables
+  data remain compatible; the adapter keeps Catalyst fail-closed and preserves
+  existing RCLootCouncil response configuration.
 Follow-up TODOs: TODO(RATIFICATION_DATE) remains because the original adoption date is unknown.
 -->
 
@@ -155,7 +157,13 @@ Localization MUST be separated from business logic.
 
 When the Encounter Journal provides raid loot metadata, the addon MAY apply a user-configurable Adventure Guide sub-category matrix to decide whether a loot row is locally eligible for the Dib action. This matrix is a local policy layer for display and filtering only; it MUST NOT override authoritative guild ledger rules, season allocations, or historical audit records.
 
-The default recommended matrix SHOULD prefer safe raid-eligible categories and SHOULD block clearly non-Dib categories such as cosmetics, housing decor, and other non-loot policy items unless the user explicitly changes the configuration. Unknown categories MAY remain visible by default to avoid suppressing legitimate combat loot by mistake.
+Adventure Guide categories MUST remain semantic. `TOKEN` represents a general or
+Curio token pool, while `TOKEN_SET` represents a class-based Tier Set token pool.
+`CATALYST` represents a personal player resource and MUST always be blocked from
+Dibs actions, Pre-Dibs, Dibs response buttons, Dibs policy settings, and ledger
+consumption. A saved or locally supplied Catalyst override MUST NOT re-enable it.
+
+The default recommended matrix SHOULD prefer safe raid-eligible categories and SHOULD block clearly non-Dib categories such as Catalyst, cosmetics, housing decor, and other non-loot policy items. Catalyst MUST remain blocked even if a user attempts to change the local matrix. Unknown categories MAY remain visible by default to avoid suppressing legitimate combat loot by mistake.
 
 ### IX. Multi-Raid Operation
 
@@ -360,6 +368,40 @@ The changelog entry and TOC version update MUST be reviewed together before a re
 accepted. SavedVariables or protocol migrations MUST identify their compatibility impact
 in the same change note.
 
+### XX. RCLootCouncil Item Mapping and Installation Safety
+
+The RCLootCouncil adapter MUST translate loot into stable Dibs semantic families:
+
+- `TOKEN` MUST represent general Curio or Context Token loot.
+- `TOKEN_SET` MUST represent class-based Tier Set or Armor Token loot.
+- `MOUNTS`, `PETS`, `RECIPE`, `DECOR`, and `OTHER` MUST remain independently configurable
+  Dibs families.
+- RCLootCouncil `Rare items` and `Items /w special effects` groups MUST resolve to
+  the configurable `OTHER` family.
+- Ordinary armor, weapons, and otherwise unclassified tradeable equipment MUST use
+  `OTHER` when no more specific semantic family is available.
+- Personal `CATALYST` loot MUST remain permanently ineligible for Dibs, even when it
+  appears through RCLootCouncil's broader `Catalyst Items` group.
+
+RCLootCouncil equipment-slot groups such as `Chest`, `Head`, `Trinket`, and `Weapon`
+MUST be treated as response-routing compatibility sets only. They MUST inherit the
+semantic Dibs decision and MUST NOT become independent Dibs accounting families.
+
+The Installation assistant MAY apply a documented Dibs semantic preset and request
+the adapter to prepare the dedicated Dibs response. It MUST require the same GM or
+Officer settings authority as other Dibs policy changes, MUST be safe to run repeatedly,
+and MUST preserve existing RCLootCouncil response text, colors, ordering, slot choices,
+and active responses. The adapter MAY prepare the Dibs response in the default set and
+additional sets already enabled by the Master Looter, but MUST NOT silently enable new
+RCLootCouncil sets, overwrite a full response configuration, or modify RCLootCouncil
+source code. When RCLootCouncil is unavailable, the preset MUST continue to configure
+standalone Dibs and MUST be applied automatically if RCLootCouncil becomes available
+later.
+
+The Dibs ledger remains authoritative for Dibs balances, eligibility history, and
+consumption. RCLootCouncil remains authoritative for its own loot-session responses
+and awards; the mapping and projection provide compatibility and display only.
+
 ## Governance
 
 This constitution governs all specifications, plans, tasks, and implementations in this repository.
@@ -376,4 +418,4 @@ XIX: add a dated changelog note and increment the addon TOC version when the add
 or behavior changes. Specifications, plans, tasks, release notes, and code reviews MUST
 check compliance with the current constitution before implementation is accepted.
 
-**Version**: 2.1.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-06
+**Version**: 2.3.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-09
