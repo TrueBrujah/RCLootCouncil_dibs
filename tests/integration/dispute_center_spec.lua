@@ -114,6 +114,7 @@ describe("Dispute center", function()
     assert_true(officer ~= nil and officer.SelectTab ~= nil)
     officer.SelectTab("disputes")
     assert_equal("disputes", officer.activeTab)
+    assert_not_nil(officer.disputeSearchBox)
   end)
 
   it("routes advanced corrections through protected ledger actions", function()

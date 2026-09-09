@@ -1276,6 +1276,7 @@ groups.officer.args.disputes = { type = "group", name = "Review Requests", order
   open = execute(2, "Open review queue", function()
     local frame = Dibs.OfficerUI.CreateWindow()
     if frame and frame.SelectTab then frame.SelectTab("disputes") end
+    if frame and frame.Refresh then frame:Refresh() end
     if frame then frame:Show(); frame:Raise() end
   end),
   counts = description(3, function()
