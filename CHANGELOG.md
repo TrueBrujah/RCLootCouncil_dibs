@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.6-dev - 2026-09-09
+
+- Added the Raid Readiness and Dry-Run Center on `dev`: bounded readiness
+  probes, safe and Officer reports, authorized slash commands, and a local
+  simulation path that never invokes live loot controls or consumes Dibs.
+- Added shared pure award validation and a final readiness safety gate for live
+  RCLootCouncil award accounting.
+
 ## 0.3.5 - 2026-09-09
 
 - Reserve `CATALYST` items for the player's personal progression: Catalyst is

@@ -20,6 +20,8 @@ Dibs.LootPipeline = Dibs.LootPipeline or {}
 Dibs.Sync = Dibs.Sync or {}
 Dibs.RaidRelay = Dibs.RaidRelay or {}
 Dibs.RaidPrompts = Dibs.RaidPrompts or {}
+Dibs.Readiness = Dibs.Readiness or {}
+Dibs.DryRun = Dibs.DryRun or {}
 Dibs.Ace3 = Dibs.Ace3 or {}
 Dibs.AceGUI = Dibs.AceGUI or {}
 Dibs.DeveloperMode = Dibs.DeveloperMode or {}
@@ -35,7 +37,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.3.5"
+Dibs.VERSION = "0.3.6-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -544,8 +546,34 @@ function Dibs.HandleSlashCommand(msg)
     return
   end
 
+  if action == "readiness" or action == "ready" or action == "preflight" then
+    if Dibs.Readiness and type(Dibs.Readiness.Run) == "function" then
+      local result, reason = Dibs.Readiness.Run()
+      Dibs.Message(result and Dibs.Readiness.FormatSummary(result, true) or ("Readiness unavailable: " .. tostring(reason)))
+    else
+      Dibs.Message("Raid readiness is unavailable.")
+    end
+    return
+  end
+
+  if action == "dryrun" or action == "dry-run" then
+    if Dibs.DryRun and type(Dibs.DryRun.RunFromSlash) == "function" then
+      local result, reason = Dibs.DryRun.RunFromSlash(rest)
+      if result then
+        Dibs.Message(Dibs.DryRun.Format(result))
+      elseif reason == "USAGE" then
+        Dibs.Message("Usage: /dibs dryrun <itemID/link> <winner> <response> <finalized|test|pending> [session]")
+      else
+        Dibs.Message("Dry-run unavailable: " .. tostring(reason))
+      end
+    else
+      Dibs.Message("Dibs dry-run is unavailable.")
+    end
+    return
+  end
+
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs balance | /dibs ui | /dibs options | /dibs officer | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs options | /dibs officer | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
@@ -974,6 +1002,7 @@ local function onRuntimeEvent(event, ...)
     if Dibs.RCLootCouncil and Dibs.RCLootCouncil.TryUseRCModule then
       Dibs.RCLootCouncil.TryUseRCModule()
     end
+    if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("PLAYER_LOGIN") end
     return
   end
   if event == "ADDON_LOADED" then
@@ -986,6 +1015,7 @@ local function onRuntimeEvent(event, ...)
       and Dibs.RCLootCouncil.TryUseRCModule
     then
       Dibs.RCLootCouncil.TryUseRCModule()
+      if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("RCLootCouncil lifecycle") end
     end
     return
   end
@@ -997,9 +1027,15 @@ local function onRuntimeEvent(event, ...)
     -- the first world entry so its profile and ML module are ready before the
     -- Master Looter options are opened.
     Dibs.RCLootCouncil.TryUseRCModule()
+    if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("PLAYER_ENTERING_WORLD") end
   end
   if event == "CHAT_MSG_ADDON" and Dibs.Sync and Dibs.Sync.OnAddonMessage then return Dibs.Sync.OnAddonMessage(...) end
   if event == "GROUP_ROSTER_UPDATE" and Dibs.Sync and Dibs.Sync.OnRosterChanged then Dibs.Sync.OnRosterChanged() end
+  if Dibs.Readiness and Dibs.Readiness.Invalidate
+    and (event == "GROUP_ROSTER_UPDATE" or event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_REGEN_ENABLED")
+  then
+    Dibs.Readiness.Invalidate(event)
+  end
   if Dibs.RaidPrompts and Dibs.RaidPrompts.OnEvent then Dibs.RaidPrompts.OnEvent(event) end
 end
 

@@ -44,6 +44,16 @@ standalone Dibs and the projection is applied automatically when RCLC loads.
 
 Overview and the RCLootCouncil policy tab show a capability snapshot (`absent`, `operational`, `degraded`, or `unsupported`), a stable reason code, and only the probes that were verified. In Standalone mode the player sees a clear fallback status and continues to use local Dibs views. The status does not expose candidates, votes, responses, or live session identifiers.
 
+The **Raid Readiness & Dry-Run** page is available inside the Officer
+RCLootCouncil section. **Run readiness check** evaluates the active season,
+rank policy, installation mode, RCLootCouncil capabilities, response projection,
+raid context, channel and local services. **Copy safe readiness report** prints
+bounded diagnostic metadata. The dry-run fields accept an item, winner,
+response, finalization status and synthetic session identity; **Run local
+dry-run** reports `would_allow`, `would_reject`, `would_ignore`, or
+`would_require_review` without invoking live award controls or consuming a Dib.
+Players see only a safe readiness status in their Summary view.
+
 When RCLootCouncil is available, the adapter projects a locked `Dib` response into the indexed Master Looter button/response arrays. It adds the response to the active default set and every enabled additional-button set, preserves the existing responses, and re-applies after profile changes or late module loading. A full `maxButtons` configuration is left untouched so no existing RCLootCouncil response is overwritten; the runtime Dibs button still fails closed when the candidate is not eligible.
 
 Raid Dibs is a community stream, distinct from RAID chat. Its selection remains visible even when the stream cannot be found. Announcements shows discovery status and the detected club/stream identifiers. Test buttons use the announcement service and do not create requests or ledger entries. A successful local API call still requires in-game confirmation that the message was delivered.
@@ -60,7 +70,7 @@ Raid Dibs is a community stream, distinct from RAID chat. Its selection remains 
 
 ## Automated validation
 
-2026-09-09: full Lua suite passed: 168 tests, 0 failures, 44 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, sync privacy, options fallback, combat deferral, standalone operation, RC loot policy cache invalidation, indexed DIB response projection, AceDB profile discovery, malformed-count bounds, normalized voting-row Dibs display, the real lib-st callback signature, slash output with diagnostics disabled, rank allocation for candidates without ledger history, Catalyst exclusion, semantic Curio/Tier Set mapping, ordinary equipment fallback, Miscellaneous Armor Token disambiguation, Cosmetic blocking, and the Installation assistant controls. Retail visual and delivery checks remain pending.
+2026-09-09: full Lua suite passed: 179 tests, 0 failures, 46 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, sync privacy, options fallback, combat deferral, standalone operation, RC loot policy cache invalidation, indexed DIB response projection, AceDB profile discovery, malformed-count bounds, normalized voting-row Dibs display, the real lib-st callback signature, slash output with diagnostics disabled, rank allocation for candidates without ledger history, Catalyst exclusion, semantic Curio/Tier Set mapping, ordinary equipment fallback, Miscellaneous Armor Token disambiguation, Cosmetic blocking, Installation assistant controls, Raid Readiness states and invalidation, safe reports, dry-run replay, shared award validation, and no-mutation checks. Retail visual and delivery checks remain pending.
 
 The `/dibs officer` window uses the same vertical navigation pattern as the RCLootCouncil options. It has a **Loot types** page with the same dynamic type list, checkboxes and both presets as the RCLootCouncil options. Changes use the same callbacks; reopening or refreshing either view reads the current values. The Player window uses the same navigation pattern for its Summary and History pages. Focused options and combat/UI regression validation: 20 tests passed.
 

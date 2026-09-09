@@ -16,6 +16,8 @@ local TOC_FILES = {
   "modules/Sync.lua",
   "modules/RaidRelay.lua",
   "modules/RaidPrompts.lua",
+  "modules/Readiness.lua",
+  "modules/DryRun.lua",
   "integrations/Ace3.lua",
   "integrations/DeveloperMode.lua",
   "integrations/EncounterJournal.lua",

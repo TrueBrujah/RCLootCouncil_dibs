@@ -39,6 +39,13 @@ function Dibs.DebugLogs.Open(actor)
       Dibs.AceGUI.AddLabel(shell, tabs, "RCLootCouncil: " .. tostring(integration.status or integration.availability or "absent") ..
         " | " .. tostring(integration.reasonCode or "UNKNOWN") .. "\n" .. tostring(integration.diagnostic or ""), true)
     end
+    if Dibs.Readiness and type(Dibs.Readiness.GetStatusText) == "function" then
+      Dibs.AceGUI.AddLabel(shell, tabs, "Raid readiness: " .. Dibs.Readiness.GetStatusText(true), true)
+      local report = Dibs.AceGUI.AddButton(shell, tabs, "Copy readiness report", function()
+        Dibs.Readiness.CopyReport("detailed")
+      end, 180)
+      Dibs.AceGUI.AddTooltip(report, "Readiness report", "Prints bounded Officer diagnostics without live candidates, votes or private loot state.")
+    end
     local searchBox = Dibs.AceGUI.AddEditBox(shell, tabs, "Search", function(value) query = value; refresh() end, 420)
     Dibs.AceGUI.AddTooltip(searchBox, "Search logs", "Search module names, severity labels and message text.")
     local sort = Dibs.AceGUI.AddDropdown(shell, tabs, "Sort by", { timestamp = "Time", module = "Module", level = "Severity" }, function(value) sortKey = value; refresh() end, 180)

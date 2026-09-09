@@ -2,8 +2,9 @@
 
 ## Automated validation
 
-Add fixtures for Ready, Degraded, Blocked, Unavailable, no group/channel, stale checks,
-absent/degraded RCLootCouncil, custom aliases, dry-run replay, and privacy reports. Run:
+Fixtures for Ready, Degraded, Blocked, Unavailable, no group/channel, stale checks,
+absent/degraded RCLootCouncil, custom aliases, dry-run replay, and privacy reports
+are included in `tests/helpers/rclootcouncil_fixtures.lua`. Run:
 
 ```powershell
 $files = Get-ChildItem tests -Recurse -File -Filter "*_spec.lua" | Sort-Object FullName | ForEach-Object { $_.FullName.Replace((Get-Location).Path + "\", "").Replace("\", "/") }

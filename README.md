@@ -10,7 +10,7 @@ guild Dibs ledger, reservations, permissions, and audit history.
 ## Downloads
 
 - [Stable release v0.3.5](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.5)
-- [Development release v0.3.4-dev](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.4-dev)
+- Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. The repository is
 currently private, so GitHub download links require repository access. A public
@@ -28,6 +28,8 @@ test mirror can be used for guild testers without exposing the source repository
 - RCLootCouncil item-family mapping and an installation assistant for Dibs buttons.
 - Multi-raid synchronization of guild Dibs state without sharing live loot votes.
 - Developer Mode for local item and request testing.
+- Raid Readiness checks with clear Ready, Degraded, Blocked and Unavailable states.
+- Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
 - SavedVariables migrations and localized English/French runtime strings.
 
 ## How to use
@@ -56,6 +58,9 @@ workflow. RCLootCouncil remains optional for the Dibs core.
    Dibs buttons** after changing RCLootCouncil's enabled button sets.
 6. Choose the Pre-Dib mode, announcement channels, and supported loot types.
 7. Review **Overview** to confirm the season, permissions, and integration status.
+8. Open **RCLootCouncil > Dibs > RCLootCouncil > Raid Readiness & Dry-Run** and
+   run the readiness check before a raid. Use the dry-run form to validate a
+   test item, winner, response, finalization status, and synthetic session ID.
 
 Only the current guild master and officers selected by the configured guild
 rank policy can change Dibs settings, seasons, rank rules, modes, or balances.
@@ -91,6 +96,9 @@ RCLootCouncil layout:
 Officer pages use the same protected callbacks and SavedVariables as the main
 options panel. The Officer view can inspect the complete ledger and history,
 manage seasons and allocations, configure announcements, and review diagnostics.
+The **Raid Readiness & Dry-Run** page is read-only: it explains missing raid
+context or integration capabilities, prints a privacy-safe report, and shows
+whether a qualifying live award could consume a Dib after final revalidation.
 
 ### RCLootCouncil workflow
 
@@ -107,6 +115,12 @@ After a verified Master Looter finalizes a qualifying `DIB` award, the adapter
 records one protected Dibs debit. Normal, test, failed, pending, or duplicate
 award events do not consume production Dibs. The Dibs ledger remains the
 authoritative source for balances and history.
+
+Use `/dibs readiness` for an authorized administrative check. Use
+`/dibs dryrun <itemID/link> <winner> <response> <finalized|test|pending> [session]`
+for a bounded local simulation. Both commands are read-only with respect to
+the ledger, RCLootCouncil history, loot sessions, votes, chat traffic and
+SavedVariables.
 
 ### Slash commands
 

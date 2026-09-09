@@ -304,6 +304,11 @@ local function createAceWindow()
       Dibs.AceGUI.AddLabel(shell, tabs, "RCLootCouncil: " .. tostring(integration.status or integration.availability or "absent") ..
         " (" .. tostring(integration.reasonCode or "UNKNOWN") .. ")\n" .. tostring(integration.diagnostic or ""), true)
     end
+    if Dibs.Readiness and type(Dibs.Readiness.Evaluate) == "function" then
+      local readiness = Dibs.Readiness.Evaluate({ allowPlayer = true })
+      Dibs.AceGUI.AddLabel(shell, tabs, "Raid readiness (safe summary): " .. tostring(readiness and readiness.status or "Unavailable") ..
+        " | Live Dibs consumption: " .. (readiness and readiness.liveConsumptionAllowed and "allowed after revalidation" or "blocked or unavailable"), true)
+    end
     Dibs.AceGUI.AddTable(shell, tabs, {
       { title = "Metric", width = 180, tooltip = "Summary field." },
       { title = "Value", width = 280, tooltip = "Current value." },

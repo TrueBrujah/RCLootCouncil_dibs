@@ -42,6 +42,20 @@ Owns local player-visible state distribution and authorized, informational raid 
 ### RaidPrompts
 Owns the player-local raid-entry prompt preference and session deduplication. Prompts require explicit acceptance before Adventure Guide navigation and defer/revalidate while in combat.
 
+### Readiness and DryRun
+`Readiness` evaluates standalone Dibs administration separately from optional
+RCLootCouncil live-award integration. It returns bounded Ready, Degraded,
+Blocked, or Unavailable results with timestamps, configuration fingerprints,
+probe reason codes, impact and remediation. Checks are invalidated after
+roster, zone, login, combat or RCLootCouncil lifecycle changes. Its safe and
+Officer reports contain diagnostic metadata only; the in-memory audit is capped
+and never stores live candidates or votes.
+
+`DryRun` accepts a bounded synthetic item, winner, response, finalization status
+and session identity. It calls the pure award-validation contract, then reads
+candidate eligibility. It never calls `RCMLAwardSuccess`, `FinalizeAward`, loot
+controls, addon traffic, synchronization, or protected accounting.
+
 ### EncounterJournalAdapter
 Adds supported UI integration without placing business logic in Blizzard UI hooks. Wild Open requests use the selected Adventure Guide difficulty; Encounter requests use verified `GetInstanceInfo` raid difficulty even if the Journal selection differs. Acquired Vault items are shown as `Acquired`.
 
@@ -63,6 +77,11 @@ used only as RCLootCouncil compatibility projections; they do not define the
 protected-loot family.
 
 The adapter observes compatible local Ace messages and maps a valid `RCMLAwardSuccess` event to one idempotent finalized-award command. It does not replace candidate getters, alter RCLootCouncil registries, history, or wire messages. For the Master Looter UI it applies one narrow, locked compatibility projection to RCLootCouncil's local indexed buttons/responses: the DIB entry is inserted without overwriting active responses and is reapplied after profile/module lifecycle changes. Candidate status and Dibs columns remain read-only projections; the local Dibs display is the compatibility fallback. Projection locks are idempotent, and AceConfig/scroll-table rebuilds occur only after a real structural change. Voting cells follow the complete `lib-st` callback contract, and released AceGUI page widgets are tracked only through weak references so refreshes cannot retain old pages.
+
+Before protected finalized-award accounting, the adapter asks Readiness for a
+fresh safety decision. An unverifiable Master Looter, response projection or
+other required provenance blocks automatic consumption while preserving normal
+GM/Officer administration.
 
 The capability snapshot exposes `absent`, `operational`, `degraded`, and `unsupported` states with a reason code, observed release label, and verified probes. The supported surface is the Retail 3.x-shaped AceAddon: enabled state, canonical Master Looter identity, award callback registration, stable history/session identity, and explicit DIB response mapping. A callback is accepted only with a stable `entry:`, `history:`, or `session:` award reference, an item link matching the item ID, a finalized status, and local Master Looter authority. Duplicate references return the existing ledger result; missing or ambiguous provenance is ignored.
 

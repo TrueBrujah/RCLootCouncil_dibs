@@ -1313,6 +1313,44 @@ local function parseItemID(itemLink)
   return tonumber(tostring(itemLink):match("item:(%d+)"))
 end
 
+-- Pure award validation shared by the live callback and local dry-run.  This
+-- function deliberately reads the current policy only; it never consumes a
+-- Dib, writes history, sends an RCLootCouncil response, or invokes a protected
+-- action.
+function Dibs.RCLootCouncil.ValidateAwardInput(payload)
+  payload = type(payload) == "table" and payload or {}
+  local itemID = tonumber(payload.itemID) or parseItemID(payload.itemLink or payload.item)
+  if not itemID then return { ok = false, reasonCode = "AWARD_INVALID_ITEM" } end
+  if payload.winner == nil or tostring(payload.winner) == "" then
+    return { ok = false, reasonCode = "AWARD_INVALID_WINNER" }
+  end
+  local status = string.lower(tostring(payload.status or ""))
+  if status == "test" or status == "test_mode" then
+    return { ok = false, reasonCode = "AWARD_TEST_MODE", itemID = itemID }
+  end
+  local normalized, responseReason = normalizeDibResponse(payload.response or payload.responseText, getRC(), payload.responseType)
+  if normalized ~= "DIB" then
+    return { ok = false, reasonCode = responseReason or "NON_DIB_RESPONSE", itemID = itemID }
+  end
+  if not Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, payload.responseType) then
+    return { ok = false, reasonCode = "AWARD_PERSONAL_ITEM", itemID = itemID, response = normalized }
+  end
+  if payload.requireIdentity == true then
+    local identity = payload.awardRef or payload.sessionIdentity or payload.sessionId
+    if identity == nil or tostring(identity) == "" then
+      return { ok = false, reasonCode = "AWARD_IDENTITY_UNAVAILABLE", itemID = itemID, response = normalized }
+    end
+  end
+  return {
+    ok = true,
+    itemID = itemID,
+    winner = tostring(payload.winner),
+    response = normalized,
+    responseType = payload.responseType,
+    status = status,
+  }
+end
+
 local function formatCount(value)
   local number = tonumber(value) or 0
   if number == math.floor(number) then
@@ -2361,6 +2399,7 @@ local REASON_DIAGNOSTIC_KEYS = {
   STANDALONE_MODE = "AWARD_STANDALONE_MODE",
   AWARD_IDENTITY_UNAVAILABLE = "AWARD_IDENTITY_UNAVAILABLE",
   AWARD_IDENTITY_AMBIGUOUS = "AWARD_IDENTITY_AMBIGUOUS",
+  READINESS_BLOCKED = "READINESS_BLOCKED",
 }
 
 local REASON_DIAGNOSTIC_FALLBACKS = {
@@ -2383,6 +2422,7 @@ local REASON_DIAGNOSTIC_FALLBACKS = {
   STANDALONE_MODE = "Automatic award accounting is disabled in Standalone mode.",
   AWARD_IDENTITY_UNAVAILABLE = "The finalized award identity could not be verified.",
   AWARD_IDENTITY_AMBIGUOUS = "More than one history entry matched this award; no Dib was consumed.",
+  READINESS_BLOCKED = "Raid readiness blocked automatic Dibs consumption until the live award can be verified.",
 }
 
 local function reasonDiagnostic(reasonCode)
@@ -2676,11 +2716,32 @@ function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink,
       and "AWARD_IDENTITY_UNAVAILABLE" or (capabilities.reasonCode or "RC_AWARD_PATH_UNAVAILABLE")
     return ignoredAward(reasonCode)
   end
+  if Dibs.Readiness and type(Dibs.Readiness.CanProcessLiveAward) == "function" then
+    local allowed, readiness = Dibs.Readiness.CanProcessLiveAward()
+    if allowed == false then
+      local reasonCode = "READINESS_BLOCKED"
+      if readiness and readiness.reasonCodes then
+        for code in pairs(readiness.reasonCodes) do
+          reasonCode = tostring(code)
+          break
+        end
+      end
+      return ignoredAward(reasonCode)
+    end
+  end
   local itemID = tonumber(tostring(itemLink):match("item:(%d+)"))
   if not itemID then return ignoredAward("AWARD_INVALID_ITEM") end
   local responseType = getAwardResponseType(rc, session)
-  if responseType and not Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType) then
-    return ignoredAward("AWARD_PERSONAL_ITEM")
+  local sharedValidation = Dibs.RCLootCouncil.ValidateAwardInput({
+    itemID = itemID,
+    itemLink = itemLink,
+    winner = winner,
+    response = normalizedResponse,
+    responseType = responseType,
+    status = status,
+  })
+  if not sharedValidation.ok then
+    return ignoredAward(sharedValidation.reasonCode or "AWARD_INVALID")
   end
   local actor = rc and rc.masterLooter
   if not actor then return ignoredAward("RC_MASTER_LOOTER_UNVERIFIABLE") end

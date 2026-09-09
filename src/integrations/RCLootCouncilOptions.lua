@@ -1204,6 +1204,14 @@ groups.player = { type = "group", name = "Player", order = 7, args = {
     local summary = Dibs.PlayerUI.GetSummary()
     return "Season: " .. tostring(summary.season and summary.season.name or "None") .. "\nDibs: " .. tostring(summary.balance)
   end),
+  readiness = description(1.5, function()
+    if Dibs.Readiness and type(Dibs.Readiness.Evaluate) == "function" then
+      local result = Dibs.Readiness.Evaluate({ allowPlayer = true })
+      return "Raid readiness (safe summary): " .. tostring(result and result.status or "Unavailable") ..
+        " | Live Dibs consumption: " .. (result and result.liveConsumptionAllowed and "allowed after revalidation" or "blocked or unavailable")
+    end
+    return "Raid readiness (safe summary): Unavailable"
+  end),
   item = { type = "input", name = "Pre-Dib item ID or link", order = 2,
     get = function() return getState().playerItem or "" end,
     set = function(_, value) getState().playerItem = value end },
@@ -1315,6 +1323,64 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
     templateHelp = description(1, "Templates set Dibs semantic families only. The Installation assistant also refreshes the locked Dibs button projection."),
     progression = execute(2, "Curio + Tier Set", function() applyDibSemanticTemplate("progression") end),
     broad = execute(3, "Standard loot", function() applyDibSemanticTemplate("broad") end),
+  } },
+  readiness = { type = "group", name = "Raid Readiness & Dry-Run", order = 3.5, inline = true, args = {
+    intro = description(1, "Run a read-only readiness check before raid. The dry-run uses local validation only and never calls RCMLAwardSuccess, FinalizeAward, loot controls, chat traffic, or ledger accounting."),
+    status = description(2, function()
+      if Dibs.Readiness and Dibs.Readiness.GetStatusText then
+        return Dibs.Readiness.GetStatusText(true)
+      end
+      return "Raid readiness is unavailable."
+    end),
+    check = execute(3, "Run readiness check", function()
+      local result, reason = Dibs.Readiness and Dibs.Readiness.Run and Dibs.Readiness.Run() or nil, "UNAVAILABLE"
+      setStatus(result and ("Readiness: " .. tostring(result.status)) or ("Readiness unavailable: " .. tostring(reason)))
+    end),
+    safeReport = execute(4, "Copy safe readiness report", function()
+      local report, reason = Dibs.Readiness and Dibs.Readiness.CopyReport and Dibs.Readiness.CopyReport("safe") or nil, "UNAVAILABLE"
+      setStatus(report and "Safe readiness report printed to chat." or ("Report unavailable: " .. tostring(reason)))
+    end),
+    dryRunItem = { type = "input", name = "Dry-run item ID or link", order = 5,
+      get = function() return getState().dryRunItem or "19019" end,
+      set = function(_, value) getState().dryRunItem = trimText(value) end },
+    dryRunWinner = { type = "input", name = "Dry-run winner", order = 6,
+      get = function() return getState().dryRunWinner or (Dibs.GetPlayerName and Dibs.GetPlayerName() or "") end,
+      set = function(_, value) getState().dryRunWinner = trimText(value) end },
+    dryRunResponse = { type = "input", name = "Dry-run response", order = 7,
+      get = function() return getState().dryRunResponse or "DIB" end,
+      set = function(_, value) getState().dryRunResponse = trimText(value) end },
+    dryRunStatus = { type = "select", name = "Dry-run finalization status", order = 8,
+      values = { finalized = "Finalized", awarded = "Awarded", pending = "Pending", test_mode = "Test mode" },
+      get = function() return getState().dryRunStatus or "finalized" end,
+      set = function(_, value) getState().dryRunStatus = value end },
+    dryRunSession = { type = "input", name = "Dry-run session identity", order = 9,
+      get = function() return getState().dryRunSession or "dry-run-session" end,
+      set = function(_, value) getState().dryRunSession = trimText(value) end },
+    runDryRun = execute(10, "Run local dry-run", function()
+      local state = getState()
+      local result, reason = Dibs.DryRun and Dibs.DryRun.Run and Dibs.DryRun.Run({
+        item = state.dryRunItem or "19019",
+        winner = state.dryRunWinner or (Dibs.GetPlayerName and Dibs.GetPlayerName() or ""),
+        response = state.dryRunResponse or "DIB",
+        status = state.dryRunStatus or "finalized",
+        sessionIdentity = state.dryRunSession or "dry-run-session",
+      }) or nil, "UNAVAILABLE"
+      if result then
+        state.lastDryRun = result
+        local last = Dibs.Readiness and Dibs.Readiness.GetLast and Dibs.Readiness.GetLast()
+        if last then
+          last.lastDryRunOutcome = result.outcome
+          last.simulationCount = (tonumber(last.simulationCount) or 0) + 1
+        end
+        setStatus(Dibs.DryRun.Format(result))
+      else
+        setStatus("Dry-run unavailable: " .. tostring(reason))
+      end
+    end),
+    dryRunResult = description(11, function()
+      local result = getState().lastDryRun
+      return result and Dibs.DryRun.Format(result) or "No dry-run has been executed in this session."
+    end),
   } },
   enable = execute(4, "Enable all loot types", function() applyDibTypePreset(true) end),
   disable = execute(5, "Default loot type only", function() applyDibTypePreset(false) end),
