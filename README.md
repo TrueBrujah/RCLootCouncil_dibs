@@ -106,6 +106,12 @@ inspect the attached Dibs and RCLootCouncil references, then choose a clear
 action. A reason is required for every resolution; corrections, refunds,
 revokes, historical imports, and adjustments also require explicit confirmation
 and append one linked ledger transaction.
+For a **Wrong item or player** report, **Correct player** is selected from the
+current guild roster (with a search field), and **Correct item** is selected
+from a session-cached Adventure Guide raid-loot catalogue. Item search matches
+the name, ID, raid, boss, Dibs category, and equipment metadata; when the game
+does not expose Adventure Guide data, the form explains the reason and offers a
+refresh instead of accepting arbitrary item text.
 The **Raid Readiness & Dry-Run** page is read-only: it explains missing raid
 context or integration capabilities, opens a privacy-safe report in a
 selectable window with the addon version, and shows whether a qualifying live

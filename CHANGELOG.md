@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.10-dev - 2026-09-09
+
+- Add guild-roster player choices to Officer target corrections, with a local
+  search field and a dropdown that never invents character names.
+- Add a bounded, session-cached Adventure Guide raid-loot catalogue for target
+  corrections. Search supports item name, ID, raid, boss, Dibs category, and
+  equipment metadata; the correction form accepts only catalogue selections.
+- Keep the correction UI explicit when the Adventure Guide API or loot data is
+  unavailable instead of accepting arbitrary item text.
+
 ## 0.3.9-dev - 2026-09-09
 
 - Replace simulated text columns with real aligned AceGUI table cells and

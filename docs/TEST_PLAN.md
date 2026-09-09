@@ -69,7 +69,7 @@ node node_modules/fengari-node-cli/src/lua-cli.js tests/run.lua
 git diff --check
 ```
 
-Expected baseline: **168 tests pass, 0 fail, 44 files**. Run this suite after
+Expected baseline: **195 tests pass, 0 fail, 50 files**. Run this suite after
 source changes and attach the output to the test record.
 
 ## Manual test checklist
@@ -78,8 +78,8 @@ source changes and attach the output to the test record.
 
 - [ ] Install the stable ZIP on a clean character and confirm the addon loads.
 - [ ] Install the development ZIP separately and confirm the TOC version is
-      `0.3.5-dev`.
-- [ ] Confirm the stable package reports `0.3.5`.
+      `0.3.10-dev`.
+- [ ] Confirm the stable package reports the current stable version.
 - [ ] Confirm SavedVariables survive `/reload`, relog, and client restart.
 - [ ] Open `/dibs options` and confirm the correct Dibs options category opens.
 - [ ] Create a test season, select it as active, and configure at least two rank
@@ -203,6 +203,14 @@ disclose another player's stored requests to an ordinary member.
 
 - [ ] Open Player and Officer windows from Overview and return through their links.
 - [ ] Visit every Officer page and confirm controls render in the content panel.
+- [ ] Open a wrong-item/player request and confirm **Correct player** only lists
+      guild-roster characters; search a short or realm-qualified name.
+- [ ] Confirm **Correct item** only lists Adventure Guide raid loot. Search by
+      item name, item ID, raid, boss, Dibs category, and equipment metadata;
+      verify the selected link is the one submitted for correction.
+- [ ] Temporarily make the Adventure Guide API unavailable, reopen the request,
+      and confirm the form explains the unavailable catalogue and offers a
+      refresh instead of accepting arbitrary item text.
 - [ ] Change a setting in RCLootCouncil options and confirm the Officer view reads
       the same value, then repeat in the other direction.
 - [ ] Scroll every long options page from top to bottom and confirm it does not

@@ -6,6 +6,11 @@ local EJ_BUTTON_ANCHOR_X = 0
 local EJ_BUTTON_ANCHOR_Y = -19
 local EJ_ITEM_DEBUG_CACHE_TTL = 120
 local EJ_TOOLTIP_MAX_DEBUG_LINES = 60
+local EJ_CATALOG_MAX_TIERS = 20
+local EJ_CATALOG_MAX_INSTANCES = 80
+local EJ_CATALOG_MAX_ENCOUNTERS = 40
+local EJ_CATALOG_MAX_LOOT = 80
+local EJ_CATALOG_MAX_ITEMS = 3500
 
 local EJ_SUBCATEGORY_MATRIX = {
   CATALYST = { allow = false, note = "Personal player item; never a Dibs category" },
@@ -21,6 +26,8 @@ local EJ_SUBCATEGORY_MATRIX = {
 }
 
 local itemDebugCache = {}
+local adventureGuideCatalog = nil
+local adventureGuideCatalogMeta = nil
 
 local function getNowSeconds()
   if type(GetTime) == "function" then
@@ -751,6 +758,237 @@ local function isRaidEncounterJournalContext()
   end
 
   return true
+end
+
+-- Build a searchable, session-cached catalogue from the Adventure Guide raid
+-- data.  The catalogue is deliberately read-only: selecting a result only
+-- supplies an item link to the officer correction workflow.  Scanning is
+-- bounded because the Adventure Guide can contain a large number of legacy
+-- raids, and every call is protected for clients where one of the optional
+-- APIs is not available yet.
+local function getJournalInstanceDetails(index)
+  if type(EJ_GetInstanceByIndex) ~= "function" then return nil end
+  local ok, instanceID, name = pcall(EJ_GetInstanceByIndex, index, true)
+  if ok and tonumber(instanceID) and tonumber(instanceID) > 0 then
+    return tonumber(instanceID), tostring(name or ("Raid " .. tostring(instanceID)))
+  end
+  ok, instanceID, name = pcall(EJ_GetInstanceByIndex, index)
+  if ok and tonumber(instanceID) and tonumber(instanceID) > 0 then
+    return tonumber(instanceID), tostring(name or ("Raid " .. tostring(instanceID)))
+  end
+  return nil
+end
+
+local function getJournalEncounterDetails(index, instanceID)
+  if type(EJ_GetEncounterInfoByIndex) ~= "function" then return nil end
+  local ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index, instanceID)
+  if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
+    return tonumber(encounterID), tostring(name or ("Encounter " .. tostring(encounterID)))
+  end
+  ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index)
+  if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
+    return tonumber(encounterID), tostring(name or ("Encounter " .. tostring(encounterID)))
+  end
+  return nil
+end
+
+local function getJournalLootDetails(index)
+  if type(C_EncounterJournal) == "table" and type(C_EncounterJournal.GetLootInfoByIndex) == "function" then
+    local ok, info = pcall(C_EncounterJournal.GetLootInfoByIndex, index)
+    if ok and type(info) == "table" then
+      local id = tonumber(info.itemID or info.id)
+      if id and id > 0 then
+        return id, tostring(info.name or info.itemName or ("Item " .. tostring(id))), info.link or info.itemLink or info.itemHyperlink
+      end
+    end
+  end
+
+  if type(EJ_GetLootInfoByIndex) == "function" then
+    local ok, itemID, _, itemName, _, _, _, itemLink = pcall(EJ_GetLootInfoByIndex, index)
+    itemID = tonumber(itemID)
+    if ok and itemID and itemID > 0 then
+      return itemID, tostring(itemName or ("Item " .. tostring(itemID))), itemLink
+    end
+  end
+
+  return nil
+end
+
+local function enrichCatalogItem(itemID, itemName, itemLink, instanceName, bossName, encounterID)
+  local link = itemLink
+  local name = itemName
+  if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
+    local ok, apiName, apiLink = pcall(C_Item.GetItemInfo, link or itemID)
+    if ok then
+      name = apiName or name
+      link = apiLink or link
+    end
+  elseif type(GetItemInfo) == "function" then
+    local ok, apiName, apiLink = pcall(GetItemInfo, link or itemID)
+    if ok then
+      name = apiName or name
+      link = apiLink or link
+    end
+  end
+  link = link or string.format("|cffffffff|Hitem:%d::::::::::::|h[%s]|h|r", itemID, tostring(name or ("Item " .. tostring(itemID))))
+
+  local catalogItem = { itemID = itemID, itemName = name, itemLink = link, responseType = "default" }
+  local itemType = tostring(inferItemSubCategory(catalogItem, {}) or "UNKNOWN")
+  local className, subClassName, equipLoc = "", "", ""
+  if type(C_Item) == "table" and type(C_Item.GetItemInfoInstant) == "function" then
+    local ok, _, cName, scName, eLoc = pcall(C_Item.GetItemInfoInstant, itemID)
+    if ok then
+      className, subClassName, equipLoc = tostring(cName or ""), tostring(scName or ""), tostring(eLoc or "")
+    end
+  end
+  local typeSearch = table.concat({ itemType, className, subClassName, equipLoc }, " ")
+  local key = tostring(itemID) .. ":" .. tostring(encounterID or 0)
+  return {
+    key = key,
+    itemID = itemID,
+    itemName = tostring(name or ("Item " .. tostring(itemID))),
+    itemLink = link,
+    instanceName = tostring(instanceName or "Adventure Guide"),
+    bossName = tostring(bossName or "Unknown boss"),
+    type = itemType,
+    typeLabel = typeSearch:gsub("^%s+", ""):gsub("%s+$", ""),
+    searchText = safeLower(table.concat({ tostring(name or ""), tostring(itemID), tostring(instanceName or ""), tostring(bossName or ""), typeSearch }, " ")),
+  }
+end
+
+local function scanAdventureGuideCatalog()
+  local result = {}
+  local seen = {}
+  local meta = { available = false, reason = nil, scannedInstances = 0, scannedEncounters = 0, scannedLoot = 0 }
+
+  local function addLoot(instanceName, bossName, encounterID, lootIndex)
+    if #result >= EJ_CATALOG_MAX_ITEMS then return end
+    local itemID, itemName, itemLink = getJournalLootDetails(lootIndex)
+    if not itemID then return end
+    local item = enrichCatalogItem(itemID, itemName, itemLink, instanceName, bossName, encounterID)
+    -- A token can appear in multiple encounter tables. Keep the first source,
+    -- while retaining a stable key for the dropdown and audit payload.
+    local dedupeKey = tostring(item.itemID) .. "|" .. tostring(item.bossName) .. "|" .. tostring(item.instanceName)
+    if not seen[dedupeKey] then
+      seen[dedupeKey] = true
+      result[#result + 1] = item
+    end
+  end
+
+  local function scanInstances()
+    if type(EJ_GetInstanceByIndex) ~= "function" then return end
+    local duplicateStreak = 0
+    for instanceIndex = 1, EJ_CATALOG_MAX_INSTANCES do
+      local instanceID, instanceName = getJournalInstanceDetails(instanceIndex)
+      if not instanceID then break end
+      -- Some test clients and older API shims expose the current instance for
+      -- every index. Stop on a duplicate to avoid a hot loop in that case.
+      if meta._seenInstanceIDs and meta._seenInstanceIDs[instanceID] then
+        duplicateStreak = duplicateStreak + 1
+        if duplicateStreak >= 3 then break end
+      else
+        duplicateStreak = 0
+      end
+      meta._seenInstanceIDs = meta._seenInstanceIDs or {}
+      meta._seenInstanceIDs[instanceID] = true
+      meta.scannedInstances = meta.scannedInstances + 1
+
+      if type(EJ_SelectInstance) == "function" then pcall(EJ_SelectInstance, instanceID) end
+      if type(EJ_GetEncounterInfoByIndex) == "function" and type(EJ_SelectEncounter) == "function" and type(EJ_GetNumLoot) == "function" then
+        for encounterIndex = 1, EJ_CATALOG_MAX_ENCOUNTERS do
+          local encounterID, bossName = getJournalEncounterDetails(encounterIndex, instanceID)
+          if not encounterID then break end
+          meta.scannedEncounters = meta.scannedEncounters + 1
+          pcall(EJ_SelectEncounter, encounterID)
+          local okNum, lootCount = pcall(EJ_GetNumLoot)
+          lootCount = okNum and tonumber(lootCount) or 0
+          if lootCount and lootCount > 0 then
+            for lootIndex = 1, math.min(lootCount, EJ_CATALOG_MAX_LOOT) do
+              meta.scannedLoot = meta.scannedLoot + 1
+              addLoot(instanceName, bossName, encounterID, lootIndex)
+            end
+          end
+          if #result >= EJ_CATALOG_MAX_ITEMS then return end
+        end
+      end
+    end
+  end
+
+  local previousInstance = getCurrentJournalInstanceID()
+  local previousEncounter = _G.EncounterJournal and _G.EncounterJournal.encounter and _G.EncounterJournal.encounter.info and tonumber(_G.EncounterJournal.encounter.info.encounterID) or nil
+  local previousTier
+  if type(EJ_GetCurrentTier) == "function" then
+    local okTier, tierValue = pcall(EJ_GetCurrentTier)
+    if okTier then previousTier = tonumber(tierValue) end
+  end
+  local tierCount = 0
+  if type(EJ_GetNumTiers) == "function" then
+    local ok, value = pcall(EJ_GetNumTiers)
+    tierCount = ok and math.min(tonumber(value) or 0, EJ_CATALOG_MAX_TIERS) or 0
+  end
+  if tierCount > 0 and type(EJ_SelectTier) == "function" then
+    for tier = 1, tierCount do
+      pcall(EJ_SelectTier, tier)
+      scanInstances()
+      if #result >= EJ_CATALOG_MAX_ITEMS then break end
+    end
+  else
+    scanInstances()
+  end
+
+  if #result == 0 and type(EJ_GetNumLoot) == "function" then
+    -- A limited fallback for clients that expose only the currently selected
+    -- encounter through C_EncounterJournal. It still remains Adventure Guide
+    -- sourced and is useful while the journal is open on a single boss.
+    local okNum, lootCount = pcall(EJ_GetNumLoot)
+    lootCount = okNum and tonumber(lootCount) or 0
+    for lootIndex = 1, math.min(lootCount, EJ_CATALOG_MAX_LOOT) do
+      meta.scannedLoot = meta.scannedLoot + 1
+      addLoot("Current raid", "Current boss", 0, lootIndex)
+    end
+  end
+
+  if type(EJ_SelectTier) == "function" and previousTier then pcall(EJ_SelectTier, previousTier) end
+  if type(EJ_SelectInstance) == "function" and previousInstance then pcall(EJ_SelectInstance, previousInstance) end
+  if type(EJ_SelectEncounter) == "function" and previousEncounter then pcall(EJ_SelectEncounter, previousEncounter) end
+
+  table.sort(result, function(a, b)
+    local left = safeLower(a.itemName) .. "|" .. safeLower(a.instanceName) .. "|" .. safeLower(a.bossName) .. "|" .. tostring(a.itemID)
+    local right = safeLower(b.itemName) .. "|" .. safeLower(b.instanceName) .. "|" .. safeLower(b.bossName) .. "|" .. tostring(b.itemID)
+    return left < right
+  end)
+  meta._seenInstanceIDs = nil
+  meta.available = #result > 0
+  meta.reason = meta.available and nil or (type(EJ_GetInstanceByIndex) == "function" and "NO_RAID_LOOT_FOUND" or "ADVENTURE_GUIDE_API_UNAVAILABLE")
+  return result, meta
+end
+
+function Dibs.EncounterJournal.InvalidateLootCatalog()
+  adventureGuideCatalog = nil
+  adventureGuideCatalogMeta = nil
+end
+
+function Dibs.EncounterJournal.GetLootCatalog(query, options)
+  options = options or {}
+  if options.refresh == true or not adventureGuideCatalog then
+    adventureGuideCatalog, adventureGuideCatalogMeta = scanAdventureGuideCatalog()
+  end
+
+  local needle = safeLower(tostring(query or "")):match("^%s*(.-)%s*$") or ""
+  local limit = math.max(1, tonumber(options.limit) or 250)
+  local matches = {}
+  for _, item in ipairs(adventureGuideCatalog or {}) do
+    if needle == "" or string.find(item.searchText or "", needle, 1, true) then
+      matches[#matches + 1] = item
+      if #matches >= limit then break end
+    end
+  end
+  local meta = {}
+  for key, value in pairs(adventureGuideCatalogMeta or {}) do meta[key] = value end
+  meta.query = needle
+  meta.total = #(adventureGuideCatalog or {})
+  meta.returned = #matches
+  return matches, meta
 end
 
 local function updateButtonState(button)

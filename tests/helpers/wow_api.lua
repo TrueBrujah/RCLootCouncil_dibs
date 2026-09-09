@@ -291,6 +291,7 @@ function M.resetGlobals()
   _G.Item = nil
   _G.C_Item = nil
   _G.C_Timer = nil
+  _G.C_EncounterJournal = nil
   _G.__dibsMessages = nil
   _G.__sentChatMessages = nil
   _G.__sentAddonMessages = nil
@@ -338,14 +339,65 @@ function M.installEncounterJournalContext(opts)
   local dungeonInstanceID = tonumber(opts.dungeonInstanceID)
   local currentInstanceID = raidInstanceID or dungeonInstanceID
 
+  local raidInstances = opts.raidInstances or {}
+  local journalEncounters = opts.encounters or {}
+  local journalLoot = opts.loot or {}
+  local hasCatalogFixture = next(raidInstances) ~= nil or next(journalEncounters) ~= nil or next(journalLoot) ~= nil
+
   _G.EJ_GetCurrentInstance = function()
     return currentInstanceID
   end
 
-  _G.EJ_GetInstanceByIndex = function(_, isRaid)
-    if isRaid == true then return raidInstanceID end
-    if isRaid == false then return dungeonInstanceID end
+  _G.EJ_GetInstanceByIndex = function(index, isRaid)
+    if isRaid == true then
+      local entry = raidInstances[index]
+      if type(entry) == "table" then return entry.id or entry.instanceID, entry.name end
+      if index == 1 then return raidInstanceID end
+      return nil
+    end
+    if isRaid == false then
+      if index == 1 then return dungeonInstanceID end
+      return nil
+    end
     return nil
+  end
+
+  if hasCatalogFixture then
+    _G.EJ_SelectTier = function(tier) _G.__ejNavigation = { tier = tier } end
+    _G.EJ_GetCurrentTier = function() return (_G.__ejNavigation and _G.__ejNavigation.tier) or 1 end
+    _G.EJ_GetNumTiers = function() return tonumber(opts.tierCount) or 1 end
+    _G.EJ_GetEncounterInfoByIndex = function(index, instanceID)
+      local list = journalEncounters[tonumber(instanceID)] or journalEncounters[tostring(instanceID)] or {}
+      local entry = list[index]
+      if type(entry) == "table" then return entry.id or entry.encounterID, entry.name end
+      return nil
+    end
+    _G.EJ_GetNumLoot = function()
+      local encounterID = _G.__ejNavigation and _G.__ejNavigation.encounterId
+      local list = journalLoot[tonumber(encounterID)] or journalLoot[tostring(encounterID)] or {}
+      return #list
+    end
+    _G.EJ_GetLootInfoByIndex = function(index)
+      local encounterID = _G.__ejNavigation and _G.__ejNavigation.encounterId
+      local list = journalLoot[tonumber(encounterID)] or journalLoot[tostring(encounterID)] or {}
+      local entry = list[index]
+      if type(entry) ~= "table" then return nil end
+      return entry.itemID or entry.id, encounterID, entry.name, entry.icon, entry.slot, entry.armorType, entry.link
+    end
+    _G.C_EncounterJournal = {
+      GetLootInfoByIndex = function(index)
+        local encounterID = _G.__ejNavigation and _G.__ejNavigation.encounterId
+        local list = journalLoot[tonumber(encounterID)] or journalLoot[tostring(encounterID)] or {}
+        local entry = list[index]
+        if type(entry) ~= "table" then return nil end
+        return {
+          itemID = entry.itemID or entry.id,
+          name = entry.name,
+          link = entry.link,
+          encounterID = encounterID,
+        }
+      end,
+    }
   end
 end
 

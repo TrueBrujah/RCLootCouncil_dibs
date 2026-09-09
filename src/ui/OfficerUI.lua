@@ -260,6 +260,43 @@ local function getCurrentGuildMemberName(memberNames, playerName)
   return memberNames[fullName] or (shortName ~= nil and memberNames[shortName]) or nil
 end
 
+local function buildGuildMemberChoices(query, selectedName)
+  local roster = getCurrentGuildMemberNames() or {}
+  local unique = {}
+  for _, name in pairs(roster) do
+    if name and name ~= "" then unique[tostring(name)] = true end
+  end
+
+  local needle = string.lower(trimText(query))
+  local values = { [""] = "Select a guild player..." }
+  local count = 0
+  for name in pairs(unique) do
+    local matches = needle == "" or string.find(string.lower(name), needle, 1, true) ~= nil
+    if matches or (selectedName and string.lower(name) == string.lower(tostring(selectedName))) then
+      values[name] = name
+      count = count + 1
+    end
+  end
+  return sortedLabels(values), count
+end
+
+local function buildAdventureGuideItemChoices(catalog, query, selectedKey, maxResults)
+  local needle = string.lower(trimText(query))
+  local resultLimit = math.max(1, tonumber(maxResults) or 200)
+  local values = { [""] = "Select an Adventure Guide item..." }
+  local count = 0
+  for _, item in ipairs(catalog or {}) do
+    local matches = needle == "" or string.find(string.lower(tostring(item.searchText or "")), needle, 1, true) ~= nil
+    local isSelected = selectedKey and tostring(item.key) == tostring(selectedKey)
+    if (matches and count < resultLimit) or isSelected then
+      local label = string.format("%s [%s] — %s / %s (%s)", tostring(item.itemName or ("Item " .. tostring(item.itemID))), tostring(item.itemID or "?"), tostring(item.instanceName or "Adventure Guide"), tostring(item.bossName or "Unknown boss"), tostring(item.typeLabel or item.type or "UNKNOWN"))
+      values[tostring(item.key)] = label
+      count = count + 1
+    end
+  end
+  return sortedLabels(values), count
+end
+
 local function getRankName(rankIndex)
   local idx = tonumber(rankIndex) or 0
   local names = getGuildRankNames()
@@ -1043,6 +1080,9 @@ local function createAceWindow()
             if result then
               self.disputeReason, self.disputeAmount = "", ""
               self.disputeCorrectPlayer, self.disputeCorrectItem = "", ""
+              self.disputeCorrectPlayerQuery, self.disputeCorrectItemQuery = "", ""
+              self.disputeCorrectItemKey = nil
+              self.disputeTargetRequestId = nil
               self.disputeConfirmed = false
             end
             self:Refresh()
@@ -1055,17 +1095,83 @@ local function createAceWindow()
               { "Current player", tostring(evidence.winner or selected.player and selected.player.name or "Unavailable") },
               { "Current item", tostring(evidence.item or evidence.itemID or "Unavailable") },
             }, 90)
+            if self.disputeTargetRequestId ~= selected.requestId then
+              self.disputeTargetRequestId = selected.requestId
+              self.disputeCorrectPlayer, self.disputeCorrectItem = "", ""
+              self.disputeCorrectPlayerQuery, self.disputeCorrectItemQuery = "", ""
+              self.disputeCorrectItemKey = nil
+            end
             self.disputeCorrectPlayer = self.disputeCorrectPlayer or ""
             self.disputeCorrectItem = self.disputeCorrectItem or ""
-            local correctedPlayer = Dibs.AceGUI.AddEditBox(shell, targetSection, "Correct player (optional)", function(value) self.disputeCorrectPlayer = value or "" end, 250)
-            setControlText(correctedPlayer, self.disputeCorrectPlayer)
-            local correctedItem = Dibs.AceGUI.AddEditBox(shell, targetSection, "Correct item ID or link (optional)", function(value) self.disputeCorrectItem = value or "" end, 300)
-            setControlText(correctedItem, self.disputeCorrectItem)
+            self.disputeCorrectPlayerQuery = self.disputeCorrectPlayerQuery or ""
+            self.disputeCorrectItemQuery = self.disputeCorrectItemQuery or ""
+
+            local playerGroup = Dibs.AceGUI.AddInlineGroup(shell, targetSection)
+            local playerChoices, playerCount = buildGuildMemberChoices("", self.disputeCorrectPlayer)
+            local correctedPlayerDropdown
+            local correctedPlayerSearch = Dibs.AceGUI.AddEditBox(shell, playerGroup, "Search guild players", function(value)
+              self.disputeCorrectPlayerQuery = value or ""
+              local choices = buildGuildMemberChoices(self.disputeCorrectPlayerQuery, self.disputeCorrectPlayer)
+              if correctedPlayerDropdown and correctedPlayerDropdown.SetList then correctedPlayerDropdown:SetList(choices) end
+            end, 250)
+            setControlText(correctedPlayerSearch, self.disputeCorrectPlayerQuery)
+            correctedPlayerDropdown = Dibs.AceGUI.AddDropdown(shell, playerGroup, "Correct player", playerChoices, function(value)
+              if value and value ~= "" then self.disputeCorrectPlayer = tostring(value) end
+            end, 270)
+            if correctedPlayerDropdown and self.disputeCorrectPlayer ~= "" then
+              Dibs.AceGUI.SetValue(correctedPlayerDropdown, self.disputeCorrectPlayer)
+            end
+            if playerCount == 0 then
+              Dibs.AceGUI.AddLabel(shell, targetSection, "No guild roster is available. Refresh the guild roster before correcting a player.", true)
+              Dibs.AceGUI.AddButton(shell, targetSection, "Refresh guild roster", function()
+                if type(_G.GuildRoster) == "function" then pcall(_G.GuildRoster) end
+                self:Refresh()
+              end, 150)
+            end
+
+            local itemCatalog, itemMeta = {}, {}
+            if Dibs.EncounterJournal and type(Dibs.EncounterJournal.GetLootCatalog) == "function" then
+              itemCatalog, itemMeta = Dibs.EncounterJournal.GetLootCatalog("", { limit = 3500 })
+            end
+            self.disputeItemCatalogByKey = {}
+            for _, item in ipairs(itemCatalog or {}) do self.disputeItemCatalogByKey[tostring(item.key)] = item end
+
+            local itemGroup = Dibs.AceGUI.AddInlineGroup(shell, targetSection)
+            local itemChoices = buildAdventureGuideItemChoices(itemCatalog, "", self.disputeCorrectItemKey, 200)
+            local correctedItemDropdown
+            local correctedItemSearch = Dibs.AceGUI.AddEditBox(shell, itemGroup, "Search Adventure Guide (name, ID, boss, type)", function(value)
+              self.disputeCorrectItemQuery = value or ""
+              local choices = buildAdventureGuideItemChoices(itemCatalog, self.disputeCorrectItemQuery, self.disputeCorrectItemKey, 200)
+              if correctedItemDropdown and correctedItemDropdown.SetList then correctedItemDropdown:SetList(choices) end
+            end, 360)
+            setControlText(correctedItemSearch, self.disputeCorrectItemQuery)
+            correctedItemDropdown = Dibs.AceGUI.AddDropdown(shell, itemGroup, "Correct item", itemChoices, function(value)
+              local item = value and self.disputeItemCatalogByKey and self.disputeItemCatalogByKey[tostring(value)] or nil
+              if item then
+                self.disputeCorrectItemKey = tostring(item.key)
+                self.disputeCorrectItem = item.itemLink or ("item:" .. tostring(item.itemID))
+              end
+            end, 430)
+            if correctedItemDropdown and self.disputeCorrectItemKey then
+              Dibs.AceGUI.SetValue(correctedItemDropdown, self.disputeCorrectItemKey)
+            end
+            if not itemMeta.available then
+              local reason = tostring(itemMeta.reason or "ADVENTURE_GUIDE_UNAVAILABLE")
+              Dibs.AceGUI.AddLabel(shell, targetSection, "Adventure Guide items are unavailable (" .. reason .. "). Open the Adventure Guide once, then reopen this request.", true)
+              Dibs.AceGUI.AddButton(shell, targetSection, "Refresh Adventure Guide items", function()
+                if Dibs.EncounterJournal and type(Dibs.EncounterJournal.InvalidateLootCatalog) == "function" then
+                  Dibs.EncounterJournal.InvalidateLootCatalog()
+                end
+                self:Refresh()
+              end, 210)
+            else
+              Dibs.AceGUI.AddLabel(shell, targetSection, tostring(itemMeta.total or #itemCatalog) .. " Adventure Guide loot entries loaded. Search matches boss, item name, ID, and type.", true)
+            end
             targetButton = Dibs.AceGUI.AddButton(shell, targetSection, "Apply target correction", function()
               resolve("correct_target", {
                 confirmed = self.disputeConfirmed,
-                playerName = trimText(getControlText(correctedPlayer)),
-                itemLink = trimText(getControlText(correctedItem)),
+                playerName = trimText(self.disputeCorrectPlayer),
+                itemLink = trimText(self.disputeCorrectItem),
               })
             end, 180)
           end
