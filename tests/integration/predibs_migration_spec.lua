@@ -19,7 +19,7 @@ describe("Pre-Dib migration", function()
 
     local migrated = dibs.GetDB()
 
-    assert_equal(5, migrated.version)
+    assert_equal(6, migrated.version)
     assert_equal(request, migrated.preDibs.requests[1])
     assert_equal("Normal", migrated.preDibs.requests[1].difficulty)
     assert_false(migrated.settings.allowPublicPreDibs)

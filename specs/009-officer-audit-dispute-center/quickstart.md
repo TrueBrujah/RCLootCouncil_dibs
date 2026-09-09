@@ -2,8 +2,8 @@
 
 ## Automated validation
 
-Add fixtures for each report category, own/other-player scope, duplicate requests, evidence
-gaps, all statuses, replies, concurrent resolutions, reload, and absent RCLootCouncil. Run:
+Fixtures cover own/other-player scope, duplicate requests, evidence gaps, all statuses,
+replies, protected corrections, UI rendering, reload, and absent RCLootCouncil. Run:
 
 ```powershell
 $files = Get-ChildItem tests -Recurse -File -Filter "*_spec.lua" | Sort-Object FullName | ForEach-Object { $_.FullName.Replace((Get-Location).Path + "\", "").Replace("\", "/") }
@@ -11,6 +11,10 @@ $env:DIBS_TEST_FILES = ($files -join ";")
 npx.cmd --yes fengari tests/run.lua
 git diff --check
 ```
+
+The automated suite currently passes 192 tests with zero failures, including the
+Dispute Center integration, privacy, replay, reload, and scope tests. Retail UI
+and in-raid delivery checks remain manual.
 
 ## Retail acceptance
 

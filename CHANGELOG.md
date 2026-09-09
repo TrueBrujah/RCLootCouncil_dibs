@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7-dev - 2026-09-09
+
+- Added the Officer Audit and Dispute Center: players can submit bounded,
+  non-authoritative reports from their own Dibs context, while GM/Officer
+  reviewers get a private queue, evidence view, safe resolutions, and an
+  append-only audit timeline. Balance corrections use linked protected ledger
+  transactions and remain idempotent across reloads or repeated actions.
+
 ## 0.3.6-dev - 2026-09-09
 
 - Added the Raid Readiness and Dry-Run Center on `dev`: bounded readiness

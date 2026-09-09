@@ -71,6 +71,11 @@ local function buildAudit(actionId, actor, payload, decision)
     sourceStatus = payload and payload.sourceStatus,
     response = payload and payload.response,
     responseValidated = payload and payload.responseValidated == true or nil,
+    reviewRequestId = payload and payload.reviewRequestId,
+    evidenceId = payload and payload.evidenceId,
+    originalTransactionId = payload and payload.originalTransactionId,
+    correctionKey = payload and payload.correctionKey,
+    confirmation = payload and payload.confirmation == true or nil,
   }
 end
 

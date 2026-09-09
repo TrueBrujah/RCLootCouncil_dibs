@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-09
 
-**Status**: Draft
+**Status**: Implemented on `dev` in version 0.3.7-dev
 
 **Input**: User description: "Add a simple player report flow and an Officer review queue for Dibs problems. Players should submit a request with one button and optional notes; GM/Officers should see prefilled evidence and resolve it with a few clear actions, while all corrections remain safe and auditable."
 

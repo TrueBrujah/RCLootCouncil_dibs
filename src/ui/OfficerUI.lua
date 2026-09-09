@@ -27,6 +27,7 @@ local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before t
 
 local OFFICER_NAV_TREE = {
   { text = "Overview", value = "overview" },
+  { text = "Review Requests", value = "disputes" },
   { text = "Seasons", value = "seasons" },
   { text = "Rank Rules", value = "ranks" },
   { text = "Settings", value = "settings" },
@@ -43,6 +44,8 @@ local OFFICER_TAB_ALIASES = {
   dashboard = "overview",
   lootTypes = "integration",
   predibs = "preDibs",
+  dispute = "disputes",
+  review = "disputes",
 }
 
 local function normalizeOfficerTab(tab)
@@ -82,6 +85,22 @@ local HAS_DROPDOWN = type(_G.UIDropDownMenu_Initialize) == "function"
 
 local function trimText(value)
   return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
+local function sortedLabels(values)
+  local entries = {}
+  for key, label in pairs(values or {}) do
+    table.insert(entries, { key = key, label = label })
+  end
+  table.sort(entries, function(a, b) return tostring(a.label) < tostring(b.label) end)
+  local result = {}
+  for _, entry in ipairs(entries) do result[entry.key] = entry.label end
+  return result
+end
+
+local function disputeStatusText(request)
+  if not request then return "" end
+  return tostring(request.status or "Open") .. " | " .. tostring(request.categoryLabel or request.category or "Other")
 end
 
 local function setControlText(control, text)
@@ -888,6 +907,194 @@ local function createAceWindow()
       if self.activeTab == "integration" and controlMap then
         self.enableLootTypes = controlMap.enable
         self.defaultLootTypes = controlMap.disable
+      end
+      return
+    end
+
+    if self.activeTab == "disputes" then
+      Dibs.AceGUI.AddHeader(shell, tabs, "Officer review requests", "Review player reports with the attached Dibs and RCLootCouncil evidence. Every resolution records an auditable reason.")
+      local statusChoices = { [""] = "All statuses" }
+      for key, value in pairs(Dibs.Disputes and Dibs.Disputes.GetStatuses and Dibs.Disputes.GetStatuses() or {}) do
+        statusChoices[value] = value
+      end
+      self.disputeStatusFilter = self.disputeStatusFilter or ""
+      self.disputeQuery = self.disputeQuery or ""
+      local filter = Dibs.AceGUI.AddDropdown(shell, tabs, "Status filter", statusChoices, function(value)
+        self.disputeStatusFilter = value or ""
+        self.disputePage = 1
+        self:Refresh()
+      end, 220)
+      Dibs.AceGUI.SetValue(filter, self.disputeStatusFilter)
+      self.disputeSearchBox = Dibs.AceGUI.AddEditBox(shell, tabs, "Search player, item, or note", function(value)
+        self.disputeQuery = value or ""
+        self.disputePage = 1
+        self:Refresh()
+      end, 300)
+      setControlText(self.disputeSearchBox, self.disputeQuery)
+      Dibs.AceGUI.AddButton(shell, tabs, "Clear", function()
+        self.disputeQuery, self.disputeStatusFilter, self.disputeSelectedId = "", "", nil
+        self:Refresh()
+      end, 70)
+
+      local requests, queueReason = {}, nil
+      if Dibs.Disputes and Dibs.Disputes.ListForOfficer then
+        requests, queueReason = Dibs.Disputes.ListForOfficer(nil, {
+          status = self.disputeStatusFilter ~= "" and self.disputeStatusFilter or nil,
+          query = self.disputeQuery,
+        })
+      end
+      if queueReason then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Officer access required: " .. tostring(queueReason), true)
+        return
+      end
+      local pageSize = 10
+      local totalPages = math.max(1, math.ceil(#(requests or {}) / pageSize))
+      self.disputePage = math.min(math.max(1, self.disputePage or 1), totalPages)
+      local firstRequest = ((self.disputePage - 1) * pageSize) + 1
+      local lastRequest = math.min(#(requests or {}), self.disputePage * pageSize)
+      local requestRows = {}
+      for index = firstRequest, lastRequest do
+        local request = requests[index]
+        local evidence = request.evidence and request.evidence[1] or {}
+        requestRows[#requestRows + 1] = {
+          tostring(request.requestId),
+          tostring(request.player and request.player.name or "Unknown"),
+          disputeStatusText(request),
+          tostring(evidence.item or "Unavailable"),
+          tostring(request.note or ""),
+          "",
+          request = request,
+        }
+      end
+      if #requestRows == 0 then requestRows[1] = { "No requests", "", "", "", "", "" } end
+      Dibs.AceGUI.AddTable(shell, tabs, {
+        { title = "Request", width = 145, tooltip = "Player review request identifier." },
+        { title = "Player", width = 130, tooltip = "Character that submitted the request." },
+        { title = "Status", width = 150, tooltip = "Current review status." },
+        { title = "Item", width = 180, tooltip = "Attached item when available." },
+        { title = "Note", width = 230, tooltip = "Player note." },
+        { title = "Action", width = 80, tooltip = "Open request details." },
+      }, requestRows, 270, function(row)
+        if not row.request then return nil end
+        return {
+          text = "Open",
+          callback = function()
+            self.disputeSelectedId = row.request.requestId
+            self:Refresh()
+          end,
+        }
+      end)
+      local previousPage = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function()
+        self.disputePage = math.max(1, self.disputePage - 1)
+        self:Refresh()
+      end, 90)
+      local pageLabel = Dibs.AceGUI.AddLabel(shell, tabs, "Page " .. tostring(self.disputePage) .. "/" .. tostring(totalPages))
+      local nextPage = Dibs.AceGUI.AddButton(shell, tabs, "Next", function()
+        self.disputePage = math.min(totalPages, self.disputePage + 1)
+        self:Refresh()
+      end, 70)
+      Dibs.AceGUI.SetDisabled(previousPage, self.disputePage <= 1)
+      Dibs.AceGUI.SetDisabled(nextPage, self.disputePage >= totalPages)
+      Dibs.AceGUI.AddTooltip(pageLabel, "Page", "Current review queue page.")
+
+      if self.disputeSelectedId then
+        local selected = Dibs.Disputes.GetRequest(self.disputeSelectedId, nil)
+        if selected then
+          local evidence = selected.evidence and selected.evidence[1] or {}
+          Dibs.AceGUI.AddHeader(shell, tabs, "Selected request", disputeStatusText(selected))
+          local unavailable = evidence.unavailableFields and table.concat(evidence.unavailableFields, ", ") or "none"
+          Dibs.AceGUI.AddLabel(shell, tabs, "Player: " .. tostring(selected.player and selected.player.name or "Unknown") ..
+            "\nCategory: " .. tostring(selected.categoryLabel or selected.category) ..
+            "\nStatus: " .. tostring(selected.status) ..
+            "\nNote: " .. tostring(selected.note or "") ..
+            "\nEvidence source: " .. tostring(evidence.source or "unknown") ..
+            "\nIntegration: " .. tostring(evidence.integrationStatus or "standalone/unavailable") ..
+            " (" .. tostring(evidence.integrationReason or "") .. ")" ..
+            "\nItem: " .. tostring(evidence.item or "Unavailable") ..
+            "\nTransaction: " .. tostring(evidence.transactionRef or "Unavailable") ..
+            "\nAward/history reference: " .. tostring(evidence.awardRef or evidence.historyRef or "Unavailable") ..
+            "\nUnavailable fields: " .. unavailable, true)
+
+          self.disputeReason = self.disputeReason or ""
+          local reason = Dibs.AceGUI.AddEditBox(shell, tabs, "Resolution reason or question", function(value) self.disputeReason = value or "" end, 600)
+          setControlText(reason, self.disputeReason)
+          local amount = Dibs.AceGUI.AddEditBox(shell, tabs, "Balance change (optional)", function(value) self.disputeAmount = value or "" end, 180)
+          setControlText(amount, self.disputeAmount or "")
+          self.disputeConfirmed = self.disputeConfirmed == true
+          local confirmation = Dibs.AceGUI.AddCheckBox(shell, tabs, "I confirm a ledger-changing correction", self.disputeConfirmed, function(value) self.disputeConfirmed = value == true end, 320)
+
+          local function resolve(action, options)
+            options = options or {}
+            options.reason = self.disputeReason
+            local result, resolveReason = Dibs.Disputes.Resolve(self.disputeSelectedId, action, options, nil)
+            self.disputeStatusMessage = result and ("Request updated: " .. tostring(result.request and result.request.status or "done"))
+              or ("Unable to update request: " .. tostring(resolveReason or "unknown error"))
+            if result then self.disputeReason, self.disputeAmount = "", "" end
+            self:Refresh()
+          end
+          local reviewButton = Dibs.AceGUI.AddButton(shell, tabs, "Start review", function() resolve("under_review") end, 110)
+          local questionButton = Dibs.AceGUI.AddButton(shell, tabs, "Ask for information", function() resolve("ask_information", { question = self.disputeReason }) end, 150)
+          local noCorrection = Dibs.AceGUI.AddButton(shell, tabs, "Resolve: no correction", function() resolve("no_correction") end, 155)
+          local duplicate = Dibs.AceGUI.AddButton(shell, tabs, "Mark duplicate", function() resolve("duplicate", { duplicateOf = self.disputeDuplicateId }) end, 110)
+          local reject = Dibs.AceGUI.AddButton(shell, tabs, "Reject", function() resolve("reject") end, 80)
+          local correction = Dibs.AceGUI.AddButton(shell, tabs, "Correct balance", function()
+            local options = { confirmed = self.disputeConfirmed }
+            local parsed = tonumber(trimText(self.disputeAmount))
+            if parsed then options.amount = parsed end
+            resolve("correct_balance", options)
+          end, 120)
+          local refund = Dibs.AceGUI.AddButton(shell, tabs, "Refund Dib", function()
+            local options = { confirmed = self.disputeConfirmed }
+            local parsed = tonumber(trimText(self.disputeAmount))
+            if parsed then options.amount = parsed end
+            resolve("refund", options)
+          end, 95)
+          local revoke = Dibs.AceGUI.AddButton(shell, tabs, "Revoke Dib", function()
+            local options = { confirmed = self.disputeConfirmed }
+            local parsed = tonumber(trimText(self.disputeAmount))
+            if parsed then options.amount = parsed end
+            resolve("revoke", options)
+          end, 95)
+          local import = Dibs.AceGUI.AddButton(shell, tabs, "Import historical", function()
+            local options = { confirmed = self.disputeConfirmed }
+            local parsed = tonumber(trimText(self.disputeAmount))
+            if parsed then options.amount = parsed end
+            resolve("historical_import", options)
+          end, 125)
+          local adjustment = Dibs.AceGUI.AddButton(shell, tabs, "Admin adjustment", function()
+            local options = { confirmed = self.disputeConfirmed }
+            local parsed = tonumber(trimText(self.disputeAmount))
+            if parsed then options.amount = parsed end
+            resolve("adjustment", options)
+          end, 120)
+          local reopen = Dibs.AceGUI.AddButton(shell, tabs, "Reopen", function() resolve("reopen") end, 80)
+          local terminal = selected.status == "Resolved" or selected.status == "Rejected"
+          Dibs.AceGUI.SetDisabled(reviewButton, terminal)
+          Dibs.AceGUI.SetDisabled(questionButton, terminal)
+          Dibs.AceGUI.SetDisabled(noCorrection, terminal)
+          Dibs.AceGUI.SetDisabled(duplicate, terminal)
+          Dibs.AceGUI.SetDisabled(reject, terminal)
+          Dibs.AceGUI.SetDisabled(correction, terminal)
+          Dibs.AceGUI.SetDisabled(refund, terminal)
+          Dibs.AceGUI.SetDisabled(revoke, terminal)
+          Dibs.AceGUI.SetDisabled(import, terminal)
+          Dibs.AceGUI.SetDisabled(adjustment, terminal)
+          Dibs.AceGUI.SetDisabled(reopen, not terminal)
+          Dibs.AceGUI.AddLabel(shell, tabs, self.disputeStatusMessage or "Choose an action. Ledger-changing corrections require a reason and explicit confirmation.", true)
+
+          local timelineRows = {}
+          for _, event in ipairs(Dibs.Disputes.GetTimeline(self.disputeSelectedId, nil) or {}) do
+            timelineRows[#timelineRows + 1] = { tostring(event.timestamp or ""), tostring(event.action or ""), tostring(event.actorName or ""), tostring(event.reason or "") }
+          end
+          if #timelineRows > 0 then
+            Dibs.AceGUI.AddTable(shell, tabs, {
+              { title = "Time", width = 130, tooltip = "Audit event time." },
+              { title = "Action", width = 150, tooltip = "Recorded action." },
+              { title = "Actor", width = 140, tooltip = "Actor identity is officer-only." },
+              { title = "Reason", width = 300, tooltip = "Recorded justification." },
+            }, timelineRows, 190)
+          end
+        end
       end
       return
     end

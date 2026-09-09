@@ -30,6 +30,7 @@ test mirror can be used for guild testers without exposing the source repository
 - Developer Mode for local item and request testing.
 - Raid Readiness checks with clear Ready, Degraded, Blocked and Unavailable states.
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
+- Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
 - SavedVariables migrations and localized English/French runtime strings.
 
 ## How to use
@@ -73,6 +74,9 @@ rank policy can change Dibs settings, seasons, rank rules, modes, or balances.
    offers a Dibs action.
 4. Submit a Pre-Dib before the drop when the active season allows it.
 5. Review your transaction history after an award, refund, or adjustment.
+6. Open **My requests** (or use `/dibs requests`) to report a Dibs problem with
+   an optional transaction, follow its status, answer an Officer question, and
+   read the final explanation.
 
 A Pre-Dib is a reservation request. It does not spend a Dib until a qualifying
 award is finalized. A request that does not win remains active unless guild
@@ -84,6 +88,7 @@ Open `/dibs officer` for the full Officer interface. Its navigation mirrors the
 RCLootCouncil layout:
 
 - Overview
+- Review Requests
 - Seasons
 - Rank Rules
 - Settings
@@ -96,6 +101,11 @@ RCLootCouncil layout:
 Officer pages use the same protected callbacks and SavedVariables as the main
 options panel. The Officer view can inspect the complete ledger and history,
 manage seasons and allocations, configure announcements, and review diagnostics.
+Review Requests is a private GM/Officer queue. Filter by status or player/item,
+inspect the attached Dibs and RCLootCouncil references, then choose a clear
+action. A reason is required for every resolution; corrections, refunds,
+revokes, historical imports, and adjustments also require explicit confirmation
+and append one linked ledger transaction.
 The **Raid Readiness & Dry-Run** page is read-only: it explains missing raid
 context or integration capabilities, opens a privacy-safe report in a
 selectable window with the addon version, and shows whether a qualifying live
@@ -131,6 +141,8 @@ SavedVariables.
 /dibs balance
 /dibs ui
 /dibs officer
+/dibs requests
+/dibs review
 /dibs options
 /dibs grant <player> <amount>
 /dibs use <player> <amount>

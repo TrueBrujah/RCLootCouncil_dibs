@@ -2803,3 +2803,31 @@ function Dibs.RCLootCouncil.GetLocalStatus()
     initialized = Dibs.RCLootCouncil.initialized == true,
   }
 end
+
+-- Build a read-only evidence link for a dispute.  This adapter deliberately
+-- copies only stable award metadata supplied by the caller; it never exposes
+-- live candidates/votes and never mutates RCLootCouncil history.
+function Dibs.RCLootCouncil.GetAwardEvidence(context)
+  context = type(context) == "table" and context or {}
+  local status = Dibs.RCLootCouncil.GetLocalStatus()
+  return {
+    source = "rclootcouncil",
+    awardRef = context.awardRef,
+    historyRef = context.historyRef,
+    transactionRef = context.transactionRef,
+    itemID = tonumber(context.itemID or context.itemId),
+    itemLink = context.itemLink,
+    itemName = context.itemName,
+    playerName = context.winner or context.playerName,
+    response = context.response or context.responseText,
+    status = context.status or context.sourceStatus,
+    seasonId = context.seasonId,
+    timestamp = context.timestamp or context.createdAt,
+    confidence = (context.awardRef or context.historyRef) and "high" or "medium",
+    unavailableFields = status.availability == "operational" and {} or { "live_integration" },
+    integrationStatus = status.availability,
+    integrationReason = status.reasonCode,
+  }
+end
+
+Dibs.RCLootCouncil.BuildAwardEvidence = Dibs.RCLootCouncil.GetAwardEvidence

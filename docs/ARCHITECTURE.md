@@ -17,6 +17,14 @@ Maps guild rank identifiers to season allocation rules.
 ### Ledger
 Owns append-only authoritative transactions and balance derivation.
 
+### Disputes
+Owns player-scoped audit requests, bounded notes/replies, normalized Dibs and
+RCLootCouncil evidence, duplicate detection, and the append-only review
+timeline. Player reads contain only the owner's request and safe explanations;
+the Officer queue is GM/Officer-only. Balance corrections never edit an
+existing transaction: they use `ProtectedActions` to append one linked,
+idempotent compensating transaction with the request, evidence, and reason.
+
 ### PreDibs
 Owns advance reservation/request lifecycle, per-season `WILD_OPEN` and `ENCOUNTER` policies, request revisions, immutable origin metadata, validation context, normalized difficulty, and delivery acknowledgement metadata. Active request identity includes player, item, season, and difficulty. Mode changes validate future requests only and never rewrite ledger or request history.
 
@@ -87,6 +95,13 @@ The capability snapshot exposes `absent`, `operational`, `degraded`, and `unsupp
 
 ### AuditUI
 Presents history appropriate to the current user's permissions.
+
+The Player window's **My requests** page submits a report from an optional
+ledger entry and shows only the character's own requests, questions, replies,
+and resolution explanation. The Officer window's **Review Requests** page
+filters a private queue, shows evidence and unavailable fields, and exposes
+reasoned actions for review, information requests, duplicate/reject decisions,
+corrections, refunds, revokes, historical imports, adjustments, and reopening.
 
 ## Authority model
 

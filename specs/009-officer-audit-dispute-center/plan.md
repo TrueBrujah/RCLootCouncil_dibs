@@ -2,7 +2,7 @@
 
 **Branch**: `009-officer-audit-dispute-center` | **Date**: 2026-09-09 | **Spec**: [spec.md](spec.md)
 
-**Status**: Draft; design-ready and not implemented.
+**Status**: Implemented on `dev` in version 0.3.7-dev.
 
 ## Summary
 

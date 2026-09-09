@@ -22,6 +22,7 @@ Dibs.RaidRelay = Dibs.RaidRelay or {}
 Dibs.RaidPrompts = Dibs.RaidPrompts or {}
 Dibs.Readiness = Dibs.Readiness or {}
 Dibs.DryRun = Dibs.DryRun or {}
+Dibs.Disputes = Dibs.Disputes or {}
 Dibs.Ace3 = Dibs.Ace3 or {}
 Dibs.AceGUI = Dibs.AceGUI or {}
 Dibs.DeveloperMode = Dibs.DeveloperMode or {}
@@ -37,7 +38,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.3.6-dev"
+Dibs.VERSION = "0.3.7-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -95,7 +96,7 @@ function Dibs.GetGuildKey()
 end
 
 local defaultDB = {
-  version = 5,
+  version = 6,
   currentSeasonId = nil,
   seasons = {},
   rankRules = {},
@@ -112,6 +113,12 @@ local defaultDB = {
     requests = {},
     modePolicies = {},
     acquisitions = {},
+  },
+  disputes = {
+    version = 1,
+    requests = {},
+    order = {},
+    corrections = {},
   },
   sync = {
     seenTransactions = {},
@@ -210,6 +217,14 @@ local function ensureDB()
       end
     end
     Dibs.db.version = 5
+  end
+  if (tonumber(Dibs.db.version) or 0) < 6 then
+    Dibs.db.disputes = Dibs.db.disputes or { version = 1, requests = {}, order = {}, corrections = {} }
+    Dibs.db.disputes.version = tonumber(Dibs.db.disputes.version) or 1
+    Dibs.db.disputes.requests = Dibs.db.disputes.requests or {}
+    Dibs.db.disputes.order = Dibs.db.disputes.order or {}
+    Dibs.db.disputes.corrections = Dibs.db.disputes.corrections or {}
+    Dibs.db.version = 6
   end
   _G[dbName] = persisted
   _G.DibsDB = Dibs.db
@@ -580,7 +595,7 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs options | /dibs officer | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs options | /dibs officer | /dibs review | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
@@ -671,6 +686,22 @@ function Dibs.HandleSlashCommand(msg)
   if action == "officer" then
     if Dibs.OfficerUI and Dibs.OfficerUI.Show then
       Dibs.OfficerUI.Show()
+    end
+    return
+  end
+
+  if action == "requests" or action == "report" then
+    local frame = Dibs.PlayerUI and Dibs.PlayerUI.CreateWindow and Dibs.PlayerUI.CreateWindow()
+    if frame and frame.SelectTab then frame.SelectTab("requests") end
+    if frame then frame:Show(); frame:Raise() end
+    return
+  end
+
+  if action == "review" or action == "disputes" then
+    if Dibs.OfficerUI and Dibs.OfficerUI.Toggle then
+      local opened = Dibs.OfficerUI.Toggle(true)
+      local frame = opened and _G.DibsOfficerFrame or nil
+      if frame and frame.SelectTab then frame.SelectTab("disputes") end
     end
     return
   end

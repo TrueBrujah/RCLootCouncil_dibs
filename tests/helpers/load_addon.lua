@@ -11,6 +11,7 @@ local TOC_FILES = {
   "modules/Ledger.lua",
   "modules/Permissions.lua",
   "modules/ProtectedActions.lua",
+  "modules/Disputes.lua",
   "modules/PreDibs.lua",
   "modules/LootPipeline.lua",
   "modules/Sync.lua",

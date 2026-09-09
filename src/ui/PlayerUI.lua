@@ -48,6 +48,7 @@ end
 local PLAYER_NAV_TREE = {
   { text = "Summary", value = "summary" },
   { text = "History", value = "history" },
+  { text = "My requests", value = "requests" },
 }
 
 local function submitPublicPreDib(rawItem)
@@ -163,6 +164,52 @@ local function buildFilteredHistory(playerName, seasonId, query, mode)
   return filtered
 end
 
+local function getPlayerTransactions(playerName, seasonId, mode)
+  local items = {}
+  if mode == "all" and Dibs.Ledger and Dibs.Ledger.GetAllTransactions then
+    local playerKey = string.lower(tostring(playerName or Dibs.GetPlayerName()))
+    for _, tx in ipairs(Dibs.Ledger.GetAllTransactions()) do
+      if string.lower(tostring(tx.playerName or tx.playerKey or "")) == playerKey then
+        table.insert(items, tx)
+      end
+    end
+  elseif Dibs.Ledger and Dibs.Ledger.GetHistory then
+    items = Dibs.Ledger.GetHistory(playerName, seasonId)
+  end
+  table.sort(items, function(a, b)
+    return (a.createdAt or a.timestamp or 0) > (b.createdAt or b.timestamp or 0)
+  end)
+  return items
+end
+
+local function getFilteredHistoryEntries(playerName, seasonId, query, mode)
+  local q = string.lower(tostring(query or ""))
+  local filtered = {}
+  for _, tx in ipairs(getPlayerTransactions(playerName, seasonId, mode)) do
+    local line = compactLine(tx)
+    if q == "" or string.find(string.lower(line), q, 1, true) then
+      table.insert(filtered, { line = line, transaction = tx })
+    end
+  end
+  return filtered
+end
+
+local function sortedLabels(values)
+  local entries = {}
+  for key, label in pairs(values or {}) do
+    table.insert(entries, { key = key, label = label })
+  end
+  table.sort(entries, function(a, b) return tostring(a.label) < tostring(b.label) end)
+  local result = {}
+  for _, entry in ipairs(entries) do result[entry.key] = entry.label end
+  return result
+end
+
+local function disputeStatusLabel(request)
+  if not request then return "" end
+  return tostring(request.status or "Open") .. " | " .. tostring(request.categoryLabel or request.category or "Other")
+end
+
 function Dibs.PlayerUI.GetSummary(playerName)
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
   local balance = Dibs.Ledger and Dibs.Ledger.GetBalance(playerName or Dibs.GetPlayerName(), season and season.id) or 0
@@ -247,8 +294,128 @@ local function createAceWindow()
     Dibs.AceGUI.Clear(tabs)
     Dibs.AceGUI.AddButton(shell, tabs, "RCLootCouncil - Dibs options", function() Dibs.RCOptions.Open() end, 240)
     local summary = Dibs.PlayerUI.GetSummary()
+    if self.playerTab == "requests" then
+      Dibs.AceGUI.AddHeader(shell, tabs, "Report a problem", "Report a Dibs or loot history problem and follow its resolution.")
+      Dibs.AceGUI.AddLabel(shell, tabs, "My review requests", true)
+      local categories = sortedLabels(Dibs.Disputes and Dibs.Disputes.GetCategories and Dibs.Disputes.GetCategories() or { other = "Other" })
+      local transactions = getPlayerTransactions(summary.player, summary.season and summary.season.id, self.historyMode)
+      local transactionChoices = { [""] = "General request (no transaction)" }
+      for _, tx in ipairs(transactions) do
+        local id = tostring(tx.transactionId or "")
+        if id ~= "" then transactionChoices[id] = compactLine(tx) end
+      end
+      self.disputeCategory = self.disputeCategory or "other"
+      self.disputeTransactionId = self.disputeTransactionId or ""
+      self.disputeNote = self.disputeNote or ""
+      local category = Dibs.AceGUI.AddDropdown(shell, tabs, "Problem type", categories, function(value)
+        self.disputeCategory = value
+      end, 420)
+      Dibs.AceGUI.SetValue(category, self.disputeCategory)
+      local transaction = Dibs.AceGUI.AddDropdown(shell, tabs, "Related ledger entry (optional)", transactionChoices, function(value)
+        self.disputeTransactionId = value or ""
+      end, 560)
+      Dibs.AceGUI.SetValue(transaction, self.disputeTransactionId)
+      local note = Dibs.AceGUI.AddEditBox(shell, tabs, "What should an Officer review?", function(value)
+        self.disputeNote = value or ""
+      end, 560)
+      setControlText(note, self.disputeNote)
+      local submit = Dibs.AceGUI.AddButton(shell, tabs, "Submit request", function()
+        local payload = {
+          category = self.disputeCategory,
+          note = self.disputeNote,
+          playerName = summary.player,
+          seasonId = summary.season and summary.season.id or nil,
+        }
+        if self.disputeTransactionId ~= "" then payload.transactionRef = self.disputeTransactionId end
+        local request, reason = Dibs.Disputes and Dibs.Disputes.CreateReport and Dibs.Disputes.CreateReport(payload)
+        if request then
+          self.disputeStatusText = "Request " .. tostring(request.requestId) .. " submitted. Officers can now review it."
+          self.disputeNote = ""
+          self.disputeTransactionId = ""
+        else
+          self.disputeStatusText = "Unable to submit request: " .. tostring(reason or "unknown error")
+        end
+        self:Refresh()
+      end, 150)
+      Dibs.AceGUI.SetDisabled(submit, not (Dibs.Disputes and Dibs.Disputes.CreateReport))
+      Dibs.AceGUI.AddLabel(shell, tabs, self.disputeStatusText or "Requests are visible only to you and guild Officers.", true)
+
+      local requests = Dibs.Disputes and Dibs.Disputes.ListForPlayer and Dibs.Disputes.ListForPlayer(summary.player) or {}
+      local requestRows = {}
+      if #requests == 0 then
+        requestRows[1] = { "No requests yet.", "", "", "" }
+      else
+        for _, request in ipairs(requests) do
+          requestRows[#requestRows + 1] = {
+            tostring(request.requestId),
+            disputeStatusLabel(request),
+            tostring(request.note or ""),
+            "",
+            request = request,
+          }
+        end
+      end
+      Dibs.AceGUI.AddTable(shell, tabs, {
+        { title = "Request", width = 160, tooltip = "Your request identifier." },
+        { title = "Status", width = 180, tooltip = "Current Officer review status." },
+        { title = "Note", width = 220, tooltip = "Your bounded request note." },
+        { title = "Action", width = 80, tooltip = "Open details." },
+      }, requestRows, 230, function(row)
+        if not row.request then return nil end
+        return {
+          text = "View",
+          callback = function()
+            self.selectedDisputeRequestId = row.request.requestId
+            self:Refresh()
+          end,
+        }
+      end)
+
+      if self.selectedDisputeRequestId then
+        local selected = Dibs.Disputes.GetRequest(self.selectedDisputeRequestId, summary.player)
+        if selected then
+          Dibs.AceGUI.AddHeader(shell, tabs, "Request details", disputeStatusLabel(selected))
+          local evidence = selected.evidence and selected.evidence[1] or {}
+          Dibs.AceGUI.AddLabel(shell, tabs, "Status: " .. tostring(selected.status) ..
+            "\nCategory: " .. tostring(selected.categoryLabel or selected.category) ..
+            "\nItem: " .. tostring(evidence.item or selected.attachedContext and selected.attachedContext.item or "Unavailable") ..
+            "\nEvidence: " .. tostring(evidence.source or "unavailable") ..
+            "\nNote: " .. tostring(selected.note or ""), true)
+          if selected.question and selected.status == "Need information" then
+            Dibs.AceGUI.AddLabel(shell, tabs, "Officer question: " .. tostring(selected.question), true)
+            self.disputeReply = self.disputeReply or ""
+            local reply = Dibs.AceGUI.AddEditBox(shell, tabs, "Reply", function(value) self.disputeReply = value or "" end, 560)
+            setControlText(reply, self.disputeReply)
+            Dibs.AceGUI.AddButton(shell, tabs, "Send reply", function()
+              local result, reason = Dibs.Disputes.AddReply(self.selectedDisputeRequestId, self.disputeReply, summary.player)
+              self.disputeStatusText = result and "Reply sent to the Officer queue." or ("Unable to reply: " .. tostring(reason or "unknown error"))
+              if result then self.disputeReply = "" end
+              self:Refresh()
+            end, 120)
+          end
+          local timeline = Dibs.Disputes.GetTimeline(self.selectedDisputeRequestId, summary.player) or {}
+          local timelineRows = {}
+          for _, event in ipairs(timeline) do
+            timelineRows[#timelineRows + 1] = { tostring(event.action or ""), tostring(event.newStatus or ""), tostring(event.reason or "") }
+          end
+          if #timelineRows > 0 then
+            Dibs.AceGUI.AddTable(shell, tabs, {
+              { title = "Event", width = 160, tooltip = "Request history event." },
+              { title = "Status", width = 140, tooltip = "Status after the event." },
+              { title = "Details", width = 260, tooltip = "Player-visible explanation." },
+            }, timelineRows, 170)
+          end
+        end
+      end
+      return
+    end
     if self.playerTab == "history" then
       Dibs.AceGUI.AddLabel(shell, tabs, "History (condensed)", true)
+      Dibs.AceGUI.AddButton(shell, tabs, "Report a problem", function()
+        self.playerTab = "requests"
+        self.disputeTransactionId = ""
+        self:Refresh()
+      end, 150)
       self.searchBox = Dibs.AceGUI.AddEditBox(shell, tabs, "Search", function(value)
         self.historyQuery = value
         self.historyPage = 1
@@ -266,23 +433,37 @@ local function createAceWindow()
         self.historyPage = 1
         self:Refresh()
       end, 70)
-      local lines = buildFilteredHistory(summary.player, summary.season and summary.season.id, self.historyQuery, self.historyMode)
+      local historyEntries = getFilteredHistoryEntries(summary.player, summary.season and summary.season.id, self.historyQuery, self.historyMode)
       local pageSize = 9
-      local totalPages = math.max(1, math.ceil(#lines / pageSize))
+      local totalPages = math.max(1, math.ceil(#historyEntries / pageSize))
       self.historyPage = math.min(math.max(1, self.historyPage), totalPages)
       local visible = {}
-      for index = ((self.historyPage - 1) * pageSize) + 1, math.min(#lines, self.historyPage * pageSize) do
-        table.insert(visible, lines[index])
+      for index = ((self.historyPage - 1) * pageSize) + 1, math.min(#historyEntries, self.historyPage * pageSize) do
+        table.insert(visible, historyEntries[index])
       end
-      if #visible == 0 then visible[1] = "No matching history." end
       local rows = {}
-      for _, line in ipairs(visible) do table.insert(rows, splitPipeLine(line)) end
+      for _, entry in ipairs(visible) do
+        local row = splitPipeLine(entry.line)
+        row.transaction = entry.transaction
+        table.insert(rows, row)
+      end
+      if #rows == 0 then rows[1] = { "No matching history." } end
       self.aceHistoryScroll = Dibs.AceGUI.AddTable(shell, tabs, {
         { title = "Date", width = 145, tooltip = "When the ledger entry was recorded." },
         { title = "Action", width = 150, tooltip = "The ledger operation." },
         { title = "Amount", width = 70, tooltip = "Dibs gained or spent." },
         { title = "Reason", width = 170, tooltip = "Why the entry was created." },
-      }, rows, 320)
+      }, rows, 320, function(row)
+        if not row.transaction then return nil end
+        return {
+          text = "Report",
+          callback = function()
+            self.disputeTransactionId = row.transaction.transactionId or ""
+            self.playerTab = "requests"
+            self:Refresh()
+          end,
+        }
+      end)
       local previous = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function()
         self.historyPage = math.max(1, self.historyPage - 1)
         self:Refresh()

@@ -1241,6 +1241,12 @@ groups.player = { type = "group", name = "Player", order = 7, args = {
   end),
   openHistory = execute(7, "Open history log", function() Dibs.LogsUI.OpenPlayerHistory() end),
   openAcquisitions = execute(8, "Open acquisitions log", function() Dibs.LogsUI.OpenPlayerAcquisitions() end),
+  reviewRequests = description(9, "Review a Dibs or loot history problem from the Player window."),
+  openRequests = execute(10, "Open my review requests", function()
+    local frame = Dibs.PlayerUI.CreateWindow()
+    if frame and frame.SelectTab then frame.SelectTab("requests") end
+    if frame then frame:Show(); frame:Raise() end
+  end),
 } }
 groups.officer = { type = "group", name = function() return Dibs.RCOptions.IsOfficerPreviewOnly() and "Officer *" or "Officer" end, order = 8, args = {
   previewNotice = description(1, function()
@@ -1265,6 +1271,19 @@ groups.officer.args.openLogs.order = 2
 groups.officer.args.openWindow.desc = "Open the complete Officer management window."
 groups.officer.args.openLogs.width = "half"
 groups.officer.args.openLogs.desc = "Open a separate logs window with Players, Pre-Dibs and History views, search and pagination."
+groups.officer.args.disputes = { type = "group", name = "Review Requests", order = 4, args = {
+  intro = description(1, "Player reports are private to the owner and guild Officers. Evidence is read-only; every resolution records a reason."),
+  open = execute(2, "Open review queue", function()
+    local frame = Dibs.OfficerUI.CreateWindow()
+    if frame and frame.SelectTab then frame.SelectTab("disputes") end
+    if frame then frame:Show(); frame:Raise() end
+  end),
+  counts = description(3, function()
+    local counts = Dibs.Disputes and Dibs.Disputes.GetCounts and Dibs.Disputes.GetCounts(nil) or {}
+    return "Open: " .. tostring(counts.Open or 0) .. " | Under review: " .. tostring(counts["Under review"] or 0) ..
+      " | Need information: " .. tostring(counts["Need information"] or 0) .. " | Closed: " .. tostring((counts.Resolved or 0) + (counts.Rejected or 0))
+  end),
+} }
 groups.overview.args.seasonSummary = description(4, function()
   local season = Dibs.Seasons.GetById(getSelectedSeasonId())
   return season and table.concat(Dibs.OfficerUI.BuildDashboardDetails(season), "\n") or "No active season."
