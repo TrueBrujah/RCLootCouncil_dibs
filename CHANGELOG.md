@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.3.5 - 2026-09-09
+
+- Reserve `CATALYST` items for the player's personal progression: Catalyst is
+  always blocked from Dibs buttons, Pre-Dibs, policy settings, and ledger use.
+  Class-based Tier Set tokens are classified as `TOKEN_SET`, while Curios use
+  `TOKEN`. The broader RCLootCouncil `Catalyst Items` button set is resolved
+  from item metadata so it cannot hide Curios or Tier Set tokens. This source
+  and policy change is included in the `0.3.5` build.
+- Add an in-game RCLootCouncil button-set mapping guide and two safe semantic
+  templates (`Curio + Tier Set` and `Standard loot`). Slot-specific RCLootCouncil
+  groups remain compatibility projections and are never treated as new Dibs
+  item families.
+- Add the Installation assistant to the RCLootCouncil options. It applies the
+  recommended semantic preset and refreshes the locked Dibs response in the
+  default and already-enabled RCLootCouncil button sets without changing the
+  guild's existing response configuration.
+- Resolve ordinary armor, weapons and other unclassified equipment through the
+  configurable `OTHER` Dibs family. Keep Cosmetic Items blocked even when the
+  catch-all family is enabled, recognize readable RCLootCouncil slot labels such
+  as `Chest` and `Weapon` as compatibility sets, and resolve an Armor Token
+  before the broad Retail Miscellaneous fallback.
+- Add the draft specification for GM/Officer-controlled RCLootCouncil history
+  reconciliation, configurable response aliases, manual historical Dibs
+  confirmation, and auditable evidence records. This is documentation only;
+  no addon behavior or SavedVariables format changes are included yet.
+- Clarify that `RCMLAwardSuccess` is the RCLootCouncil source event while
+  `FinalizeAward` is Dibs's protected accounting action, not an executable
+  history control.
+- Add the draft specification for local backups, preview-first export/import,
+  safe configuration profiles, version-aware migration, and privacy-aware
+  recovery. This is documentation only; no addon behavior or SavedVariables
+  format changes are included yet.
+- Add the draft specification for a Raid Readiness and Dry-Run Center with
+  pre-raid capability checks, fail-closed live-award gating, safe local
+  simulations, and privacy-aware reports. This is documentation only; no addon
+  behavior or SavedVariables format changes are included yet.
+- Add the draft specification for a simple Officer Audit and Dispute Center:
+  one-button player reports, prefilled evidence, a small Officer resolution
+  queue, and append-only corrections. This is documentation only; no addon
+  behavior or SavedVariables format changes are included yet.
+
 ## 0.3.4 - 2026-09-07
 
 - Add the RCLootCouncil Dibs logo to the addon metadata and AceGUI windows.

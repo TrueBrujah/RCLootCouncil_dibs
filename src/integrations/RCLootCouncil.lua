@@ -1,6 +1,9 @@
 local Dibs = _G.Dibs
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 
+-- Change log 0.3.5 (2026-09-09): keep personal Catalyst items outside
+-- the Dibs policy, resolve the broader RCLC Catalyst Items group by metadata,
+-- and classify class set tokens as TOKEN_SET.
 -- Change log 0.3.4-dev (2026-09-07): add the addon logo to metadata and
 -- AceGUI windows while keeping the original source image in docs/assets.
 -- Change log 0.3.3-dev (2026-09-07): treat wildcard AceDB defaults as
@@ -61,6 +64,37 @@ local function normalizeTypeKey(value)
   return valueText
 end
 
+local canonicalPolicyKey
+
+local function isCatalystButtonSetType(value)
+  local key = tostring(value or ""):match("^%s*(.-)%s*$") or ""
+  key = string.upper(key)
+  key = key:gsub("[%s%-]", "_")
+  return key == "CATALYST_ITEMS" or key == "CATALYSTITEMS"
+end
+
+local function isPersonalNonDibType(value)
+  local key = tostring(value or ""):match("^%s*(.-)%s*$") or ""
+  key = string.upper(key)
+  key = key:gsub("[%s%-]", "_")
+  return key == "CATALYST" or key == "CATALYSTS"
+end
+
+local function isCosmeticNonDibType(value)
+  local key = tostring(value or ""):match("^%s*(.-)%s*$") or ""
+  key = string.upper(key)
+  key = key:gsub("[%s%-]", "_")
+  return key == "COSMETIC" or key == "COSMETIC_ITEMS" or key == "COSMETICITEMS"
+end
+
+local function isPersonalOrCosmeticNonDibType(value)
+  return isPersonalNonDibType(value) or isCosmeticNonDibType(value)
+end
+
+local function isNonDibPolicyType(value)
+  return isPersonalOrCosmeticNonDibType(value) or isCatalystButtonSetType(value)
+end
+
 local function getDibTypeSettings()
   local db = Dibs.GetDB and Dibs.GetDB() or {}
   db.settings = db.settings or {}
@@ -80,7 +114,12 @@ local function nowSeconds()
 end
 
 function Dibs.RCLootCouncil.IsDibEnabledForType(responseType)
-  local key = normalizeTypeKey(responseType)
+  -- Catalyst currency is personal to the player. It can never be a Dibs
+  -- response, consume a ledger entry, or be enabled by a saved policy.
+  if isNonDibPolicyType(responseType) then
+    return false
+  end
+  local key = canonicalPolicyKey(responseType)
   local rules = getDibTypeSettings()
   local value = rules[key]
   if value == nil then
@@ -94,7 +133,10 @@ function Dibs.RCLootCouncil.SetDibEnabledForType(responseType, enabled, actor)
     or not Dibs.Permissions.Can("settings.modify", actor) then
     return nil, "GUILD_ADMIN_REQUIRED"
   end
-  local key = normalizeTypeKey(responseType)
+  if isNonDibPolicyType(responseType) then
+    return nil, "PERSONAL_ITEM_TYPE"
+  end
+  local key = canonicalPolicyKey(responseType)
   local rules = getDibTypeSettings()
   rules[key] = enabled == true
   typePolicyRevision = typePolicyRevision + 1
@@ -119,9 +161,12 @@ local function normalizeKey(value)
   return string.lower(tostring(value or ""))
 end
 
-local function canonicalPolicyKey(value)
+canonicalPolicyKey = function(value)
   local key = string.upper(tostring(value or ""))
   key = key:gsub("[%s%-]", "_")
+  if key == "" or key == "DEFAULT" then
+    return "default"
+  end
   if key == "MOUNT" or key == "MOUNTS" then
     return "MOUNTS"
   end
@@ -137,10 +182,22 @@ local function canonicalPolicyKey(value)
   if key == "TOKEN" or key == "TOKENS" then
     return "TOKEN"
   end
-  if key == "CATALYSTS" then
+  if key == "TOKEN_SET" or key == "TOKEN_SETS" or key == "TOKENSET" then
+    return "TOKEN_SET"
+  end
+  if key == "CATALYST" or key == "CATALYSTS" then
     return "CATALYST"
   end
   if key == "OTHER" or key == "OTHERS" then
+    return "OTHER"
+  end
+  if key == "ARMOR_TOKEN" or key == "ARMORTOKEN" then
+    return "TOKEN_SET"
+  end
+  if key == "RECIPE_PATTERN" or key == "RECIPEPATTERN" then
+    return "RECIPE"
+  end
+  if key == "RARE_ITEMS" or key == "RAREITEMS" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or key == "SPECIALEFFECTSITEMS" then
     return "OTHER"
   end
   return key
@@ -213,8 +270,7 @@ local function collectItemTypeCandidates(itemID, responseType)
           or left:find("armor token", 1, true)
           or left:find("classes:", 1, true)
         then
-          addTypeCandidate(values, seen, "TOKEN")
-          addTypeCandidate(values, seen, "CATALYST")
+          addTypeCandidate(values, seen, "TOKEN_SET")
         end
         if left:find("summon and dismiss this companion", 1, true)
           or left:find("teach.*companion")
@@ -255,7 +311,12 @@ local function collectItemTypeCandidates(itemID, responseType)
       addTypeCandidate(values, seen, "recette")
     end
 
-    if tonumber(classID) == 15 then
+    -- Miscellaneous (class 15) also contains Tier Set tokens on Retail. Let
+    -- RCLootCouncil's token table win before treating the remaining items as
+    -- mount collection entries.
+    local isKnownTierSetToken = targetItem and type(_G.RCTokenTable) == "table"
+      and _G.RCTokenTable[targetItem] ~= nil
+    if tonumber(classID) == 15 and not isKnownTierSetToken then
       addTypeCandidate(values, seen, "MOUNT")
       addTypeCandidate(values, seen, "MOUNTS")
       addTypeCandidate(values, seen, "Mount")
@@ -282,6 +343,22 @@ local function collectItemTypeCandidates(itemID, responseType)
 
     local classLower = string.lower(tostring(itemClassName or ""))
     local subclassLower = string.lower(tostring(itemSubClassName or ""))
+    -- Retail exposes Curios as Context Tokens. Use the stable numeric item
+    -- class/subclass pair as well as localized names so French and other
+    -- clients classify the item identically.
+    if (tonumber(classID) == 5 and tonumber(subClassID) == 2)
+      or classLower:find("context token", 1, true)
+      or subclassLower:find("context token", 1, true)
+    then
+      addTypeCandidate(values, seen, "TOKEN")
+    end
+
+    -- RCLootCouncil's token table is the authoritative class-token list when
+    -- it is available. This covers tier tokens whose localized tooltip text
+    -- is not available yet or differs between clients.
+    if targetItem and type(_G.RCTokenTable) == "table" and _G.RCTokenTable[targetItem] then
+      addTypeCandidate(values, seen, "TOKEN_SET")
+    end
     if classLower:find("decor", 1, true)
       or subclassLower:find("decor", 1, true)
       or classLower:find("cosmetic", 1, true)
@@ -298,6 +375,27 @@ local function collectItemTypeCandidates(itemID, responseType)
     end
     if classLower:find("pet", 1, true) or subclassLower:find("pet", 1, true) then
       addTypeCandidate(values, seen, "PETS")
+    end
+
+    -- Equipment-slot groups are compatibility routing hints, not separate
+    -- Dibs families. Give ordinary weapons, armor and other unclassified
+    -- tradeable loot the configurable OTHER family so the Standard loot
+    -- preset actually covers normal gear while a slot-specific rule can still
+    -- override it when a guild needs one.
+    local hasSemanticFamily = false
+    for _, candidate in ipairs(values) do
+      local canonical = canonicalPolicyKey(candidate)
+      if canonical == "TOKEN" or canonical == "TOKEN_SET"
+        or canonical == "MOUNTS" or canonical == "PETS"
+        or canonical == "RECIPE" or canonical == "DECOR"
+        or canonical == "OTHER" or canonical == "COSMETIC"
+      then
+        hasSemanticFamily = true
+        break
+      end
+    end
+    if not hasSemanticFamily then
+      addTypeCandidate(values, seen, "OTHER")
     end
   end
 
@@ -324,16 +422,16 @@ local PRIORITY_CATEGORY_KEYS = {
   PETS = true,
   DECOR = true,
   TOKEN = true,
-  CATALYST = true,
+  TOKEN_SET = true,
   RECIPE = true,
   OTHER = true,
 }
 
 local PRIORITY_CATEGORY_ORDER = {
+  "TOKEN",
+  "TOKEN_SET",
   "MOUNTS",
   "PETS",
-  "TOKEN",
-  "CATALYST",
   "RECIPE",
   "DECOR",
   "OTHER",
@@ -370,6 +468,36 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
   end
 
   local candidates = collectItemTypeCandidates(itemID, responseType)
+  local hasProgressionToken = false
+  for _, candidate in ipairs(candidates) do
+    local canonical = canonicalPolicyKey(candidate)
+    if canonical == "TOKEN" or canonical == "TOKEN_SET" then
+      hasProgressionToken = true
+      break
+    end
+  end
+  for _, candidate in ipairs(candidates) do
+    -- Some RCLootCouncil releases use the label `CATALYST` for the broader
+    -- button group. Keep that path available only when stable item metadata
+    -- already classified the item as a Curio or Tier Set token; a personal
+    -- Catalyst item never receives either progression candidate.
+    if isCosmeticNonDibType(candidate) then
+      typeAllowanceCache[cacheKey] = { value = false, at = now }
+      return false
+    end
+    if isPersonalNonDibType(candidate) and not hasProgressionToken then
+      typeAllowanceCache[cacheKey] = { value = false, at = now }
+      return false
+    end
+    -- RCLootCouncil's Catalyst Items button set is broader than the personal
+    -- Catalyst resource: Context-token Curios and class Tier Set tokens may be
+    -- assigned to that set. Let their semantic candidates win, but fail closed
+    -- when the item has no recognised progression token family.
+    if isCatalystButtonSetType(candidate) and not hasProgressionToken then
+      typeAllowanceCache[cacheKey] = { value = false, at = now }
+      return false
+    end
+  end
   local rules = getDibTypeSettings()
   local policyConfigured = hasConfiguredTypePolicy(rules)
 
@@ -780,6 +908,8 @@ local function ensureForcedDibForSet(buttons, responses, maxButtons)
   return changed, nil
 end
 
+local removeDibFromSet
+
 local function ensureForcedDibConfigForDB(db)
   if type(db) ~= "table" then return false end
 
@@ -820,26 +950,34 @@ local function ensureForcedDibConfigForDB(db)
   for typeKey in pairs(typeKeys) do
     local typeButtons = db.buttons[typeKey]
     local typeResponses = db.responses[typeKey]
-    if type(typeButtons) ~= "table" then
-      typeButtons = {}
-      db.buttons[typeKey] = typeButtons
-    end
-    if type(typeResponses) ~= "table" then
-      typeResponses = {}
-      db.responses[typeKey] = typeResponses
-    end
-    if tonumber(typeButtons.numButtons) == nil then
-      local existingEntries = math.max(#typeButtons, #typeResponses)
-      local defaultCount = tonumber(db.buttons.default.numButtons) or 1
-      -- A newly enabled set should have the same final active count as the
-      -- default set. Reserve one slot for the DIB that is added below.
-      typeButtons.numButtons = existingEntries > 0
-        and existingEntries
-        or math.max(0, defaultCount - 1)
-      changed = true
-    end
-    if ensureForcedDibForSet(typeButtons, typeResponses, maxButtons) then
-      changed = true
+    if isPersonalOrCosmeticNonDibType(typeKey) then
+      -- Do not create or retain an adapter-owned DIB response in a personal
+      -- Catalyst button set. Existing stale projections are removed once.
+      if removeDibFromSet(typeButtons, typeResponses) then
+        changed = true
+      end
+    else
+      if type(typeButtons) ~= "table" then
+        typeButtons = {}
+        db.buttons[typeKey] = typeButtons
+      end
+      if type(typeResponses) ~= "table" then
+        typeResponses = {}
+        db.responses[typeKey] = typeResponses
+      end
+      if tonumber(typeButtons.numButtons) == nil then
+        local existingEntries = math.max(#typeButtons, #typeResponses)
+        local defaultCount = tonumber(db.buttons.default.numButtons) or 1
+        -- A newly enabled set should have the same final active count as the
+        -- default set. Reserve one slot for the DIB that is added below.
+        typeButtons.numButtons = existingEntries > 0
+          and existingEntries
+          or math.max(0, defaultCount - 1)
+        changed = true
+      end
+      if ensureForcedDibForSet(typeButtons, typeResponses, maxButtons) then
+        changed = true
+      end
     end
   end
 
@@ -909,6 +1047,7 @@ local function lockForcedDibOptionsForTable(options)
         and groupKey ~= "responseFromChat"
         and groupKey ~= "reset"
         and groupKey ~= "optionsDesc"
+        and not isPersonalOrCosmeticNonDibType(groupKey)
         and type(groupOption) == "table"
         and type(groupOption.args) == "table"
       then
@@ -1647,7 +1786,7 @@ local function applyDibsButtonState(lootFrame)
         dibButton.__dibsEntry = entry
         dibButton.__dibsLootFrame = lootFrame
         installDibsClickGuard(dibButton)
-        if showDibs then
+        if showDibs and status.dibTypeEnabled == true then
           placeDibButtonFirst(entry, dibButton)
           dibButton:Show()
           setButtonEnabled(dibButton, status.canUseDib == true)
@@ -2218,6 +2357,7 @@ local REASON_DIAGNOSTIC_KEYS = {
   EMPTY_RESPONSE = "AWARD_EMPTY_RESPONSE",
   AWARD_TEST_MODE = "AWARD_TEST_MODE",
   AWARD_INVALID_ITEM = "AWARD_INVALID_ITEM",
+  AWARD_PERSONAL_ITEM = "AWARD_PERSONAL_ITEM",
   STANDALONE_MODE = "AWARD_STANDALONE_MODE",
   AWARD_IDENTITY_UNAVAILABLE = "AWARD_IDENTITY_UNAVAILABLE",
   AWARD_IDENTITY_AMBIGUOUS = "AWARD_IDENTITY_AMBIGUOUS",
@@ -2239,6 +2379,7 @@ local REASON_DIAGNOSTIC_FALLBACKS = {
   EMPTY_RESPONSE = "The award response was empty.",
   AWARD_TEST_MODE = "Test awards cannot consume production Dibs.",
   AWARD_INVALID_ITEM = "The award item identity is missing or malformed.",
+  AWARD_PERSONAL_ITEM = "Personal Catalyst items cannot consume Dibs.",
   STANDALONE_MODE = "Automatic award accounting is disabled in Standalone mode.",
   AWARD_IDENTITY_UNAVAILABLE = "The finalized award identity could not be verified.",
   AWARD_IDENTITY_AMBIGUOUS = "More than one history entry matched this award; no Dib was consumed.",
@@ -2365,7 +2506,10 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
   local targetItem = tonumber(itemID)
   local balance = Dibs.Ledger and Dibs.Ledger.GetBalance(name) or 0
   local typeKey = normalizeTypeKey(responseType)
-  local typeEnabled = Dibs.RCLootCouncil.IsDibEnabledForType(typeKey)
+  -- Resolve the semantic item family as well as the RCLC response type. This
+  -- prevents a personal Catalyst item from falling through an equip-slot or
+  -- default policy and receiving a Dibs action.
+  local typeEnabled = Dibs.RCLootCouncil.IsItemDibTypeAllowed(targetItem, typeKey)
   local publicPreDibsEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() == true
   local preDib = targetItem and Dibs.PreDibs and Dibs.PreDibs.GetConfirmedRequestForPlayer(name, targetItem) or nil
   local hasPriority = false
@@ -2483,6 +2627,34 @@ local function ignoredAward(reasonCode)
   return { ok = false, ignored = true, outcome = "ignored", reasonCode = reasonCode, diagnostic = diagnostic }
 end
 
+local function getAwardResponseType(rc, session)
+  local sources = { rc, getRCMLModule(rc) }
+  for _, source in ipairs(sources) do
+    local lootTable = source and source.lootTable
+    local entry = type(lootTable) == "table" and lootTable[tonumber(session)] or nil
+    local item = entry and entry.item
+    if type(item) == "table" then
+      return item.typeCode or item.equipLoc or item.responseType
+    end
+  end
+  return nil
+end
+
+removeDibFromSet = function(buttons, responses)
+  if type(buttons) ~= "table" and type(responses) ~= "table" then return false end
+  local activeCount = tonumber(buttons and buttons.numButtons)
+    or tonumber(responses and responses.numButtons)
+    or math.max(#(buttons or {}), #(responses or {}))
+  local buttonIndex = findDibButtonIndex(buttons, activeCount)
+  local responseIndex = findDibResponseIndex(responses, activeCount)
+  if not buttonIndex and not responseIndex then return false end
+  if buttonIndex then removeArrayIndex(buttons, buttonIndex) end
+  if responseIndex then removeArrayIndex(responses, responseIndex) end
+  if type(buttons) == "table" then buttons.numButtons = math.max(0, activeCount - 1) end
+  if type(responses) == "table" then responses.numButtons = math.max(0, activeCount - 1) end
+  return true
+end
+
 function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink, responseText)
   if not Dibs.ProtectedActions or not winner or not itemLink then
     return ignoredAward("AWARD_INVALID")
@@ -2506,13 +2678,17 @@ function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink,
   end
   local itemID = tonumber(tostring(itemLink):match("item:(%d+)"))
   if not itemID then return ignoredAward("AWARD_INVALID_ITEM") end
+  local responseType = getAwardResponseType(rc, session)
+  if responseType and not Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType) then
+    return ignoredAward("AWARD_PERSONAL_ITEM")
+  end
   local actor = rc and rc.masterLooter
   if not actor then return ignoredAward("RC_MASTER_LOOTER_UNVERIFIABLE") end
   local ref, identityReason = getAwardIdentity(rc, session, winner, itemID, itemLink)
   if not ref then
     return ignoredAward(identityReason or "AWARD_IDENTITY_UNAVAILABLE")
   end
-  local result = Dibs.ProtectedActions.FinalizeAward(actor, { awardRef = ref, playerName = winner, itemID = itemID, itemLink = itemLink, sourceStatus = status, source = "rclootcouncil", response = normalizedResponse, responseValidated = true })
+  local result = Dibs.ProtectedActions.FinalizeAward(actor, { awardRef = ref, playerName = winner, itemID = itemID, itemLink = itemLink, sourceStatus = status, source = "rclootcouncil", response = normalizedResponse, responseType = responseType, responseValidated = true })
   if result and result.ok == false and Dibs.DebugLogs and type(Dibs.DebugLogs.Add) == "function" then
     Dibs.DebugLogs.Add("RCLootCouncil", 2, tostring(result.reasonCode or "AWARD_REJECTED"))
   end

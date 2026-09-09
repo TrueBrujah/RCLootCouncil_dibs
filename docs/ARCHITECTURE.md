@@ -53,6 +53,15 @@ Capability-probes the optional RCLootCouncil AceAddon without force-loading it. 
 
 When availability is `operational`, the adapter verifies the current RCLootCouncil Master Looter only for loot-session finalization. Dibs administration still uses the verified guild GM/officer policy. When availability is `degraded` or `absent`, standalone Dibs administration remains available to the verified guild GM/officers; no RCLootCouncil or raid role is promoted to Dibs authority.
 
+Loot classification stays semantic at this boundary: Curios are `TOKEN`, class
+Tier Set tokens are `TOKEN_SET`, and `CATALYST` is a personal player resource.
+The exact personal Catalyst set is never projected, never displays a Catalyst
+Dibs action, and never debits the ledger. RCLootCouncil's broader `Catalyst
+Items` group is resolved by item metadata so a Curio or Tier Set token can still
+receive the DIB response when that group is selected. Equipment-slot sets may be
+used only as RCLootCouncil compatibility projections; they do not define the
+protected-loot family.
+
 The adapter observes compatible local Ace messages and maps a valid `RCMLAwardSuccess` event to one idempotent finalized-award command. It does not replace candidate getters, alter RCLootCouncil registries, history, or wire messages. For the Master Looter UI it applies one narrow, locked compatibility projection to RCLootCouncil's local indexed buttons/responses: the DIB entry is inserted without overwriting active responses and is reapplied after profile/module lifecycle changes. Candidate status and Dibs columns remain read-only projections; the local Dibs display is the compatibility fallback. Projection locks are idempotent, and AceConfig/scroll-table rebuilds occur only after a real structural change. Voting cells follow the complete `lib-st` callback contract, and released AceGUI page widgets are tracked only through weak references so refreshes cannot retain old pages.
 
 The capability snapshot exposes `absent`, `operational`, `degraded`, and `unsupported` states with a reason code, observed release label, and verified probes. The supported surface is the Retail 3.x-shaped AceAddon: enabled state, canonical Master Looter identity, award callback registration, stable history/session identity, and explicit DIB response mapping. A callback is accepted only with a stable `entry:`, `history:`, or `session:` award reference, an item link matching the item ID, a finalized status, and local Master Looter authority. Duplicate references return the existing ledger result; missing or ambiguous provenance is ignored.

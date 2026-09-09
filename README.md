@@ -9,7 +9,7 @@ guild Dibs ledger, reservations, permissions, and audit history.
 
 ## Downloads
 
-- [Stable release v0.3.4](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.4)
+- [Stable release v0.3.5](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.5)
 - [Development release v0.3.4-dev](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.4-dev)
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. The repository is
@@ -25,6 +25,7 @@ test mirror can be used for guild testers without exposing the source repository
 - Player and Officer interfaces with shared settings.
 - Standalone operation when RCLootCouncil is absent.
 - Optional RCLootCouncil Master Looter integration.
+- RCLootCouncil item-family mapping and an installation assistant for Dibs buttons.
 - Multi-raid synchronization of guild Dibs state without sharing live loot votes.
 - Developer Mode for local item and request testing.
 - SavedVariables migrations and localized English/French runtime strings.
@@ -50,8 +51,11 @@ workflow. RCLootCouncil remains optional for the Dibs core.
    `RCLootCouncil`.
 3. Create a season under **Seasons** and make it active.
 4. Configure the guild rank allocations under **Rank Rules**.
-5. Choose the Pre-Dib mode, announcement channels, and supported loot types.
-6. Review **Overview** to confirm the season, permissions, and integration status.
+5. Open **RCLootCouncil > Dibs > RCLootCouncil > Installation assistant** and
+   choose **Curio + Tier Set** or **Standard loot + collections**. Use **Refresh
+   Dibs buttons** after changing RCLootCouncil's enabled button sets.
+6. Choose the Pre-Dib mode, announcement channels, and supported loot types.
+7. Review **Overview** to confirm the season, permissions, and integration status.
 
 Only the current guild master and officers selected by the configured guild
 rank policy can change Dibs settings, seasons, rank rules, modes, or balances.

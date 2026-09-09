@@ -79,6 +79,21 @@ describe("Finalize award flow", function()
     assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
   end)
 
+  it("rejects a personal Catalyst award even when an old DIB response exists", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
+    rc.lootTable = {
+      [1] = { itemGUID = "catalyst-guid", item = { link = "item:19027", typeCode = "CATALYST" } },
+    }
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = false, guildMembers = { "Tester-Realm" }, guildRankIndices = { [1] = 3 } } })
+    dibs.GetDB().settings.allowPublicPreDibs = false
+    local before = dibs.Ledger.GetBalance("Tester-Realm")
+
+    local result = dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19027", "Dib")
+    assert_false(result.ok)
+    assert_equal("AWARD_PERSONAL_ITEM", result.reasonCode)
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+  end)
+
   it("does not consume from a degraded or explicitly standalone RC callback", function()
     local degraded = { enabled = true, masterLooter = nil }
     local _, dibs = loader.load({ rclootcouncil = degraded, wow = { guildLeader = true } })

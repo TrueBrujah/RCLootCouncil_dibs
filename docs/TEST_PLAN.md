@@ -14,6 +14,8 @@ The test campaign must demonstrate that:
   that role alone.
 - Finalized DIB awards consume one Dib, while ordinary, test, failed, pending,
   and duplicate awards consume none.
+- Catalyst items never show a Dibs action or consume a Dib; Curios and class set
+  tokens are classified separately as `TOKEN` and `TOKEN_SET`.
 - Pre-Dibs, ledger history, and synchronization remain duplicate-safe and private.
 - Player and Officer interfaces remain usable during normal Retail play.
 
@@ -27,6 +29,8 @@ first raid test:
    `RCLootCouncil`, or `AUTO`?
 3. Which seasons and rank allocations are active?
 4. Which loot types and Encounter Journal sub-categories can receive a Dib?
+   Record that `CATALYST` is always excluded because it is personal to the
+   player; `TOKEN` (Curio) and `TOKEN_SET` (Tier Set) remain separate families.
 5. Is Pre-Dib mode `WILD_OPEN` or `ENCOUNTER`?
 6. Which public, Officer, and Raid Dibs announcement channels are available?
 7. Are Dibs shared across Normal, Heroic, and Mythic, or tracked separately?
@@ -65,7 +69,7 @@ node node_modules/fengari-node-cli/src/lua-cli.js tests/run.lua
 git diff --check
 ```
 
-Expected baseline: **161 tests pass, 0 fail, 44 files**. Run this suite after
+Expected baseline: **168 tests pass, 0 fail, 44 files**. Run this suite after
 source changes and attach the output to the test record.
 
 ## Manual test checklist
@@ -74,8 +78,8 @@ source changes and attach the output to the test record.
 
 - [ ] Install the stable ZIP on a clean character and confirm the addon loads.
 - [ ] Install the development ZIP separately and confirm the TOC version is
-      `0.3.4-dev`.
-- [ ] Confirm the stable package reports `0.3.4`.
+      `0.3.5-dev`.
+- [ ] Confirm the stable package reports `0.3.5`.
 - [ ] Confirm SavedVariables survive `/reload`, relog, and client restart.
 - [ ] Open `/dibs options` and confirm the correct Dibs options category opens.
 - [ ] Create a test season, select it as active, and configure at least two rank

@@ -179,6 +179,141 @@ describe("Dibs options compatibility", function()
     assert_true(dibs.RCLootCouncil.GetTypePolicyRevision() > revision)
     assert_equal(count, #dibs.Ledger.GetTransactions(dibs.GetCurrentSeasonId()))
   end)
+
+  it("keeps Catalyst personal and exposes class set tokens separately", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    dibs.RCOptions.EnsureRegistered(1)
+    local policy = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.integration.args.types
+    local values = policy.values()
+
+    assert_nil(values.CATALYST)
+    assert_not_nil(values.TOKEN_SET)
+    assert_false(dibs.RCLootCouncil.IsDibEnabledForType("CATALYST"))
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(nil, "CATALYST"))
+    local changed, reason = dibs.RCLootCouncil.SetDibEnabledForType("CATALYST", true)
+    assert_nil(changed)
+    assert_equal("PERSONAL_ITEM_TYPE", reason)
+    assert_false(policy.get(nil, "CATALYST"))
+  end)
+
+  it("documents RCLootCouncil set associations and applies semantic templates", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    rc.Getdb = function()
+      return { buttons = {
+        ARMOR_TOKEN = {},
+        INVTYPE_HEAD = {},
+        CATALYST_ITEMS = {},
+        RARE_ITEMS = {},
+        SPECIAL_EFFECTS_ITEMS = {},
+        WEAPON = {},
+      } }
+    end
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    dibs.RCOptions.EnsureRegistered(1)
+    local integration = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.integration
+    local values = integration.args.types.values()
+    assert_nil(values.ARMOR_TOKEN)
+    assert_nil(values.CATALYST_ITEMS)
+    assert_equal("Tier Set tokens (TOKEN_SET)", values.TOKEN_SET)
+    assert_equal("HEAD (RCLC slot)", values.INVTYPE_HEAD)
+    assert_equal("WEAPON (RCLC slot)", values.WEAPON)
+    local guide = integration.args.mapping.args.guide.name()
+    assert_true(guide:find("Catalyst Items [resolved]", 1, true) ~= nil)
+    assert_true(guide:find("Armor Token -> TOKEN_SET", 1, true) ~= nil)
+    assert_true(guide:find("Rare items -> OTHER", 1, true) ~= nil)
+    assert_true(guide:find("Items /w special effects -> OTHER", 1, true) ~= nil)
+    assert_true(guide:find("Chest, Back", 1, true) ~= nil)
+    assert_true(guide:find("Equipment-slot specificity", 1, true) ~= nil)
+
+    assert_not_nil(integration.args.setup)
+    assert_not_nil(integration.args.setup.args.progression)
+    assert_not_nil(integration.args.setup.args.standard)
+    assert_not_nil(integration.args.setup.args.refresh)
+
+    integration.args.types.set(nil, "TOKEN_SET", false)
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(nil, "Armor Token"))
+    integration.args.types.set(nil, "TOKEN_SET", true)
+    integration.args.templates.args.progression.func()
+    local policy = integration.args.types
+    assert_true(policy.get(nil, "TOKEN"))
+    assert_true(policy.get(nil, "TOKEN_SET"))
+    assert_false(policy.get(nil, "MOUNTS"))
+    assert_false(policy.get(nil, "default"))
+  end)
+
+  it("resolves Curio and Tier Set metadata inside the Catalyst Items group", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    dibs.RCOptions.EnsureRegistered(1)
+
+    local originalGetItemInfoInstant = _G.C_Item.GetItemInfoInstant
+    local originalTokenTable = _G.RCTokenTable
+    _G.C_Item.GetItemInfoInstant = function()
+      return 270909, "Reagent", "Context Token", "INVTYPE_NON_EQUIP_IGNORE", nil, 5, 2
+    end
+    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(270909, "CATALYST_ITEMS"))
+    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(270909, "CATALYST"))
+
+    _G.C_Item.GetItemInfoInstant = function()
+      return 270916, "Miscellaneous", "Junk", "INVTYPE_NON_EQUIP_IGNORE", nil, 15, 0
+    end
+    _G.RCTokenTable = { [270916] = "Head" }
+    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(270916, "CATALYST_ITEMS"))
+    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(270916, "CATALYST"))
+
+    _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
+    _G.RCTokenTable = originalTokenTable
+  end)
+
+  it("routes ordinary equipment through the configurable Other family", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = loader.makeRCLootCouncil(), withAce3 = true })
+    local originalGetItemInfoInstant = _G.C_Item.GetItemInfoInstant
+    _G.C_Item.GetItemInfoInstant = function()
+      return 190001, "Armor", "Plate", "INVTYPE_HEAD", nil, 4, 4
+    end
+
+    dibs.RCLootCouncil.SetDibEnabledForType("OTHER", false)
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190001, "INVTYPE_HEAD"))
+    dibs.RCLootCouncil.SetDibEnabledForType("OTHER", true)
+    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(190001, "INVTYPE_HEAD"))
+
+    _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
+  end)
+
+  it("keeps an Armor Token in Tier Set policy when its fallback class is Miscellaneous", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = loader.makeRCLootCouncil(), withAce3 = true })
+    local originalGetItemInfoInstant = _G.C_Item.GetItemInfoInstant
+    local originalTokenTable = _G.RCTokenTable
+    _G.C_Item.GetItemInfoInstant = function()
+      return 190003, "Miscellaneous", "Junk", "INVTYPE_HEAD", nil, 15, 0
+    end
+    _G.RCTokenTable = nil
+
+    dibs.RCLootCouncil.SetDibEnabledForType("MOUNTS", true)
+    dibs.RCLootCouncil.SetDibEnabledForType("TOKEN_SET", false)
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190003, "Armor Token"))
+
+    dibs.RCLootCouncil.SetDibEnabledForType("TOKEN_SET", true)
+    dibs.RCLootCouncil.SetDibEnabledForType("MOUNTS", false)
+    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(190003, "Armor Token"))
+
+    _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
+    _G.RCTokenTable = originalTokenTable
+  end)
+
+  it("keeps Cosmetic Items blocked even when Other is enabled", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = loader.makeRCLootCouncil(), withAce3 = true })
+    local originalGetItemInfoInstant = _G.C_Item.GetItemInfoInstant
+    _G.C_Item.GetItemInfoInstant = function()
+      return 190002, "Cosmetic", "Cosmetic", "INVTYPE_NON_EQUIP_IGNORE", nil, 5, 0
+    end
+
+    dibs.RCLootCouncil.SetDibEnabledForType("OTHER", true)
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS"))
+
+    _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
+  end)
 end)
 
 
