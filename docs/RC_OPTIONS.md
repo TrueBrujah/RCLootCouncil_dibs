@@ -47,8 +47,9 @@ Overview and the RCLootCouncil policy tab show a capability snapshot (`absent`, 
 The **Raid Readiness & Dry-Run** page is available inside the Officer
 RCLootCouncil section. **Run readiness check** evaluates the active season,
 rank policy, installation mode, RCLootCouncil capabilities, response projection,
-raid context, channel and local services. **Copy safe readiness report** prints
-bounded diagnostic metadata. The dry-run fields accept an item, winner,
+raid context, channel and local services. **Open selectable safe report** opens
+bounded diagnostic metadata in its own selectable window and includes the Dibs
+addon version plus the observed RCLootCouncil version. The dry-run fields accept an item, winner,
 response, finalization status and synthetic session identity; **Run local
 dry-run** reports `would_allow`, `would_reject`, `would_ignore`, or
 `would_require_review` without invoking live award controls or consuming a Dib.
@@ -70,8 +71,8 @@ Raid Dibs is a community stream, distinct from RAID chat. Its selection remains 
 
 ## Automated validation
 
-2026-09-09: full Lua suite passed: 179 tests, 0 failures, 46 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, sync privacy, options fallback, combat deferral, standalone operation, RC loot policy cache invalidation, indexed DIB response projection, AceDB profile discovery, malformed-count bounds, normalized voting-row Dibs display, the real lib-st callback signature, slash output with diagnostics disabled, rank allocation for candidates without ledger history, Catalyst exclusion, semantic Curio/Tier Set mapping, ordinary equipment fallback, Miscellaneous Armor Token disambiguation, Cosmetic blocking, Installation assistant controls, Raid Readiness states and invalidation, safe reports, dry-run replay, shared award validation, and no-mutation checks. Retail visual and delivery checks remain pending.
+2026-09-09: full Lua suite passed: 180 tests, 0 failures, 46 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, sync privacy, options fallback, combat deferral, standalone operation, RC loot policy cache invalidation, indexed DIB response projection, AceDB profile discovery, malformed-count bounds, normalized voting-row Dibs display, the real lib-st callback signature, slash output with diagnostics disabled, rank allocation for candidates without ledger history, Catalyst exclusion, semantic Curio/Tier Set mapping, ordinary equipment fallback, Miscellaneous Armor Token disambiguation, Cosmetic blocking, Installation assistant controls, Raid Readiness states and invalidation, safe reports, selectable report windows with version metadata, dry-run replay, shared award validation, and no-mutation checks. Retail visual and delivery checks remain pending.
 
 The `/dibs officer` window uses the same vertical navigation pattern as the RCLootCouncil options. It has a **Loot types** page with the same dynamic type list, checkboxes and both presets as the RCLootCouncil options. Changes use the same callbacks; reopening or refreshing either view reads the current values. The Player window uses the same navigation pattern for its Summary and History pages. Focused options and combat/UI regression validation: 20 tests passed.
 
-The officer window also has a **Debug** tab. It exposes the global and module verbosity levels, the current runtime report, and a chat copy action. `/dibs debug report` prints the same report. The report contains runtime metadata and channel identifiers only; it does not include live loot candidates, votes, or responses.
+The officer window also has a **Debug** tab. It exposes the global and module verbosity levels, the current runtime report, and a button that opens the selectable readiness report. `/dibs debug report` remains the compact chat diagnostic. The readiness report contains runtime metadata and channel identifiers only; it does not include live loot candidates, votes, or responses.

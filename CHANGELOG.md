@@ -7,6 +7,8 @@
   simulation path that never invokes live loot controls or consumes Dibs.
 - Added shared pure award validation and a final readiness safety gate for live
   RCLootCouncil award accounting.
+- Readiness reports now open in a selectable window and show the Dibs addon and
+  observed RCLootCouncil versions; chat is reserved for short fallback messages.
 
 ## 0.3.5 - 2026-09-09
 

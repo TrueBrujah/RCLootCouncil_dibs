@@ -241,6 +241,37 @@ function Adapter.AddEditBox(shell, parent, label, callback, width)
   return edit
 end
 
+-- Add a read-only report surface that remains selectable in the live client.
+-- MultiLineEditBox is provided by AceGUI on Retail; the EditBox fallback keeps
+-- the report available with older or reduced AceGUI installations.
+function Adapter.AddSelectableText(shell, parent, label, value, width, height)
+  local edit = Adapter.Create(shell, "MultiLineEditBox", parent)
+  if not edit then edit = Adapter.Create(shell, "EditBox", parent) end
+  if not edit then return nil end
+  call(edit, "SetLabel", label or "")
+  call(edit, "SetWidth", width or 700)
+  call(edit, "SetHeight", height or 460)
+  call(edit, "SetFullWidth", true)
+  call(edit, "SetFullHeight", true)
+  call(edit, "SetText", tostring(value or ""))
+  -- Keep this as an editable widget so Ctrl+A/Ctrl+C works.  The report is
+  -- immutable from Dibs' side because no OnTextChanged callback is attached.
+  return edit
+end
+
+function Adapter.SelectText(widget)
+  if not widget then return false end
+  local targets = { widget, widget.editbox, widget.frame }
+  for _, target in ipairs(targets) do
+    if target and type(target.SetFocus) == "function" then pcall(target.SetFocus, target) end
+    if target and type(target.HighlightText) == "function" then
+      local ok = pcall(target.HighlightText, target, 0, -1)
+      if ok then return true end
+    end
+  end
+  return false
+end
+
 function Adapter.AddDropdown(shell, parent, label, values, callback, width)
   local dropdown = Adapter.Create(shell, "Dropdown", parent)
   if not dropdown then return nil end

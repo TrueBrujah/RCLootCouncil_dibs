@@ -41,10 +41,13 @@ function Dibs.DebugLogs.Open(actor)
     end
     if Dibs.Readiness and type(Dibs.Readiness.GetStatusText) == "function" then
       Dibs.AceGUI.AddLabel(shell, tabs, "Raid readiness: " .. Dibs.Readiness.GetStatusText(true), true)
-      local report = Dibs.AceGUI.AddButton(shell, tabs, "Copy readiness report", function()
-        Dibs.Readiness.CopyReport("detailed")
+      local report = Dibs.AceGUI.AddButton(shell, tabs, "Open selectable report", function()
+        local reportShell, reportText, reason = Dibs.Readiness.OpenReport("detailed")
+        if not reportShell and not reportText then
+          Dibs.Message("Readiness report unavailable: " .. tostring(reason))
+        end
       end, 180)
-      Dibs.AceGUI.AddTooltip(report, "Readiness report", "Prints bounded Officer diagnostics without live candidates, votes or private loot state.")
+      Dibs.AceGUI.AddTooltip(report, "Readiness report", "Opens bounded Officer diagnostics in a selectable window without live candidates, votes or private loot state.")
     end
     local searchBox = Dibs.AceGUI.AddEditBox(shell, tabs, "Search", function(value) query = value; refresh() end, 420)
     Dibs.AceGUI.AddTooltip(searchBox, "Search logs", "Search module names, severity labels and message text.")

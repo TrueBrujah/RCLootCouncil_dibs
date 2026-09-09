@@ -547,7 +547,14 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "readiness" or action == "ready" or action == "preflight" then
-    if Dibs.Readiness and type(Dibs.Readiness.Run) == "function" then
+    if Dibs.Readiness and type(Dibs.Readiness.OpenReport) == "function" then
+      local shell, report, reason = Dibs.Readiness.OpenReport("detailed")
+      if not shell and report then
+        Dibs.Message(report)
+      elseif not shell then
+        Dibs.Message("Readiness unavailable: " .. tostring(reason))
+      end
+    elseif Dibs.Readiness and type(Dibs.Readiness.Run) == "function" then
       local result, reason = Dibs.Readiness.Run()
       Dibs.Message(result and Dibs.Readiness.FormatSummary(result, true) or ("Readiness unavailable: " .. tostring(reason)))
     else

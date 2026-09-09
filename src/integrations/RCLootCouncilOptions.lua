@@ -1336,9 +1336,14 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
       local result, reason = Dibs.Readiness and Dibs.Readiness.Run and Dibs.Readiness.Run() or nil, "UNAVAILABLE"
       setStatus(result and ("Readiness: " .. tostring(result.status)) or ("Readiness unavailable: " .. tostring(reason)))
     end),
-    safeReport = execute(4, "Copy safe readiness report", function()
-      local report, reason = Dibs.Readiness and Dibs.Readiness.CopyReport and Dibs.Readiness.CopyReport("safe") or nil, "UNAVAILABLE"
-      setStatus(report and "Safe readiness report printed to chat." or ("Report unavailable: " .. tostring(reason)))
+    safeReport = execute(4, "Open selectable safe report", function()
+      local shell, report, reason
+      if Dibs.Readiness and Dibs.Readiness.OpenReport then
+        shell, report, reason = Dibs.Readiness.OpenReport("safe")
+      else
+        reason = "UNAVAILABLE"
+      end
+      setStatus(shell and "Safe readiness report opened." or (report and "Safe readiness report opened in chat fallback." or ("Report unavailable: " .. tostring(reason))))
     end),
     dryRunItem = { type = "input", name = "Dry-run item ID or link", order = 5,
       get = function() return getState().dryRunItem or "19019" end,

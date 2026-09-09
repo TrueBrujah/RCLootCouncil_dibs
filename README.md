@@ -97,8 +97,9 @@ Officer pages use the same protected callbacks and SavedVariables as the main
 options panel. The Officer view can inspect the complete ledger and history,
 manage seasons and allocations, configure announcements, and review diagnostics.
 The **Raid Readiness & Dry-Run** page is read-only: it explains missing raid
-context or integration capabilities, prints a privacy-safe report, and shows
-whether a qualifying live award could consume a Dib after final revalidation.
+context or integration capabilities, opens a privacy-safe report in a
+selectable window with the addon version, and shows whether a qualifying live
+award could consume a Dib after final revalidation.
 
 ### RCLootCouncil workflow
 
@@ -116,7 +117,8 @@ records one protected Dibs debit. Normal, test, failed, pending, or duplicate
 award events do not consume production Dibs. The Dibs ledger remains the
 authoritative source for balances and history.
 
-Use `/dibs readiness` for an authorized administrative check. Use
+Use `/dibs readiness` for an authorized administrative check; it opens the
+selectable report window. Use
 `/dibs dryrun <itemID/link> <winner> <response> <finalized|test|pending> [session]`
 for a bounded local simulation. Both commands are read-only with respect to
 the ledger, RCLootCouncil history, loot sessions, votes, chat traffic and

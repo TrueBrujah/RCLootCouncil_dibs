@@ -395,6 +395,8 @@ function Readiness.FormatSummary(result, detailed)
   if type(result) ~= "table" then return text("READINESS_UNAVAILABLE", "Raid readiness is unavailable.") end
   local lines = {
     statusLine("Raid Readiness", result.status),
+    statusLine("Addon version", Dibs.VERSION or "unknown"),
+    statusLine("RCLootCouncil version", result.integration and result.integration.observedVersion or "unknown"),
     statusLine("Standalone Dibs", result.standaloneStatus),
     statusLine("Live RCLootCouncil", result.integrationStatus),
     statusLine("Mode", result.mode),
@@ -419,7 +421,7 @@ function Readiness.BuildReport(result, scope)
   local rcVersion = result.integration and result.integration.observedVersion or "unknown"
   local lines = {
     "Raid Readiness report",
-    "Addon: " .. tostring(Dibs.VERSION or "unknown"),
+    "Addon version: " .. tostring(Dibs.VERSION or "unknown"),
     "RCLootCouncil: " .. tostring(rcVersion),
     "Mode: " .. tostring(result.mode),
     "Status: " .. tostring(result.status),
@@ -446,15 +448,53 @@ function Readiness.BuildReport(result, scope)
   return table.concat(lines, "\n")
 end
 
-function Readiness.CopyReport(scope)
+function Readiness.OpenReport(scope)
+  scope = scope == "detailed" and "detailed" or "safe"
   local result = Readiness.GetLast()
   if not result or not Readiness.IsFresh(result) then
     result = Readiness.Run()
-    if not result then return nil, "GUILD_ADMIN_REQUIRED" end
+    if not result then return nil, nil, "GUILD_ADMIN_REQUIRED" end
   end
   local report = Readiness.BuildReport(result, scope)
-  if Dibs.Message then Dibs.Message(report) end
-  return report
+  if not Dibs.AceGUI or type(Dibs.AceGUI.CreateWindow) ~= "function" or
+      type(Dibs.AceGUI.AddSelectableText) ~= "function" then
+    return nil, report, "UI_UNAVAILABLE"
+  end
+
+  local shell = Dibs.AceGUI.CreateWindow("Dibs Raid Readiness Report", 820, 650, { "CENTER", 0, 0 })
+  if not shell or not shell.window then return nil, report, "UI_UNAVAILABLE" end
+  local body = shell.window
+  -- CreateWindow uses Fill for normal pages.  A report has several stacked
+  -- controls, so switch this shell to a vertical layout before adding them.
+  if type(body.SetLayout) == "function" then body:SetLayout("List") end
+  Dibs.AceGUI.AddHeader(shell, body, "Raid Readiness report",
+    "Read-only diagnostics for the current Dibs and RCLootCouncil environment.")
+  Dibs.AceGUI.AddLabel(shell, body,
+    "Select the report below, then press Ctrl+A and Ctrl+C to copy it. No loot, vote, ledger, or chat state is changed.", true)
+  local editor = Dibs.AceGUI.AddSelectableText(shell, body, "Selectable report", report, 760, 500)
+  shell.reportText = report
+  shell.reportEditor = editor
+  shell.reportScope = scope
+  local selectAll = Dibs.AceGUI.AddButton(shell, body, "Select all", function()
+    if Dibs.AceGUI.SelectText then Dibs.AceGUI.SelectText(editor) end
+  end, 120)
+  Dibs.AceGUI.AddTooltip(selectAll, "Select all report text", "Focuses the report so Ctrl+C can copy the selected diagnostics.")
+  if shell.window and type(shell.window.Show) == "function" then shell.window:Show() end
+  Readiness.state = Readiness.state or {}
+  Readiness.state.reportShell = shell
+  return shell, report
+end
+
+function Readiness.CopyReport(scope)
+  local shell, report, reason = Readiness.OpenReport(scope)
+  if shell then return report end
+  -- Compatibility for clients without an AceGUI surface: retain the old
+  -- chat fallback while live clients use the selectable report window.
+  if report and reason == "UI_UNAVAILABLE" then
+    if Dibs.Message then Dibs.Message(report) end
+    return report
+  end
+  return nil, reason
 end
 
 function Readiness.GetStatusText(detailed)
