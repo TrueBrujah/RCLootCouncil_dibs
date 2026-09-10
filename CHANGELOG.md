@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.2-dev - 2026-09-10
+
+- Keep the Data control center content panel visible on first open and after
+  switching tabs or resizing the modeless window.
+
 ## 0.5.1-dev - 2026-09-10
 
 - Repair the modeless Data control center so Backups, Profiles and Import /
