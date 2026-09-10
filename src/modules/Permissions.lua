@@ -55,6 +55,9 @@ local ADMIN_ACTIONS = {
   ["predib.mode.set"] = true,
   ["history.confirm"] = true,
   ["history.reject"] = true,
+  ["backup.restore"] = true,
+  ["data.import"] = true,
+  ["profile.manage"] = true,
 }
 
 local function sameIdentity(first, second)

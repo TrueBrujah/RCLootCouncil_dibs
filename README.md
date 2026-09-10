@@ -31,6 +31,7 @@ test mirror can be used for guild testers without exposing the source repository
 - Raid Readiness checks with clear Ready, Degraded, Blocked and Unavailable states.
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
 - Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
+- Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
 - SavedVariables migrations and localized English/French runtime strings.
 
 ## How to use
@@ -62,6 +63,9 @@ workflow. RCLootCouncil remains optional for the Dibs core.
 8. Open **RCLootCouncil > Dibs > RCLootCouncil > Raid Readiness & Dry-Run** and
    run the readiness check before a raid. Use the dry-run form to validate a
    test item, winner, response, finalization status, and synthetic session ID.
+9. Open the **Data** tab for safety backups, named local/guild profiles, and
+   portable package transfer. Every restore or import shows a preview and
+   requires an explicit confirmation.
 
 Only the current guild master and officers selected by the configured guild
 rank policy can change Dibs settings, seasons, rank rules, modes, or balances.
@@ -134,6 +138,26 @@ available only to verified guild GMs and Officers. Select a row and use **Open
 in Adventure Guide** to jump to its raid and boss when the Adventure Guide
 catalogue can identify them.
 
+### Backup, profiles and transfer
+
+The **Data** tab opens a separate modeless window with three small workspaces:
+
+- **Backups** creates dated local recovery points, shows scope, size and checksum,
+  and keeps the configured retention count. Restore always creates a safety
+  snapshot, then shows a preview before applying it.
+- **Profiles** manages named local presentation profiles and guild policy
+  profiles. Create, copy, activate, reset and delete operations never remove
+  ledger transactions. Guild policy activation remains GM/Officer protected.
+- **Import / Export** produces a versioned `DIBS-PKG-1` text package. Local,
+  guild-configuration and full-data scopes are labelled; sensitive scopes can be
+  redacted. Packages are size, schema and checksum validated and imported as data
+  only. Configuration uses explicit merge/replace, while full history uses
+  append-and-deduplicate semantics and reports conflicts in the preview.
+
+Copy packages through a private channel or file. Full-data packages contain
+player identities and award history; do not publish them. A cancelled preview
+does not change settings, profiles, balances or history.
+
 ### RCLootCouncil workflow
 
 When RCLootCouncil is installed, Dibs adds a `DIB` response to the supported
@@ -172,6 +196,11 @@ SavedVariables.
 /dibs review
 /dibs reconcile
 /dibs options
+/dibs data
+/dibs backup
+/dibs profiles
+/dibs import
+/dibs export
 /dibs grant <player> <amount>
 /dibs use <player> <amount>
 /dibs pre <itemID> [name]

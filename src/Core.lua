@@ -34,12 +34,15 @@ Dibs.OfficerUI = Dibs.OfficerUI or {}
 Dibs.LogsUI = Dibs.LogsUI or {}
 Dibs.DebugLogs = Dibs.DebugLogs or {}
 Dibs.Reconciliation = Dibs.Reconciliation or {}
+Dibs.Backup = Dibs.Backup or {}
+Dibs.ImportExport = Dibs.ImportExport or {}
+Dibs.Profiles = Dibs.Profiles or {}
 Dibs.DebugLogs.entries = Dibs.DebugLogs.entries or {}
 Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.3.14-dev"
+Dibs.VERSION = "0.4.0-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -61,6 +64,10 @@ local function deepcopy(value)
   end
   return copy
 end
+
+-- Shared by backup, import/export and profile modules.  The copy is deliberately
+-- data-only: functions, userdata and frames are never copied into SavedVariables.
+Dibs.DeepCopy = Dibs.DeepCopy or deepcopy
 
 local function mergeDefaults(target, defaults)
   if type(target) ~= "table" then
@@ -131,6 +138,9 @@ local defaultDB = {
     evidence = {},
     evidenceIndex = {},
   },
+  backups = {},
+  backupRetention = 5,
+  auditLog = {},
   sync = {
     seenTransactions = {},
     peerStates = {},
@@ -620,7 +630,7 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs options | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
@@ -712,6 +722,12 @@ function Dibs.HandleSlashCommand(msg)
     if Dibs.OfficerUI and Dibs.OfficerUI.Show then
       Dibs.OfficerUI.Show()
     end
+    return
+  end
+
+  if action == "data" or action == "backup" or action == "profiles" or action == "import" or action == "export" then
+    local tab = action == "profiles" and "profiles" or ((action == "import" or action == "export") and "transfer" or "backups")
+    if Dibs.DataUI and Dibs.DataUI.Open then Dibs.DataUI.Open(tab) else Dibs.Message("Data window is unavailable until AceGUI is loaded.") end
     return
   end
 

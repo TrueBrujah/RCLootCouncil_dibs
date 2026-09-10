@@ -125,6 +125,19 @@ matching Adventure Guide raid and encounter through `EncounterJournalAdapter`.
 The navigation lookup is explicit and bounded; it never runs during a normal
 history search.
 
+### Backup, ImportExport and Profiles
+`ImportExport` creates deterministic `DIBS-PKG-1` data packages for local
+presentation, guild configuration, or full Dibs data. It validates size, schema,
+scope, checksum and data-only content before previewing an operation. Guild and
+full imports require a verified GM/Officer; full ledger imports append validated
+records and deduplicate transaction, award and evidence identities. `Backup`
+stores bounded, checksummed snapshots and automatically creates a restore point
+before risky mutations. `Profiles` manages independent local and guild profiles;
+presentation values are separate from authoritative policy and profile lifecycle
+operations never delete or rewrite the append-only ledger. The modeless `DataUI`
+window keeps these workflows out of Blizzard Settings and makes confirmation
+explicit.
+
 ## Authority model
 
 Player requests are proposals.

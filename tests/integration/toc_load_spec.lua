@@ -9,6 +9,9 @@ describe("TOC load integrity", function()
       "modules/Ledger.lua",
       "modules/Permissions.lua",
       "modules/ProtectedActions.lua",
+      "modules/ImportExport.lua",
+      "modules/Profiles.lua",
+      "modules/Backup.lua",
       "modules/PreDibs.lua",
       "modules/LootPipeline.lua",
       "modules/Sync.lua",
@@ -18,6 +21,8 @@ describe("TOC load integrity", function()
       "integrations/EncounterJournal.lua",
       "integrations/RCLootCouncil.lua",
       "ui/AceGUI.lua",
+      "ui/LogsUI.lua",
+      "ui/DataUI.lua",
       "ui/PlayerUI.lua",
       "ui/OfficerUI.lua",
     }

@@ -24,6 +24,9 @@ local VALID_ACTIONS = {
   ["predib.mode.set"] = true,
   ["history.confirm"] = true,
   ["history.reject"] = true,
+  ["backup.restore"] = true,
+  ["data.import"] = true,
+  ["profile.manage"] = true,
 }
 
 local function isValidAction(actionId)
@@ -436,6 +439,31 @@ local function executeInstallationModeSet(actor, payload, decision)
   return buildResult(mode ~= nil, mode, decision, reason)
 end
 
+local function executeBackupRestore(actor, payload, decision)
+  if not Dibs.Backup or type(Dibs.Backup.Restore) ~= "function" then return reject(decision, "Backup module unavailable.") end
+  local value, reason = Dibs.Backup.Restore(payload and payload.previewId, payload and payload.confirmation == true, payload and payload.reason, actor)
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
+local function executeDataImport(actor, payload, decision)
+  if not Dibs.ImportExport or type(Dibs.ImportExport.Apply) ~= "function" then return reject(decision, "Import/export module unavailable.") end
+  local value, reason = Dibs.ImportExport.Apply(payload and payload.previewId, payload and payload.confirmation == true, payload and payload.reason, actor)
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
+local function executeProfileManage(actor, payload, decision)
+  if not Dibs.Profiles then return reject(decision, "Profiles module unavailable.") end
+  local op = tostring(payload and payload.operation or ""):lower(); local value, reason
+  if op == "create" then value, reason = Dibs.Profiles.Create(payload.name, payload.scope, payload, actor)
+  elseif op == "copy" then value, reason = Dibs.Profiles.Copy(payload.source, payload.name, payload.scope, actor)
+  elseif op == "rename" then value, reason = Dibs.Profiles.Rename(payload.name, payload.newName, payload.scope, actor)
+  elseif op == "activate" then value, reason = Dibs.Profiles.Activate(payload.name, payload.scope, actor, payload.confirmation == true)
+  elseif op == "reset" then value, reason = Dibs.Profiles.Reset(payload.name, payload.scope, actor)
+  elseif op == "delete" then value, reason = Dibs.Profiles.Delete(payload.name, payload.scope, actor)
+  else return reject(decision, "Unknown profile operation.") end
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
 function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   local command = payload or {}
   if not isValidAction(actionId) then
@@ -467,6 +495,9 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "history.reject" then return executeHistoryReject(actor, command, decision) end
   if actionId == "predib.mode.set" then return executePreDibModeSet(actor, command, decision) end
   if actionId == "installation.mode.set" then return executeInstallationModeSet(actor, command, decision) end
+  if actionId == "backup.restore" then return executeBackupRestore(actor, command, decision) end
+  if actionId == "data.import" then return executeDataImport(actor, command, decision) end
+  if actionId == "profile.manage" then return executeProfileManage(actor, command, decision) end
   if actionId == "settings.modify" then return buildResult(true, true, decision) end
 
   return buildResult(false, nil, decision, text("AUTHORITY_INVALID_ACTION", "Unknown protected action."))

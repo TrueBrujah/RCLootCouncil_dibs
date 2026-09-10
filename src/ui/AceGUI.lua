@@ -26,6 +26,19 @@ local HAS_MSA_DROPDOWN = type(_G.MSA_DropDownMenu_Create) == "function"
   and type(_G.MSA_DropDownMenu_SetText) == "function"
 local msaDropdownSerial = 0
 local msaDropdownPool = {}
+local contextMenuSerial = 0
+local contextMenuFrame
+
+local function getScrollingTable()
+  if Dibs.Ace3 and Dibs.Ace3.libs and Dibs.Ace3.libs.scrollingTable then
+    return Dibs.Ace3.libs.scrollingTable
+  end
+  if type(_G.LibStub) == "function" or type(_G.LibStub) == "table" then
+    local ok, library = pcall(_G.LibStub, "ScrollingTable", true)
+    if ok and library then return library end
+  end
+  return nil
+end
 
 local function call(widget, method, ...)
   if widget and type(widget[method]) == "function" then
@@ -153,6 +166,12 @@ local function releaseMSAControls(widget, seen)
     msaDropdownPool[#msaDropdownPool + 1] = control
     widget._dibsMSAControl = nil
   end
+  if widget._dibsScrollingTable then
+    if type(widget._dibsScrollingTable.Hide) == "function" then
+      pcall(widget._dibsScrollingTable.Hide, widget._dibsScrollingTable)
+    end
+    widget._dibsScrollingTable = nil
+  end
   for _, child in ipairs(widget.children or {}) do
     releaseMSAControls(child, seen)
   end
@@ -233,7 +252,240 @@ function Adapter.AddLabel(shell, parent, text, fullWidth)
   return label
 end
 
-function Adapter.AddTable(shell, parent, columns, rows, height, rowActions)
+local function safeContextText(value)
+  return tostring(value or "")
+end
+
+local function showTableContextMenu(st, rowRecord, columns, options)
+  if not HAS_MSA_DROPDOWN or type(_G.MSA_ToggleDropDownMenu) ~= "function"
+    or type(_G.MSA_DropDownMenu_Initialize) ~= "function" then
+    return false
+  end
+  if not contextMenuFrame then
+    contextMenuSerial = contextMenuSerial + 1
+    contextMenuFrame = _G.MSA_DropDownMenu_Create("DibsTableContext" .. tostring(contextMenuSerial), _G.UIParent)
+  end
+  if not contextMenuFrame then return false end
+
+  local menuRows = {}
+  local function addMenu(text, callback, disabled)
+    menuRows[#menuRows + 1] = { text = text, callback = callback, disabled = disabled }
+  end
+  if rowRecord then
+    local action = rowRecord._dibsAction
+    if action and type(action.callback) == "function" then
+      addMenu(action.text or "Open", action.callback)
+    end
+    if options and type(options.contextMenu) == "function" then
+      local ok, custom = pcall(options.contextMenu, rowRecord._dibsRow or rowRecord, st)
+      if ok and type(custom) == "table" then
+        for _, entry in ipairs(custom) do
+          if type(entry) == "table" and type(entry.callback) == "function" then
+            addMenu(entry.text or "Action", entry.callback, entry.disabled == true)
+          end
+        end
+      end
+    end
+    if #menuRows > 0 then
+      menuRows[#menuRows + 1] = { isTitle = true, text = "Sort table" }
+    end
+  end
+  for index, column in ipairs(columns or {}) do
+    if not column.action then
+      local name = safeContextText(column.title or column.name or ("Column " .. tostring(index)))
+      addMenu(name .. " (A-Z)", function()
+        for i, definition in ipairs(st.cols or {}) do definition.sort = nil end
+        st.cols[index].sort = getScrollingTable().SORT_ASC
+        st:SortData()
+        if st._dibsUpdateHeaders then st._dibsUpdateHeaders() end
+      end)
+      addMenu(name .. " (Z-A)", function()
+        for i, definition in ipairs(st.cols or {}) do definition.sort = nil end
+        st.cols[index].sort = getScrollingTable().SORT_DSC
+        st:SortData()
+        if st._dibsUpdateHeaders then st._dibsUpdateHeaders() end
+      end)
+    end
+  end
+  if #menuRows == 0 then return false end
+  _G.MSA_DropDownMenu_Initialize(contextMenuFrame, function(_, level)
+    if level ~= 1 then return end
+    for _, entry in ipairs(menuRows) do
+      local info = _G.MSA_DropDownMenu_CreateInfo()
+      info.text = entry.text
+      info.isTitle = entry.isTitle
+      info.disabled = entry.disabled
+      info.notCheckable = true
+      info.func = entry.callback
+      _G.MSA_DropDownMenu_AddButton(info, level)
+    end
+  end, "MENU")
+  _G.MSA_ToggleDropDownMenu(1, nil, contextMenuFrame, "cursor", 0, 0)
+  return true
+end
+
+-- Render a real ScrollingTable when lib-st is available. Its native header
+-- buttons provide stable column widths, left-click sorting, row selection and
+-- right-click menus. The existing AceGUI label grid remains the compatibility
+-- fallback used by reduced test clients and older installations.
+function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
+  local library = getScrollingTable()
+  if not library or type(library.CreateST) ~= "function" or not parent or not parent.frame then
+    return nil
+  end
+  options = options or {}
+  local definitions = columns or {}
+  if #definitions == 0 then return nil end
+  local host = Adapter.Create(shell, "SimpleGroup", parent)
+  if not host or not host.frame then return nil end
+  call(host, "SetFullWidth", true)
+  call(host, "SetLayout", "Fill")
+
+  local desiredWidth = 0
+  local tableColumns = {}
+  for index, column in ipairs(definitions) do
+    local width = math.max(48, tonumber(column.width) or 100)
+    desiredWidth = desiredWidth + width
+    tableColumns[index] = {
+      name = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
+      baseName = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
+      width = width,
+      align = column.align or "LEFT",
+      tooltip = column.tooltip,
+      defaultsort = column.defaultsort,
+      action = column.action == true or (index == #definitions and rowActions ~= nil),
+    }
+  end
+
+  local availableWidth = host.frame.GetWidth and host.frame:GetWidth() or 0
+  if availableWidth <= 0 and shell.frame and shell.frame.GetWidth then
+    availableWidth = math.max(360, (shell.frame:GetWidth() or desiredWidth) - 220)
+  end
+  if availableWidth > 0 then availableWidth = availableWidth - 12 end
+  if availableWidth > 0 and desiredWidth > availableWidth then
+    local scale = availableWidth / desiredWidth
+    local used = 0
+    for index, column in ipairs(tableColumns) do
+      column.width = math.floor(column.width * scale)
+      if index == #tableColumns then column.width = math.max(48, availableWidth - used) end
+      used = used + column.width
+    end
+  end
+
+  local rowData = {}
+  for _, sourceRow in ipairs(rows or {}) do
+    local action = rowActions and rowActions(sourceRow) or nil
+    local cells = {}
+    for index = 1, #tableColumns do
+      local value = sourceRow[index]
+      if index == #tableColumns and action then value = action.text or "Action" end
+      cells[index] = value == nil and "" or value
+    end
+    rowData[#rowData + 1] = { cols = cells, _dibsRow = sourceRow, _dibsAction = action }
+  end
+  if #rowData == 0 then
+    rowData[1] = { cols = {}, _dibsRow = { "No entries" } }
+    for index = 1, #tableColumns do rowData[1].cols[index] = index == 1 and "No entries" or "" end
+  end
+
+  local rowHeight = tonumber(options.rowHeight) or 20
+  local visibleRows = math.max(1, math.floor((tonumber(height) or 260) / rowHeight))
+  local ok, st = pcall(library.CreateST, library, tableColumns, visibleRows, rowHeight,
+    options.highlight or { r = 0.22, g = 0.45, b = 0.65, a = 0.35 }, host.frame)
+  if not ok or not st then return nil end
+  host._dibsScrollingTable = st
+  st._dibsColumns = tableColumns
+  st._dibsUpdateHeaders = function()
+    for _, column in ipairs(tableColumns) do
+      local marker = column.sort == library.SORT_ASC and "  ^" or (column.sort == library.SORT_DSC and "  v" or "")
+      column.name = column.baseName .. marker
+    end
+    if type(st.SetDisplayCols) == "function" then st:SetDisplayCols(tableColumns) end
+  end
+  if type(st.SetDefaultHighlight) == "function" then
+    pcall(st.SetDefaultHighlight, st, 0.18, 0.42, 0.62, 0.38)
+  end
+  if type(st.EnableSelection) == "function" then st:EnableSelection(true) end
+  if st.frame then
+    st.frame:ClearAllPoints()
+    st.frame:SetPoint("TOPLEFT", host.frame, "TOPLEFT", 0, 0)
+    st.frame:SetWidth(desiredWidth)
+  end
+
+  local function sortColumn(index)
+    for i, column in ipairs(tableColumns) do
+      if i ~= index then column.sort = nil end
+    end
+    local column = tableColumns[index]
+    if column.sort == library.SORT_DSC then column.sort = library.SORT_ASC else column.sort = library.SORT_DSC end
+    st:SortData()
+    st._dibsUpdateHeaders()
+  end
+
+  st:RegisterEvents({
+    OnEnter = function(rowFrame, cellFrame, data, cols, row, realrow, column, table)
+      local cell = realrow and table:GetCell(realrow, column)
+      local value = type(cell) == "table" and cell.value or cell
+      if type(value) == "string" and value:find("|Hitem:", 1, true) and _G.GameTooltip
+        and type(_G.GameTooltip.SetOwner) == "function" and type(_G.GameTooltip.SetHyperlink) == "function" then
+        _G.GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
+        _G.GameTooltip:SetHyperlink(value)
+        _G.GameTooltip:Show()
+      end
+      return false
+    end,
+    OnLeave = function()
+      if _G.GameTooltip and type(_G.GameTooltip.Hide) == "function" then _G.GameTooltip:Hide() end
+      return false
+    end,
+    OnClick = function(rowFrame, cellFrame, data, cols, row, realrow, column, table, button)
+      local record = realrow and table:GetRow(realrow)
+      if button == "RightButton" then
+        return showTableContextMenu(table, record, definitions, options)
+      end
+      if button ~= "LeftButton" then return false end
+      if not realrow then
+        sortColumn(column)
+        return true
+      end
+      if record and record._dibsAction and column == #tableColumns then
+        if type(record._dibsAction.callback) == "function" then record._dibsAction.callback(record._dibsRow or record) end
+        return true
+      end
+      if table.GetSelection and table.SetSelection then
+        if table:GetSelection() == realrow and table.ClearSelection then table:ClearSelection()
+        else table:SetSelection(realrow) end
+      end
+      if options and type(options.onRowClick) == "function" then
+        options.onRowClick(record and (record._dibsRow or record) or nil, column)
+      end
+      return true
+    end,
+  }, true)
+  st:SetData(rowData, false)
+  local defaultColumn = options.defaultSortColumn
+  if not defaultColumn then
+    for index, column in ipairs(tableColumns) do
+      local title = string.lower(column.baseName or "")
+      if title:find("date", 1, true) or title:find("time", 1, true) then
+        defaultColumn = index
+        break
+      end
+    end
+  end
+  if defaultColumn and tableColumns[defaultColumn] then
+    for index, column in ipairs(tableColumns) do column.sort = nil end
+    tableColumns[defaultColumn].sort = options.defaultSortDirection == "asc" and library.SORT_ASC or library.SORT_DSC
+    st:SortData()
+    st._dibsUpdateHeaders()
+  end
+  if st.frame and st.frame.Show then st.frame:Show() end
+  return host
+end
+
+function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, options)
+  local scrolling = Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
+  if scrolling then return scrolling end
   local scroll = Adapter.AddScrollableList(shell, parent, height)
   if not scroll then return nil end
   local definitions = columns or {}

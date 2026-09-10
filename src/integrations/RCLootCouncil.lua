@@ -1,7 +1,8 @@
 local Dibs = _G.Dibs
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 
--- Change log 0.3.14-dev (2026-09-10): keep operational searches, history,
+-- Change log 0.4.0-dev (2026-09-10): add backup/import/profile data tools and
+-- keep operational searches, history,
 -- reports, and statistics in modeless control-center windows; preserve item
 -- context for explicit Adventure Guide navigation from reconciliation rows.
 -- Change log 0.3.13-dev (2026-09-09): use MSA dropdowns for lightweight

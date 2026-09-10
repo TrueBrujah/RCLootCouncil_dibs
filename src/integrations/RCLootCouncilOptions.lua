@@ -1329,6 +1329,15 @@ groups.officer.args.reconciliation = { type = "group", name = "RC History", orde
 groups.officer.args.disputes.hidden = true
 groups.officer.args.reconciliation.hidden = true
 groups.overview.args.seasonSummary = nil
+groups.data = { type = "group", name = "Data", order = 12, args = {
+  intro = description(1, "Backups, profiles and portable packages use a preview-first workflow. Imported text is treated as data only and never executed."),
+  openBackups = execute(2, "Open backups", function() if Dibs.DataUI then Dibs.DataUI.Open("backups") end end),
+  openProfiles = execute(3, "Open profiles", function() if Dibs.DataUI then Dibs.DataUI.Open("profiles") end end),
+  openTransfer = execute(4, "Open import / export", function() if Dibs.DataUI then Dibs.DataUI.Open("transfer") end end),
+  retention = { type = "range", name = "Safety backup retention", min = 1, max = 25, step = 1, order = 5,
+    get = function() return tonumber(Dibs.GetDB().backupRetention or 5) end,
+    set = function(_, value) local saved, reason = Dibs.Backup.SetRetention(value); setStatus(saved and ("Backup retention: " .. tostring(saved)) or tostring(reason)) end },
+} }
 groups.developer = { type = "group", name = "Developer", order = 9, args = {
   enabled = { type = "toggle", name = "Developer Mode", order = 1,
     get = function() return Dibs.DeveloperMode.IsEnabled() end,

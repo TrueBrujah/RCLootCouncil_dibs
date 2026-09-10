@@ -18,6 +18,7 @@ Adapter.libs = Adapter.libs or {
   gui = getLibrary("AceGUI-3.0"),
   config = getLibrary("AceConfig-3.0"),
   dialog = getLibrary("AceConfigDialog-3.0"),
+  scrollingTable = getLibrary("ScrollingTable"),
 }
 
 local function embed(library)

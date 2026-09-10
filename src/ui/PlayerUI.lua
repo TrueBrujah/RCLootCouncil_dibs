@@ -28,6 +28,15 @@ local function trimText(value)
   return tostring(value or ""):match("^%s*(.-)%s*$")
 end
 
+local function formatDate(timestamp)
+  local value = tonumber(timestamp) or 0
+  if value > 0 and type(date) == "function" then
+    local ok, formatted = pcall(date, "%Y-%m-%d %H:%M", value)
+    if ok and formatted then return tostring(formatted) end
+  end
+  return value > 0 and tostring(value) or "Unknown"
+end
+
 local function parseItemInput(raw)
   local text = trimText(raw)
   if text == "" then return nil end
@@ -351,10 +360,11 @@ local function createAceWindow()
       local requests = Dibs.Disputes and Dibs.Disputes.ListForPlayer and Dibs.Disputes.ListForPlayer(summary.player) or {}
       local requestRows = {}
       if #requests == 0 then
-        requestRows[1] = { "No requests yet.", "", "", "" }
+        requestRows[1] = { "", "No requests yet.", "", "", "" }
       else
         for _, request in ipairs(requests) do
           requestRows[#requestRows + 1] = {
+            formatDate(request.createdAt or request.updatedAt),
             tostring(request.requestId),
             disputeStatusLabel(request),
             tostring(request.note or ""),
@@ -364,6 +374,7 @@ local function createAceWindow()
         end
       end
       Dibs.AceGUI.AddTable(shell, tabs, {
+        { title = "Date", width = 145, tooltip = "When you submitted the request." },
         { title = "Request", width = 160, tooltip = "Your request identifier." },
         { title = "Status", width = 180, tooltip = "Current Officer review status." },
         { title = "Note", width = 220, tooltip = "Your bounded request note." },
@@ -406,10 +417,11 @@ local function createAceWindow()
           local timeline = Dibs.Disputes.GetTimeline(self.selectedDisputeRequestId, summary.player) or {}
           local timelineRows = {}
           for _, event in ipairs(timeline) do
-            timelineRows[#timelineRows + 1] = { tostring(event.action or ""), tostring(event.newStatus or ""), tostring(event.reason or "") }
+            timelineRows[#timelineRows + 1] = { formatDate(event.timestamp or event.createdAt), tostring(event.action or ""), tostring(event.newStatus or ""), tostring(event.reason or "") }
           end
           if #timelineRows > 0 then
             Dibs.AceGUI.AddTable(shell, tabs, {
+              { title = "Date", width = 145, tooltip = "When the event was recorded." },
               { title = "Event", width = 160, tooltip = "Request history event." },
               { title = "Status", width = 140, tooltip = "Status after the event." },
               { title = "Details", width = 260, tooltip = "Player-visible explanation." },
@@ -460,7 +472,7 @@ local function createAceWindow()
         row.transaction = entry.transaction
         table.insert(rows, row)
       end
-      if #rows == 0 then rows[1] = { "No matching history." } end
+    if #rows == 0 then rows[1] = { "No matching history." } end
       self.aceHistoryScroll = Dibs.AceGUI.AddTable(shell, tabs, {
         { title = "Date", width = 145, tooltip = "When the ledger entry was recorded." },
         { title = "Action", width = 150, tooltip = "The ledger operation." },
@@ -516,10 +528,11 @@ local function createAceWindow()
     Dibs.AceGUI.AddLabel(shell, tabs, "My active Pre-Dibs", true)
     local activeRows = {}
     if #(summary.activePreDibs or {}) == 0 then
-      activeRows[1] = { "No active Pre-Dibs.", "", "", "" }
+      activeRows[1] = { "", "No active Pre-Dibs.", "", "", "" }
     else
       for _, request in ipairs(summary.activePreDibs) do
         activeRows[#activeRows + 1] = {
+          formatDate(request.createdAt or request.updatedAt),
           tostring(request.itemName or request.itemLink or ("Item " .. tostring(request.itemID))),
           tostring(request.difficulty or "Normal"),
           tostring(request.status),
@@ -529,6 +542,7 @@ local function createAceWindow()
       end
     end
     Dibs.AceGUI.AddTable(shell, tabs, {
+      { title = "Date", width = 145, tooltip = "When the Pre-Dib was created." },
       { title = "Item", width = 240, tooltip = "The reserved loot." },
       { title = "Difficulty", width = 100, tooltip = "Normal, Heroic, or Mythic." },
       { title = "Status", width = 100, tooltip = "Pending or confirmed." },

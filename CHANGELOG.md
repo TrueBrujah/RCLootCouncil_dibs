@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.4.0-dev - 2026-09-10
+
+- Add versioned, checksummed backup snapshots with bounded retention and
+  preview-first restore plus automatic pre-operation safety points.
+- Add local and guild configuration profiles with lifecycle controls and clear
+  separation between presentation settings, policy and the append-only ledger.
+- Add portable local, guild and full-data import/export packages. Validation
+  rejects malformed, tampered, future-schema or executable-looking content;
+  full-data imports append only new validated transactions and deduplicate
+  existing award/evidence references.
+- Add the modeless **Data** control center for Backups, Profiles and Import /
+  Export, keeping Blizzard Settings focused on configuration.
+- Rework long request, history and log lists around ScrollingTable when lib-st is
+  available, with date columns, responsive widths, click sorting and MSA context
+  menus; retain the AceGUI fallback for reduced clients.
+
 ## 0.3.14-dev - 2026-09-10
 
 - Keep WoW/RCLootCouncil Options focused on configuration, short launch actions,

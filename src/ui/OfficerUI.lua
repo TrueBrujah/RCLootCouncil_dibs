@@ -1006,6 +1006,7 @@ local function createAceWindow()
         local request = requests[index]
         local evidence = request.evidence and request.evidence[1] or {}
         requestRows[#requestRows + 1] = {
+          formatHistoryDate(request.createdAt or request.updatedAt),
           tostring(request.requestId),
           tostring(request.player and request.player.name or "Unknown"),
           disputeStatusText(request),
@@ -1015,13 +1016,14 @@ local function createAceWindow()
           request = request,
         }
       end
-      if #requestRows == 0 then requestRows[1] = { "No requests", "", "", "", "", "" } end
+      if #requestRows == 0 then requestRows[1] = { "", "No requests", "", "", "", "", "" } end
       Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Request", width = 110, tooltip = "Player review request identifier." },
-        { title = "Player", width = 110, tooltip = "Character that submitted the request." },
-        { title = "Status", width = 130, tooltip = "Current review status." },
-        { title = "Item", width = 150, tooltip = "Attached item when available." },
-        { title = "Note", width = 180, tooltip = "Player note." },
+        { title = "Date", width = 145, tooltip = "When the player submitted the request." },
+        { title = "Request", width = 125, tooltip = "Player review request identifier." },
+        { title = "Player", width = 125, tooltip = "Character that submitted the request." },
+        { title = "Status", width = 135, tooltip = "Current review status." },
+        { title = "Item", width = 170, tooltip = "Attached item when available." },
+        { title = "Note", width = 210, tooltip = "Player note." },
         { title = "Action", width = 75, tooltip = "Open request details." },
       }, requestRows, 270, function(row)
         if not row.request then return nil end
@@ -1330,15 +1332,20 @@ local function createAceWindow()
       for index = pageStart, pageEnd do
         local candidate = session.candidates[index]
         candidateRows[#candidateRows + 1] = {
-          tostring(candidate.classification or ""), tostring(candidate.playerName or "Unknown"),
+          formatHistoryDate(candidate.originalAwardTime), tostring(candidate.classification or ""), tostring(candidate.playerName or "Unknown"),
           tostring(candidate.itemLink or candidate.itemName or candidate.itemID or "Unavailable"),
           tostring(candidate.responseText or ""), tostring(candidate.reasonCode or "ready"), "", candidate = candidate,
         }
       end
-      if #candidateRows == 0 then candidateRows[1] = { "No history rows", "", "", "", "", "" } end
+      if #candidateRows == 0 then candidateRows[1] = { "", "No history rows", "", "", "", "", "" } end
       Dibs.AceGUI.AddTable(shell, scroll, {
-        { title = "Class", width = 110 }, { title = "Winner", width = 130 }, { title = "Item", width = 200 },
-        { title = "Response", width = 120 }, { title = "Reason", width = 170 }, { title = "Action", width = 80 },
+        { title = "Date", width = 145, tooltip = "Original RCLootCouncil award time." },
+        { title = "Class", width = 105, tooltip = "Dibs reconciliation classification." },
+        { title = "Winner", width = 135, tooltip = "Character recorded as the awarded player." },
+        { title = "Item", width = 210, tooltip = "Rich RCLootCouncil item link." },
+        { title = "Response", width = 125, tooltip = "Original RCLootCouncil response." },
+        { title = "Reason", width = 175, tooltip = "Why the row was classified this way." },
+        { title = "Action", width = 80, tooltip = "Open row details." },
       }, candidateRows, 250, function(row)
         if not row.candidate then return nil end
         return { text = "View", callback = function()

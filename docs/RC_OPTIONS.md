@@ -11,6 +11,12 @@ The loot-type policy is semantic: `TOKEN` is the general/Curio token family and
 player progress and is permanently excluded from Dibs buttons, Pre-Dibs, policy
 settings, and ledger consumption. Older saved Catalyst settings are ignored.
 
+The **Data** tab is the launch point for the modeless backup/profile/transfer
+window. Use **Backups** for dated recovery points and preview-first restore,
+**Profiles** for local presentation or GM/Officer guild policy profiles, and
+**Import / Export** for checksummed `DIBS-PKG-1` packages. Configuration imports
+show merge/replace impact; full-data imports are append-only and deduplicated.
+
 ## RCLootCouncil button-set mapping
 
 RCLootCouncil's **Additional Buttons** menu mixes item families and equipment

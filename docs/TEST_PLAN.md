@@ -69,8 +69,25 @@ node node_modules/fengari-node-cli/src/lua-cli.js tests/run.lua
 git diff --check
 ```
 
-Expected baseline: **206 tests pass, 0 fail, 52 files**. Run this suite after
+Expected baseline: **213 tests pass, 0 fail, 53 files**. Run this suite after
 source changes and attach the output to the test record.
+
+### F. Backups, profiles and data transfer
+
+- [ ] Create a local and a full backup; verify date, scope, size, checksum and
+  retention pruning.
+- [ ] Preview and cancel a restore; verify balances and transaction counts do
+  not change. Confirm a restore and verify the automatic safety snapshot exists.
+- [ ] Create, copy, activate, reset and delete a local profile; verify the ledger
+  and permissions are unchanged. Repeat guild policy activation as an Officer.
+- [ ] Export local, guild and full scopes. Verify sensitivity labels and that a
+  redacted configuration package contains no identities, ledger or evidence.
+- [ ] Tamper, truncate and paste extra text into a package; verify checksum,
+  size and structure validation blocks it without mutation.
+- [ ] Preview merge, replace and append strategies. Import the same full package
+  twice and verify no duplicate transaction, award reference or balance change.
+- [ ] Try guild/full export, restore and import as a normal player or raid-only
+  Master Looter; verify `GUILD_ADMIN_REQUIRED` and no data change.
 
 ## Manual test checklist
 
@@ -78,7 +95,7 @@ source changes and attach the output to the test record.
 
 - [ ] Install the stable ZIP on a clean character and confirm the addon loads.
 - [ ] Install the development ZIP separately and confirm the TOC version is
-      `0.3.14-dev`.
+      `0.4.0-dev`.
 - [ ] Confirm the stable package reports the current stable version.
 - [ ] Confirm SavedVariables survive `/reload`, relog, and client restart.
 - [ ] Open `/dibs options` and confirm the correct Dibs options category opens.
