@@ -50,6 +50,18 @@ Owns local player-visible state distribution and authorized, informational raid 
 ### RaidPrompts
 Owns the player-local raid-entry prompt preference and session deduplication. Prompts require explicit acceptance before Adventure Guide navigation and defer/revalidate while in combat.
 
+### CharacterEligibility
+Owns season-scoped protected-loot policy and progression for Curios (`TOKEN`) and
+class-based Tier Set tokens (`TOKEN_SET`). Catalyst remains a personal resource
+and is always blocked from Dibs. Finalized RCLootCouncil awards or explicitly
+confirmed Officer history append immutable acquisition records with award/evidence
+identity, difficulty, slot, token group, receiving character and linked player
+group. Eligibility decisions are explainable (`allow`, `warn`, `review`,
+`downgrade`, or `block`) and bounded in history. Main/alt declarations stay
+pending until Officer approval; approved main changes start a 14-day main-spec
+probation, with reasoned, limited exceptions. The module never infers a link from
+name or class similarity and never rewrites the Ledger.
+
 ### Readiness and DryRun
 `Readiness` evaluates standalone Dibs administration separately from optional
 RCLootCouncil live-award integration. It returns bounded Ready, Degraded,

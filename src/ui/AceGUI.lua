@@ -683,6 +683,10 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
     self:SetText(valueLabel(value))
   end
 
+  function wrapper:GetValue()
+    return self.value
+  end
+
   function wrapper:SetList(nextValues)
     self.values = nextValues or {}
     if self.value ~= nil then self:SetValue(self.value) end

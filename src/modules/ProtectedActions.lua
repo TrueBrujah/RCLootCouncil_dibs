@@ -27,6 +27,11 @@ local VALID_ACTIONS = {
   ["backup.restore"] = true,
   ["data.import"] = true,
   ["profile.manage"] = true,
+  ["eligibility.policy.set"] = true,
+  ["eligibility.history.add"] = true,
+  ["eligibility.relationship.review"] = true,
+  ["eligibility.main.review"] = true,
+  ["eligibility.exception.create"] = true,
 }
 
 local function isValidAction(actionId)
@@ -320,14 +325,54 @@ local function executeAwardFinalize(actor, payload, decision)
     })
     if not candidate or candidate.canUseDib ~= true then
       local result = buildResult(false, nil, decision, text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
-      result.outcome = "rejected"
-      result.reasonCode = "AWARD_INELIGIBLE"
+      result.eligibility = candidate and candidate.eligibility or nil
+      result.outcome = candidate and candidate.eligibility and candidate.eligibility.outcome == "review" and "review" or "rejected"
+      result.reasonCode = candidate and candidate.eligibility and candidate.eligibility.reasonCode or "AWARD_INELIGIBLE"
+      if candidate and candidate.eligibility and candidate.eligibility.explanation then
+        result.message = candidate.eligibility.explanation
+      end
       return result
+    end
+  end
+  local eligibilityDecision
+  if Dibs.CharacterEligibility and Dibs.CharacterEligibility.Evaluate
+    and Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetItemSemanticFamily
+  then
+    local family = Dibs.RCLootCouncil.GetItemSemanticFamily(command.itemID, command.responseType)
+    if family == "TOKEN" or family == "TOKEN_SET" or family == "CATALYST" then
+      eligibilityDecision = Dibs.CharacterEligibility.Evaluate({
+        itemID = command.itemID, itemLink = command.itemLink, responseType = command.responseType,
+        family = family, difficulty = command.difficulty, slot = command.slot,
+        tokenGroup = command.tokenGroup, classID = command.classID, upgradeTrack = command.upgradeTrack,
+        isMainSpec = command.isMainSpec,
+      }, command.playerName, command.seasonId)
+      if eligibilityDecision.outcome ~= "allow" and eligibilityDecision.outcome ~= "warn" then
+        local blocked = buildResult(false, nil, decision, eligibilityDecision.explanation)
+        blocked.outcome = eligibilityDecision.outcome == "review" and "review" or "rejected"
+        blocked.reasonCode = eligibilityDecision.reasonCode or "ELIGIBILITY_BLOCKED"
+        blocked.eligibility = eligibilityDecision
+        return blocked
+      end
     end
   end
   local tx = Dibs.Ledger.Use(command.playerName, 1, command.reason or "Finalized loot award", command.source or "rclootcouncil", command.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()), buildAudit("award.finalize", actor, command, decision))
   local result = buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
   result.outcome = tx and "awarded" or "rejected"
+  result.eligibility = eligibilityDecision
+  if tx and eligibilityDecision and Dibs.CharacterEligibility.ConsumeException then
+    Dibs.CharacterEligibility.ConsumeException(eligibilityDecision)
+  end
+  if tx and eligibilityDecision and Dibs.CharacterEligibility.RecordAcquisition then
+    local recorded = Dibs.CharacterEligibility.RecordAcquisition({
+      seasonId = command.seasonId, family = eligibilityDecision.family, itemID = command.itemID,
+      itemLink = command.itemLink, itemName = command.itemName, difficulty = command.difficulty,
+      slot = command.slot, tokenGroup = command.tokenGroup, classID = command.classID,
+      upgradeTrack = command.upgradeTrack, characterName = command.playerName,
+      source = command.source or "rclootcouncil", awardRef = command.awardRef,
+      acquiredAt = command.originalAwardTime, reason = command.reason or "Finalized protected-loot award",
+    }, actor, true)
+    result.acquisition = recorded
+  end
   return result
 end
 
@@ -464,6 +509,46 @@ local function executeProfileManage(actor, payload, decision)
   return buildResult(value ~= nil, value, decision, reason)
 end
 
+local function executeEligibilityPolicySet(actor, payload, decision)
+  if not Dibs.CharacterEligibility or type(Dibs.CharacterEligibility.SetPolicy) ~= "function" then
+    return reject(decision, "Character eligibility module unavailable.")
+  end
+  local value, reason = Dibs.CharacterEligibility.SetPolicy(payload or {}, actor)
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
+local function executeEligibilityHistoryAdd(actor, payload, decision)
+  if not Dibs.CharacterEligibility or type(Dibs.CharacterEligibility.RecordAcquisition) ~= "function" then
+    return reject(decision, "Character eligibility module unavailable.")
+  end
+  local value, reason = Dibs.CharacterEligibility.RecordAcquisition(payload or {}, actor, false)
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
+local function executeEligibilityRelationshipReview(actor, payload, decision)
+  if not Dibs.CharacterEligibility or type(Dibs.CharacterEligibility.ReviewRelationship) ~= "function" then
+    return reject(decision, "Character eligibility module unavailable.")
+  end
+  local value, reason = Dibs.CharacterEligibility.ReviewRelationship(payload and payload.relationshipId, payload and payload.status, actor, payload and payload.reason)
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
+local function executeEligibilityMainReview(actor, payload, decision)
+  if not Dibs.CharacterEligibility or type(Dibs.CharacterEligibility.ApproveMainChange) ~= "function" then
+    return reject(decision, "Character eligibility module unavailable.")
+  end
+  local value, reason = Dibs.CharacterEligibility.ApproveMainChange(payload and payload.changeId, payload or {}, actor)
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
+local function executeEligibilityException(actor, payload, decision)
+  if not Dibs.CharacterEligibility or type(Dibs.CharacterEligibility.CreateProbationException) ~= "function" then
+    return reject(decision, "Character eligibility module unavailable.")
+  end
+  local value, reason = Dibs.CharacterEligibility.CreateProbationException(payload or {}, actor)
+  return buildResult(value ~= nil, value, decision, reason)
+end
+
 function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   local command = payload or {}
   if not isValidAction(actionId) then
@@ -498,6 +583,11 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "backup.restore" then return executeBackupRestore(actor, command, decision) end
   if actionId == "data.import" then return executeDataImport(actor, command, decision) end
   if actionId == "profile.manage" then return executeProfileManage(actor, command, decision) end
+  if actionId == "eligibility.policy.set" then return executeEligibilityPolicySet(actor, command, decision) end
+  if actionId == "eligibility.history.add" then return executeEligibilityHistoryAdd(actor, command, decision) end
+  if actionId == "eligibility.relationship.review" then return executeEligibilityRelationshipReview(actor, command, decision) end
+  if actionId == "eligibility.main.review" then return executeEligibilityMainReview(actor, command, decision) end
+  if actionId == "eligibility.exception.create" then return executeEligibilityException(actor, command, decision) end
   if actionId == "settings.modify" then return buildResult(true, true, decision) end
 
   return buildResult(false, nil, decision, text("AUTHORITY_INVALID_ACTION", "Unknown protected action."))

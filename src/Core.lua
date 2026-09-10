@@ -22,6 +22,8 @@ Dibs.RaidRelay = Dibs.RaidRelay or {}
 Dibs.RaidPrompts = Dibs.RaidPrompts or {}
 Dibs.Readiness = Dibs.Readiness or {}
 Dibs.DryRun = Dibs.DryRun or {}
+Dibs.CharacterEligibility = Dibs.CharacterEligibility or {}
+Dibs.Eligibility = Dibs.CharacterEligibility
 Dibs.Disputes = Dibs.Disputes or {}
 Dibs.Ace3 = Dibs.Ace3 or {}
 Dibs.AceGUI = Dibs.AceGUI or {}
@@ -42,7 +44,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.4.0-dev"
+Dibs.VERSION = "0.5.0-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -137,6 +139,18 @@ local defaultDB = {
     decisions = {},
     evidence = {},
     evidenceIndex = {},
+  },
+  characterEligibility = {
+    version = 1,
+    policies = {},
+    acquisitions = {},
+    acquisitionIndex = {},
+    relationships = {},
+    relationshipOrder = {},
+    mainChanges = {},
+    mainChangeOrder = {},
+    exceptions = {},
+    decisions = {},
   },
   backups = {},
   backupRetention = 5,
@@ -261,6 +275,22 @@ local function ensureDB()
   reconciliation.decisions = reconciliation.decisions or {}
   reconciliation.evidence = reconciliation.evidence or {}
   reconciliation.evidenceIndex = reconciliation.evidenceIndex or {}
+  Dibs.db.characterEligibility = Dibs.db.characterEligibility or {
+    version = 1, policies = {}, acquisitions = {}, acquisitionIndex = {},
+    relationships = {}, relationshipOrder = {}, mainChanges = {},
+    mainChangeOrder = {}, exceptions = {}, decisions = {},
+  }
+  local eligibility = Dibs.db.characterEligibility
+  eligibility.version = tonumber(eligibility.version) or 1
+  eligibility.policies = eligibility.policies or {}
+  eligibility.acquisitions = eligibility.acquisitions or {}
+  eligibility.acquisitionIndex = eligibility.acquisitionIndex or {}
+  eligibility.relationships = eligibility.relationships or {}
+  eligibility.relationshipOrder = eligibility.relationshipOrder or {}
+  eligibility.mainChanges = eligibility.mainChanges or {}
+  eligibility.mainChangeOrder = eligibility.mainChangeOrder or {}
+  eligibility.exceptions = eligibility.exceptions or {}
+  eligibility.decisions = eligibility.decisions or {}
   _G[dbName] = persisted
   _G.DibsDB = Dibs.db
 end
@@ -346,6 +376,60 @@ function Dibs.CoreAPI.getRankAllocation(request)
     allocation = rule.allocation,
     rankName = rule.rankName,
   } or nil
+end
+
+function Dibs.CoreAPI.getEligibilityPolicy(request)
+  local payload = request or {}
+  return Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPolicy
+    and Dibs.CharacterEligibility.GetPolicy(payload.seasonId, payload.family) or nil
+end
+
+function Dibs.CoreAPI.setEligibilityPolicy(request)
+  local payload = request or {}
+  local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+    and Dibs.ProtectedActions.Execute("eligibility.policy.set", payload.actor or payload.actorIdentity, payload)
+  return result and result.ok and result.value or { reasonCode = result and result.reasonCode or "AUTHORITY_UNAVAILABLE" }
+end
+
+function Dibs.CoreAPI.evaluateEligibility(request)
+  local payload = request or {}
+  if not Dibs.CharacterEligibility or not Dibs.CharacterEligibility.Evaluate then
+    return { outcome = "review", reasonCode = "ELIGIBILITY_UNAVAILABLE" }
+  end
+  return Dibs.CharacterEligibility.Evaluate(payload.itemContext or payload, payload.playerName, payload.seasonId)
+end
+
+function Dibs.CoreAPI.declareCharacterRelationship(request)
+  local payload = request or {}
+  return Dibs.CharacterEligibility and Dibs.CharacterEligibility.DeclareRelationship
+    and Dibs.CharacterEligibility.DeclareRelationship(payload, payload.actor or payload.actorIdentity) or nil
+end
+
+function Dibs.CoreAPI.reviewCharacterRelationship(request)
+  local payload = request or {}
+  local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+    and Dibs.ProtectedActions.Execute("eligibility.relationship.review", payload.actor or payload.actorIdentity, payload)
+  return result and result.ok and result.value or { reasonCode = result and result.reasonCode or "AUTHORITY_UNAVAILABLE" }
+end
+
+function Dibs.CoreAPI.requestMainChange(request)
+  local payload = request or {}
+  return Dibs.CharacterEligibility and Dibs.CharacterEligibility.RequestMainChange
+    and Dibs.CharacterEligibility.RequestMainChange(payload, payload.actor or payload.actorIdentity) or nil
+end
+
+function Dibs.CoreAPI.approveMainChange(request)
+  local payload = request or {}
+  local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+    and Dibs.ProtectedActions.Execute("eligibility.main.review", payload.actor or payload.actorIdentity, payload)
+  return result and result.ok and result.value or { reasonCode = result and result.reasonCode or "AUTHORITY_UNAVAILABLE" }
+end
+
+function Dibs.CoreAPI.createProbationException(request)
+  local payload = request or {}
+  local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+    and Dibs.ProtectedActions.Execute("eligibility.exception.create", payload.actor or payload.actorIdentity, payload)
+  return result and result.ok and result.value or { reasonCode = result and result.reasonCode or "AUTHORITY_UNAVAILABLE" }
 end
 
 function Dibs.CoreAPI.appendTransaction(request)

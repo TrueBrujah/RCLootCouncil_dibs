@@ -58,6 +58,11 @@ local ADMIN_ACTIONS = {
   ["backup.restore"] = true,
   ["data.import"] = true,
   ["profile.manage"] = true,
+  ["eligibility.policy.set"] = true,
+  ["eligibility.history.add"] = true,
+  ["eligibility.relationship.review"] = true,
+  ["eligibility.main.review"] = true,
+  ["eligibility.exception.create"] = true,
 }
 
 local function sameIdentity(first, second)

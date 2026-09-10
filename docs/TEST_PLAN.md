@@ -271,10 +271,11 @@ RCLootCouncil traffic, or pollute production accounting.
 Pass criteria: migrations preserve immutable history, guild data never crosses
 contexts, and the packaged addon loads from a clean installation.
 
-## Future feature 005 tests
+## Feature 005: Character Eligibility and Main/Alt Governance
 
-The Character Loot Eligibility and Main/Alt Governance feature is still a draft.
-It must not be enabled for production guild decisions until these tests pass:
+The automated Character Eligibility implementation is available on `dev` in
+version `0.5.0-dev`. These manual Retail checks remain required before using it
+for production guild decisions:
 
 - [ ] Curio history is tracked across linked characters and configured difficulties.
 - [ ] A character at 4/4 Curios is marked complete according to policy.
@@ -290,6 +291,13 @@ It must not be enabled for production guild decisions until these tests pass:
 - [ ] Unlinked characters are not blocked by name or class similarity alone.
 - [ ] Guild changes, character renames, and realm transfers require re-verification.
 - [ ] Every override, historical import, no-need status, and policy change is audited.
+
+Automated coverage is in `tests/unit/character_eligibility_spec.lua` and covers
+Catalyst exclusion, Curio/Tier Set separation, cross-character progress,
+idempotent acquisition records, lowest-progress Tier Set rounds, probation,
+bounded exceptions, and RCLootCouncil candidate projection. The full suite
+passed 219 tests with 0 failures on 2026-09-10; Retail visual and two-client
+validation are still pending.
 
 ## Evidence record
 

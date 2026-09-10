@@ -15,9 +15,12 @@ Officer backbone, relay model, reconnect recovery, deduplication, reconciliation
 ## Phase 5 - Audit UI
 Player history and complete officer/GM ledger views.
 
+## Phase 6 - Protected Loot Governance
+Curio and Tier Set progression across linked characters, configurable seasonal
+policies, Officer-reviewed main/alt relationships, and bounded main-change
+probation.
+
 ## Later
 - localization expansion
-- import/export tools
-- diagnostics
 - configurable tie-breaking policies
 - optional public guild request board

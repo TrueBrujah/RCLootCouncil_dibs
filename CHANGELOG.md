@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0-dev - 2026-09-10
+
+- Add Character Eligibility for Curio (`TOKEN`) and class-based Tier Set
+  (`TOKEN_SET`) progression with independent seasonal policies, difficulty
+  scopes, explainable decisions and Catalyst exclusion.
+- Record finalized or Officer-confirmed protected-loot acquisitions with stable
+  award/evidence idempotency, linked main/alt progress and privacy-aware reads.
+- Add pending main/alt declarations, Officer approval, 14-day main-change
+  probation and bounded, reasoned exceptions with audit records.
+- Gate RCLootCouncil candidate status and finalized awards through the protected
+  loot policy while preserving standalone operation and immutable ledger rules.
+- Add the modeless Officer **Loot Eligibility** page and Player protected-loot
+  summary with guild-roster alt/main-change requests, plus automated coverage
+  for policy, rounds, privacy, authority, replay, probation and exceptions.
+
 ## 0.4.0-dev - 2026-09-10
 
 - Add versioned, checksummed backup snapshots with bounded retention and

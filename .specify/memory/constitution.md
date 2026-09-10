@@ -2,19 +2,15 @@
 
 <!--
 Sync Impact Report
-Version change: 2.2.0 -> 2.3.0
-Modified principles: VII. RCLootCouncil Compatibility; VIII. Encounter Journal;
-  XIX. Change Notes and Addon Versioning; Governance
-Added sections: XX. RCLootCouncil Item Mapping and Installation Safety
+Version change: 2.3.0 -> 2.4.0
+Modified principles: none; Governance metadata updated
+Added sections: XXI. Human-Centered Interface and Search Quality
 Removed sections: none
-Rationale for MINOR bump: formalize the RCLootCouncil item-family mapping and make
-  the installation assistant's button projection safe, repeatable, and compatible
-  with existing guild response configurations.
-Dependent documents: the addon TOC, release checklist, repository changelog process,
-  RCLootCouncil type-policy adapter, Encounter Journal matrix, options guide, and
-  installation test plan must follow this rule. Existing ledger and SavedVariables
-  data remain compatible; the adapter keeps Catalyst fail-closed and preserves
-  existing RCLootCouncil response configuration.
+Rationale for MINOR bump: add enforceable interface and search quality rules so that
+  every future feature remains readable, responsive, predictable, and easy to use.
+Dependent documents: UI modules, options guide, search and history specifications,
+  release checklist, and manual test plan must follow this rule. Existing ledger,
+  protocol, and SavedVariables data remain compatible.
 Follow-up TODOs: TODO(RATIFICATION_DATE) remains because the original adoption date is unknown.
 -->
 
@@ -402,6 +398,51 @@ The Dibs ledger remains authoritative for Dibs balances, eligibility history, an
 consumption. RCLootCouncil remains authoritative for its own loot-session responses
 and awards; the mapping and projection provide compatibility and display only.
 
+### XXI. Human-Centered Interface and Search Quality
+
+The interface MUST be designed for a player who is unfamiliar with addon internals.
+Labels, actions, status messages, and help text MUST use plain language, consistent
+placement, readable contrast, and enough spacing to remain understandable at a glance.
+Every actionable control MUST have a visible purpose and a concise explanation of its
+effect on the ledger, a request, or a display-only view.
+
+Blizzard's Options panel MUST contain persistent configuration only. Search, history,
+statistics, review, import/export, and other workspaces MUST open in Dibs-owned modeless
+windows so a player can keep the workspace open while using other game windows. Reports
+that a player needs to inspect or copy MUST be available in a selectable Dibs view and
+MUST NOT be delivered only through chat output.
+
+Every table MUST provide:
+
+- a visible header for every column and stable, aligned column boundaries;
+- a date/time column whenever rows represent events, history, requests, or transactions;
+- a deterministic default order, with the newest history first unless the feature says
+  otherwise;
+- clickable ascending and descending sorting with a visible sort indicator;
+- bounded scrolling or pagination, responsive column widths, and no clipped, overlapping,
+  or orphaned text at supported window sizes.
+
+Search and filtering MUST keep the game UI responsive. Implementations MUST avoid a full
+unbounded data scan and complete table rebuild on every keystroke; they MUST use bounded
+results, incremental/deferred work, caching, or indexing when the data set can grow. A
+search view MUST show its active filters, result count, loading state, empty state, and
+recoverable error state. Where the source provides the data, player selectors MUST be
+restricted to the guild roster and item selectors MUST use the Adventure Guide catalog,
+with autocomplete or a dropdown plus search by player, item name, item ID, boss, and
+semantic loot type.
+
+Finite-choice controls SHOULD use the embedded `MSA-DropDownMenu-1.0` library, and large
+tabular data SHOULD use the embedded scrolling-table library. Row right-click menus MAY
+expose sorting and row actions, but the same action MUST remain discoverable without a
+right-click. Item values MUST remain real WoW item links with their tooltip; when the
+Retail API permits it, an item link SHOULD open the corresponding Adventure Guide entry.
+
+Every UI feature MUST include an acceptance check for a narrow and a wide supported
+window, table alignment and sorting, date visibility, menu discoverability, and search
+responsiveness with a realistic history size. A release MUST reject any screen that
+freezes the client, hides the active filter or sort, loses the date, or leaves a player
+unable to tell what action is available.
+
 ## Governance
 
 This constitution governs all specifications, plans, tasks, and implementations in this repository.
@@ -418,4 +459,4 @@ XIX: add a dated changelog note and increment the addon TOC version when the add
 or behavior changes. Specifications, plans, tasks, release notes, and code reviews MUST
 check compliance with the current constitution before implementation is accepted.
 
-**Version**: 2.3.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-09
+**Version**: 2.4.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-10

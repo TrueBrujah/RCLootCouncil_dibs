@@ -33,6 +33,7 @@ local OFFICER_NAV_TREE = {
   { text = "Rank Rules", value = "ranks" },
   { text = "Settings", value = "settings" },
   { text = "Pre-Dibs", value = "preDibs" },
+  { text = "Loot Eligibility", value = "eligibility" },
   { text = "Announcements", value = "announcements" },
   { text = "Developer", value = "developer" },
   { text = "RCLootCouncil", value = "integration" },
@@ -921,7 +922,7 @@ local function createAceWindow()
           -- Review Requests is a custom OfficerUI page.  The options table
           -- also exposes a small entry point with the same key, but rendering
           -- that AceConfig group here hides the actual queue and its actions.
-          or (self.activeTab ~= "disputes" and self.activeTab ~= "reconciliation" and groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
+          or (self.activeTab ~= "disputes" and self.activeTab ~= "reconciliation" and self.activeTab ~= "eligibility" and groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
       end
     end
     if optionGroup and Dibs.AceGUI.RenderOptionsGroup then
@@ -951,6 +952,104 @@ local function createAceWindow()
         self.enableLootTypes = controlMap.enable
         self.defaultLootTypes = controlMap.disable
       end
+      return
+    end
+
+    if self.activeTab == "eligibility" then
+      local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 700) or tabs
+      Dibs.AceGUI.AddHeading(shell, scroll, "Protected loot eligibility", "Configure Curio and Tier Set fairness without changing the Dibs ledger.")
+      local seasonId = currentId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
+      self.eligibilityFamily = self.eligibilityFamily or "TOKEN"
+      local policy = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPolicy
+        and Dibs.CharacterEligibility.GetPolicy(seasonId, self.eligibilityFamily) or nil
+      local policySection = Dibs.AceGUI.AddSection(shell, scroll, "Season policy", "Changes apply to future eligibility decisions and are recorded in the audit history.")
+      local family = Dibs.AceGUI.AddDropdown(shell, policySection, "Loot family", { TOKEN = "Curio (TOKEN)", TOKEN_SET = "Tier Set (TOKEN_SET)" }, function(value)
+        self.eligibilityFamily = value or "TOKEN"
+        self:Refresh()
+      end, 220)
+      Dibs.AceGUI.SetValue(family, self.eligibilityFamily)
+      local scope = Dibs.AceGUI.AddDropdown(shell, policySection, "Difficulty scope", { ALL = "All difficulties", SAME = "Same difficulty" }, nil, 220)
+      Dibs.AceGUI.SetValue(scope, policy and policy.difficultyScope or "ALL")
+      local outcome = Dibs.AceGUI.AddDropdown(shell, policySection, "Duplicate outcome", { block = "Block", downgrade = "Downgrade", review = "Officer review", warn = "Warn", allow = "Allow" }, nil, 220)
+      Dibs.AceGUI.SetValue(outcome, policy and policy.enforcementOutcome or "block")
+      local threshold
+      if self.eligibilityFamily == "TOKEN" then
+        threshold = Dibs.AceGUI.AddEditBox(shell, policySection, "Curio completion slots", nil, 120)
+        setControlText(threshold, tostring(policy and policy.completionThreshold or 4))
+      end
+      local save = Dibs.AceGUI.AddButton(shell, policySection, "Save policy", function()
+        local payload = {
+          seasonId = seasonId, family = self.eligibilityFamily,
+          difficultyScope = (scope and scope.GetValue and scope:GetValue()) or (policy and policy.difficultyScope) or "ALL",
+          enforcementOutcome = (outcome and outcome.GetValue and outcome:GetValue()) or (policy and policy.enforcementOutcome) or "block",
+        }
+        if threshold then payload.completionThreshold = tonumber(getControlText(threshold)) or 4 end
+        local result = Dibs.ProtectedActions.Execute("eligibility.policy.set", nil, payload)
+        self:SetStatus(result.ok and "Protected-loot policy saved." or (result.diagnostic or "Unable to save protected-loot policy."))
+        self:Refresh()
+      end, 150)
+      Dibs.AceGUI.AddTooltip(save, "Save policy", "Only a verified GM or Officer can change the active season policy.")
+      if policy then
+        Dibs.AceGUI.AddPropertyTable(shell, scroll, {
+          { "Family", tostring(policy.family) },
+          { "Difficulty scope", tostring(policy.difficultyScope) },
+          { "Matching scope", tostring(policy.matchingScope) },
+          { "Enforcement", tostring(policy.enforcementOutcome) },
+          { "Unknown data", tostring(policy.unknownDataBehavior) },
+          { "Curio threshold", tostring(policy.completionThreshold or "n/a") },
+        }, 190)
+      end
+      local relationships = Dibs.CharacterEligibility and Dibs.CharacterEligibility.ListRelationships
+        and Dibs.CharacterEligibility.ListRelationships(nil, seasonId) or {}
+      local relationshipRows = {}
+      for _, relationship in ipairs(relationships or {}) do
+        relationshipRows[#relationshipRows + 1] = {
+          formatHistoryDate(relationship.declaredAt), tostring(relationship.mainCharacterName or relationship.mainCharacterId),
+          tostring(relationship.altCharacterName or relationship.altCharacterId), tostring(relationship.status), "", relationship = relationship,
+        }
+      end
+      if #relationshipRows == 0 then relationshipRows[1] = { "", "No declarations", "", "", "" } end
+      Dibs.AceGUI.AddHeader(shell, scroll, "Main / alt declarations", "Unapproved declarations never affect protected-loot enforcement.")
+      Dibs.AceGUI.AddTable(shell, scroll, {
+        { title = "Date", width = 145, tooltip = "Declaration date." },
+        { title = "Main", width = 150, tooltip = "Declared main character." },
+        { title = "Alt", width = 150, tooltip = "Declared alt character." },
+        { title = "Status", width = 100, tooltip = "Pending or approved." },
+        { title = "Action", width = 100, tooltip = "Review this declaration." },
+      }, relationshipRows, 220, function(row)
+        if not row.relationship or row.relationship.status ~= "pending" then return nil end
+        return { text = "Approve", callback = function()
+          local result = Dibs.ProtectedActions.Execute("eligibility.relationship.review", nil, { relationshipId = row.relationship.relationshipId, status = "approved" })
+          self:SetStatus(result.ok and "Character relationship approved." or (result.diagnostic or "Unable to approve relationship."))
+          self:Refresh()
+        end }
+      end)
+      local mainChanges = Dibs.CharacterEligibility and Dibs.CharacterEligibility.ListMainChanges
+        and Dibs.CharacterEligibility.ListMainChanges(nil, seasonId) or {}
+      local mainChangeRows = {}
+      for _, change in ipairs(mainChanges or {}) do
+        mainChangeRows[#mainChangeRows + 1] = {
+          formatHistoryDate(change.requestedAt), tostring(change.oldMainName or change.oldMainId or ""), tostring(change.newMainName or change.newMainId or ""),
+          tostring(change.status), change.probationEndsAt and formatHistoryDate(change.probationEndsAt) or "", change = change,
+        }
+      end
+      if #mainChangeRows == 0 then mainChangeRows[1] = { "", "No main-change requests", "", "", "" } end
+      Dibs.AceGUI.AddHeader(shell, scroll, "Main-change requests", "An approved change starts the configured probation period before main-spec protected loot is allowed.")
+      Dibs.AceGUI.AddTable(shell, scroll, {
+        { title = "Requested", width = 145, tooltip = "Request date." },
+        { title = "Old main", width = 150, tooltip = "Current main character." },
+        { title = "New main", width = 150, tooltip = "Requested main character." },
+        { title = "Status", width = 100, tooltip = "Pending or approved." },
+        { title = "Probation ends", width = 145, tooltip = "End of the protected-loot probation." },
+        { title = "Action", width = 100, tooltip = "Approve this request." },
+      }, mainChangeRows, 220, function(row)
+        if not row.change or row.change.status ~= "pending" then return nil end
+        return { text = "Approve", callback = function()
+          local result = Dibs.ProtectedActions.Execute("eligibility.main.review", nil, { changeId = row.change.changeId, reason = "Approved by Officer" })
+          self:SetStatus(result.ok and "Main-change request approved." or (result.diagnostic or "Unable to approve main change."))
+          self:Refresh()
+        end }
+      end)
       return
     end
 

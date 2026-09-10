@@ -32,6 +32,7 @@ test mirror can be used for guild testers without exposing the source repository
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
 - Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
 - Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
+- Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions (dev 0.5.0).
 - SavedVariables migrations and localized English/French runtime strings.
 
 ## How to use
@@ -266,8 +267,11 @@ npx --yes fengari tests/run.lua
 
 See [docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md) and
 [docs/RC_OPTIONS.md](docs/RC_OPTIONS.md) for focused validation steps. The full
-[guild test plan](docs/TEST_PLAN.md) lists the manual scenarios, evidence to
-record, and future Curio/Tier Set/main-alt checks.
+[guild test plan](docs/TEST_PLAN.md) lists the manual scenarios and evidence to
+record. Character Eligibility is available on `dev` under the Officer
+**Loot Eligibility** page; its Retail validation checklist remains explicit
+because protected-loot decisions should be tested with real Curio and Tier Set
+items before production use.
 
 ## Repository layout
 

@@ -447,6 +447,35 @@ local PRIORITY_CATEGORY_ORDER = {
   "OTHER",
 }
 
+-- Public semantic mapping for other Dibs services. Equipment slots remain
+-- compatibility hints; protected-loot policy consumes only these families.
+function Dibs.RCLootCouncil.GetItemSemanticFamilies(itemID, responseType)
+  local candidates = collectItemTypeCandidates(itemID, responseType)
+  local result, seen = {}, {}
+  for _, candidate in ipairs(candidates) do
+    local key = canonicalPolicyKey(candidate)
+    if key == "CATALYST" or key == "CATALYST_ITEMS" then key = "CATALYST" end
+    if key == "COSMETIC" or key == "COSMETIC_ITEMS" then key = "COSMETIC" end
+    if key == "TOKEN" or key == "TOKEN_SET" or key == "MOUNTS" or key == "PETS"
+      or key == "RECIPE" or key == "DECOR" or key == "OTHER" or key == "CATALYST"
+      or key == "COSMETIC"
+    then
+      if not seen[key] then seen[key] = true; table.insert(result, key) end
+    end
+  end
+  return result
+end
+
+function Dibs.RCLootCouncil.GetItemSemanticFamily(itemID, responseType)
+  local families = Dibs.RCLootCouncil.GetItemSemanticFamilies(itemID, responseType)
+  for _, key in ipairs({ "CATALYST", "COSMETIC", "TOKEN", "TOKEN_SET", "MOUNTS", "PETS", "RECIPE", "DECOR", "OTHER" }) do
+    for _, family in ipairs(families) do
+      if family == key then return family end
+    end
+  end
+  return nil
+end
+
 local function resolvePriorityCategoryRule(rules, candidates)
   local present = {}
   for _, candidate in ipairs(candidates or {}) do
@@ -2587,6 +2616,17 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
   -- prevents a personal Catalyst item from falling through an equip-slot or
   -- default policy and receiving a Dibs action.
   local typeEnabled = Dibs.RCLootCouncil.IsItemDibTypeAllowed(targetItem, typeKey)
+  local semanticFamily = Dibs.RCLootCouncil.GetItemSemanticFamily
+    and Dibs.RCLootCouncil.GetItemSemanticFamily(targetItem, typeKey) or nil
+  local eligibilityDecision
+  if (semanticFamily == "TOKEN" or semanticFamily == "TOKEN_SET" or semanticFamily == "CATALYST")
+    and Dibs.CharacterEligibility and Dibs.CharacterEligibility.Evaluate then
+    eligibilityDecision = Dibs.CharacterEligibility.Evaluate({
+      itemID = targetItem, responseType = typeKey, family = semanticFamily,
+      difficulty = options.difficulty, slot = options.slot, tokenGroup = options.tokenGroup,
+      classID = options.classID, upgradeTrack = options.upgradeTrack, isMainSpec = options.isMainSpec,
+    }, name, options.seasonId)
+  end
   local publicPreDibsEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() == true
   local preDib = targetItem and Dibs.PreDibs and Dibs.PreDibs.GetConfirmedRequestForPlayer(name, targetItem) or nil
   local hasPriority = false
@@ -2596,8 +2636,10 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
     end
   end
   local lockedOutByPreDib = hasPriority and preDib == nil
+  local protectedLootAllowed = not eligibilityDecision
+    or eligibilityDecision.outcome == "allow" or eligibilityDecision.outcome == "warn"
   local eligible = false
-  if typeEnabled and not lockedOutByPreDib then
+  if typeEnabled and protectedLootAllowed and not lockedOutByPreDib then
     if publicPreDibsEnabled and options.ignorePublicPreDibRequirement ~= true then
       eligible = preDib ~= nil
     else
@@ -2618,6 +2660,9 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
   elseif (tonumber(balance) or 0) > 0 then
     state = "ineligible"
   end
+  if eligibilityDecision and not protectedLootAllowed then
+    state = "eligibility-" .. tostring(eligibilityDecision.outcome or "review")
+  end
   return {
     playerName = name,
     itemID = targetItem,
@@ -2632,6 +2677,8 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
     canUseDib = eligible,
     status = state,
     preDibRequest = preDib,
+    semanticFamily = semanticFamily,
+    eligibility = eligibilityDecision,
   }
 end
 

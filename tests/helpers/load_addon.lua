@@ -16,6 +16,7 @@ local TOC_FILES = {
   "modules/Backup.lua",
   "modules/Disputes.lua",
   "modules/PreDibs.lua",
+  "modules/CharacterEligibility.lua",
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
   "modules/RaidRelay.lua",

@@ -28,6 +28,21 @@ local function trimText(value)
   return tostring(value or ""):match("^%s*(.-)%s*$")
 end
 
+local function getGuildCharacterChoices()
+  local choices = {}
+  local localName = string.lower(trimText(Dibs.GetPlayerName and Dibs.GetPlayerName() or ""))
+  if type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
+    local count = _G.GetNumGuildMembers() or 0
+    if type(count) ~= "number" then count = tonumber(count) or 0 end
+    for index = 1, count do
+      local ok, name = pcall(_G.GetGuildRosterInfo, index)
+      name = ok and trimText(name) or ""
+      if name ~= "" and string.lower(name) ~= localName then choices[name] = name end
+    end
+  end
+  return choices
+end
+
 local function formatDate(timestamp)
   local value = tonumber(timestamp) or 0
   if value > 0 and type(date) == "function" then
@@ -227,6 +242,8 @@ function Dibs.PlayerUI.GetSummary(playerName)
   local balance = Dibs.Ledger and Dibs.Ledger.GetBalance(playerName or Dibs.GetPlayerName(), season and season.id) or 0
   local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(playerName or Dibs.GetPlayerName()) or {}
   local acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsForPlayer and Dibs.PreDibs.GetAcquisitionsForPlayer(playerName or Dibs.GetPlayerName()) or {}
+  local eligibility = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
+    and Dibs.CharacterEligibility.GetSummary(playerName or Dibs.GetPlayerName(), season and season.id) or nil
 
   return {
     season = season,
@@ -234,6 +251,7 @@ function Dibs.PlayerUI.GetSummary(playerName)
     balance = balance,
     activePreDibs = requests,
     acquisitions = acquisitions,
+    eligibility = eligibility,
     modePolicy = Dibs.PreDibs and Dibs.PreDibs.GetModePolicy and Dibs.PreDibs.GetModePolicy(season and season.id) or nil,
   }
 end
@@ -524,7 +542,56 @@ local function createAceWindow()
       { "Active Pre-Dibs", tostring(#(summary.activePreDibs or {})) },
       { "Vault acquisitions", tostring(#(summary.acquisitions or {})) },
       { "Pre-Dib mode", tostring(summary.modePolicy and summary.modePolicy.mode or "WILD_OPEN") },
+      { "Protected-loot group", tostring(summary.eligibility and summary.eligibility.groupId or "Not linked") },
+      { "Main-change probation", tostring(summary.eligibility and summary.eligibility.probation and ("Until " .. tostring(summary.eligibility.probation.probationEndsAt)) or "None") },
     }, 145)
+    if summary.eligibility then
+      local protectedRows = {}
+      for _, family in ipairs({ "TOKEN", "TOKEN_SET" }) do
+        local policy = summary.eligibility.policies and summary.eligibility.policies[family]
+        local count = 0
+        for _, acquisition in ipairs(summary.eligibility.acquisitions or {}) do
+          if acquisition.family == family then count = count + 1 end
+        end
+        protectedRows[#protectedRows + 1] = { family == "TOKEN" and "Curio" or "Tier Set", tostring(count), tostring(policy and policy.difficultyScope or "ALL"), tostring(policy and (policy.enabled and "Enabled" or "Disabled") or "Unknown") }
+      end
+      Dibs.AceGUI.AddHeader(shell, tabs, "Protected-loot status", "Only finalized acquisitions and approved character links affect these counts.")
+      Dibs.AceGUI.AddTable(shell, tabs, {
+        { title = "Family", width = 160, tooltip = "Tracked protected-loot family." },
+        { title = "Acquired", width = 90, tooltip = "Confirmed acquisitions for your linked group." },
+        { title = "Scope", width = 120, tooltip = "Difficulty scope in the active policy." },
+        { title = "Status", width = 150, tooltip = "Current policy status." },
+      }, protectedRows, 100)
+      local relationshipCount = #(summary.eligibility.relationships or {})
+      Dibs.AceGUI.AddLabel(shell, tabs, "Character links: " .. tostring(relationshipCount) .. " record(s). Pending links do not affect enforcement.", true)
+      local relationshipSection = Dibs.AceGUI.AddSection(shell, tabs, "Main / alt declarations", "Choose a guild character. Officers must approve the declaration before it affects protected-loot priority.")
+      local characterChoices = getGuildCharacterChoices()
+      self.eligibilityCharacter = self.eligibilityCharacter or next(characterChoices)
+      local characterChoice = Dibs.AceGUI.AddDropdown(shell, relationshipSection, "Guild character", characterChoices, function(value)
+        self.eligibilityCharacter = value
+      end, 260)
+      Dibs.AceGUI.SetValue(characterChoice, self.eligibilityCharacter)
+      local declare = Dibs.AceGUI.AddButton(shell, relationshipSection, "Declare alt", function()
+        local alt = self.eligibilityCharacter
+        local relationship = alt and Dibs.CharacterEligibility and Dibs.CharacterEligibility.DeclareRelationship and Dibs.CharacterEligibility.DeclareRelationship({
+          seasonId = summary.season and summary.season.id, mainCharacter = Dibs.GetPlayerName(), altCharacter = alt,
+        }) or nil
+        self.eligibilityStatus = relationship and "Declaration submitted for Officer approval." or "Choose a guild character before submitting."
+        self:Refresh()
+      end, 130)
+      local requestMain = Dibs.AceGUI.AddButton(shell, relationshipSection, "Request main change", function()
+        local newMain = self.eligibilityCharacter
+        local request = newMain and Dibs.CharacterEligibility and Dibs.CharacterEligibility.RequestMainChange and Dibs.CharacterEligibility.RequestMainChange({
+          seasonId = summary.season and summary.season.id, oldMain = Dibs.GetPlayerName(), newMain = newMain,
+          reason = "Player requested a main-character change",
+        }) or nil
+        self.eligibilityStatus = request and "Main-change request submitted for Officer approval." or "Choose a guild character before submitting."
+        self:Refresh()
+      end, 170)
+      Dibs.AceGUI.SetDisabled(declare, next(characterChoices) == nil)
+      Dibs.AceGUI.SetDisabled(requestMain, next(characterChoices) == nil)
+      Dibs.AceGUI.AddLabel(shell, relationshipSection, self.eligibilityStatus or "Declarations stay pending until an Officer reviews them.", true)
+    end
     Dibs.AceGUI.AddLabel(shell, tabs, "My active Pre-Dibs", true)
     local activeRows = {}
     if #(summary.activePreDibs or {}) == 0 then
