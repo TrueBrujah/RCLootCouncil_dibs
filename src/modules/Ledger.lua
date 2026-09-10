@@ -16,6 +16,7 @@ local function ensureState()
   Dibs.db.ledger.transactions = Dibs.db.ledger.transactions or {}
   Dibs.db.ledger.playerStates = Dibs.db.ledger.playerStates or {}
   Dibs.db.ledger.awardTransactions = Dibs.db.ledger.awardTransactions or {}
+  Dibs.db.ledger.evidenceTransactions = Dibs.db.ledger.evidenceTransactions or {}
 end
 
 local function getRosterPlayerName(playerName)
@@ -135,11 +136,18 @@ function Dibs.Ledger.AddTransaction(record)
     local existingId = Dibs.db.ledger.awardTransactions[tostring(tx.awardRef)]
     if existingId then return Dibs.db.ledger.transactions[existingId] end
   end
+  if tx.evidenceId and tx.source == "rclootcouncil_history" then
+    local existingId = Dibs.db.ledger.evidenceTransactions[tostring(tx.evidenceId)]
+    if existingId then return Dibs.db.ledger.transactions[existingId] end
+  end
 
   Dibs.db.ledger.transactions[tx.transactionId] = tx
   if tx.awardRef then
     local ref = tostring(tx.awardRef)
     Dibs.db.ledger.awardTransactions[ref] = tx.transactionId
+  end
+  if tx.evidenceId and tx.source == "rclootcouncil_history" then
+    Dibs.db.ledger.evidenceTransactions[tostring(tx.evidenceId)] = tx.transactionId
   end
 
   local state = ensurePlayerState(tx.playerKey, tx.seasonId)
@@ -285,6 +293,27 @@ function Dibs.Ledger.GetTransactionForAward(awardRef)
   ensureState()
   local txId = awardRef and Dibs.db.ledger.awardTransactions[tostring(awardRef)]
   return txId and Dibs.db.ledger.transactions[txId] or nil
+end
+
+function Dibs.Ledger.GetTransactionForEvidence(evidenceId)
+  ensureState()
+  local txId = evidenceId and Dibs.db.ledger.evidenceTransactions[tostring(evidenceId)]
+  return txId and Dibs.db.ledger.transactions[txId] or nil
+end
+
+-- Historical reconciliation uses the same append-only debit path as a live award.
+-- The evidence and award references make repeated confirmations idempotent.
+function Dibs.Ledger.RecordHistoricalAward(playerName, seasonId, awardRef, evidenceId, reason, audit)
+  local fields = mergeAudit({ awardRef = awardRef, evidenceId = evidenceId }, audit)
+  local tx = Dibs.Ledger.Use(playerName, 1, reason or "Historical RCLootCouncil award", "rclootcouncil_history", seasonId, fields)
+  if tx then
+    tx.awardRef = awardRef or tx.awardRef
+    tx.evidenceId = evidenceId or tx.evidenceId
+    ensureState()
+    if tx.awardRef then Dibs.db.ledger.awardTransactions[tostring(tx.awardRef)] = tx.transactionId end
+    if tx.evidenceId then Dibs.db.ledger.evidenceTransactions[tostring(tx.evidenceId)] = tx.transactionId end
+  end
+  return tx
 end
 
 function Dibs.Ledger.RegisterSeasonAllocation(playerName, seasonId, amount, reason)

@@ -15,6 +15,7 @@ local raidLeader = false
 local raidAssistant = false
 local masterLooter = false
 local raidDibsChannel = false
+local historyFixture = nil
 local instanceName, instanceType, instanceId = nil, nil, nil
 local frames = {}
 
@@ -87,6 +88,7 @@ function M.install(opts)
   raidAssistant = opts.raidAssistant == true
   masterLooter = opts.masterLooter == true
   raidDibsChannel = opts.raidDibsChannel == true
+  historyFixture = opts.historyDB or opts.rclootHistory
   instanceName, instanceType, instanceId = opts.instanceName, opts.instanceType, opts.instanceId
   frames = {}
   _G.__dibsFrameCreations = {}
@@ -278,6 +280,18 @@ function M.install(opts)
   }
 end
 
+-- Shared fixture accessor for history-reconciliation tests. The RC mock owns
+-- the read-only getter, while the WoW fixture keeps a convenient copy for
+-- tests that need to reload the addon with the same historical rows.
+function M.getHistoryFixture()
+  return historyFixture
+end
+
+function M.installHistoryFixture(history)
+  historyFixture = history
+  return historyFixture
+end
+
 function M.resetGlobals()
   _G.Dibs = nil
   _G.RCLootCouncil_dibs = nil
@@ -301,6 +315,7 @@ function M.resetGlobals()
   _G.__dibsAceWidgets = nil
   _G.__ejNavigation = nil
   _G.C_ChatInfo = nil
+  historyFixture = nil
 end
 
 function M.dispatch(event, ...)

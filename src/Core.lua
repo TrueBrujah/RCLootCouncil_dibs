@@ -33,12 +33,13 @@ Dibs.PlayerUI = Dibs.PlayerUI or {}
 Dibs.OfficerUI = Dibs.OfficerUI or {}
 Dibs.LogsUI = Dibs.LogsUI or {}
 Dibs.DebugLogs = Dibs.DebugLogs or {}
+Dibs.Reconciliation = Dibs.Reconciliation or {}
 Dibs.DebugLogs.entries = Dibs.DebugLogs.entries or {}
 Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.3.10-dev"
+Dibs.VERSION = "0.3.11-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -104,6 +105,7 @@ local defaultDB = {
     transactions = {},
     playerStates = {},
     awardTransactions = {},
+    evidenceTransactions = {},
   },
   permissions = {
     adminEvents = {},
@@ -119,6 +121,15 @@ local defaultDB = {
     requests = {},
     order = {},
     corrections = {},
+  },
+  reconciliation = {
+    version = 1,
+    sessions = {},
+    aliases = {},
+    aliasHistory = {},
+    decisions = {},
+    evidence = {},
+    evidenceIndex = {},
   },
   sync = {
     seenTransactions = {},
@@ -184,8 +195,9 @@ local function ensureDB()
     Dibs.db.permissions = Dibs.db.permissions or { adminEvents = {}, activeStandaloneAdmins = {} }
     Dibs.db.permissions.adminEvents = Dibs.db.permissions.adminEvents or {}
     Dibs.db.permissions.activeStandaloneAdmins = Dibs.db.permissions.activeStandaloneAdmins or {}
-    Dibs.db.ledger = Dibs.db.ledger or { transactions = {}, playerStates = {}, awardTransactions = {} }
+    Dibs.db.ledger = Dibs.db.ledger or { transactions = {}, playerStates = {}, awardTransactions = {}, evidenceTransactions = {} }
     Dibs.db.ledger.awardTransactions = Dibs.db.ledger.awardTransactions or {}
+    Dibs.db.ledger.evidenceTransactions = Dibs.db.ledger.evidenceTransactions or {}
     Dibs.db.version = 2
   end
   if (tonumber(Dibs.db.version) or 0) < 3 then
@@ -226,6 +238,19 @@ local function ensureDB()
     Dibs.db.disputes.corrections = Dibs.db.disputes.corrections or {}
     Dibs.db.version = 6
   end
+  -- Reconciliation has its own additive schema so legacy Dibs version 6
+  -- databases remain compatible while the feature can evolve independently.
+  Dibs.db.reconciliation = Dibs.db.reconciliation or {
+    version = 1, sessions = {}, aliases = {}, aliasHistory = {}, decisions = {}, evidence = {}, evidenceIndex = {},
+  }
+  local reconciliation = Dibs.db.reconciliation
+  reconciliation.version = tonumber(reconciliation.version) or 1
+  reconciliation.sessions = reconciliation.sessions or {}
+  reconciliation.aliases = reconciliation.aliases or {}
+  reconciliation.aliasHistory = reconciliation.aliasHistory or {}
+  reconciliation.decisions = reconciliation.decisions or {}
+  reconciliation.evidence = reconciliation.evidence or {}
+  reconciliation.evidenceIndex = reconciliation.evidenceIndex or {}
   _G[dbName] = persisted
   _G.DibsDB = Dibs.db
 end
@@ -595,7 +620,7 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs options | /dibs officer | /dibs review | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs options | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
@@ -702,6 +727,15 @@ function Dibs.HandleSlashCommand(msg)
       local opened = Dibs.OfficerUI.Toggle(true)
       local frame = opened and _G.DibsOfficerFrame or nil
       if frame and frame.SelectTab then frame.SelectTab("disputes") end
+    end
+    return
+  end
+
+  if action == "reconcile" or action == "history" then
+    if Dibs.OfficerUI and Dibs.OfficerUI.Toggle then
+      local opened = Dibs.OfficerUI.Toggle(true)
+      local frame = opened and _G.DibsOfficerFrame or nil
+      if frame and frame.SelectTab then frame.SelectTab("reconciliation") end
     end
     return
   end

@@ -142,6 +142,7 @@ local function makeRC(opts)
     currentSessionId = currentSessionId,
     sessionID = opts.sessionID,
     lootSessionId = opts.lootSessionId,
+    historyDB = opts.historyDB,
     _handlers = {},
     RegisterMessage = function(self, event, fn)
       self._handlers[event] = fn
@@ -150,6 +151,7 @@ local function makeRC(opts)
       local fn = self._handlers[event]
       if fn then fn(self, ...) end
     end,
+    GetHistoryDB = opts.historyDB and function(self) return self.historyDB end or nil,
   }
 end
 

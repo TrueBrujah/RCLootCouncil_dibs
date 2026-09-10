@@ -22,6 +22,8 @@ local VALID_ACTIONS = {
   ["admin.revoke"] = true,
   ["award.finalize"] = true,
   ["predib.mode.set"] = true,
+  ["history.confirm"] = true,
+  ["history.reject"] = true,
 }
 
 local function isValidAction(actionId)
@@ -326,6 +328,98 @@ local function executeAwardFinalize(actor, payload, decision)
   return result
 end
 
+local function historicalStableReference(command)
+  local awardRef = tostring(command.awardRef or "")
+  local evidenceId = tostring(command.evidenceId or "")
+  return (awardRef ~= "" and (awardRef:match("^history:") or awardRef:match("^entry:") or awardRef:match("^session:")))
+    or (evidenceId ~= "" and evidenceId:match("^reconciliation:"))
+end
+
+local function executeHistoryConfirm(actor, payload, decision)
+  local command = payload or {}
+  local mode = tostring(command.mode or "guided"):lower()
+  if mode ~= "guided" and mode ~= "manual" then
+    return reject(decision, "A guided or manual reconciliation mode is required.")
+  end
+  if not command.seasonId or not Dibs.Seasons or not Dibs.Seasons.GetById or not Dibs.Seasons.GetById(command.seasonId) then
+    return reject(decision, text("SEASON_NOT_FOUND", "Season not found."))
+  end
+  if not command.playerName or tostring(command.playerName) == "" or not tonumber(command.itemID) then
+    return reject(decision, text("AWARD_INVALID", "Award payload is missing required fields."))
+  end
+  if not historicalStableReference(command) then
+    return reject(decision, text("HISTORY_IDENTITY_REQUIRED", "A stable history identity is required."))
+  end
+  local existing = Dibs.Ledger and Dibs.Ledger.GetTransactionForEvidence and Dibs.Ledger.GetTransactionForEvidence(command.evidenceId)
+  existing = existing or (Dibs.Ledger and Dibs.Ledger.GetTransactionForAward and Dibs.Ledger.GetTransactionForAward(command.awardRef))
+  if existing then
+    local replay = buildResult(true, existing, decision)
+    replay.duplicate = true
+    replay.outcome = "duplicate"
+    return replay
+  end
+  if mode == "guided" then
+    if (command.classification ~= nil and command.classification ~= "eligible")
+      or command.responseValidated ~= true or not command.aliasUsed or not isFinalAward(command) then
+      return reject(decision, text("HISTORY_GUIDED_CONFIRM_REQUIRED", "Guided confirmation requires a final award and an explicit response alias."))
+    end
+  else
+    if command.classification and command.classification ~= "ambiguous" and command.classification ~= "unsupported" and command.classification ~= "eligible" then
+      return reject(decision, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
+    end
+    local manualStatus = tostring(command.sourceStatus or ""):lower()
+    if manualStatus == "test" or manualStatus == "test_mode" or manualStatus == "pending" or manualStatus == "rejected" then
+      return reject(decision, text("AWARD_NOT_FINAL", "Award is not finalized; no Dib consumed."))
+    end
+    if command.confirmation ~= true or command.manualAcknowledgement ~= true then
+      return reject(decision, text("HISTORY_MANUAL_ACK_REQUIRED", "Manual confirmation requires explicit acknowledgement."))
+    end
+    if tostring(command.reason or ""):match("^%s*$") then
+      return reject(decision, text("HISTORY_REASON_REQUIRED", "A reason is required for manual historical confirmation."))
+    end
+  end
+  if not Dibs.Ledger or type(Dibs.Ledger.RecordHistoricalAward) ~= "function" then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  local audit = buildAudit("history.confirm", actor, command, decision)
+  audit.historySource = command.historySource or "RCLootCouncil"
+  audit.historyEvent = command.historyEvent or "unknown"
+  audit.sourceEvent = command.historyEvent or "RCMLAwardSuccess"
+  audit.accountingAction = "FinalizeAward"
+  audit.originalAwardTime = command.originalAwardTime or "unknown"
+  audit.responseText = command.responseText or command.response or "unknown"
+  audit.responseIdentity = command.responseIdentity or "unknown"
+  audit.aliasUsed = command.aliasUsed or "unknown"
+  audit.reconciliationSessionId = command.reconciliationSessionId or "unknown"
+  audit.difficulty = command.difficulty or "unknown"
+  audit.importedAt = time()
+  audit.importReason = command.reason
+  audit.reviewMode = mode
+  audit.manualAcknowledgement = command.manualAcknowledgement == true
+  local tx = Dibs.Ledger.RecordHistoricalAward(command.playerName, command.seasonId, command.awardRef, command.evidenceId, command.reason or "Historical RCLootCouncil award", audit)
+  local result = buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for historical award."))
+  result.outcome = tx and "awarded" or "rejected"
+  return result
+end
+
+local function executeHistoryReject(actor, payload, decision)
+  local command = payload or {}
+  if not command.reconciliationSessionId or not command.candidateId then
+    return reject(decision, "A reconciliation session and candidate are required.")
+  end
+  if tostring(command.reason or ""):match("^%s*$") then
+    return reject(decision, text("HISTORY_REASON_REQUIRED", "A reason is required for manual historical confirmation."))
+  end
+  return buildResult(true, {
+    sessionId = command.reconciliationSessionId,
+    candidateId = command.candidateId,
+    outcome = "rejected",
+    reason = command.reason,
+    actorId = getActorId(actor, decision),
+    createdAt = time(),
+  }, decision)
+end
+
 local function executePreDibModeSet(actor, payload, decision)
   if not Dibs.PreDibs or not Dibs.PreDibs.SetModePolicy then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
@@ -369,6 +463,8 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "admin.appoint" then return executeAdminChange(actor, command, true, decision) end
   if actionId == "admin.revoke" then return executeAdminChange(actor, command, false, decision) end
   if actionId == "award.finalize" then return executeAwardFinalize(actor, command, decision) end
+  if actionId == "history.confirm" then return executeHistoryConfirm(actor, command, decision) end
+  if actionId == "history.reject" then return executeHistoryReject(actor, command, decision) end
   if actionId == "predib.mode.set" then return executePreDibModeSet(actor, command, decision) end
   if actionId == "installation.mode.set" then return executeInstallationModeSet(actor, command, decision) end
   if actionId == "settings.modify" then return buildResult(true, true, decision) end

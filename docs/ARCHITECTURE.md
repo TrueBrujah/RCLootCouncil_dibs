@@ -103,6 +103,17 @@ filters a private queue, shows evidence and unavailable fields, and exposes
 reasoned actions for review, information requests, duplicate/reject decisions,
 corrections, refunds, revokes, historical imports, adjustments, and reopening.
 
+### HistoryReconciliation
+The Officer-only reconciliation surface reads the optional RCLootCouncil history
+getter into bounded, immutable preview rows. It stores a separate additive
+reconciliation schema under the guild SavedVariables bucket: sessions, exact
+response aliases, decisions, and evidence links. Search never mutates the
+RCLootCouncil history or Dibs ledger. A guided or manually acknowledged row is
+passed to `ProtectedActions.history.confirm`, which appends one
+`rclootcouncil_history` debit through the Ledger and indexes its stable award or
+evidence identity for idempotent replay. Player history exposes only the
+confirmed transaction's source and reason.
+
 ## Authority model
 
 Player requests are proposals.

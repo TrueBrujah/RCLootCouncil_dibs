@@ -2400,6 +2400,19 @@ local REASON_DIAGNOSTIC_KEYS = {
   AWARD_IDENTITY_UNAVAILABLE = "AWARD_IDENTITY_UNAVAILABLE",
   AWARD_IDENTITY_AMBIGUOUS = "AWARD_IDENTITY_AMBIGUOUS",
   READINESS_BLOCKED = "READINESS_BLOCKED",
+  HISTORY_IDENTITY_REQUIRED = "HISTORY_IDENTITY_REQUIRED",
+  HISTORY_GUIDED_CONFIRM_REQUIRED = "HISTORY_GUIDED_CONFIRM_REQUIRED",
+  HISTORY_MANUAL_ACK_REQUIRED = "HISTORY_MANUAL_ACK_REQUIRED",
+  HISTORY_REASON_REQUIRED = "HISTORY_REASON_REQUIRED",
+  HISTORY_NO_HISTORY = "HISTORY_NO_HISTORY",
+  HISTORY_NO_ALIASES = "HISTORY_NO_ALIASES",
+  HISTORY_INVALID_DATE_RANGE = "HISTORY_INVALID_DATE_RANGE",
+  HISTORY_ALREADY_ACCOUNTED = "HISTORY_ALREADY_ACCOUNTED",
+  HISTORY_NON_FINAL = "HISTORY_NON_FINAL",
+  HISTORY_UNSUPPORTED = "HISTORY_UNSUPPORTED",
+  HISTORY_RESPONSE_IDENTITY_AMBIGUOUS = "HISTORY_RESPONSE_IDENTITY_AMBIGUOUS",
+  HISTORY_REJECTED_BY_OFFICER = "HISTORY_REJECTED_BY_OFFICER",
+  HISTORY_FINAL_STATUS_UNKNOWN = "HISTORY_FINAL_STATUS_UNKNOWN",
 }
 
 local REASON_DIAGNOSTIC_FALLBACKS = {
@@ -2423,6 +2436,19 @@ local REASON_DIAGNOSTIC_FALLBACKS = {
   AWARD_IDENTITY_UNAVAILABLE = "The finalized award identity could not be verified.",
   AWARD_IDENTITY_AMBIGUOUS = "More than one history entry matched this award; no Dib was consumed.",
   READINESS_BLOCKED = "Raid readiness blocked automatic Dibs consumption until the live award can be verified.",
+  HISTORY_IDENTITY_REQUIRED = "A stable history identity is required.",
+  HISTORY_GUIDED_CONFIRM_REQUIRED = "Guided confirmation requires a final award and an explicit response alias.",
+  HISTORY_MANUAL_ACK_REQUIRED = "Manual confirmation requires explicit acknowledgement.",
+  HISTORY_REASON_REQUIRED = "A reason is required for manual historical confirmation.",
+  HISTORY_NO_HISTORY = "RCLootCouncil history is unavailable in this session.",
+  HISTORY_NO_ALIASES = "Add at least one exact response alias before searching.",
+  HISTORY_INVALID_DATE_RANGE = "The history date range is invalid.",
+  HISTORY_ALREADY_ACCOUNTED = "This historical award is already accounted for.",
+  HISTORY_NON_FINAL = "This history row is not a finalized award.",
+  HISTORY_UNSUPPORTED = "This history row is missing a required identity.",
+  HISTORY_RESPONSE_IDENTITY_AMBIGUOUS = "The response label maps to more than one RCLootCouncil response identity.",
+  HISTORY_REJECTED_BY_OFFICER = "Rejected by an Officer during reconciliation.",
+  HISTORY_FINAL_STATUS_UNKNOWN = "The finalization status is unavailable; manual review is required.",
 }
 
 local function reasonDiagnostic(reasonCode)
@@ -2831,3 +2857,376 @@ function Dibs.RCLootCouncil.GetAwardEvidence(context)
 end
 
 Dibs.RCLootCouncil.BuildAwardEvidence = Dibs.RCLootCouncil.GetAwardEvidence
+
+-- Historical reconciliation -------------------------------------------------
+-- This surface is deliberately read-only until an Officer explicitly confirms
+-- an individual candidate through ProtectedActions.history.confirm.
+local HISTORY_FINAL_STATES = {
+  awarded = true, success = true, complete = true, finalized = true,
+  normal = true, indirect = true, manually_added = true,
+}
+
+local function trimHistoryText(value)
+  local textValue = tostring(value or ""):match("^%s*(.-)%s*$") or ""
+  return textValue
+end
+
+function Dibs.RCLootCouncil.NormalizeResponseAlias(value)
+  return string.upper(trimHistoryText(value))
+end
+
+local function splitAliases(value)
+  local result, seen = {}, {}
+  local function add(alias)
+    local normalized = Dibs.RCLootCouncil.NormalizeResponseAlias(alias)
+    if normalized ~= "" and not seen[normalized] then
+      seen[normalized] = true
+      table.insert(result, normalized)
+    end
+  end
+  if type(value) == "table" then
+    for _, alias in ipairs(value) do add(alias) end
+  else
+    for alias in tostring(value or ""):gmatch("[^,;\n]+") do add(alias) end
+  end
+  table.sort(result)
+  return result
+end
+
+function Dibs.RCLootCouncil.NormalizeResponseAliases(value)
+  return splitAliases(value)
+end
+
+local function reconciliationState()
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  db.reconciliation = db.reconciliation or {
+    version = 1, sessions = {}, aliases = {}, aliasHistory = {}, decisions = {}, evidence = {}, evidenceIndex = {},
+  }
+  local state = db.reconciliation
+  state.sessions = state.sessions or {}
+  state.aliases = state.aliases or {}
+  state.aliasHistory = state.aliasHistory or {}
+  state.decisions = state.decisions or {}
+  state.evidence = state.evidence or {}
+  state.evidenceIndex = state.evidenceIndex or {}
+  return state
+end
+
+function Dibs.RCLootCouncil.GetReconciliationAliases(seasonId)
+  local state = reconciliationState()
+  local aliases = state.aliases[tostring(seasonId or "")] or {}
+  local result = {}
+  for _, alias in ipairs(aliases) do result[#result + 1] = alias end
+  return result
+end
+
+function Dibs.RCLootCouncil.SetReconciliationAliases(seasonId, aliases, actor)
+  if not seasonId or not Dibs.Seasons or not Dibs.Seasons.GetById or not Dibs.Seasons.GetById(seasonId) then
+    return nil, "SEASON_NOT_FOUND"
+  end
+  if not Dibs.Permissions or not Dibs.Permissions.Can or not Dibs.Permissions.Can("history.confirm", actor) then
+    return nil, "GUILD_ADMIN_REQUIRED"
+  end
+  local normalized = splitAliases(aliases)
+  if #normalized == 0 then return nil, "HISTORY_NO_ALIASES" end
+  local state = reconciliationState()
+  state.aliases[tostring(seasonId)] = normalized
+  state.aliasHistory[#state.aliasHistory + 1] = {
+    seasonId = tostring(seasonId), aliases = normalized,
+    actorId = Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or tostring(actor or ""),
+    createdAt = time(),
+  }
+  return normalized
+end
+
+local function historyItemId(row)
+  return tonumber(row.itemID or row.itemId or row.itemIDValue) or parseItemID(row.lootWon or row.itemLink or row.item or row.link)
+end
+
+local function historyWinner(row, playerKey)
+  return row.winner or row.playerName or row.player or row.owner or row.recipient or playerKey
+end
+
+local function historyStatus(row)
+  return row.finalStatus or row.sourceStatus or row.awardStatus or row.status or (row.isAwarded and "awarded" or nil)
+end
+
+local function historyTimestamp(row)
+  for _, key in ipairs({ "originalAwardTime", "timestamp", "createdAt", "timeStamp", "dateValue" }) do
+    local value = tonumber(row[key])
+    if value then return value end
+  end
+  return nil
+end
+
+local function historyTimestampText(row)
+  local dateText, timeText = row.date or row.dateText or row.awardDate, row.clock or row.timeText or row.awardTime
+  if dateText and timeText then return trimHistoryText(dateText) .. " " .. trimHistoryText(timeText) end
+  if dateText then return trimHistoryText(dateText) end
+  return nil
+end
+
+local function historyResponse(row)
+  local value = row.responseText or row.responseName or row.response or row.responseType or row.responseID
+  if type(value) == "table" then value = value.name or value.text or value.label or value.id end
+  return value
+end
+
+local function historyRowsFromDB(historyDB)
+  local rows = {}
+  local function add(playerKey, index, row)
+    if type(row) ~= "table" then return end
+    local historyRef = row.id and "history:" .. tostring(row.id) or nil
+    local itemLink = row.lootWon or row.itemLink or row.item or row.link
+    local responseText = historyResponse(row)
+    local winner = historyWinner(row, playerKey)
+    local itemID = historyItemId(row)
+    local sourceStatus = historyStatus(row)
+    local rowKey = historyRef or ("row:" .. tostring(playerKey or "unknown") .. ":" .. tostring(index))
+    rows[#rows + 1] = {
+      candidateId = rowKey,
+      historyRef = historyRef,
+      awardRef = historyRef,
+      evidenceId = "reconciliation:" .. rowKey,
+      historySource = row.source or row.dibsOrigin or "RCLootCouncil",
+      historyEvent = row.event or row.eventName or row.sourceEvent,
+      playerName = winner,
+      winner = winner,
+      itemID = itemID,
+      itemLink = itemLink,
+      itemName = row.itemName or row.name,
+      responseText = responseText,
+      response = responseText,
+      responseIdentity = row.responseID or row.responseId or row.responseIdentity,
+      sourceStatus = sourceStatus,
+      finalStatus = sourceStatus,
+      difficulty = row.difficulty or row.difficultyID,
+      finalized = row.finalized == true or HISTORY_FINAL_STATES[string.lower(tostring(sourceStatus or ""))] == true,
+      originalAwardTime = historyTimestamp(row),
+      originalAwardTimeText = historyTimestampText(row),
+      sessionIdentity = row.sessionID or row.sessionId or row.session,
+      rawIndex = index,
+    }
+  end
+  if type(historyDB) ~= "table" then return rows end
+  local isArray = #historyDB > 0
+  if isArray then
+    for index, row in ipairs(historyDB) do add(row and (row.playerName or row.player or row.owner), index, row) end
+  else
+    for playerKey, entries in pairs(historyDB) do
+      if type(entries) == "table" then
+        if entries.id or entries.itemID or entries.lootWon then
+          add(playerKey, 1, entries)
+        else
+          for index, row in ipairs(entries) do add(playerKey, index, row) end
+        end
+      end
+    end
+  end
+  table.sort(rows, function(a, b) return tostring(a.candidateId) < tostring(b.candidateId) end)
+  return rows
+end
+
+function Dibs.RCLootCouncil.GetHistoryRows(options)
+  options = type(options) == "table" and options or {}
+  if Dibs.Permissions and Dibs.Permissions.Can and not Dibs.Permissions.Can("history.confirm", options.actor) then
+    return nil, "GUILD_ADMIN_REQUIRED"
+  end
+  local rc = getRC()
+  if type(rc) ~= "table" or type(rc.GetHistoryDB) ~= "function" then return nil, "HISTORY_UNAVAILABLE" end
+  local ok, historyDB = pcall(rc.GetHistoryDB, rc)
+  if not ok or type(historyDB) ~= "table" then return nil, "HISTORY_UNAVAILABLE" end
+  local rows = historyRowsFromDB(historyDB)
+  local maxRows = math.floor(tonumber(options.limit) or 200)
+  if maxRows < 1 then maxRows = 1 end
+  if maxRows > 500 then maxRows = 500 end
+  local filtered = {}
+  local fromTime, toTime = tonumber(options.fromTime), tonumber(options.toTime)
+  for _, row in ipairs(rows) do
+    local stamp = row.originalAwardTime
+    if (not fromTime or not stamp or stamp >= fromTime) and (not toTime or not stamp or stamp <= toTime) then
+      filtered[#filtered + 1] = row
+      if #filtered >= maxRows then break end
+    end
+  end
+  return filtered
+end
+
+local function classifyHistoryRow(row, aliases, seasonId, identityMap)
+  local normalizedResponse = Dibs.RCLootCouncil.NormalizeResponseAlias(row.responseText)
+  local aliasUsed
+  for _, alias in ipairs(aliases or {}) do
+    if normalizedResponse == alias then aliasUsed = alias break end
+  end
+  local classification, reasonCode = "eligible", nil
+  if normalizedResponse == "" then classification, reasonCode = "rejected", "NON_DIB_RESPONSE"
+  elseif not aliasUsed then classification, reasonCode = "rejected", "NON_DIB_RESPONSE"
+  elseif (function()
+    local state = string.lower(tostring(row.sourceStatus or ""))
+    return state == "test" or state == "test_mode" or state == "pending" or state == "rejected" or state == "open" or state == "in_progress"
+  end)() then classification, reasonCode = "rejected", "HISTORY_NON_FINAL"
+  elseif not row.finalized and not HISTORY_FINAL_STATES[string.lower(tostring(row.sourceStatus or ""))] then classification, reasonCode = "ambiguous", "HISTORY_FINAL_STATUS_UNKNOWN"
+  elseif not row.itemID or not row.playerName then classification, reasonCode = "unsupported", "HISTORY_UNSUPPORTED"
+  elseif not row.awardRef then classification, reasonCode = "ambiguous", "HISTORY_IDENTITY_REQUIRED"
+  end
+  if classification == "eligible" and aliasUsed and identityMap and identityMap[aliasUsed] and identityMap[aliasUsed].ambiguous then
+    classification, reasonCode = "ambiguous", "HISTORY_RESPONSE_IDENTITY_AMBIGUOUS"
+  end
+  local existing = Dibs.Ledger and Dibs.Ledger.GetTransactionForEvidence and Dibs.Ledger.GetTransactionForEvidence(row.evidenceId)
+  existing = existing or (Dibs.Ledger and Dibs.Ledger.GetTransactionForAward and Dibs.Ledger.GetTransactionForAward(row.awardRef))
+  if existing then classification, reasonCode = "already_accounted", "HISTORY_ALREADY_ACCOUNTED" end
+  row.targetSeasonId = seasonId
+  row.normalizedResponse = normalizedResponse
+  row.aliasUsed = aliasUsed
+  row.classification = classification
+  row.reasonCode = reasonCode
+  return row
+end
+
+function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
+  options = type(options) == "table" and options or {}
+  local seasonId = options.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
+  if not seasonId or not Dibs.Seasons or not Dibs.Seasons.GetById or not Dibs.Seasons.GetById(seasonId) then return nil, "HISTORY_NO_SEASON" end
+  if not Dibs.Permissions or not Dibs.Permissions.Can or not Dibs.Permissions.Can("history.confirm", actor) then return nil, "GUILD_ADMIN_REQUIRED" end
+  local aliases = splitAliases(options.aliases or options.responseAliases)
+  if #aliases == 0 then return nil, "HISTORY_NO_ALIASES" end
+  local fromTime, toTime = options.fromTime and tonumber(options.fromTime), options.toTime and tonumber(options.toTime)
+  if (options.fromTime and not fromTime) or (options.toTime and not toTime) or (fromTime and toTime and fromTime > toTime) then
+    return nil, "HISTORY_INVALID_DATE_RANGE"
+  end
+  local scanOptions = {}
+  for key, value in pairs(options) do scanOptions[key] = value end
+  scanOptions.actor = actor
+  local rows, reason = Dibs.RCLootCouncil.GetHistoryRows(scanOptions)
+  if not rows then return nil, reason or "HISTORY_UNAVAILABLE" end
+  local candidates = {}
+  local counts = { scanned = #rows, eligible = 0, already_accounted = 0, ambiguous = 0, rejected = 0, unsupported = 0 }
+  local identityMap = {}
+  for _, row in ipairs(rows) do
+    local response = Dibs.RCLootCouncil.NormalizeResponseAlias(row.responseText)
+    if response ~= "" and row.responseIdentity ~= nil then
+      local entry = identityMap[response] or { values = {} }
+      entry.values[tostring(row.responseIdentity)] = true
+      identityMap[response] = entry
+    end
+  end
+  for _, entry in pairs(identityMap) do
+    local count = 0
+    for _ in pairs(entry.values) do count = count + 1 end
+    entry.ambiguous = count > 1
+  end
+  for _, row in ipairs(rows) do
+    local candidate = classifyHistoryRow(row, aliases, seasonId, identityMap)
+    candidates[#candidates + 1] = candidate
+    counts[candidate.classification] = (counts[candidate.classification] or 0) + 1
+  end
+  local session = {
+    sessionId = Dibs.NewId and Dibs.NewId("reconciliation") or ("reconciliation-" .. tostring(time())),
+    targetSeasonId = seasonId,
+    aliases = aliases,
+    mode = tostring(options.mode or "guided"):lower() == "manual" and "manual" or "guided",
+    createdAt = time(),
+    actorId = Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or tostring(actor or ""),
+    previewOnly = true,
+    counts = counts,
+    candidates = candidates,
+    source = "RCLootCouncil history",
+    fromTime = fromTime, toTime = toTime,
+  }
+  reconciliationState().sessions[session.sessionId] = session
+  return session
+end
+
+function Dibs.RCLootCouncil.GetReconciliationSession(sessionId, actor)
+  local session = reconciliationState().sessions[tostring(sessionId or "")]
+  if not session then return nil, "HISTORY_SESSION_NOT_FOUND" end
+  if Dibs.Permissions and Dibs.Permissions.Can and not Dibs.Permissions.Can("history.confirm", actor) then return nil, "GUILD_ADMIN_REQUIRED" end
+  return session
+end
+
+function Dibs.RCLootCouncil.ListReconciliationSessions(actor)
+  if Dibs.Permissions and Dibs.Permissions.Can and not Dibs.Permissions.Can("history.confirm", actor) then
+    return {}, "GUILD_ADMIN_REQUIRED"
+  end
+  local sessions = {}
+  for _, session in pairs(reconciliationState().sessions or {}) do sessions[#sessions + 1] = session end
+  table.sort(sessions, function(a, b) return (tonumber(a.createdAt) or 0) > (tonumber(b.createdAt) or 0) end)
+  return sessions
+end
+
+function Dibs.RCLootCouncil.ConfirmReconciliationCandidate(sessionId, candidateId, options, actor)
+  local session, reason = Dibs.RCLootCouncil.GetReconciliationSession(sessionId, actor)
+  if not session then return nil, reason end
+  local candidate
+  for _, row in ipairs(session.candidates or {}) do if tostring(row.candidateId) == tostring(candidateId) then candidate = row break end end
+  if not candidate then return nil, "HISTORY_CANDIDATE_NOT_FOUND" end
+  options = type(options) == "table" and options or {}
+  local payload = {}
+  for key, value in pairs(candidate) do payload[key] = value end
+  for key, value in pairs(options) do payload[key] = value end
+  payload.reconciliationSessionId = session.sessionId
+  payload.candidateId = candidate.candidateId
+  payload.seasonId = session.targetSeasonId
+  payload.mode = options.mode or session.mode
+  payload.responseValidated = candidate.aliasUsed ~= nil and candidate.normalizedResponse == candidate.aliasUsed
+  payload.source = "rclootcouncil_history"
+  local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute and Dibs.ProtectedActions.Execute("history.confirm", actor, payload)
+  if not result then return nil, "PROTECTED_ACTION_UNAVAILABLE" end
+  local state = reconciliationState()
+  local decision = {
+    decisionId = Dibs.NewId and Dibs.NewId("reconciliation-decision") or tostring(time()),
+    sessionId = session.sessionId, candidateId = candidate.candidateId,
+    outcome = result.outcome or (result.ok and "awarded" or "rejected"),
+    reasonCode = result.reasonCode, actorId = result.decision and result.decision.actorId,
+    createdAt = time(), evidenceId = candidate.evidenceId,
+  }
+  state.decisions[decision.decisionId] = decision
+  if result.ok and result.value then
+    candidate.classification = "already_accounted"
+    candidate.reasonCode = "HISTORY_ALREADY_ACCOUNTED"
+    candidate.transactionId = result.value.transactionId
+    candidate.confirmedAt = time()
+    if not state.evidence[candidate.evidenceId] then state.evidence[candidate.evidenceId] = {
+      evidenceId = candidate.evidenceId, immutable = true,
+      source = candidate.historySource or "unknown", historyRef = candidate.historyRef or "unknown",
+      sourceEvent = candidate.historyEvent or "RCMLAwardSuccess", accountingAction = "FinalizeAward",
+      sessionId = candidate.sessionIdentity or "unknown", itemID = candidate.itemID or "unknown",
+      itemLink = candidate.itemLink or "unknown", playerName = candidate.playerName or "unknown",
+      responseText = candidate.responseText or "unknown", responseIdentity = candidate.responseIdentity or "unknown",
+      finalStatus = candidate.sourceStatus or "unknown", difficulty = candidate.difficulty or "unknown", aliasUsed = candidate.aliasUsed or "unknown",
+      targetSeasonId = session.targetSeasonId or "unknown", originalAwardTime = candidate.originalAwardTime or candidate.originalAwardTimeText or "unknown",
+      importedAt = time(), importedBy = decision.actorId, reason = options.reason,
+      transactionId = result.value.transactionId,
+    } end
+    state.evidenceIndex[candidate.evidenceId] = decision.decisionId
+  end
+  return result, decision
+end
+
+function Dibs.RCLootCouncil.RejectReconciliationCandidate(sessionId, candidateId, reason, actor)
+  local session, sessionReason = Dibs.RCLootCouncil.GetReconciliationSession(sessionId, actor)
+  if not session then return nil, sessionReason end
+  local result = Dibs.ProtectedActions.Execute("history.reject", actor, {
+    reconciliationSessionId = sessionId, candidateId = candidateId, reason = reason,
+  })
+  if result and result.ok then
+    local state = reconciliationState()
+    for _, candidate in ipairs(session.candidates or {}) do
+      if tostring(candidate.candidateId) == tostring(candidateId) then
+        candidate.classification = "rejected"
+        candidate.reasonCode = "HISTORY_REJECTED_BY_OFFICER"
+        candidate.rejectedAt = time()
+        break
+      end
+    end
+    local decisionId = Dibs.NewId and Dibs.NewId("reconciliation-decision") or tostring(time())
+    state.decisions[decisionId] = { decisionId = decisionId, sessionId = sessionId, candidateId = candidateId, outcome = "rejected", reason = reason, createdAt = time(), actorId = result.decision and result.decision.actorId }
+  end
+  return result
+end
+
+-- Descriptive aliases keep the public adapter easy to discover for integrations
+-- and allow future UI clients to use the same controlled workflow.
+Dibs.RCLootCouncil.StartHistoryReconciliation = Dibs.RCLootCouncil.CreateReconciliationSession
+Dibs.RCLootCouncil.GetHistoryReconciliationPreview = Dibs.RCLootCouncil.GetReconciliationSession
+Dibs.RCLootCouncil.ConfirmHistoryCandidate = Dibs.RCLootCouncil.ConfirmReconciliationCandidate

@@ -12,9 +12,14 @@ npx.cmd --yes fengari tests/run.lua
 git diff --check
 ```
 
+The additive reconciliation schema is stored under each guild bucket as
+`reconciliation.version = 1` (sessions, aliases, decisions, evidence and an
+evidence index). Existing Dibs schema version 6 remains readable; loading the
+addon only initializes these empty tables and never scans or imports history.
+
 ## Retail acceptance
 
-1. As a GM/Officer, open **Reconcile RCLootCouncil history**.
+1. As a GM/Officer, open **RC History** in the Officer window (or use `/dibs reconcile`).
 2. Select target season, bounded date/history scope, explicit response aliases, and guided
    or manual review. Confirm that opening the form does not alter balances.
 3. Run the search and inspect counts plus one row in each classification.

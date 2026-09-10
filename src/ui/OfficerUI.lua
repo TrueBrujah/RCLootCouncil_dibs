@@ -28,6 +28,7 @@ local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before t
 local OFFICER_NAV_TREE = {
   { text = "Overview", value = "overview" },
   { text = "Review Requests", value = "disputes" },
+  { text = "RC History", value = "reconciliation" },
   { text = "Seasons", value = "seasons" },
   { text = "Rank Rules", value = "ranks" },
   { text = "Settings", value = "settings" },
@@ -46,6 +47,8 @@ local OFFICER_TAB_ALIASES = {
   predibs = "preDibs",
   dispute = "disputes",
   review = "disputes",
+  historyReconciliation = "reconciliation",
+  rcHistory = "reconciliation",
 }
 
 local function normalizeOfficerTab(tab)
@@ -918,7 +921,7 @@ local function createAceWindow()
           -- Review Requests is a custom OfficerUI page.  The options table
           -- also exposes a small entry point with the same key, but rendering
           -- that AceConfig group here hides the actual queue and its actions.
-          or (self.activeTab ~= "disputes" and groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
+          or (self.activeTab ~= "disputes" and self.activeTab ~= "reconciliation" and groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
       end
     end
     if optionGroup and Dibs.AceGUI.RenderOptionsGroup then
@@ -1240,6 +1243,137 @@ local function createAceWindow()
               { title = "Reason", width = 300, tooltip = "Recorded justification." },
             }, timelineRows, 190)
           end
+        end
+      end
+      return
+    end
+
+    if self.activeTab == "reconciliation" then
+      local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
+      Dibs.AceGUI.AddHeading(shell, scroll, "RCLootCouncil - Dibs options", "History reconciliation is preview-first and Officer controlled.")
+      Dibs.AceGUI.AddHeader(shell, scroll, "RCLootCouncil history reconciliation", "Scan completed RCLootCouncil history without changing it. Only an explicit confirmation records a Dibs debit.")
+      local rcStatus = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
+      if not Dibs.RCLootCouncil or type(Dibs.RCLootCouncil.GetHistoryRows) ~= "function" then
+        Dibs.AceGUI.AddLabel(shell, scroll, "History reconciliation is unavailable until RCLootCouncil exposes its read-only history.", true)
+        return
+      end
+      local seasons = getSeasonList()
+      local seasonChoices = {}
+      for _, season in ipairs(seasons) do seasonChoices[season.id] = tostring(season.name or season.id) end
+      self.reconSeasonId = self.reconSeasonId or currentId
+      if not self.reconAliasesText then
+        local savedAliases = Dibs.RCLootCouncil.GetReconciliationAliases(self.reconSeasonId) or {}
+        self.reconAliasesText = #savedAliases > 0 and table.concat(savedAliases, ", ") or "DIB"
+      end
+      self.reconMode = self.reconMode or "guided"
+      self.reconLimit = self.reconLimit or "200"
+      self.reconFromTime = self.reconFromTime or ""
+      self.reconToTime = self.reconToTime or ""
+      local form = Dibs.AceGUI.AddSection(shell, scroll, "Search scope", "Use exact response labels. Matching trims whitespace and ignores case; it never performs fuzzy matching.")
+      local seasonControl = Dibs.AceGUI.AddDropdown(shell, form, "Target season", seasonChoices, function(value)
+        self.reconSeasonId = value
+        local savedAliases = Dibs.RCLootCouncil.GetReconciliationAliases(value) or {}
+        self.reconAliasesText = #savedAliases > 0 and table.concat(savedAliases, ", ") or "DIB"
+      end, 240)
+      if self.reconSeasonId then Dibs.AceGUI.SetValue(seasonControl, self.reconSeasonId) end
+      local aliases = Dibs.AceGUI.AddEditBox(shell, form, "DIB response aliases (comma separated)", function(value) self.reconAliasesText = value or "" end, 500)
+      setControlText(aliases, self.reconAliasesText)
+      local mode = Dibs.AceGUI.AddDropdown(shell, form, "Review mode", { guided = "Guided (final + exact alias)", manual = "Manual (acknowledgement required)" }, function(value) self.reconMode = value or "guided" end, 260)
+      Dibs.AceGUI.SetValue(mode, self.reconMode)
+      local limit = Dibs.AceGUI.AddEditBox(shell, form, "Maximum rows (1-500)", function(value) self.reconLimit = value or "200" end, 150)
+      setControlText(limit, self.reconLimit)
+      local fromTime = Dibs.AceGUI.AddEditBox(shell, form, "From timestamp (optional)", function(value) self.reconFromTime = value or "" end, 190)
+      setControlText(fromTime, self.reconFromTime)
+      local toTime = Dibs.AceGUI.AddEditBox(shell, form, "To timestamp (optional)", function(value) self.reconToTime = value or "" end, 190)
+      setControlText(toTime, self.reconToTime)
+      Dibs.AceGUI.AddButton(shell, form, "Save aliases", function()
+        local saved, saveReason = Dibs.RCLootCouncil.SetReconciliationAliases(self.reconSeasonId, self.reconAliasesText, nil)
+        self.reconStatus = saved and "Aliases saved." or ("Unable to save aliases: " .. tostring(saveReason or "unknown"))
+        self:Refresh()
+      end, 120)
+      Dibs.AceGUI.AddButton(shell, form, "Search history (preview)", function()
+        local session, searchReason = Dibs.RCLootCouncil.CreateReconciliationSession({
+          seasonId = self.reconSeasonId, aliases = self.reconAliasesText, mode = self.reconMode, limit = tonumber(self.reconLimit) or 200,
+          fromTime = trimText(self.reconFromTime) ~= "" and tonumber(self.reconFromTime) or nil,
+          toTime = trimText(self.reconToTime) ~= "" and tonumber(self.reconToTime) or nil,
+        }, nil)
+        self.reconSessionId = session and session.sessionId or nil
+        self.reconSelectedCandidate = nil
+        self.reconStatus = session and "Preview complete. No ledger or RCLootCouncil history was changed." or ("Unable to search history: " .. tostring(searchReason or "unknown"))
+        self:Refresh()
+      end, 190)
+      if rcStatus.availability ~= "operational" then
+        Dibs.AceGUI.AddLabel(shell, scroll, "Live award integration: " .. tostring(rcStatus.availability or "unavailable") .. ". Historical preview can still run when the read-only history is available.", true)
+      end
+      if self.reconStatus then Dibs.AceGUI.AddLabel(shell, scroll, self.reconStatus, true) end
+      local session = self.reconSessionId and Dibs.RCLootCouncil.GetReconciliationSession(self.reconSessionId, nil) or nil
+      if not session then return end
+      Dibs.AceGUI.AddPropertyTable(shell, scroll, {
+        { "Session", session.sessionId }, { "Target season", tostring(session.targetSeasonId) },
+        { "Scanned", tostring(session.counts and session.counts.scanned or 0) },
+        { "Eligible", tostring(session.counts and session.counts.eligible or 0) },
+        { "Already accounted", tostring(session.counts and session.counts.already_accounted or 0) },
+        { "Ambiguous", tostring(session.counts and session.counts.ambiguous or 0) },
+        { "Rejected / unsupported", tostring((session.counts and session.counts.rejected or 0) + (session.counts and session.counts.unsupported or 0)) },
+      }, 220)
+      local candidateRows = {}
+      for _, candidate in ipairs(session.candidates or {}) do
+        candidateRows[#candidateRows + 1] = {
+          tostring(candidate.classification or ""), tostring(candidate.playerName or "Unknown"),
+          tostring(candidate.itemName or candidate.itemLink or candidate.itemID or "Unavailable"),
+          tostring(candidate.responseText or ""), tostring(candidate.reasonCode or "ready"), "", candidate = candidate,
+        }
+      end
+      if #candidateRows == 0 then candidateRows[1] = { "No history rows", "", "", "", "", "" } end
+      Dibs.AceGUI.AddTable(shell, scroll, {
+        { title = "Class", width = 110 }, { title = "Winner", width = 130 }, { title = "Item", width = 200 },
+        { title = "Response", width = 120 }, { title = "Reason", width = 170 }, { title = "Action", width = 80 },
+      }, candidateRows, 250, function(row)
+        if not row.candidate then return nil end
+        return { text = "View", callback = function()
+          self.reconSelectedCandidate = row.candidate.candidateId
+          self:Refresh()
+        end }
+      end)
+      if self.reconSelectedCandidate then
+        local candidate
+        for _, row in ipairs(session.candidates or {}) do if tostring(row.candidateId) == tostring(self.reconSelectedCandidate) then candidate = row break end end
+        if candidate then
+          local detail = Dibs.AceGUI.AddSection(shell, scroll, "Selected history row", "RCMLAwardSuccess and FinalizeAward are displayed as evidence labels only; they are never executable controls.")
+          Dibs.AceGUI.AddPropertyTable(shell, detail, {
+            { "Classification", tostring(candidate.classification) }, { "History reference", tostring(candidate.historyRef or "Unavailable") },
+            { "Winner", tostring(candidate.playerName or "Unavailable") }, { "Item", tostring(candidate.itemLink or candidate.itemID or "Unavailable") },
+            { "Original response", tostring(candidate.responseText or "Unavailable") }, { "Final status", tostring(candidate.sourceStatus or "Unavailable") },
+            { "Reason", tostring(candidate.reasonCode or "ready") }, { "Evidence", tostring(candidate.evidenceId) },
+          }, 240)
+          self.reconReason = self.reconReason or ""
+          local reason = Dibs.AceGUI.AddEditBox(shell, detail, "Confirmation reason", function(value) self.reconReason = value or "" end, 500)
+          setControlText(reason, self.reconReason)
+          self.reconAcknowledged = self.reconAcknowledged == true
+          local ack = Dibs.AceGUI.AddCheckBox(shell, detail, "I acknowledge this historical confirmation", self.reconAcknowledged, function(value) self.reconAcknowledged = value == true end, 330)
+          local actions = Dibs.AceGUI.AddInlineGroup(shell, detail)
+          local guided = Dibs.AceGUI.AddButton(shell, actions, "Confirm guided", function()
+            local result, decision = Dibs.RCLootCouncil.ConfirmReconciliationCandidate(session.sessionId, candidate.candidateId, {
+              mode = "guided", reason = self.reconReason, confirmation = true, manualAcknowledgement = self.reconAcknowledged,
+            }, nil)
+            self.reconStatus = result and (result.duplicate and "Already accounted; no second debit was appended." or "Historical Dibs recorded.") or ("Unable to confirm: " .. tostring(decision and decision.reasonCode or result and result.reasonCode or "unknown"))
+            self:Refresh()
+          end, 130)
+          local manual = Dibs.AceGUI.AddButton(shell, actions, "Confirm manual", function()
+            local result, decision = Dibs.RCLootCouncil.ConfirmReconciliationCandidate(session.sessionId, candidate.candidateId, {
+              mode = "manual", reason = self.reconReason, confirmation = true, manualAcknowledgement = self.reconAcknowledged,
+            }, nil)
+            self.reconStatus = result and (result.duplicate and "Already accounted; no second debit was appended." or "Historical Dibs recorded.") or ("Unable to confirm: " .. tostring(decision and decision.reasonCode or result and result.reasonCode or "unknown"))
+            self:Refresh()
+          end, 130)
+          local reject = Dibs.AceGUI.AddButton(shell, actions, "Reject row", function()
+            local result = Dibs.RCLootCouncil.RejectReconciliationCandidate(session.sessionId, candidate.candidateId, self.reconReason, nil)
+            self.reconStatus = result and "History row rejected; no ledger change was made." or "Unable to reject history row."
+            self:Refresh()
+          end, 110)
+          Dibs.AceGUI.SetDisabled(guided, candidate.classification ~= "eligible")
+          Dibs.AceGUI.SetDisabled(manual, not self.reconAcknowledged or trimText(self.reconReason) == "")
+          Dibs.AceGUI.AddLabel(shell, detail, "Manual confirmation is intended for ambiguous legacy rows and always requires acknowledgement plus a reason.", true)
         end
       end
       return

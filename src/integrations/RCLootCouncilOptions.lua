@@ -1285,6 +1285,26 @@ groups.officer.args.disputes = { type = "group", name = "Review Requests", order
       " | Need information: " .. tostring(counts["Need information"] or 0) .. " | Closed: " .. tostring((counts.Resolved or 0) + (counts.Rejected or 0))
   end),
 } }
+groups.officer.args.reconciliation = { type = "group", name = "RC History", order = 4.5, args = {
+  intro = description(1, "Preview RCLootCouncil history and reconcile old DIB responses. Scanning is read-only; only a GM or Officer confirmation appends a ledger debit."),
+  aliases = { type = "input", name = "Exact DIB response aliases", desc = "Comma-separated aliases. Matching trims whitespace and ignores case; fuzzy matching is never used.", order = 2,
+    get = function()
+      local seasonId = getSelectedSeasonId()
+      return table.concat(Dibs.RCLootCouncil.GetReconciliationAliases(seasonId) or {}, ", ")
+    end,
+    set = function(_, value)
+      local seasonId = getSelectedSeasonId()
+      local saved, reason = Dibs.RCLootCouncil.SetReconciliationAliases(seasonId, value, nil)
+      setStatus(saved and "History aliases saved." or ("Unable to save history aliases: " .. tostring(reason or "unknown")))
+    end,
+  },
+  open = execute(3, "Open history reconciliation", function()
+    local frame = Dibs.OfficerUI.CreateWindow()
+    if frame and frame.SelectTab then frame.SelectTab("reconciliation") end
+    if frame and frame.Refresh then frame:Refresh() end
+    if frame then frame:Show(); frame:Raise() end
+  end),
+} }
 groups.overview.args.seasonSummary = description(4, function()
   local season = Dibs.Seasons.GetById(getSelectedSeasonId())
   return season and table.concat(Dibs.OfficerUI.BuildDashboardDetails(season), "\n") or "No active season."

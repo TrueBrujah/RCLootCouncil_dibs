@@ -53,6 +53,8 @@ local ADMIN_ACTIONS = {
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,
   ["predib.mode.set"] = true,
+  ["history.confirm"] = true,
+  ["history.reject"] = true,
 }
 
 local function sameIdentity(first, second)

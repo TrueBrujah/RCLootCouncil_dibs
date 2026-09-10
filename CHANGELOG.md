@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.11-dev - 2026-09-09
+
+- Implement GM/Officer-controlled RCLootCouncil history reconciliation with a
+  bounded, read-only preview and exact configurable response aliases.
+- Classify finalized, duplicate, ambiguous, rejected and unsupported rows;
+  preserve original response text, response identity, winner, item, status and
+  award time as immutable evidence.
+- Add guided and manually acknowledged confirmation through a protected
+  append-only `rclootcouncil_history` debit, with stable award/evidence
+  idempotency across reloads and repeated confirmations.
+- Add the Officer **RC History** page and shared options entry. The source
+  labels `RCMLAwardSuccess` and `FinalizeAward` remain informational evidence,
+  never executable controls. Player history shows only a safe source/reason
+  summary.
+
 ## 0.3.10-dev - 2026-09-09
 
 - Add guild-roster player choices to Officer target corrections, with a local

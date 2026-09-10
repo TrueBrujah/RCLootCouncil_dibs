@@ -89,6 +89,7 @@ RCLootCouncil layout:
 
 - Overview
 - Review Requests
+- RC History
 - Seasons
 - Rank Rules
 - Settings
@@ -117,6 +118,19 @@ context or integration capabilities, opens a privacy-safe report in a
 selectable window with the addon version, and shows whether a qualifying live
 award could consume a Dib after final revalidation.
 
+The **RC History** page is the recovery tool for an existing RCLootCouncil
+history. It asks for a target season, optional timestamp range, exact response
+aliases (for example `DIB`, `Reserve`, or a localized label), and guided or
+manual review. **Search history (preview)** is read-only and reports eligible,
+already accounted, ambiguous, rejected, and unsupported rows. Select a row to
+inspect its immutable source evidence. Guided confirmation accepts only a final
+award with a stable history identity and an exact alias; manual confirmation is
+available for legacy rows only after an Officer checks an acknowledgement and
+enters a reason. Each confirmed row appends one `rclootcouncil_history` debit,
+keeps the original award time beside the import time, and is idempotent across
+reloads. RCLootCouncil history is never rewritten and these controls are
+available only to verified guild GMs and Officers.
+
 ### RCLootCouncil workflow
 
 When RCLootCouncil is installed, Dibs adds a `DIB` response to the supported
@@ -132,6 +146,10 @@ After a verified Master Looter finalizes a qualifying `DIB` award, the adapter
 records one protected Dibs debit. Normal, test, failed, pending, or duplicate
 award events do not consume production Dibs. The Dibs ledger remains the
 authoritative source for balances and history.
+
+The source event `RCMLAwardSuccess` and the Dibs accounting action
+`FinalizeAward` can appear as Officer evidence labels during reconciliation;
+they are informational references and are never executable buttons.
 
 Use `/dibs readiness` for an authorized administrative check; it opens the
 selectable report window. Use
@@ -149,6 +167,7 @@ SavedVariables.
 /dibs officer
 /dibs requests
 /dibs review
+/dibs reconcile
 /dibs options
 /dibs grant <player> <amount>
 /dibs use <player> <amount>

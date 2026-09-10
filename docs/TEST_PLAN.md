@@ -78,7 +78,7 @@ source changes and attach the output to the test record.
 
 - [ ] Install the stable ZIP on a clean character and confirm the addon loads.
 - [ ] Install the development ZIP separately and confirm the TOC version is
-      `0.3.10-dev`.
+      `0.3.11-dev`.
 - [ ] Confirm the stable package reports the current stable version.
 - [ ] Confirm SavedVariables survive `/reload`, relog, and client restart.
 - [ ] Open `/dibs options` and confirm the correct Dibs options category opens.

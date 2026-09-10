@@ -120,6 +120,9 @@ local function compactLine(tx)
   local action = tostring(tx.type or tx.actionType or "UNKNOWN")
   local amount = tonumber(tx.amount or tx.quantityDelta) or 0
   local reason = tostring(tx.reason or "")
+  if tx.source == "rclootcouncil_history" then
+    reason = "Historical RCLootCouncil" .. (reason ~= "" and (": " .. reason) or "")
+  end
   local sign = amount >= 0 and "+" or ""
   return dateText .. " | " .. action .. " | " .. sign .. tostring(amount) .. (reason ~= "" and (" | " .. reason) or "")
 end
