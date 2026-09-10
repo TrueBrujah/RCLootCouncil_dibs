@@ -72,6 +72,28 @@ describe("RCLootCouncil history reconciliation", function()
     assert_equal("Leetah-Durotan", rows[1].originalOwner)
   end)
 
+  it("normalizes compact item tokens into selectable rich links", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
+      ["Meatyfajita-Ysera"] = {
+        {
+          id = "1788395568-8",
+          itemID = 270167,
+          lootWon = "item:270167::::::::::::",
+          itemName = "Wavecaller's Seastone",
+          response = "Dibs",
+          status = "success",
+        },
+      },
+    } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local rows = dibs.RCLootCouncil.GetHistoryRows({ limit = 10 })
+    assert_true(rows[1].itemLink:find("|Hitem:270167", 1, true) ~= nil)
+    assert_true(rows[1].itemLink:find("[Wavecaller's Seastone]", 1, true) ~= nil)
+    rows[1].itemName = "changed by the preview"
+    local secondRows = dibs.RCLootCouncil.GetHistoryRows({ limit = 10 })
+    assert_equal("Wavecaller's Seastone", secondRows[1].itemName)
+  end)
+
   it("requires acknowledgement and a reason for ambiguous manual rows", function()
     local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
       ["Tester-Realm"] = {

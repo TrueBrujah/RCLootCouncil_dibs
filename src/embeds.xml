@@ -1,5 +1,6 @@
 <Ui xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://www.blizzard.com/wow/ui/">
   <Script file="libs\LibStub\LibStub.lua"/>
+  <Include file="libs\MSA-DropDownMenu-1.0\MSA-DropDownMenu-1.0.xml"/>
   <Include file="libs\CallbackHandler-1.0\CallbackHandler-1.0.xml"/>
   <Include file="libs\AceEvent-3.0\AceEvent-3.0.xml"/>
   <Include file="libs\AceTimer-3.0\AceTimer-3.0.xml"/>

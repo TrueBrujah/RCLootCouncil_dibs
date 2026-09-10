@@ -1,6 +1,9 @@
 local Dibs = _G.Dibs
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 
+-- Change log 0.3.13-dev (2026-09-09): use MSA dropdowns for lightweight
+-- Officer choices, normalize compact history item tokens, cache bounded
+-- history indexes, and page reconciliation rows to keep previews responsive.
 -- Change log 0.3.12-dev (2026-09-09): use the RCLootCouncil history bucket
 -- (the awarded player) as the winner; preserve the original loot owner as
 -- separate evidence so traded awards cannot be attributed to the looter.
@@ -1728,9 +1731,10 @@ local function sanitizeRCLootCouncilHistory(rc)
   return changed
 end
 
-local function buildFallbackItemLink(itemID)
+local function buildFallbackItemLink(itemID, itemName)
   local id = tonumber(itemID) or 0
-  return string.format("|cffffffff|Hitem:%d::::::::::::|h[Item %d]|h|r", id, id)
+  local label = tostring(itemName or ("Item " .. tostring(id)))
+  return string.format("|cffffffff|Hitem:%d::::::::::::|h[%s]|h|r", id, label)
 end
 
 local function getDateParts()
@@ -2942,6 +2946,61 @@ function Dibs.RCLootCouncil.SetReconciliationAliases(seasonId, aliases, actor)
   return normalized
 end
 
+-- RCLootCouncil history can contain both rich WoW hyperlinks and compact
+-- `item:ID...` tokens. Native history resolves the latter while rendering;
+-- normalize them once for Dibs so the Officer table never exposes raw Hitem
+-- strings and repeated searches do not ask the item API again.
+local historyItemLinkCache = {}
+
+local function isRichHistoryItemLink(value)
+  return type(value) == "string" and value:find("|Hitem:", 1, true) ~= nil
+end
+
+local function historyItemInfo(row, itemID, rawLink)
+  local link = type(rawLink) == "string" and rawLink or nil
+  local name = row.itemName or row.itemDisplayName
+  if isRichHistoryItemLink(link) then
+    name = name or link:match("|h%[([^%]]+)%]|h")
+    return link, name
+  end
+  -- Compact `item:ID...` values are identifiers, not renderable links. Keep
+  -- the name for the fallback below but never pass the raw token to the UI.
+  link = nil
+
+  local id = tonumber(itemID)
+  if id and historyItemLinkCache[id] then
+    local cached = historyItemLinkCache[id]
+    return cached.link, name or cached.name
+  end
+
+  -- GetItemInfo is normally immediate for an item already present in the
+  -- RCLootCouncil history. Use it only for compact links and cache the result;
+  -- this keeps a large reconciliation search from repeatedly triggering item
+  -- lookups while still producing the same rich link as native history.
+  if not name and id then
+    local getter = type(_G.C_Item) == "table" and _G.C_Item.GetItemInfo or _G.GetItemInfo
+    if type(getter) == "function" then
+      local ok, resolvedName, resolvedLink = pcall(getter, id)
+      if ok then
+        name = resolvedName or name
+        link = resolvedLink or link
+      end
+    end
+  end
+
+  local bracketName = type(rawLink) == "string" and rawLink:match("%[([^%]]+)%]") or nil
+  if not name and bracketName and not bracketName:match("^H?item:") then
+    name = bracketName
+  end
+  if id and not link then
+    link = buildFallbackItemLink(id, name)
+  end
+  if id then
+    historyItemLinkCache[id] = { link = link, name = name }
+  end
+  return link, name
+end
+
 local function historyItemId(row)
   return tonumber(row.itemID or row.itemId or row.itemIDValue) or parseItemID(row.lootWon or row.itemLink or row.item or row.link)
 end
@@ -2985,7 +3044,7 @@ local function historyRowsFromDB(historyDB)
   local function add(playerKey, index, row)
     if type(row) ~= "table" then return end
     local historyRef = row.id and "history:" .. tostring(row.id) or nil
-    local itemLink = row.lootWon or row.itemLink or row.item or row.link
+    local rawItemLink = row.lootWon or row.itemLink or row.item or row.link
     local responseText = historyResponse(row)
     local winner = historyWinner(row, playerKey)
     local itemID = historyItemId(row)
@@ -3002,8 +3061,11 @@ local function historyRowsFromDB(historyDB)
       winner = winner,
       originalOwner = row.owner or row.originalOwner or row.lootOwner,
       itemID = itemID,
-      itemLink = itemLink,
-      itemName = row.itemName or row.name,
+      -- Resolve compact item tokens only after the result limit and date
+      -- filters have been applied. This keeps the first preview responsive on
+      -- a long history while preserving the original read-only row data.
+      itemLink = rawItemLink,
+      itemName = row.itemName or row.itemDisplayName or row.name,
       responseText = responseText,
       response = responseText,
       responseIdentity = row.responseID or row.responseId or row.responseIdentity,
@@ -3041,6 +3103,52 @@ local function historyRowsFromDB(historyDB)
   return rows
 end
 
+local HISTORY_ROWS_CACHE_LIMIT = 2500
+local historyRowsCache = { db = nil, signature = nil, rows = nil }
+
+local function historyRowMarker(row)
+  if type(row) ~= "table" then return "" end
+  return tostring(row.id or row.itemID or row.itemId or row.timestamp or row.date or row.lootWon or "")
+end
+
+-- RCLootCouncil keeps one long-lived history table and appends to its player
+-- buckets. A small structural signature lets repeated previews reuse the
+-- indexed rows without retaining more than a bounded amount of data.
+local function historyDBSignature(historyDB)
+  if type(historyDB) ~= "table" then return "" end
+  local buckets, entries = 0, 0
+  local firstMarker, lastMarker = "", ""
+  if #historyDB > 0 then
+    entries = #historyDB
+    firstMarker = historyRowMarker(historyDB[1])
+    lastMarker = historyRowMarker(historyDB[#historyDB])
+  else
+    for key, bucket in pairs(historyDB) do
+      buckets = buckets + 1
+      if type(bucket) == "table" then
+        if bucket.id or bucket.itemID or bucket.itemId or bucket.lootWon then
+          entries = entries + 1
+          firstMarker = firstMarker == "" and (tostring(key) .. ":" .. historyRowMarker(bucket)) or firstMarker
+          lastMarker = tostring(key) .. ":" .. historyRowMarker(bucket)
+        else
+          entries = entries + #bucket
+          if #bucket > 0 then
+            firstMarker = firstMarker == "" and (tostring(key) .. ":" .. historyRowMarker(bucket[1])) or firstMarker
+            lastMarker = tostring(key) .. ":" .. historyRowMarker(bucket[#bucket])
+          end
+        end
+      end
+    end
+  end
+  return tostring(buckets) .. ":" .. tostring(entries) .. ":" .. firstMarker .. ":" .. lastMarker
+end
+
+local function copyHistoryRow(row)
+  local copy = {}
+  for key, value in pairs(row or {}) do copy[key] = value end
+  return copy
+end
+
 function Dibs.RCLootCouncil.GetHistoryRows(options)
   options = type(options) == "table" and options or {}
   if Dibs.Permissions and Dibs.Permissions.Can and not Dibs.Permissions.Can("history.confirm", options.actor) then
@@ -3050,15 +3158,28 @@ function Dibs.RCLootCouncil.GetHistoryRows(options)
   if type(rc) ~= "table" or type(rc.GetHistoryDB) ~= "function" then return nil, "HISTORY_UNAVAILABLE" end
   local ok, historyDB = pcall(rc.GetHistoryDB, rc)
   if not ok or type(historyDB) ~= "table" then return nil, "HISTORY_UNAVAILABLE" end
-  local rows = historyRowsFromDB(historyDB)
+  local signature = historyDBSignature(historyDB)
+  local rows
+  if historyRowsCache.db == historyDB and historyRowsCache.signature == signature and historyRowsCache.rows then
+    rows = historyRowsCache.rows
+  else
+    rows = historyRowsFromDB(historyDB)
+    if #rows <= HISTORY_ROWS_CACHE_LIMIT then
+      historyRowsCache = { db = historyDB, signature = signature, rows = rows }
+    else
+      historyRowsCache = { db = historyDB, signature = signature, rows = nil }
+    end
+  end
   local maxRows = math.floor(tonumber(options.limit) or 200)
   if maxRows < 1 then maxRows = 1 end
   if maxRows > 500 then maxRows = 500 end
   local filtered = {}
   local fromTime, toTime = tonumber(options.fromTime), tonumber(options.toTime)
-  for _, row in ipairs(rows) do
-    local stamp = row.originalAwardTime
+  for _, sourceRow in ipairs(rows) do
+    local stamp = sourceRow.originalAwardTime
     if (not fromTime or not stamp or stamp >= fromTime) and (not toTime or not stamp or stamp <= toTime) then
+      local row = copyHistoryRow(sourceRow)
+      row.itemLink, row.itemName = historyItemInfo(row, row.itemID, row.itemLink)
       filtered[#filtered + 1] = row
       if #filtered >= maxRows then break end
     end

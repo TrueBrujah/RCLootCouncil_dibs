@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.13-dev - 2026-09-09
+
+- Use the embedded MSA-DropDownMenu library for lightweight Officer choices.
+- Normalize compact RCLootCouncil item tokens into rich links and resolve only
+  visible rows, with a bounded history index cache for repeated searches.
+- Paginate reconciliation previews so long histories do not freeze the UI.
+
 ## 0.3.12-dev - 2026-09-09
 
 - Fix RCLootCouncil history reconciliation attributing traded awards to the

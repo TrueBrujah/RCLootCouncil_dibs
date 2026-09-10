@@ -1299,6 +1299,7 @@ local function createAceWindow()
         }, nil)
         self.reconSessionId = session and session.sessionId or nil
         self.reconSelectedCandidate = nil
+        self.reconPage = 1
         self.reconStatus = session and "Preview complete. No ledger or RCLootCouncil history was changed." or ("Unable to search history: " .. tostring(searchReason or "unknown"))
         self:Refresh()
       end, 190)
@@ -1316,11 +1317,21 @@ local function createAceWindow()
         { "Ambiguous", tostring(session.counts and session.counts.ambiguous or 0) },
         { "Rejected / unsupported", tostring((session.counts and session.counts.rejected or 0) + (session.counts and session.counts.unsupported or 0)) },
       }, 220)
+      -- RCLootCouncil uses a virtualized scrolling table. Keep the Dibs
+      -- preview equally light by rendering one bounded page of rows instead
+      -- of constructing hundreds of AceGUI labels in a single refresh.
+      local pageSize = 40
+      local candidateCount = #(session.candidates or {})
+      local pageCount = math.max(1, math.ceil(candidateCount / pageSize))
+      self.reconPage = math.min(math.max(1, tonumber(self.reconPage) or 1), pageCount)
+      local pageStart = candidateCount > 0 and ((self.reconPage - 1) * pageSize + 1) or 1
+      local pageEnd = math.min(candidateCount, pageStart + pageSize - 1)
       local candidateRows = {}
-      for _, candidate in ipairs(session.candidates or {}) do
+      for index = pageStart, pageEnd do
+        local candidate = session.candidates[index]
         candidateRows[#candidateRows + 1] = {
           tostring(candidate.classification or ""), tostring(candidate.playerName or "Unknown"),
-          tostring(candidate.itemName or candidate.itemLink or candidate.itemID or "Unavailable"),
+          tostring(candidate.itemLink or candidate.itemName or candidate.itemID or "Unavailable"),
           tostring(candidate.responseText or ""), tostring(candidate.reasonCode or "ready"), "", candidate = candidate,
         }
       end
@@ -1335,6 +1346,19 @@ local function createAceWindow()
           self:Refresh()
         end }
       end)
+      local pageControls = Dibs.AceGUI.AddInlineGroup(shell, scroll)
+      local previousPage = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function()
+        self.reconPage = math.max(1, self.reconPage - 1)
+        self:Refresh()
+      end, 90)
+      local pageLabel = Dibs.AceGUI.AddLabel(shell, pageControls,
+        candidateCount > 0 and ("Rows " .. tostring(pageStart) .. "-" .. tostring(pageEnd) .. " of " .. tostring(candidateCount) .. " | Page " .. tostring(self.reconPage) .. "/" .. tostring(pageCount)) or "No history rows")
+      local nextPage = Dibs.AceGUI.AddButton(shell, pageControls, "Next", function()
+        self.reconPage = math.min(pageCount, self.reconPage + 1)
+        self:Refresh()
+      end, 70)
+      Dibs.AceGUI.SetDisabled(previousPage, self.reconPage <= 1)
+      Dibs.AceGUI.SetDisabled(nextPage, self.reconPage >= pageCount)
       if self.reconSelectedCandidate then
         local candidate
         for _, row in ipairs(session.candidates or {}) do if tostring(row.candidateId) == tostring(self.reconSelectedCandidate) then candidate = row break end end

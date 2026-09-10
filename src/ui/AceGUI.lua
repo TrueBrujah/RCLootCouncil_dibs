@@ -16,6 +16,17 @@ local function getLibrary()
   return ok and library or nil
 end
 
+-- MSA-DropDownMenu is considerably lighter than creating a full AceGUI
+-- Dropdown widget for every small choice. Keep a runtime check so reduced
+-- test clients and older installations continue to use the AceGUI fallback.
+local HAS_MSA_DROPDOWN = type(_G.MSA_DropDownMenu_Create) == "function"
+  and type(_G.MSA_DropDownMenu_Initialize) == "function"
+  and type(_G.MSA_DropDownMenu_CreateInfo) == "function"
+  and type(_G.MSA_DropDownMenu_AddButton) == "function"
+  and type(_G.MSA_DropDownMenu_SetText) == "function"
+local msaDropdownSerial = 0
+local msaDropdownPool = {}
+
 local function call(widget, method, ...)
   if widget and type(widget[method]) == "function" then
     return pcall(widget[method], widget, ...)
@@ -123,7 +134,25 @@ function Adapter.Create(shell, kind, parent)
   return widget
 end
 
+local function releaseMSAControls(widget, seen)
+  if type(widget) ~= "table" then return end
+  seen = seen or {}
+  if seen[widget] then return end
+  seen[widget] = true
+  local control = widget._dibsMSAControl
+  if control then
+    if control.Hide then pcall(control.Hide, control) end
+    if control.SetParent then pcall(control.SetParent, control, nil) end
+    msaDropdownPool[#msaDropdownPool + 1] = control
+    widget._dibsMSAControl = nil
+  end
+  for _, child in ipairs(widget.children or {}) do
+    releaseMSAControls(child, seen)
+  end
+end
+
 function Adapter.Clear(container)
+  releaseMSAControls(container)
   if container and type(container.ReleaseChildren) == "function" then
     container:ReleaseChildren()
   elseif container and type(container.children) == "table" then
@@ -219,6 +248,9 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions)
 
   local function cellText(value, width)
     local result = tostring(value or "")
+    -- Let WoW render a complete hyperlink. Truncating the colour and Hitem
+    -- escape sequence makes the visible cell look like raw `[Hitem:...]` text.
+    if result:find("|Hitem:", 1, true) then return result end
     local characters = math.max(8, math.floor((width or 100) / 7))
     if #result > characters then result = result:sub(1, math.max(1, characters - 3)) .. "..." end
     return result
@@ -320,7 +352,119 @@ function Adapter.SelectText(widget)
   return false
 end
 
-function Adapter.AddDropdown(shell, parent, label, values, callback, width)
+function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
+  if not HAS_MSA_DROPDOWN or not parent or not parent.frame
+    or type(parent.frame.CreateFontString) ~= "function" then
+    return nil
+  end
+
+  local host = Adapter.Create(shell, "SimpleGroup", parent)
+  if not host or not host.frame then return nil end
+  call(host, "SetFullWidth", true)
+  call(host, "SetHeight", 44)
+  call(host, "SetLayout", "Fill")
+
+  local hostFrame = host.frame
+  local labelText = hostFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  if labelText then
+    labelText:SetPoint("TOPLEFT", hostFrame, "TOPLEFT", 0, -2)
+    labelText:SetText(tostring(label or ""))
+  end
+
+  msaDropdownSerial = msaDropdownSerial + 1
+  local control = table.remove(msaDropdownPool)
+  if control and control.SetParent then
+    control:SetParent(hostFrame)
+    if control.ClearAllPoints then control:ClearAllPoints() end
+  end
+  if not control then
+    local name = "DibsMSADropdown" .. tostring(msaDropdownSerial)
+    control = _G.MSA_DropDownMenu_Create(name, hostFrame)
+  end
+  if not control then return nil end
+  control.__dibsMSA = true
+  control:SetPoint("TOPLEFT", hostFrame, "TOPLEFT", 0, -18)
+  if control.Show then control:Show() end
+  control.selectedID, control.selectedName, control.selectedValue = nil, nil, nil
+  if _G.MSA_DropDownMenu_SetWidth then
+    _G.MSA_DropDownMenu_SetWidth(control, width or 260, 25)
+  end
+  if _G.MSA_DropDownMenu_JustifyText then
+    _G.MSA_DropDownMenu_JustifyText(control, "LEFT")
+  end
+
+  local wrapper = { frame = control, host = host, values = values or {}, value = nil }
+  host._dibsMSAControl = control
+  host._dibsMSAWrapper = wrapper
+
+  local function valueLabel(value)
+    local labelValue = wrapper.values[value]
+    if labelValue == nil then labelValue = wrapper.values[tostring(value)] end
+    return tostring(labelValue or value or "")
+  end
+
+  function wrapper:SetText(text)
+    self.text = tostring(text or "")
+    _G.MSA_DropDownMenu_SetText(control, self.text)
+  end
+
+  function wrapper:GetText()
+    if _G.MSA_DropDownMenu_GetText then
+      local ok, text = pcall(_G.MSA_DropDownMenu_GetText, control)
+      if ok then return tostring(text or "") end
+    end
+    return self.text or ""
+  end
+
+  function wrapper:SetValue(value)
+    self.value = value
+    if _G.MSA_DropDownMenu_SetSelectedValue then
+      _G.MSA_DropDownMenu_SetSelectedValue(control, value, true)
+    end
+    self:SetText(valueLabel(value))
+  end
+
+  function wrapper:SetList(nextValues)
+    self.values = nextValues or {}
+    if self.value ~= nil then self:SetValue(self.value) end
+  end
+
+  function wrapper:SetDisabled(disabled)
+    self.disabled = disabled == true
+    local button = control.Button
+    if button then
+      if self.disabled and button.Disable then button:Disable()
+      elseif not self.disabled and button.Enable then button:Enable() end
+    end
+  end
+
+  local keys = {}
+  for key in pairs(wrapper.values) do keys[#keys + 1] = key end
+  table.sort(keys, function(a, b)
+    return tostring(valueLabel(a)):lower() < tostring(valueLabel(b)):lower()
+  end)
+  _G.MSA_DropDownMenu_Initialize(control, function(_, level)
+    if level ~= 1 then return end
+    for _, key in ipairs(keys) do
+      local info = _G.MSA_DropDownMenu_CreateInfo()
+      info.text = valueLabel(key)
+      info.value = key
+      info.checked = wrapper.value ~= nil and tostring(wrapper.value) == tostring(key)
+      info.func = function()
+        wrapper:SetValue(key)
+        if callback then callback(key) end
+      end
+      _G.MSA_DropDownMenu_AddButton(info, level)
+    end
+  end)
+  return wrapper
+end
+
+function Adapter.AddDropdown(shell, parent, label, values, callback, width, useMSA)
+  if useMSA ~= false and HAS_MSA_DROPDOWN then
+    local dropdown = Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
+    if dropdown then return dropdown end
+  end
   local dropdown = Adapter.Create(shell, "Dropdown", parent)
   if not dropdown then return nil end
   call(dropdown, "SetLabel", label or "")
