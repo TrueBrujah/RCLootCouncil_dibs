@@ -69,7 +69,7 @@ node node_modules/fengari-node-cli/src/lua-cli.js tests/run.lua
 git diff --check
 ```
 
-Expected baseline: **205 tests pass, 0 fail, 52 files**. Run this suite after
+Expected baseline: **206 tests pass, 0 fail, 52 files**. Run this suite after
 source changes and attach the output to the test record.
 
 ## Manual test checklist
@@ -78,7 +78,7 @@ source changes and attach the output to the test record.
 
 - [ ] Install the stable ZIP on a clean character and confirm the addon loads.
 - [ ] Install the development ZIP separately and confirm the TOC version is
-      `0.3.13-dev`.
+      `0.3.14-dev`.
 - [ ] Confirm the stable package reports the current stable version.
 - [ ] Confirm SavedVariables survive `/reload`, relog, and client restart.
 - [ ] Open `/dibs options` and confirm the correct Dibs options category opens.

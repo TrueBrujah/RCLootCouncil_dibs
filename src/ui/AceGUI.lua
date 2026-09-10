@@ -96,6 +96,13 @@ function Adapter.CreateWindow(title, width, height, point)
   end
   call(window, "SetLayout", "Fill")
   applyRCLootCouncilTheme(window.frame)
+  -- AceGUI's stock Window uses FULLSCREEN_DIALOG, which makes an Officer or
+  -- Player window behave like a modal Settings page. Dibs windows are modeless
+  -- control surfaces, so keep them above the game while allowing other panels
+  -- to remain accessible beside them.
+  if window.frame and type(window.frame.SetFrameStrata) == "function" then
+    window.frame:SetFrameStrata("DIALOG")
+  end
   addAddonLogo(window.frame)
   -- AceGUI Frame widgets are shown by OnAcquire.  PlayerUI and OfficerUI are
   -- created during addon initialization, so leave them hidden until the user

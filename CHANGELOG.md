@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.14-dev - 2026-09-10
+
+- Keep WoW/RCLootCouncil Options focused on configuration, short launch actions,
+  and status. Player and Officer searches, reports, history, reconciliation,
+  and statistics stay in separate modeless control-center windows.
+- Add an explicit **Open in Adventure Guide** action for selected
+  RCLootCouncil history rows. Catalogued raid and encounter IDs are retained;
+  older rows use a bounded Adventure Guide lookup only when requested.
+- Preserve rich item links and open Dibs windows at the DIALOG strata so the
+  Settings panel can remain available beside them.
+
 ## 0.3.13-dev - 2026-09-09
 
 - Use the embedded MSA-DropDownMenu library for lightweight Officer choices.

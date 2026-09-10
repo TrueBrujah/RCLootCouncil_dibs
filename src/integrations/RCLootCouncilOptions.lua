@@ -1165,6 +1165,14 @@ end
 groups.overview.args.player = nil
 groups.overview.args.officer = nil
 groups.overview.args.integrationStatus = description(4, integrationStatusText)
+groups.overview.args.operationalNote = description(5,
+  "Live data, searches, history and statistics open in separate Dibs windows so Blizzard and RCLootCouncil settings remain usable beside them.")
+groups.overview.args.openPlayerWindow = execute(6, "Open Player window", function()
+  if Dibs.PlayerUI and Dibs.PlayerUI.Toggle then Dibs.PlayerUI.Toggle(true) end
+end)
+groups.overview.args.openOfficerWindow = execute(7, "Open Officer control center", function()
+  if Dibs.OfficerUI and Dibs.OfficerUI.Toggle then Dibs.OfficerUI.Toggle(true) end
+end)
 groups.announcements = { type = "group", name = "Announcements", order = 6, args = {
   publicChannel = groups.preDibs.args.preDibAnnouncementChannel,
   officerChannel = groups.preDibs.args.preDibOfficerAnnouncementChannel,
@@ -1248,6 +1256,12 @@ groups.player = { type = "group", name = "Player", order = 7, args = {
     if frame then frame:Show(); frame:Raise() end
   end),
 } }
+-- Blizzard Settings is a configuration surface. Personal history, reports and
+-- searchable data live in the modeless Player window opened below.
+for _, key in ipairs({ "summary", "readiness", "item", "submit", "request", "cancel", "history", "openHistory", "openAcquisitions" }) do
+  if groups.player.args[key] then groups.player.args[key].hidden = true end
+end
+groups.player.args.intro = description(1, "Personal balances, history, acquisitions and review requests open in the separate Player window.")
 groups.officer = { type = "group", name = function() return Dibs.RCOptions.IsOfficerPreviewOnly() and "Officer *" or "Officer" end, order = 8, args = {
   previewNotice = description(1, function()
     return Dibs.RCOptions.IsOfficerPreviewOnly() and "|cffffcc00* Preview mode|r  Nanarus-Durotan — officer permissions remain enforced." or "|cff66ff99Authorized officer controls|r"
@@ -1285,6 +1299,9 @@ groups.officer.args.disputes = { type = "group", name = "Review Requests", order
       " | Need information: " .. tostring(counts["Need information"] or 0) .. " | Closed: " .. tostring((counts.Resolved or 0) + (counts.Rejected or 0))
   end),
 } }
+groups.officer.args.statistics.hidden = true
+groups.officer.args.intro = description(1, "Policies stay in Blizzard Settings. The separate Officer control center owns live searches, review, history reconciliation and statistics.")
+groups.officer.args.intro.order = 1.5
 groups.officer.args.reconciliation = { type = "group", name = "RC History", order = 4.5, args = {
   intro = description(1, "Preview RCLootCouncil history and reconcile old DIB responses. Scanning is read-only; only a GM or Officer confirmation appends a ledger debit."),
   aliases = { type = "input", name = "Exact DIB response aliases", desc = "Comma-separated aliases. Matching trims whitespace and ignores case; fuzzy matching is never used.", order = 2,
@@ -1305,10 +1322,13 @@ groups.officer.args.reconciliation = { type = "group", name = "RC History", orde
     if frame then frame:Show(); frame:Raise() end
   end),
 } }
-groups.overview.args.seasonSummary = description(4, function()
-  local season = Dibs.Seasons.GetById(getSelectedSeasonId())
-  return season and table.concat(Dibs.OfficerUI.BuildDashboardDetails(season), "\n") or "No active season."
-end)
+-- Operational queues and reconciliation are rendered by the modeless Officer
+-- control center. Keep the option entries as compatibility aliases for code
+-- and older profiles, but do not expose their long-running views in Blizzard
+-- Settings where they compete with the configuration pages.
+groups.officer.args.disputes.hidden = true
+groups.officer.args.reconciliation.hidden = true
+groups.overview.args.seasonSummary = nil
 groups.developer = { type = "group", name = "Developer", order = 9, args = {
   enabled = { type = "toggle", name = "Developer Mode", order = 1,
     get = function() return Dibs.DeveloperMode.IsEnabled() end,
@@ -1453,7 +1473,9 @@ groups.debug.args.openLogs = execute(7, "Open debug logs", function() Dibs.Debug
 -- Main navigation is intentionally split into Player and Officer tabs. Officer
 -- owns the administrative sub-sections; Player only exposes personal actions.
 groups.player.childGroups = "tree"
-groups.player.args.openWindow = execute(1, "Open player window", function() Dibs.PlayerUI.Toggle(true) end)
+groups.player.args.openWindow = execute(2, "Open player window", function() Dibs.PlayerUI.Toggle(true) end)
+groups.player.args.reviewRequests.order = 3
+groups.player.args.openRequests.order = 4
 -- Player keeps personal request actions below; the Pre-Dibs policy group is Officer-only.
 groups.player.args.preDibs = nil
 groups.officer.childGroups = "tree"

@@ -68,7 +68,8 @@ rank policy can change Dibs settings, seasons, rank rules, modes, or balances.
 
 ### Player workflow
 
-1. Open `/dibs ui` or `/dibs options` and select the Player view.
+1. Open `/dibs ui` for the modeless Player window. Use `/dibs options` only for
+   configuration and launch buttons.
 2. Review the active season, current balance, and active Pre-Dibs.
 3. Use the Encounter Journal or an RCLootCouncil loot row when a supported item
    offers a Dibs action.
@@ -84,7 +85,7 @@ policy or the player cancels it.
 
 ### Officer workflow
 
-Open `/dibs officer` for the full Officer interface. Its navigation mirrors the
+Open `/dibs officer` for the separate, modeless Officer control center. Its navigation mirrors the
 RCLootCouncil layout:
 
 - Overview
@@ -129,7 +130,9 @@ available for legacy rows only after an Officer checks an acknowledgement and
 enters a reason. Each confirmed row appends one `rclootcouncil_history` debit,
 keeps the original award time beside the import time, and is idempotent across
 reloads. RCLootCouncil history is never rewritten and these controls are
-available only to verified guild GMs and Officers.
+available only to verified guild GMs and Officers. Select a row and use **Open
+in Adventure Guide** to jump to its raid and boss when the Adventure Guide
+catalogue can identify them.
 
 ### RCLootCouncil workflow
 

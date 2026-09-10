@@ -814,7 +814,7 @@ local function getJournalLootDetails(index)
   return nil
 end
 
-local function enrichCatalogItem(itemID, itemName, itemLink, instanceName, bossName, encounterID)
+local function enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanceName, bossName, encounterID, lootIndex)
   local link = itemLink
   local name = itemName
   if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
@@ -848,6 +848,9 @@ local function enrichCatalogItem(itemID, itemName, itemLink, instanceName, bossN
     itemID = itemID,
     itemName = tostring(name or ("Item " .. tostring(itemID))),
     itemLink = link,
+    instanceID = tonumber(instanceID),
+    encounterID = tonumber(encounterID),
+    lootIndex = tonumber(lootIndex),
     instanceName = tostring(instanceName or "Adventure Guide"),
     bossName = tostring(bossName or "Unknown boss"),
     type = itemType,
@@ -861,11 +864,11 @@ local function scanAdventureGuideCatalog()
   local seen = {}
   local meta = { available = false, reason = nil, scannedInstances = 0, scannedEncounters = 0, scannedLoot = 0 }
 
-  local function addLoot(instanceName, bossName, encounterID, lootIndex)
+  local function addLoot(instanceID, instanceName, bossName, encounterID, lootIndex)
     if #result >= EJ_CATALOG_MAX_ITEMS then return end
     local itemID, itemName, itemLink = getJournalLootDetails(lootIndex)
     if not itemID then return end
-    local item = enrichCatalogItem(itemID, itemName, itemLink, instanceName, bossName, encounterID)
+    local item = enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanceName, bossName, encounterID, lootIndex)
     -- A token can appear in multiple encounter tables. Keep the first source,
     -- while retaining a stable key for the dropdown and audit payload.
     local dedupeKey = tostring(item.itemID) .. "|" .. tostring(item.bossName) .. "|" .. tostring(item.instanceName)
@@ -905,7 +908,7 @@ local function scanAdventureGuideCatalog()
           if lootCount and lootCount > 0 then
             for lootIndex = 1, math.min(lootCount, EJ_CATALOG_MAX_LOOT) do
               meta.scannedLoot = meta.scannedLoot + 1
-              addLoot(instanceName, bossName, encounterID, lootIndex)
+              addLoot(instanceID, instanceName, bossName, encounterID, lootIndex)
             end
           end
           if #result >= EJ_CATALOG_MAX_ITEMS then return end
@@ -944,7 +947,7 @@ local function scanAdventureGuideCatalog()
     lootCount = okNum and tonumber(lootCount) or 0
     for lootIndex = 1, math.min(lootCount, EJ_CATALOG_MAX_LOOT) do
       meta.scannedLoot = meta.scannedLoot + 1
-      addLoot("Current raid", "Current boss", 0, lootIndex)
+      addLoot(previousInstance, "Current raid", "Current boss", previousEncounter or 0, lootIndex)
     end
   end
 
@@ -1735,15 +1738,65 @@ function Dibs.EncounterJournal.OpenForRaidContext(context)
   if type(context) ~= "table" or not tonumber(context.raidId) then return false, "RAID_CONTEXT_UNAVAILABLE" end
   if type(InCombatLockdown) == "function" and InCombatLockdown() then return false, "DEFERRED_COMBAT" end
   if type(EncounterJournal_LoadUI) == "function" then pcall(EncounterJournal_LoadUI) end
-  if context.encounterId and type(EJ_SelectEncounter) == "function" then
-    local ok = pcall(EJ_SelectEncounter, context.encounterId)
-    if ok then return true end
-  end
+  local selected = false
   if type(EJ_SelectInstance) == "function" then
     local ok = pcall(EJ_SelectInstance, context.raidId)
+    selected = ok or selected
+  end
+  if context.encounterId and tonumber(context.encounterId) > 0 and type(EJ_SelectEncounter) == "function" then
+    local ok = pcall(EJ_SelectEncounter, context.encounterId)
+    selected = ok or selected
+  end
+  return selected, selected and nil or "JOURNAL_UNAVAILABLE"
+end
+
+local function findCatalogItemByID(itemID)
+  local id = tonumber(itemID)
+  if not id then return nil end
+  for _, item in ipairs(adventureGuideCatalog or {}) do
+    if tonumber(item.itemID) == id then return item end
+  end
+  return nil
+end
+
+-- Open a history or ledger item at its Adventure Guide raid/boss page. The
+-- catalogue stores the stable instance and encounter IDs; when an old history
+-- row lacks them, a one-time catalogue lookup is performed only after the
+-- Officer explicitly asks to navigate there.
+function Dibs.EncounterJournal.OpenLootItem(itemOrID)
+  local item
+  if type(itemOrID) == "table" then
+    item = itemOrID
+  else
+    local itemID, itemName = extractItemFromLink(itemOrID)
+    item = { itemID = tonumber(itemOrID) or itemID, itemName = itemName, itemLink = itemOrID }
+  end
+  local itemID = tonumber(item.itemID or item.itemId) or select(1, extractItemFromLink(item.itemLink or item.link or item.item))
+  local instanceID = tonumber(item.instanceID or item.raidId or item.instanceId)
+  local encounterID = tonumber(item.encounterID or item.bossID or item.encounterId)
+  local hasContext = (instanceID and instanceID > 0) or (encounterID and encounterID > 0)
+  local target = hasContext and item or findCatalogItemByID(itemID)
+  if not target and itemID then
+    local catalog = Dibs.EncounterJournal.GetLootCatalog("", { limit = EJ_CATALOG_MAX_ITEMS })
+    for _, candidate in ipairs(catalog or {}) do
+      if tonumber(candidate.itemID) == itemID then target = candidate break end
+    end
+  end
+
+  local raidID = target and tonumber(target.instanceID or target.raidId or target.instanceId)
+  encounterID = target and tonumber(target.encounterID or target.bossID or target.encounterId) or nil
+  -- With no catalog match, only reuse the currently selected raid when the
+  -- caller did not identify an item. This avoids opening an unrelated page for
+  -- an old history row whose item is no longer present in the catalogue.
+  if not raidID and not itemID then raidID = getCurrentJournalInstanceID() end
+  if raidID and raidID > 0 then
+    return Dibs.EncounterJournal.OpenForRaidContext({ raidId = raidID, encounterId = encounterID })
+  end
+  if type(EncounterJournal_LoadUI) == "function" then
+    local ok = pcall(EncounterJournal_LoadUI)
     if ok then return true end
   end
-  return false, "JOURNAL_UNAVAILABLE"
+  return false, "ADVENTURE_GUIDE_TARGET_UNAVAILABLE"
 end
 
 function Dibs.EncounterJournal.CanPreDib(itemID)

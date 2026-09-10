@@ -39,6 +39,25 @@ describe("Encounter Journal Pre-Dibs", function()
     assert_not_nil(dibs.PreDibs.GetConfirmedRequestForPlayer("Tester-Realm", 20003))
   end)
 
+  it("opens a catalog item at its Adventure Guide encounter", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    wow.installEncounterJournalContext({
+      raidInstanceID = 100,
+      raidInstances = { { id = 100, name = "Test Raid" } },
+      encounters = { [100] = { { id = 500, name = "Test Boss" } } },
+      loot = { [500] = { { itemID = 20008, name = "Test Curio", link = "item:20008" } } },
+    })
+
+    local catalog = dibs.EncounterJournal.GetLootCatalog("Test Curio", { refresh = true })
+    assert_equal(1, #catalog)
+    assert_equal(100, catalog[1].instanceID)
+    assert_equal(500, catalog[1].encounterID)
+    assert_true(dibs.EncounterJournal.OpenLootItem(catalog[1]))
+    assert_equal(500, _G.__ejNavigation.encounterId)
+    assert_true(dibs.EncounterJournal.OpenLootItem("item:20008"))
+    assert_equal(500, _G.__ejNavigation.encounterId)
+  end)
+
   it("resolves Requested state by normalized player and current season", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local firstSeason = dibs.GetCurrentSeasonId()

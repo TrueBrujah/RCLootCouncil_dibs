@@ -1,6 +1,9 @@
 local Dibs = _G.Dibs
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 
+-- Change log 0.3.14-dev (2026-09-10): keep operational searches, history,
+-- reports, and statistics in modeless control-center windows; preserve item
+-- context for explicit Adventure Guide navigation from reconciliation rows.
 -- Change log 0.3.13-dev (2026-09-09): use MSA dropdowns for lightweight
 -- Officer choices, normalize compact history item tokens, cache bounded
 -- history indexes, and page reconciliation rows to keep previews responsive.
@@ -3066,6 +3069,8 @@ local function historyRowsFromDB(historyDB)
       -- a long history while preserving the original read-only row data.
       itemLink = rawItemLink,
       itemName = row.itemName or row.itemDisplayName or row.name,
+      instanceID = tonumber(row.instanceID or row.raidId or row.instanceId),
+      encounterID = tonumber(row.encounterID or row.bossID or row.encounterId),
       responseText = responseText,
       response = responseText,
       responseIdentity = row.responseID or row.responseId or row.responseIdentity,

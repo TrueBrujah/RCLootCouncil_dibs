@@ -1371,6 +1371,13 @@ local function createAceWindow()
             { "Original response", tostring(candidate.responseText or "Unavailable") }, { "Final status", tostring(candidate.sourceStatus or "Unavailable") },
             { "Reason", tostring(candidate.reasonCode or "ready") }, { "Evidence", tostring(candidate.evidenceId) },
           }, 240)
+          if Dibs.EncounterJournal and type(Dibs.EncounterJournal.OpenLootItem) == "function" then
+            Dibs.AceGUI.AddButton(shell, detail, "Open in Adventure Guide", function()
+              local opened, openReason = Dibs.EncounterJournal.OpenLootItem(candidate)
+              self.reconStatus = opened and "Adventure Guide opened for this item." or ("Unable to open Adventure Guide: " .. tostring(openReason or "unknown"))
+              self:Refresh()
+            end, 190)
+          end
           self.reconReason = self.reconReason or ""
           local reason = Dibs.AceGUI.AddEditBox(shell, detail, "Confirmation reason", function(value) self.reconReason = value or "" end, 500)
           setControlText(reason, self.reconReason)

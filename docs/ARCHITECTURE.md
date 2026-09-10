@@ -96,6 +96,12 @@ The capability snapshot exposes `absent`, `operational`, `degraded`, and `unsupp
 ### AuditUI
 Presents history appropriate to the current user's permissions.
 
+The WoW/RCLootCouncil Options page is intentionally configuration-only. It
+keeps season, rank, policy, announcement, integration and debug controls plus
+short launch/status actions. Long-running searches, history tables, reports,
+statistics and reconciliation actions are rendered in modeless Player or
+Officer windows so they do not occupy or block Blizzard Settings.
+
 The Player window's **My requests** page submits a report from an optional
 ledger entry and shows only the character's own requests, questions, replies,
 and resolution explanation. The Officer window's **Review Requests** page
@@ -113,6 +119,11 @@ passed to `ProtectedActions.history.confirm`, which appends one
 `rclootcouncil_history` debit through the Ledger and indexes its stable award or
 evidence identity for idempotent replay. Player history exposes only the
 confirmed transaction's source and reason.
+
+Selected history rows keep their WoW item hyperlink and may navigate to the
+matching Adventure Guide raid and encounter through `EncounterJournalAdapter`.
+The navigation lookup is explicit and bounded; it never runs during a normal
+history search.
 
 ## Authority model
 
