@@ -333,6 +333,10 @@ function UI.Refresh()
   clear(currentShell)
   local parent = pageParent(currentShell)
   if not parent then return end
+  if currentShell.contentHost and currentShell.contentHost.SetHeight then
+    local height = currentShell.frame and currentShell.frame.GetHeight and currentShell.frame:GetHeight() or 680
+    currentShell.contentHost:SetHeight(math.max(320, height - 105))
+  end
   if state.tab == "profiles" then addProfiles(currentShell, parent)
   elseif state.tab == "transfer" then addTransfer(currentShell, parent)
   else addBackups(currentShell, parent) end
@@ -354,7 +358,10 @@ function UI.Open(tab)
   if shell.pageHost then
     shell.pageHost:SetFullWidth(true)
     shell.pageHost:SetFullHeight(true)
-    shell.pageHost:SetLayout("Flow")
+    -- List keeps the navigation row and the content panel in separate stable
+    -- rows. Flow treats a full-height child as the final row and can collapse
+    -- the page on Retail when the window is resized or first shown.
+    shell.pageHost:SetLayout("List")
   end
   local nav = gui.AddInlineGroup(shell, shell.pageHost or shell.window)
   if nav then
@@ -365,8 +372,9 @@ function UI.Open(tab)
   shell.contentHost = gui.Create(shell, "SimpleGroup", shell.pageHost or shell.window)
   if shell.contentHost then
     shell.contentHost:SetFullWidth(true)
-    shell.contentHost:SetFullHeight(true)
     shell.contentHost:SetLayout("Flow")
+    local height = shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or 680
+    shell.contentHost:SetHeight(math.max(320, height - 105))
   end
   UI.Refresh()
   shell.window:Show()
