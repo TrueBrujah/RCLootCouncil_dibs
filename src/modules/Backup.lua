@@ -31,8 +31,14 @@ function M.Create(scope, reason, actor)
   local pruned = {}; while #db.backups > db.backupRetention do local old = table.remove(db.backups); old.retentionState = "pruned"; table.insert(pruned, old.snapshotId) end
   audit("backup_create", snapshot, "success", reason, actor); return clone(snapshot), pruned
 end
-function M.List(scope)
-  local db = ensure(); local result = {}; for _, snapshot in ipairs(db.backups) do if not scope or snapshot.scope == scope then table.insert(result, clone(snapshot)) end end; return result
+function M.List(scope, actor)
+  local db = ensure(); local result = {}
+  for _, snapshot in ipairs(db.backups) do
+    if (not scope or snapshot.scope == scope) and authorized(snapshot.scope, actor) then
+      table.insert(result, clone(snapshot))
+    end
+  end
+  return result
 end
 function M.Get(snapshotId)
   local db = ensure(); for _, snapshot in ipairs(db.backups) do if snapshot.snapshotId == snapshotId then return snapshot end end; return nil

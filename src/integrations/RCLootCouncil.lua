@@ -1,4 +1,6 @@
 local Dibs = _G.Dibs
+-- Change log 0.5.1-dev (2026-09-10): repair the modeless data control center
+-- workflows and keep guild-scoped backup/profile reads permission filtered.
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 
 -- Change log 0.4.0-dev (2026-09-10): add backup/import/profile data tools and

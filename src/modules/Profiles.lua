@@ -44,8 +44,10 @@ local function audit(action, scope, name, reason, outcome, actor)
   local db = Dibs.GetDB(); db.auditLog = db.auditLog or {}; table.insert(db.auditLog, { auditId = Dibs.NewId("audit"), action = action, scope = scope, profile = name, actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), createdAt = time(), outcome = outcome or "success", reason = reason })
 end
 
-function M.List(scope)
-  local db, profiles = ensure(); local entries = bucket(profiles, scopeName(scope)); local result = {}
+function M.List(scope, actor)
+  scope = scopeName(scope)
+  if not authorized(scope, actor) then return {} end
+  local db, profiles = ensure(); local entries = bucket(profiles, scope); local result = {}
   for name, profile in pairs(entries) do table.insert(result, clone(profile)) end
   table.sort(result, function(a, b) return tostring(a.name) < tostring(b.name) end); return result
 end
@@ -72,7 +74,7 @@ function M.Rename(oldName, newName, scope, actor)
   audit("profile_rename", scope, newName, nil, "success", actor); return clone(profile)
 end
 function M.PreviewActivation(name, scope)
-  scope = scopeName(scope); local db, profiles = ensure(); local profile = profiles[scope][name]; if not profile then return nil, "PROFILE_NOT_FOUND" end
+  scope = scopeName(scope); local db, profiles = ensure(); local profile = bucket(profiles, scope)[name]; if not profile then return nil, "PROFILE_NOT_FOUND" end
   local changes = {}; for k, v in pairs(profile.authoritativePolicy or {}) do if tostring((db.settings or {})[k]) ~= tostring(v) then changes[#changes + 1] = k end end
   return { profile = clone(profile), policyChanges = changes, requiresConfirmation = scope == "guild" and #changes > 0 }
 end

@@ -2,7 +2,7 @@ describe("Backup, import/export and profiles", function()
   local loader, dibs
   before_each(function()
     loader = require("helpers.load_addon")
-    _, dibs = loader.load({ wow = { guildLeader = true } })
+    _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
   end)
 
   it("exports a versioned local package and validates its checksum", function()
@@ -47,8 +47,14 @@ describe("Backup, import/export and profiles", function()
     local season = dibs.GetCurrentSeasonId(); dibs.Ledger.Grant("Tester-Realm", 1, "test", "test", season)
     local before = #dibs.Ledger.GetAllTransactions()
     local profile = dibs.Profiles.Create("Test profile", "local")
-    assert_not_nil(profile); assert_not_nil(dibs.Profiles.Activate("Test profile", "local"))
+    assert_not_nil(profile)
+    assert_not_nil(dibs.Profiles.PreviewActivation("Test profile", "local"))
+    assert_not_nil(dibs.Profiles.Activate("Test profile", "local"))
     assert_equal(before, #dibs.Ledger.GetAllTransactions())
+    assert_not_nil(dibs.Profiles.Copy("Test profile", "Copied profile", "local"))
+    assert_not_nil(dibs.Profiles.Rename("Copied profile", "Renamed profile", "local"))
+    assert_not_nil(dibs.Profiles.Reset("Renamed profile", "local"))
+    assert_true(dibs.Profiles.Delete("Renamed profile", "local"))
     assert_true(dibs.Profiles.Delete("Test profile", "local"))
   end)
 
@@ -71,5 +77,50 @@ describe("Backup, import/export and profiles", function()
     local applied = dibs.ImportExport.Apply(preview.previewId, true, "test")
     assert_equal("confirmed", applied.decision)
     assert_equal(count, #dibs.Ledger.GetAllTransactions())
+  end)
+
+  it("renders the Data control center into a persistent content host", function()
+    local shell = dibs.DataUI.Open("backups")
+    assert_not_nil(shell)
+    assert_not_nil(shell.pageHost)
+    assert_not_nil(shell.contentHost)
+    assert_true(#(shell.pageHost.children or {}) >= 2)
+    assert_true(#(shell.contentHost.children or {}) > 0)
+    dibs.DataUI.Open("transfer")
+    assert_true(#(shell.contentHost.children or {}) > 0)
+  end)
+
+  it("wires the visible backup and transfer actions", function()
+    local before = #dibs.Backup.List()
+    dibs.DataUI.Open("backups")
+    local clicked = false
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.text == "Create backup" and widget.callbacks and widget.callbacks.OnClick then
+        widget.callbacks.OnClick(widget)
+        clicked = true
+        break
+      end
+    end
+    assert_true(clicked)
+    assert_true(#dibs.Backup.List() > before)
+
+    dibs.DataUI.Open("transfer")
+    local exported = false
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.text == "Export package" and widget.callbacks and widget.callbacks.OnClick then
+        widget.callbacks.OnClick(widget)
+        exported = true
+        break
+      end
+    end
+    assert_true(exported)
+    local hasPackageText = false
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if type(widget.text) == "string" and widget.text:find("DIBS%-PKG%-1%|", 1, false) then
+        hasPackageText = true
+        break
+      end
+    end
+    assert_true(hasPackageText)
   end)
 end)

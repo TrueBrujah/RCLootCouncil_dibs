@@ -218,6 +218,20 @@ end
 local function count(value)
   if type(value) ~= "table" then return 0 end; local n = 0; for _ in pairs(value) do n = n + 1 end; return n
 end
+
+local function describeMapDiff(changes, additions, source, target, prefix)
+  if type(source) ~= "table" then return end
+  target = type(target) == "table" and target or {}
+  for key, value in pairs(source) do
+    local label = (prefix and prefix ~= "" and (prefix .. ".") or "") .. tostring(key)
+    if target[key] == nil then
+      additions[#additions + 1] = label
+    elseif tostring(target[key]) ~= tostring(value) then
+      changes[#changes + 1] = label
+    end
+  end
+end
+
 function M.Preview(text, targetScope, strategy, actor)
   local package, reason = type(text) == "table" and text or M.Decode(text); if not package then return nil, reason end
   targetScope = targetScope or package.scope; strategy = strategy or (package.scope == "full" and "append" or "merge")
@@ -227,7 +241,28 @@ function M.Preview(text, targetScope, strategy, actor)
   if not roleAllowed(targetScope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   if package.scope == "full" and package.sourceGuild ~= Dibs.currentGuildKey then return nil, "CROSS_GUILD_FULL_BLOCKED" end
   local db = Dibs.GetDB(); local current = targetScope == "local" and (db.settings or {}) or db
-  local preview = { previewId = Dibs.NewId("preview"), packageId = package.checksum, targetScope = targetScope, strategy = strategy, additions = count(package.payload), changes = {}, omissions = {}, conflicts = {}, migrations = {}, sensitiveFields = package.sensitivity == "sensitive" and { "player identities", "ledger history" } or {}, expectedLedgerImpact = { additions = package.scope == "full" and count(package.payload.ledger and package.payload.ledger.transactions or {}) or 0, duplicates = 0 }, createdAt = time(), actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), decision = "pending" }
+  local preview = { previewId = Dibs.NewId("preview"), packageId = package.checksum, targetScope = targetScope, strategy = strategy, additions = 0, changes = {}, omissions = {}, conflicts = {}, migrations = {}, sensitiveFields = package.sensitivity == "sensitive" and { "player identities", "ledger history" } or {}, expectedLedgerImpact = { additions = package.scope == "full" and count(package.payload.ledger and package.payload.ledger.transactions or {}) or 0, duplicates = 0 }, createdAt = time(), actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), decision = "pending" }
+  local newFields = {}
+  if targetScope == "local" then
+    describeMapDiff(preview.changes, newFields, package.payload.presentation, current, "presentation")
+    describeMapDiff(preview.changes, newFields, package.payload.profile, db.profiles and db.profiles["local"] and db.profiles["local"][characterKey()], "profile")
+  elseif targetScope == "guild" then
+    describeMapDiff(preview.changes, newFields, package.payload.settings, db.settings, "settings")
+    describeMapDiff(preview.changes, newFields, package.payload.rankRules, db.rankRules, "rankRules")
+    describeMapDiff(preview.changes, newFields, package.payload.seasons, db.seasons, "seasons")
+    describeMapDiff(preview.changes, newFields, package.payload.profiles, db.profiles and db.profiles.guild, "profiles")
+  else
+    local incoming = package.payload.ledger and package.payload.ledger.transactions or {}
+    local existing = db.ledger and db.ledger.transactions or {}
+    for id in pairs(incoming) do
+      if existing[id] then preview.expectedLedgerImpact.duplicates = preview.expectedLedgerImpact.duplicates + 1 end
+    end
+    for key in pairs(package.payload) do
+      if key ~= "ledger" then preview.changes[#preview.changes + 1] = tostring(key) end
+    end
+  end
+  preview.additions = #newFields + (preview.expectedLedgerImpact.additions or 0)
+  if package.sensitivity == "redacted" then preview.omissions[#preview.omissions + 1] = "sensitive fields (redacted by exporter)" end
   db.pendingImports = db.pendingImports or {}; db.pendingImports[preview.previewId] = { preview = preview, package = package }
   M.RecordAudit("import_preview", package.scope, true, nil, actor); return preview
 end

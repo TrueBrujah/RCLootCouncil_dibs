@@ -69,7 +69,7 @@ node node_modules/fengari-node-cli/src/lua-cli.js tests/run.lua
 git diff --check
 ```
 
-Expected baseline: **213 tests pass, 0 fail, 53 files**. Run this suite after
+Expected baseline: **221 tests pass, 0 fail, 54 files**. Run this suite after
 source changes and attach the output to the test record.
 
 ### F. Backups, profiles and data transfer
@@ -95,7 +95,7 @@ source changes and attach the output to the test record.
 
 - [ ] Install the stable ZIP on a clean character and confirm the addon loads.
 - [ ] Install the development ZIP separately and confirm the TOC version is
-      `0.4.0-dev`.
+      `0.5.1-dev`.
 - [ ] Confirm the stable package reports the current stable version.
 - [ ] Confirm SavedVariables survive `/reload`, relog, and client restart.
 - [ ] Open `/dibs options` and confirm the correct Dibs options category opens.
@@ -274,7 +274,7 @@ contexts, and the packaged addon loads from a clean installation.
 ## Feature 005: Character Eligibility and Main/Alt Governance
 
 The automated Character Eligibility implementation is available on `dev` in
-version `0.5.0-dev`. These manual Retail checks remain required before using it
+version `0.5.1-dev`. These manual Retail checks remain required before using it
 for production guild decisions:
 
 - [ ] Curio history is tracked across linked characters and configured difficulties.
@@ -296,7 +296,7 @@ Automated coverage is in `tests/unit/character_eligibility_spec.lua` and covers
 Catalyst exclusion, Curio/Tier Set separation, cross-character progress,
 idempotent acquisition records, lowest-progress Tier Set rounds, probation,
 bounded exceptions, and RCLootCouncil candidate projection. The full suite
-passed 219 tests with 0 failures on 2026-09-10; Retail visual and two-client
+passed 221 tests with 0 failures on 2026-09-10; Retail visual and two-client
 validation are still pending.
 
 ## Evidence record

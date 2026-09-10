@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.1-dev - 2026-09-10
+
+- Repair the modeless Data control center so Backups, Profiles and Import /
+  Export render into a persistent content panel instead of clearing navigation.
+- Show real table headers, dated preview details, operation errors and explicit
+  sensitive-export confirmation; add visible profile copy, rename, reset and
+  delete actions with scope checks.
+- Keep local backup/profile data usable for players while filtering guild-scoped
+  records to verified GM/Officer access.
+
 ## 0.5.0-dev - 2026-09-10
 
 - Add Character Eligibility for Curio (`TOKEN`) and class-based Tier Set

@@ -14,7 +14,7 @@ The feature tests cover Curio and Tier Set family separation, cross-difficulty p
 lowest-progress rounds, 4/4 completion, linked-character privacy, probation, authority,
 Catalyst exclusion, finalized-award idempotency, and standalone operation.
 
-Automated evidence recorded 2026-09-10: the full Fengari suite passed 219 tests in
+Automated evidence recorded 2026-09-10: the full Fengari suite passed 221 tests in
 54 files with 0 failures. Retail visual and two-client validation remains pending.
 
 ## Retail checks

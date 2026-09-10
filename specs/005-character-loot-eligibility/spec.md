@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-07
 
-**Status**: Implemented on `dev` in version `0.5.0-dev`; Retail visual and two-client validation remain scheduled.
+**Status**: Implemented on `dev` in version `0.5.1-dev`; Retail visual and two-client validation remain scheduled.
 
 **Input**: User description: "Track Curios and Tier Set loot across a player's linked characters, prevent duplicate priority across difficulties according to configurable guild rules, and support main/alt declarations with officer-approved main changes and a configurable probation period."
 
