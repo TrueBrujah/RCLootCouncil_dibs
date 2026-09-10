@@ -1,6 +1,9 @@
 local Dibs = _G.Dibs
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 
+-- Change log 0.3.12-dev (2026-09-09): use the RCLootCouncil history bucket
+-- (the awarded player) as the winner; preserve the original loot owner as
+-- separate evidence so traded awards cannot be attributed to the looter.
 -- Change log 0.3.5 (2026-09-09): keep personal Catalyst items outside
 -- the Dibs policy, resolve the broader RCLC Catalyst Items group by metadata,
 -- and classify class set tokens as TOKEN_SET.
@@ -2944,7 +2947,12 @@ local function historyItemId(row)
 end
 
 local function historyWinner(row, playerKey)
-  return row.winner or row.playerName or row.player or row.owner or row.recipient or playerKey
+  -- RCLootCouncil stores each history entry under the awarded player's name,
+  -- while `owner` is the original loot owner.  They are often different (for
+  -- example, a tradeable item can be looted by the ML and awarded to another
+  -- raider).  Treating `owner` as the winner makes every reconciliation row
+  -- point at the looter instead of the person who actually won the item.
+  return row.winner or row.winnerName or row.playerName or row.player or row.recipient or row.awardedTo or playerKey
 end
 
 local function historyStatus(row)
@@ -2992,6 +3000,7 @@ local function historyRowsFromDB(historyDB)
       historyEvent = row.event or row.eventName or row.sourceEvent,
       playerName = winner,
       winner = winner,
+      originalOwner = row.owner or row.originalOwner or row.lootOwner,
       itemID = itemID,
       itemLink = itemLink,
       itemName = row.itemName or row.name,
@@ -3011,7 +3020,12 @@ local function historyRowsFromDB(historyDB)
   if type(historyDB) ~= "table" then return rows end
   local isArray = #historyDB > 0
   if isArray then
-    for index, row in ipairs(historyDB) do add(row and (row.playerName or row.player or row.owner), index, row) end
+    for index, row in ipairs(historyDB) do
+      -- An array has no winner key to fall back to.  Keep the winner unknown
+      -- unless the record carries an explicit awarded-player field; `owner`
+      -- is the original looter and must never be promoted to winner.
+      add(nil, index, row)
+    end
   else
     for playerKey, entries in pairs(historyDB) do
       if type(entries) == "table" then
@@ -3192,6 +3206,7 @@ function Dibs.RCLootCouncil.ConfirmReconciliationCandidate(sessionId, candidateI
       sourceEvent = candidate.historyEvent or "RCMLAwardSuccess", accountingAction = "FinalizeAward",
       sessionId = candidate.sessionIdentity or "unknown", itemID = candidate.itemID or "unknown",
       itemLink = candidate.itemLink or "unknown", playerName = candidate.playerName or "unknown",
+      originalOwner = candidate.originalOwner or "unknown",
       responseText = candidate.responseText or "unknown", responseIdentity = candidate.responseIdentity or "unknown",
       finalStatus = candidate.sourceStatus or "unknown", difficulty = candidate.difficulty or "unknown", aliasUsed = candidate.aliasUsed or "unknown",
       targetSeasonId = session.targetSeasonId or "unknown", originalAwardTime = candidate.originalAwardTime or candidate.originalAwardTimeText or "unknown",

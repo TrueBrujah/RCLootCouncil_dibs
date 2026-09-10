@@ -49,6 +49,29 @@ describe("RCLootCouncil history reconciliation", function()
     assert_equal("old-1", tostring(evidence.historyRef):gsub("^history:", ""))
   end)
 
+  it("uses the history bucket player as winner instead of the original loot owner", function()
+    local history = {
+      ["Meatyfajita-Ysera"] = {
+        {
+          id = "1788395568-7",
+          itemID = 270167,
+          lootWon = "item:270167",
+          response = "Dibs",
+          status = "success",
+          owner = "Leetah-Durotan",
+          timestamp = 1788395568,
+        },
+      },
+    }
+    local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = history })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local rows = dibs.RCLootCouncil.GetHistoryRows({ limit = 10 })
+    assert_equal(1, #rows)
+    assert_equal("Meatyfajita-Ysera", rows[1].winner)
+    assert_equal("Meatyfajita-Ysera", rows[1].playerName)
+    assert_equal("Leetah-Durotan", rows[1].originalOwner)
+  end)
+
   it("requires acknowledgement and a reason for ambiguous manual rows", function()
     local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
       ["Tester-Realm"] = {

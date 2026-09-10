@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.12-dev - 2026-09-09
+
+- Fix RCLootCouncil history reconciliation attributing traded awards to the
+  original loot owner instead of the awarded player.
+- Preserve the original owner as separate Officer evidence.
+
 ## 0.3.11-dev - 2026-09-09
 
 - Implement GM/Officer-controlled RCLootCouncil history reconciliation with a

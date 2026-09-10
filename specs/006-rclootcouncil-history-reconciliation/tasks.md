@@ -8,7 +8,7 @@ description: "Task list for RCLootCouncil history reconciliation"
 
 **Input**: Design documents from `/specs/006-rclootcouncil-history-reconciliation/`
 
-**Status**: Implemented in 0.3.11-dev; full Lua suite passes.
+**Status**: Implemented in 0.3.12-dev; full Lua suite passes.
 
 ## Phase 1: Setup
 

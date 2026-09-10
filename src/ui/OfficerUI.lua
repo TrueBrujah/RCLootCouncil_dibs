@@ -1342,7 +1342,8 @@ local function createAceWindow()
           local detail = Dibs.AceGUI.AddSection(shell, scroll, "Selected history row", "RCMLAwardSuccess and FinalizeAward are displayed as evidence labels only; they are never executable controls.")
           Dibs.AceGUI.AddPropertyTable(shell, detail, {
             { "Classification", tostring(candidate.classification) }, { "History reference", tostring(candidate.historyRef or "Unavailable") },
-            { "Winner", tostring(candidate.playerName or "Unavailable") }, { "Item", tostring(candidate.itemLink or candidate.itemID or "Unavailable") },
+            { "Winner", tostring(candidate.playerName or "Unavailable") }, { "Original owner", tostring(candidate.originalOwner or "Unavailable") },
+            { "Item", tostring(candidate.itemLink or candidate.itemID or "Unavailable") },
             { "Original response", tostring(candidate.responseText or "Unavailable") }, { "Final status", tostring(candidate.sourceStatus or "Unavailable") },
             { "Reason", tostring(candidate.reasonCode or "ready") }, { "Evidence", tostring(candidate.evidenceId) },
           }, 240)
