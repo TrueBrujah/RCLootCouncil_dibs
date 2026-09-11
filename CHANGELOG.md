@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.8-dev - 2026-09-10
+
+- Filter RC History previews to exact configured DIB response aliases and show
+  how many unrelated history rows were hidden.
+- Replace guided/manual confirmation controls with one annotation field and a
+  single **Confirm as DIB** action.
+- Render missing or zero award dates as **Unknown date** instead of `0`.
+
 ## 0.5.7-dev - 2026-09-10
 
 - Keep native MSA dropdown and lib-st table hosts at their explicit size during

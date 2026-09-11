@@ -1303,7 +1303,7 @@ groups.officer.args.statistics.hidden = true
 groups.officer.args.intro = description(1, "Policies stay in Blizzard Settings. The separate Officer control center owns live searches, review, history reconciliation and statistics.")
 groups.officer.args.intro.order = 1.5
 groups.officer.args.reconciliation = { type = "group", name = "RC History", order = 4.5, args = {
-  intro = description(1, "Preview RCLootCouncil history and reconcile old DIB responses. Scanning is read-only; only a GM or Officer confirmation appends a ledger debit."),
+  intro = description(1, "Preview only the RCLootCouncil rows whose response matches an exact DIB alias. Add an annotation and use one confirmation action; only a GM or Officer confirmation appends a ledger debit."),
   aliases = { type = "input", name = "Exact DIB response aliases", desc = "Comma-separated aliases. Matching trims whitespace and ignores case; fuzzy matching is never used.", order = 2,
     get = function()
       local seasonId = getSelectedSeasonId()

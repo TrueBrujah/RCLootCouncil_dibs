@@ -11,18 +11,18 @@ history to the Dibs protected accounting path.
 | History row | Read-only normalization; retain original source values |
 | Explicit alias | Match after case/outer-whitespace normalization only |
 | Final status, item, winner, stable identity | Required for guided eligibility |
-| Missing/ambiguous evidence | `ambiguous` or `unsupported`; no guided confirmation |
-| Test/pending/rejected/non-Dibs row | Excluded or `rejected`; no debit |
+| Missing/ambiguous evidence | `ambiguous` or `unsupported`; the Officer must review it before confirmation |
+| Test/pending/rejected/non-Dibs row | Non-Dibs rows are hidden; matching rows with an invalid final status remain `rejected`; no debit |
 
-Preview returns scanned, eligible, already-accounted, ambiguous, rejected, and unsupported
-counts. It does not write a Dibs transaction.
+Preview returns matching DIB rows, source rows checked, hidden non-DIB rows, eligible,
+already-accounted, ambiguous, rejected, and unsupported counts. It does not write a Dibs
+transaction.
 
 ## Confirmation
 
 | Action | Preconditions | Effect |
 | --- | --- | --- |
-| Guided confirm | GM/Officer; all required evidence valid | One protected append-only historical consumption |
-| Manual confirm | GM/Officer; explicit acknowledgement and reason | One protected consumption linked to evidence |
+| Confirm as DIB | GM/Officer; annotation and required evidence | One protected append-only historical consumption linked to evidence |
 | Reject/defer | GM/Officer | Decision/audit entry only; no balance change |
 | Repeat confirm | Existing stable identity/evidence link | Return existing result; no second debit |
 

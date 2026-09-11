@@ -137,6 +137,7 @@ As a guild administrator, I want to choose which season and date range a confirm
 - **FR-021**: The feature MUST distinguish the RCLootCouncil source event (`RCMLAwardSuccess`) from the Dibs accounting action (`FinalizeAward`) in its evidence and audit views; these references MAY be displayed to Officers when available, but the UI MUST NOT expose either name as a directly executable action or permission grant.
 - **FR-022**: All buttons, questions, statuses, rejection reasons, evidence fields, and help text MUST be localized with English fallback and MUST explain whether the action changes the ledger or consumes a Dibs.
 - **FR-023**: Every search, alias change, confirmation, rejection, manual override, and correction MUST be attributable to the authorized actor and retained in an append-only audit trail.
+- **FR-024**: The Officer confirmation view MUST show only rows whose normalized response exactly matches a configured DIB alias and MUST provide one clear confirmation action that records an annotation and confirms the row as DIB.
 
 ### Key Entities
 

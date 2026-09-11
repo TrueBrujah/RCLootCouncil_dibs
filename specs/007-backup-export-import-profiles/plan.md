@@ -2,7 +2,7 @@
 
 **Branch**: `007-backup-export-import-profiles` | **Date**: 2026-09-09 | **Spec**: [spec.md](spec.md)
 
-**Status**: Implemented on `dev` in version 0.5.7-dev; Retail visual validation remains scheduled.
+**Status**: Implemented on `dev` in version 0.5.8-dev; Retail visual validation remains scheduled.
 
 ## Summary
 

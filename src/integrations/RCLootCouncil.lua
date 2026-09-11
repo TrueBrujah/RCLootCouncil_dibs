@@ -3074,15 +3074,23 @@ end
 local function historyTimestamp(row)
   for _, key in ipairs({ "originalAwardTime", "timestamp", "createdAt", "timeStamp", "dateValue" }) do
     local value = tonumber(row[key])
-    if value then return value end
+    -- Zero is a common placeholder in imported/legacy rows, not a real
+    -- award time. Keep it unavailable so the UI can show a useful label.
+    if value and value > 0 then return value end
   end
   return nil
 end
 
 local function historyTimestampText(row)
   local dateText, timeText = row.date or row.dateText or row.awardDate, row.clock or row.timeText or row.awardTime
+  dateText, timeText = trimHistoryText(dateText), trimHistoryText(timeText)
+  if dateText == "" then dateText = nil end
+  if timeText == "" then timeText = nil end
+  if dateText == "0" or tonumber(dateText) == 0 then dateText = nil end
+  if timeText == "0" or tonumber(timeText) == 0 then timeText = nil end
   if dateText and timeText then return trimHistoryText(dateText) .. " " .. trimHistoryText(timeText) end
   if dateText then return trimHistoryText(dateText) end
+  if timeText then return timeText end
   return nil
 end
 
@@ -3228,18 +3236,33 @@ function Dibs.RCLootCouncil.GetHistoryRows(options)
   local maxRows = math.floor(tonumber(options.limit) or 200)
   if maxRows < 1 then maxRows = 1 end
   if maxRows > 500 then maxRows = 500 end
+  local aliasSet
+  if options.responseAliases ~= nil then
+    aliasSet = {}
+    for _, alias in ipairs(splitAliases(options.responseAliases)) do aliasSet[alias] = true end
+  end
   local filtered = {}
+  local hiddenNonDib = 0
+  local scanned = 0
   local fromTime, toTime = tonumber(options.fromTime), tonumber(options.toTime)
   for _, sourceRow in ipairs(rows) do
     local stamp = sourceRow.originalAwardTime
     if (not fromTime or not stamp or stamp >= fromTime) and (not toTime or not stamp or stamp <= toTime) then
-      local row = copyHistoryRow(sourceRow)
-      row.itemLink, row.itemName = historyItemInfo(row, row.itemID, row.itemLink)
-      filtered[#filtered + 1] = row
-      if #filtered >= maxRows then break end
+      scanned = scanned + 1
+      local normalizedResponse = Dibs.RCLootCouncil.NormalizeResponseAlias(sourceRow.responseText)
+      if aliasSet and not aliasSet[normalizedResponse] then
+        hiddenNonDib = hiddenNonDib + 1
+      elseif #filtered < maxRows then
+        local row = copyHistoryRow(sourceRow)
+        row.itemLink, row.itemName = historyItemInfo(row, row.itemID, row.itemLink)
+        filtered[#filtered + 1] = row
+      end
     end
   end
-  return filtered
+  -- Keep the historical second return value reserved for an error reason for
+  -- callers that already consume this adapter. Search metadata is additive in
+  -- the third return value.
+  return filtered, nil, { scanned = scanned, hiddenNonDib = hiddenNonDib }
 end
 
 local function classifyHistoryRow(row, aliases, seasonId, identityMap)
@@ -3287,10 +3310,19 @@ function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
   local scanOptions = {}
   for key, value in pairs(options) do scanOptions[key] = value end
   scanOptions.actor = actor
-  local rows, reason = Dibs.RCLootCouncil.GetHistoryRows(scanOptions)
+  -- Apply the exact alias filter before the bounded result limit. This keeps
+  -- unrelated Need/Transmog/Disenchant rows out of the reconciliation list
+  -- and ensures the requested limit applies to actual DIB candidates.
+  scanOptions.responseAliases = aliases
+  local rows, reason, metadata = Dibs.RCLootCouncil.GetHistoryRows(scanOptions)
   if not rows then return nil, reason or "HISTORY_UNAVAILABLE" end
   local candidates = {}
-  local counts = { scanned = #rows, eligible = 0, already_accounted = 0, ambiguous = 0, rejected = 0, unsupported = 0 }
+  local counts = {
+    scanned = #rows,
+    sourceScanned = tonumber(metadata and metadata.scanned) or #rows,
+    hiddenNonDib = tonumber(metadata and metadata.hiddenNonDib) or 0,
+    eligible = 0, already_accounted = 0, ambiguous = 0, rejected = 0, unsupported = 0,
+  }
   local identityMap = {}
   for _, row in ipairs(rows) do
     local response = Dibs.RCLootCouncil.NormalizeResponseAlias(row.responseText)

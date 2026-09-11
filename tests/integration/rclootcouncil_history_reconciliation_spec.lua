@@ -15,9 +15,12 @@ describe("RCLootCouncil history reconciliation", function()
       seasonId = seasonId, aliases = "DIB", mode = "guided", limit = 20,
     }, nil)
     assert_true(session ~= nil, reason)
-    assert_equal(2, session.counts.scanned)
+    assert_equal(1, session.counts.scanned)
+    assert_equal(2, session.counts.sourceScanned)
+    assert_equal(1, session.counts.hiddenNonDib)
     assert_equal(1, session.counts.eligible)
-    assert_equal(1, session.counts.rejected)
+    assert_equal(0, session.counts.rejected)
+    assert_equal(1, #session.candidates)
     assert_equal("DIB", session.candidates[1].aliasUsed)
     assert_equal(1, #dibs.Ledger.GetAllTransactions()) -- season allocation only
   end)
@@ -92,6 +95,18 @@ describe("RCLootCouncil history reconciliation", function()
     rows[1].itemName = "changed by the preview"
     local secondRows = dibs.RCLootCouncil.GetHistoryRows({ limit = 10 })
     assert_equal("Wavecaller's Seastone", secondRows[1].itemName)
+  end)
+
+  it("keeps zero award timestamps unavailable", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
+      ["Tester-Realm"] = {
+        { id = "zero-time", itemID = 19019, lootWon = "item:19019", response = "DIB", status = "success", timestamp = 0, date = "0" },
+      },
+    } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local rows = dibs.RCLootCouncil.GetHistoryRows({ limit = 10 })
+    assert_nil(rows[1].originalAwardTime)
+    assert_nil(rows[1].originalAwardTimeText)
   end)
 
   it("requires acknowledgement and a reason for ambiguous manual rows", function()
