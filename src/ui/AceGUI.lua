@@ -201,18 +201,46 @@ local function releaseMSAControls(widget, seen)
     end
     widget._dibsScrollingTable = nil
   end
+  -- AceGUI reuses SimpleGroup instances.  Restore the widget's original
+  -- width handler before returning a table host to the pool; otherwise a
+  -- later, unrelated SimpleGroup keeps the previous table closure and can
+  -- reflow a released native frame.
+  if widget._dibsTableWidthHandler and widget.OnWidthSet == widget._dibsTableWidthHandler then
+    widget.OnWidthSet = widget._dibsBaseOnWidthSet
+  end
+  widget._dibsTableWidthHandler = nil
+  widget._dibsBaseOnWidthSet = nil
   for _, child in ipairs(widget.children or {}) do
     releaseMSAControls(child, seen)
   end
 end
 
 function Adapter.Clear(container)
+  -- Releasing children changes frame parents and sizes.  Pause the container
+  -- while its array is being emptied so an OnSizeChanged callback cannot run
+  -- List against the half-released array (which otherwise exposes a nil child
+  -- in ElvUI's AceGUI implementation).
+  local paused = container and type(container.PauseLayout) == "function"
+  if paused then container:PauseLayout() end
   releaseMSAControls(container)
-  if container and type(container.ReleaseChildren) == "function" then
+  local children = container and container.children
+  -- Clear the live array before releasing each child.  Retail AceGUI can
+  -- synchronously resize a parent while a child is detached; leaving the
+  -- half-cleared array visible lets List observe a nil slot during that
+  -- callback.  The reduced test adapter has no child:Release method, so keep
+  -- its native ReleaseChildren fallback.
+  if type(children) == "table" and type(children[1]) == "table"
+    and type(children[1].Release) == "function" then
+    container.children = {}
+    for _, child in ipairs(children) do
+      if child and not child.isQueuedForRelease then child:Release() end
+    end
+  elseif container and type(container.ReleaseChildren) == "function" then
     container:ReleaseChildren()
   elseif container and type(container.children) == "table" then
     container.children = {}
   end
+  if paused then container:ResumeLayout() end
 end
 
 function Adapter.SetText(widget, text)
@@ -380,6 +408,10 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   -- one row for the header in the host's allocation as well.
   call(host, "SetHeight", tableHeight + rowHeight)
   call(host, "SetLayout", "Fill")
+  -- lib-st owns a native frame rather than an AceGUI child.  An empty Fill
+  -- group otherwise auto-adjusts to zero during a parent reflow, moving the
+  -- next control over the table and producing the intermittent narrow layout.
+  call(host, "SetAutoAdjustHeight", false)
   -- Give the header the same readable panel treatment as the rows. The
   -- embedded lib-st frame supplies its own backdrop for the body; this small
   -- background fills the reserved header band without changing AceGUI's
@@ -468,9 +500,11 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   -- final width. Reapply the original column proportions whenever AceGUI
   -- measures the host, otherwise the first 300px default becomes permanent
   -- and date/item text is needlessly wrapped in every window.
-  local baseOnWidthSet = host.OnWidthSet
-  local function applyTableWidth(width)
-    if baseOnWidthSet then baseOnWidthSet(host, width) end
+  local baseOnWidthSet = host._dibsBaseOnWidthSet or host.OnWidthSet
+  local function applyTableWidth(_, width)
+    if type(baseOnWidthSet) == "function" and host.content and tonumber(width) then
+      pcall(baseOnWidthSet, host, tonumber(width))
+    end
     local available = tonumber(width)
     if not available or available <= 20 then return end
     available = math.max(240, available - 12)
@@ -485,13 +519,15 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     st._dibsUpdateHeaders()
     if st.frame and st.frame.SetWidth then st.frame:SetWidth(used) end
   end
+  host._dibsBaseOnWidthSet = baseOnWidthSet
+  host._dibsTableWidthHandler = applyTableWidth
   host.OnWidthSet = applyTableWidth
   if st.frame then
     st.frame:ClearAllPoints()
     -- Keep the lib-st header inside the AceGUI host instead of letting it
     -- float into the heading/control row above the table.
     st.frame:SetPoint("TOPLEFT", host.frame, "TOPLEFT", 0, -rowHeight)
-    applyTableWidth(host.frame.GetWidth and host.frame:GetWidth() or desiredWidth)
+    applyTableWidth(host, host.frame.GetWidth and host.frame:GetWidth() or desiredWidth)
   end
 
   local function sortColumn(index)
@@ -707,6 +743,9 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
   call(host, "SetFullWidth", true)
   call(host, "SetHeight", 44)
   call(host, "SetLayout", "Fill")
+  -- The MSA dropdown is attached directly to this host.  Preserve its
+  -- explicit height when AceGUI lays out an empty Fill group.
+  call(host, "SetAutoAdjustHeight", false)
 
   local hostFrame = host.frame
   local labelText = hostFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

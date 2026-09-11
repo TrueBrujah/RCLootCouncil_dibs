@@ -928,22 +928,30 @@ local function createAceWindow()
     if optionGroup and Dibs.AceGUI.RenderOptionsGroup then
       self.lootTypeControls = self.activeTab == "integration" and {} or nil
       local controlMap = self.lootTypeControls
+      -- Overview is intentionally short; render it directly in the TreeGroup
+      -- content so a fixed 680px scroll frame does not push its launch actions
+      -- to the bottom of a mostly empty page. Other canonical option pages keep
+      -- their bounded scroll frame for long settings lists.
+      local renderedTarget
       Dibs.AceGUI.RenderOptionsGroup(shell, tabs, optionGroup, {
         controlMap = controlMap,
+        scroll = self.activeTab ~= "overview",
+        onRendered = function(target) renderedTarget = target end,
         onChanged = function()
           self:Refresh()
         end,
       })
+      local actionParent = renderedTarget or tabs
       if self.activeTab == "overview" then
         local officerRoot = optionsTable and optionsTable.args and optionsTable.args.dibsSettings
           and optionsTable.args.dibsSettings.args and optionsTable.args.dibsSettings.args.officer
         local openLogs = officerRoot and officerRoot.args and officerRoot.args.openLogs
         if Dibs.RCOptions and Dibs.RCOptions.Open then
-          Dibs.AceGUI.AddButton(shell, tabs, "Open full options", function() Dibs.RCOptions.Open() end, 180)
+          Dibs.AceGUI.AddButton(shell, actionParent, "Open full options", function() Dibs.RCOptions.Open() end, 180)
         end
         if openLogs then
-          Dibs.AceGUI.AddHeader(shell, tabs, "Officer management", "Open the detailed player, Pre-Dib and history logs.")
-          Dibs.AceGUI.AddButton(shell, tabs, tostring(type(openLogs.name) == "function" and openLogs.name() or openLogs.name or "Open logs window"), function()
+          Dibs.AceGUI.AddHeader(shell, actionParent, "Officer management", "Open the detailed player, Pre-Dib and history logs.")
+          Dibs.AceGUI.AddButton(shell, actionParent, tostring(type(openLogs.name) == "function" and openLogs.name() or openLogs.name or "Open logs window"), function()
             if type(openLogs.func) == "function" then pcall(openLogs.func) end
           end, 220)
         end
@@ -2281,9 +2289,10 @@ function Dibs.OfficerUI.Show()
   else
     frame:SetSize(800, 720)
   end
+  local wasShown = frame:IsShown()
   frame:Show()
   frame:Raise()
-  if frame.Refresh then
+  if wasShown and frame.Refresh then
     frame:Refresh()
   end
 
@@ -2304,6 +2313,7 @@ function Dibs.OfficerUI.Toggle(forceShow)
   end
 
   local frame = Dibs.OfficerUI.CreateWindow()
+  local wasShown = frame:IsShown()
   if forceShow then
     frame:Show()
     frame:Raise()
@@ -2314,7 +2324,7 @@ function Dibs.OfficerUI.Toggle(forceShow)
     frame:Raise()
   end
 
-  if frame:IsShown() and frame.Refresh then
+  if frame:IsShown() and wasShown and frame.Refresh then
     frame:Refresh()
   end
 

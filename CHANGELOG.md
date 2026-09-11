@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.7-dev - 2026-09-10
+
+- Keep native MSA dropdown and lib-st table hosts at their explicit size during
+  AceGUI reflow, preventing intermittent overlaps, narrow tables and large
+  empty gaps across Data, Player and Officer pages.
+- Restore pooled table width handlers and pause child release during refresh so
+  resizing and tab changes do not reflow released widgets.
+- Keep the short Officer Overview actions with its content and avoid a second
+  refresh when a hidden Player or Officer window is shown.
+
 ## 0.5.6-dev - 2026-09-10
 
 - Apply the same safe table sizing and vertical section layout to Player,

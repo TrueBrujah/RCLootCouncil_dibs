@@ -964,9 +964,13 @@ end
 
 function Dibs.PlayerUI.Show()
   local frame = Dibs.PlayerUI.CreateWindow()
+  local wasShown = frame:IsShown()
   frame:Show()
   frame:Raise()
-  if frame.Refresh then
+  -- OnShow already refreshes a hidden AceGUI window.  Only refresh an
+  -- already-visible window here; doing both can clear a TreeGroup while AceGUI
+  -- is still laying out the first refresh.
+  if wasShown and frame.Refresh then
     frame:Refresh()
   end
 
@@ -977,6 +981,7 @@ end
 
 function Dibs.PlayerUI.Toggle(forceShow)
   local frame = Dibs.PlayerUI.CreateWindow()
+  local wasShown = frame:IsShown()
   if forceShow then
     frame:Show()
     frame:Raise()
@@ -987,7 +992,7 @@ function Dibs.PlayerUI.Toggle(forceShow)
     frame:Raise()
   end
 
-  if frame:IsShown() and frame.Refresh then
+  if frame:IsShown() and wasShown and frame.Refresh then
     frame:Refresh()
   end
 
