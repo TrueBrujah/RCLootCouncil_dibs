@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.10-dev - 2026-09-11
+
+- Keep full date and time precision in Officer, Player, Data and Logs history displays.
+- Move historical DIB transfer evidence and confirmation into a separate resizable window so the RC History table stays usable.
+- Stabilize shared Officer option pages inside a dedicated stacked content root so navigation changes keep their controls visible.
+
 ## 0.5.9-dev - 2026-09-11
 
 - Replace the RC History action menu with a clear **Transfer** button and

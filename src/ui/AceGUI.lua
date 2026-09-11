@@ -953,6 +953,18 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   if not shell or not parent or type(group) ~= "table" then return false end
   context = context or {}
 
+  -- TreeGroup's content frame is also responsible for the navigation layout.
+  -- Keep each options page inside one stacked root so a long ScrollFrame cannot
+  -- compete with the heading or leave the selected page looking empty after a
+  -- navigation refresh on Retail's AceGUI fork.
+  local page = Adapter.Create(shell, "SimpleGroup", parent)
+  if page then
+    call(page, "SetFullWidth", true)
+    call(page, "SetLayout", "List")
+  else
+    page = parent
+  end
+
   local function evaluate(value, ...)
     if type(value) == "function" then
       local ok, result = pcall(value, ...)
@@ -1108,15 +1120,15 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
 
   local groupTitle = evaluate(group.name)
   if groupTitle and tostring(groupTitle) ~= "" then
-    Adapter.AddHeading(shell, parent, tostring(groupTitle))
+    Adapter.AddHeading(shell, page, tostring(groupTitle))
   end
 
   -- Long pages such as Rank Rules and Settings need their own scroll frame;
   -- TreeGroup only scrolls the navigation column.  Fall back to the content
   -- panel when an older AceGUI build does not provide ScrollFrame.
-  local target = parent
+  local target = page
   if context.scroll ~= false then
-    target = Adapter.AddScrollableList(shell, parent, context.pageHeight or 680) or parent
+    target = Adapter.AddScrollableList(shell, page, context.pageHeight or 680) or page
   end
   render(group.args, target)
   if context.onRendered then context.onRendered(target) end

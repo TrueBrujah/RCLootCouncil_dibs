@@ -109,6 +109,17 @@ describe("RCLootCouncil history reconciliation", function()
     assert_nil(rows[1].originalAwardTimeText)
   end)
 
+  it("formats numeric history timestamps with date and seconds", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
+      ["Tester-Realm"] = {
+        { id = "precise-time", itemID = 19019, lootWon = "item:19019", response = "DIB", status = "awarded", timestamp = 1788395568 },
+      },
+    } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local rows = dibs.RCLootCouncil.GetHistoryRows({ limit = 10 })
+    assert_equal("2026-09-06 12:00:00", rows[1].originalAwardTimeText)
+  end)
+
   it("infers a reviewable final state from dated history and keeps difficulty variants separate", function()
     local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
       ["Heroic-Winner"] = {
@@ -130,6 +141,8 @@ describe("RCLootCouncil history reconciliation", function()
     assert_true(session.candidates[1].relatedDifficulties:find("Normal", 1, true) ~= nil)
     assert_equal("Dibs", session.candidates[1].awardReason)
     assert_equal(3, session.candidates[1].voteCount)
+    assert_equal("2026/09/09 22:14", session.candidates[1].originalAwardTimeText)
+    assert_equal("2026/09/02 21:05", session.candidates[2].originalAwardTimeText)
     local strictSession = dibs.RCLootCouncil.CreateReconciliationSession({ aliases = { "DIB" }, inferFinalStatus = false }, nil)
     assert_equal("ambiguous", strictSession.candidates[1].classification)
   end)
@@ -161,5 +174,44 @@ describe("RCLootCouncil history reconciliation", function()
     assert_true(frame ~= nil)
     frame.SelectTab("reconciliation")
     assert_equal("reconciliation", frame.activeTab)
+  end)
+
+  it("opens the historical transfer review in a separate window", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
+      ["Tester-Realm"] = {
+        { id = "transfer-1", itemID = 19019, lootWon = "item:19019", response = "DIB", status = "awarded", date = "2026/09/09", time = "22:14" },
+      },
+    } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true }, withAce3 = true })
+    local frame = dibs.OfficerUI.CreateWindow()
+    frame.SelectTab("reconciliation")
+
+    local function findWidget(widget, kind, text)
+      if widget and widget.kind == kind and (widget.text == text or widget.label == text) then return widget end
+      for _, child in ipairs(widget and widget.children or {}) do
+        local found = findWidget(child, kind, text)
+        if found then return found end
+      end
+    end
+
+    local tree = frame.aceTabs
+    local search = findWidget(tree, "Button", "Search history (preview)")
+    assert_not_nil(search)
+    search.callbacks.OnClick()
+    local transfer = findWidget(tree, "Button", "Transfer")
+    assert_not_nil(transfer)
+    transfer.callbacks.OnClick()
+    local transferWindow
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "Frame" and widget.title == "RCLootCouncil - Dibs | Transfer" then transferWindow = widget break end
+    end
+    assert_not_nil(transferWindow)
+    local confirm = findWidget(transferWindow, "Button", "Confirm as DIB")
+    assert_not_nil(confirm)
+    assert_true(confirm.disabled)
+    local note = findWidget(transferWindow, "EditBox", "Transfer note (required)")
+    assert_not_nil(note)
+    note.callbacks.OnTextChanged(nil, nil, "Verified against the RC vote record")
+    assert_false(confirm.disabled)
   end)
 end)

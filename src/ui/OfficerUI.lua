@@ -153,7 +153,7 @@ end
 local function formatHistoryDate(timestamp, fallback)
   local value = tonumber(timestamp)
   if type(date) == "function" and value and value > 0 then
-    local ok, formatted = pcall(date, "%Y-%m-%d %H:%M", value)
+    local ok, formatted = pcall(date, "%Y-%m-%d %H:%M:%S", value)
     if ok and formatted then
       return tostring(formatted)
     end
@@ -887,6 +887,96 @@ local function createAceWindow()
   frame.rankRowCount = 3
   frame.inputBoundSeasonId = nil
 
+  local historyTransferShell
+  local historyTransferRoot
+
+  local function historyTransferDetails(candidate)
+    return {
+      { "Classification", tostring(candidate.classification or "Unavailable") },
+      { "History reference", tostring(candidate.historyRef or "Unavailable") },
+      { "Winner", tostring(candidate.playerName or "Unavailable") },
+      { "Original owner", tostring(candidate.originalOwner or "Unavailable") },
+      { "Item", tostring(candidate.itemLink or candidate.itemID or "Unavailable") },
+      { "Original award time", formatHistoryDate(candidate.originalAwardTime, candidate.originalAwardTimeText) },
+      { "Difficulty", tostring(candidate.difficultyText or candidate.difficulty or "Unavailable") },
+      { "Instance / encounter", tostring(candidate.instanceName or "Unavailable") .. " / " .. tostring(candidate.encounterName or "Unavailable") },
+      { "Votes recorded", tostring(candidate.voteCount or "Unavailable") },
+      { "Related rows for this item", tostring(candidate.relatedHistoryCount or 0) },
+      { "Related winners", tostring(candidate.relatedWinners or "None") },
+      { "Difficulty variants", tostring(candidate.relatedDifficulties or candidate.difficultyText or candidate.difficulty or "Unavailable") },
+      { "Original response", tostring(candidate.responseText or "Unavailable") },
+      { "Final status", tostring(candidate.sourceStatus or "Unavailable") },
+      { "RCLootCouncil award reason", tostring(candidate.awardReason or "Unavailable") },
+      { "Review result", historyReviewLabel(candidate) .. " (" .. tostring(candidate.reasonCode or "ready") .. ")" },
+      { "Evidence", tostring(candidate.evidenceId or "Unavailable") },
+    }
+  end
+
+  local function createHistoryTransferShell()
+    if historyTransferShell and historyTransferShell.frame and historyTransferShell.window then
+      return historyTransferShell
+    end
+    historyTransferShell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Transfer", 720, 620, { "CENTER", 0, 0 })
+    if not historyTransferShell then return nil end
+    historyTransferRoot = Dibs.AceGUI.Create(historyTransferShell, "SimpleGroup", historyTransferShell.window)
+    if not historyTransferRoot then return nil end
+    if historyTransferRoot.SetFullWidth then historyTransferRoot:SetFullWidth(true) end
+    if historyTransferRoot.SetFullHeight then historyTransferRoot:SetFullHeight(true) end
+    if historyTransferRoot.SetLayout then historyTransferRoot:SetLayout("List") end
+    return historyTransferShell
+  end
+
+  local function openHistoryTransfer(session, candidate)
+    if not session or not candidate then return false end
+    local transferShell = createHistoryTransferShell()
+    if not transferShell or not historyTransferRoot then return false end
+    Dibs.AceGUI.Clear(historyTransferRoot)
+    frame.reconSelectedCandidate = candidate.candidateId
+    frame.reconReason = ""
+
+    local page = Dibs.AceGUI.AddScrollableList(transferShell, historyTransferRoot, 540) or historyTransferRoot
+    Dibs.AceGUI.AddHeading(transferShell, page, "Historical DIB transfer")
+    Dibs.AceGUI.AddHeader(transferShell, page, "Review before recording", "The values below come from the read-only RCLootCouncil history and are saved with the accounting evidence.")
+    Dibs.AceGUI.AddPropertyTable(transferShell, page, historyTransferDetails(candidate), 270)
+    if Dibs.EncounterJournal and type(Dibs.EncounterJournal.OpenLootItem) == "function" then
+      Dibs.AceGUI.AddButton(transferShell, page, "Open in Adventure Guide", function()
+        Dibs.EncounterJournal.OpenLootItem(candidate)
+      end, 210)
+    end
+    Dibs.AceGUI.AddLabel(transferShell, page, "Add the accounting note, verify it below, then confirm the transfer.", true)
+    local confirm
+    local note = Dibs.AceGUI.AddEditBox(transferShell, page, "Transfer note (required)", function(value)
+      frame.reconReason = value or ""
+      if confirm then
+        Dibs.AceGUI.SetDisabled(confirm, (candidate.classification ~= "eligible" and candidate.classification ~= "ambiguous") or trimText(frame.reconReason) == "")
+      end
+    end, 580)
+    setControlText(note, frame.reconReason)
+    local actions = Dibs.AceGUI.AddInlineGroup(transferShell, page)
+    confirm = Dibs.AceGUI.AddButton(transferShell, actions, "Confirm as DIB", function()
+      local noteText = trimText(frame.reconReason)
+      if noteText == "" then return end
+      local result, decision = Dibs.RCLootCouncil.ConfirmReconciliationCandidate(session.sessionId, candidate.candidateId, {
+        mode = "manual", reason = noteText, confirmation = true, manualAcknowledgement = true,
+      }, nil)
+      frame.reconStatus = result and (result.duplicate and "Already accounted; no second debit was appended." or "Historical Dibs recorded.")
+        or ("Unable to confirm: " .. tostring(decision and decision.reasonCode or result and result.reasonCode or "unknown"))
+      if historyTransferShell and historyTransferShell.window then historyTransferShell.window:Hide() end
+      frame:Refresh()
+    end, 170)
+    local reject = Dibs.AceGUI.AddButton(transferShell, actions, "Reject row", function()
+      local result = Dibs.RCLootCouncil.RejectReconciliationCandidate(session.sessionId, candidate.candidateId, frame.reconReason, nil)
+      frame.reconStatus = result and "History row rejected; no ledger change was made." or "Unable to reject history row."
+      if historyTransferShell and historyTransferShell.window then historyTransferShell.window:Hide() end
+      frame:Refresh()
+    end, 120)
+    Dibs.AceGUI.SetDisabled(confirm, (candidate.classification ~= "eligible" and candidate.classification ~= "ambiguous") or trimText(frame.reconReason) == "")
+    Dibs.AceGUI.AddLabel(transferShell, page, "The note is stored in the audit trail with the exact date, time, response, difficulty and vote evidence.", true)
+    transferShell.window:Show()
+    if transferShell.window.DoLayout then transferShell.window:DoLayout() end
+    return true
+  end
+
   frame.SetStatus = function(self, message)
     self.statusMessage = tostring(message or "")
     Dibs.Message(self.statusMessage)
@@ -1476,21 +1566,18 @@ local function createAceWindow()
       end
       if #candidateRows == 0 then candidateRows[1] = { "", "No history rows", "", "", "", "", "" } end
       Dibs.AceGUI.AddTable(shell, scroll, {
-        { title = "Date", width = 145, tooltip = "Original RCLootCouncil award time." },
-        { title = "Class", width = 105, tooltip = "Dibs reconciliation classification." },
-        { title = "Winner", width = 135, tooltip = "Character recorded as the awarded player." },
-        { title = "Item", width = 210, tooltip = "Rich RCLootCouncil item link." },
-        { title = "Response", width = 125, tooltip = "Original RCLootCouncil response." },
-        { title = "Reason", width = 175, tooltip = "RCLootCouncil award reason when available; otherwise the review result." },
-        { title = "Transfer", width = 95, tooltip = "Review the row, add a note and transfer it into Dibs." },
+        { title = "Date / time", width = 180, tooltip = "Original RCLootCouncil award date and time." },
+        { title = "Class", width = 60, tooltip = "Dibs reconciliation classification." },
+        { title = "Winner", width = 100, tooltip = "Character recorded as the awarded player." },
+        { title = "Item", width = 170, tooltip = "Rich RCLootCouncil item link." },
+        { title = "Response", width = 75, tooltip = "Original RCLootCouncil response." },
+        { title = "Reason", width = 95, tooltip = "RCLootCouncil award reason when available; otherwise the review result." },
+        { title = "Transfer", width = 80, tooltip = "Review the row, add a note and transfer it into Dibs." },
       }, candidateRows, 250, function(row)
         if not row.candidate then return nil end
         return { text = "Transfer", callback = function()
-          if tostring(self.reconSelectedCandidate or "") ~= tostring(row.candidate.candidateId) then
-            self.reconReason = ""
-          end
           self.reconSelectedCandidate = row.candidate.candidateId
-          self:Refresh()
+          openHistoryTransfer(session, row.candidate)
         end }
       end, { disableContextMenu = true })
       local pageControls = Dibs.AceGUI.AddInlineGroup(shell, scroll)
@@ -1506,58 +1593,6 @@ local function createAceWindow()
       end, 70)
       Dibs.AceGUI.SetDisabled(previousPage, self.reconPage <= 1)
       Dibs.AceGUI.SetDisabled(nextPage, self.reconPage >= pageCount)
-      if self.reconSelectedCandidate then
-        local candidate
-        for _, row in ipairs(session.candidates or {}) do if tostring(row.candidateId) == tostring(self.reconSelectedCandidate) then candidate = row break end end
-        if candidate then
-          local detail = Dibs.AceGUI.AddSection(shell, scroll, "Selected history row", "RCMLAwardSuccess and FinalizeAward are displayed as evidence labels only; they are never executable controls.")
-          Dibs.AceGUI.AddPropertyTable(shell, detail, {
-            { "Classification", tostring(candidate.classification) }, { "History reference", tostring(candidate.historyRef or "Unavailable") },
-            { "Winner", tostring(candidate.playerName or "Unavailable") }, { "Original owner", tostring(candidate.originalOwner or "Unavailable") },
-            { "Item", tostring(candidate.itemLink or candidate.itemID or "Unavailable") },
-            { "Original award time", formatHistoryDate(candidate.originalAwardTime, candidate.originalAwardTimeText) },
-            { "Difficulty", tostring(candidate.difficultyText or candidate.difficulty or "Unavailable") },
-            { "Instance / encounter", tostring(candidate.instanceName or "Unavailable") .. " / " .. tostring(candidate.encounterName or "Unavailable") },
-            { "Votes recorded", tostring(candidate.voteCount or "Unavailable") },
-            { "Related rows for this item", tostring(candidate.relatedHistoryCount or 0) },
-            { "Related winners", tostring(candidate.relatedWinners or "None") },
-            { "Difficulty variants", tostring(candidate.relatedDifficulties or candidate.difficultyText or candidate.difficulty or "Unavailable") },
-            { "Original response", tostring(candidate.responseText or "Unavailable") }, { "Final status", tostring(candidate.sourceStatus or "Unavailable") },
-            { "RCLootCouncil award reason", tostring(candidate.awardReason or "Unavailable") },
-            { "Review result", historyReviewLabel(candidate) .. " (" .. tostring(candidate.reasonCode or "ready") .. ")" }, { "Evidence", tostring(candidate.evidenceId) },
-          }, 240)
-          if Dibs.EncounterJournal and type(Dibs.EncounterJournal.OpenLootItem) == "function" then
-            Dibs.AceGUI.AddButton(shell, detail, "Open in Adventure Guide", function()
-              local opened, openReason = Dibs.EncounterJournal.OpenLootItem(candidate)
-              self.reconStatus = opened and "Adventure Guide opened for this item." or ("Unable to open Adventure Guide: " .. tostring(openReason or "unknown"))
-              self:Refresh()
-            end, 190)
-          end
-          self.reconReason = self.reconReason or ""
-          local reason = Dibs.AceGUI.AddEditBox(shell, detail, "Transfer note (required)", function(value) self.reconReason = value or "" end, 500)
-          setControlText(reason, self.reconReason)
-          local actions = Dibs.AceGUI.AddInlineGroup(shell, detail)
-          local confirm = Dibs.AceGUI.AddButton(shell, actions, "Confirm as DIB", function()
-            if trimText(self.reconReason) == "" then
-              self.reconStatus = "Add an annotation before confirming this row as a DIB."
-              self:Refresh()
-              return
-            end
-            local result, decision = Dibs.RCLootCouncil.ConfirmReconciliationCandidate(session.sessionId, candidate.candidateId, {
-              mode = "manual", reason = self.reconReason, confirmation = true, manualAcknowledgement = true,
-            }, nil)
-            self.reconStatus = result and (result.duplicate and "Already accounted; no second debit was appended." or "Historical Dibs recorded.") or ("Unable to confirm: " .. tostring(decision and decision.reasonCode or result and result.reasonCode or "unknown"))
-            self:Refresh()
-          end, 130)
-          local reject = Dibs.AceGUI.AddButton(shell, actions, "Reject row", function()
-            local result = Dibs.RCLootCouncil.RejectReconciliationCandidate(session.sessionId, candidate.candidateId, self.reconReason, nil)
-            self.reconStatus = result and "History row rejected; no ledger change was made." or "Unable to reject history row."
-            self:Refresh()
-          end, 110)
-          Dibs.AceGUI.SetDisabled(confirm, (candidate.classification ~= "eligible" and candidate.classification ~= "ambiguous") or trimText(self.reconReason) == "")
-          Dibs.AceGUI.AddLabel(shell, detail, "Add a note, then confirm that this history row is a DIB award. This records one Dibs debit.", true)
-        end
-      end
       return
     end
 

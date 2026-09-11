@@ -371,4 +371,15 @@ describe("Player and officer option visibility", function()
     assert_not_nil(groups.officer.args.preDibs)
     assert_true(groups.officer.args.openWindow.name():find("Open officer window", 1, true) ~= nil)
   end)
+
+  it("keeps every Officer navigation page populated after switching tabs", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    local frame = dibs.OfficerUI.CreateWindow()
+    local pages = { "overview", "disputes", "reconciliation", "seasons", "ranks", "settings", "preDibs", "eligibility", "announcements", "developer", "integration", "debug" }
+    for _, page in ipairs(pages) do
+      frame.SelectTab(page)
+      assert_true(#(frame.aceTabs.children or {}) > 1, "Officer page has no content: " .. page)
+    end
+  end)
 end)

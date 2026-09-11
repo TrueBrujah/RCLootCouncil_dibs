@@ -3105,13 +3105,40 @@ local function historyTimestamp(row)
   return nil
 end
 
+local function formatHistoryTimestamp(value, format)
+  local numeric = tonumber(value)
+  if not numeric or numeric <= 0 or type(_G.date) ~= "function" then return nil end
+  local ok, formatted = pcall(_G.date, format or "%Y-%m-%d %H:%M:%S", numeric)
+  if ok and formatted and trimHistoryText(formatted) ~= "" then return tostring(formatted) end
+  return nil
+end
+
 local function historyTimestampText(row)
-  local dateText, timeText = row.date or row.dateText or row.awardDate, row.clock or row.timeText or row.awardTime or row.time
-  dateText, timeText = trimHistoryText(dateText), trimHistoryText(timeText)
+  local rawDate, rawTime = row.date or row.dateText or row.awardDate, row.clock or row.timeText or row.awardTime or row.time
+  if rawDate == nil and rawTime == nil then
+    rawDate = row.originalAwardTime or row.timestamp or row.createdAt or row.timeStamp or row.dateValue
+  end
+  local dateText, timeText = trimHistoryText(rawDate), trimHistoryText(rawTime)
   if dateText == "" then dateText = nil end
   if timeText == "" then timeText = nil end
+  local numericDate, numericTime = tonumber(rawDate), tonumber(rawTime)
+  if numericDate and numericDate > 100000000 then
+    local formattedDate = formatHistoryTimestamp(numericDate)
+    if formattedDate then
+      if not timeText or timeText == "0" or tonumber(timeText) == 0 then return formattedDate end
+      dateText = formattedDate:match("^(%S+)") or formattedDate
+    end
+  end
+  if numericTime and numericTime > 100000000 then
+    local formatted = formatHistoryTimestamp(numericTime)
+    if formatted then
+      timeText = formatted:match("%s(.+)$") or formatted
+      if not dateText then return formatted end
+    end
+  end
   if dateText == "0" or tonumber(dateText) == 0 then dateText = nil end
   if timeText == "0" or tonumber(timeText) == 0 then timeText = nil end
+  if timeText and timeText:match("^%d%d%d%d[%-/]") then return timeText end
   if dateText and timeText then return trimHistoryText(dateText) .. " " .. trimHistoryText(timeText) end
   if dateText then return trimHistoryText(dateText) end
   if timeText then return timeText end

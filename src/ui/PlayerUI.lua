@@ -46,7 +46,7 @@ end
 local function formatDate(timestamp)
   local value = tonumber(timestamp) or 0
   if value > 0 and type(date) == "function" then
-    local ok, formatted = pcall(date, "%Y-%m-%d %H:%M", value)
+    local ok, formatted = pcall(date, "%Y-%m-%d %H:%M:%S", value)
     if ok and formatted then return tostring(formatted) end
   end
   return value > 0 and tostring(value) or "Unknown"

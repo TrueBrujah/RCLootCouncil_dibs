@@ -27,7 +27,7 @@ local function labelDate(value)
   local timestamp = tonumber(value) or 0
   if timestamp <= 0 then return "Unknown" end
   if type(date) == "function" then
-    local ok, formatted = pcall(date, "%Y-%m-%d %H:%M", timestamp)
+    local ok, formatted = pcall(date, "%Y-%m-%d %H:%M:%S", timestamp)
     if ok and formatted then return tostring(formatted) end
   end
   return tostring(timestamp)
