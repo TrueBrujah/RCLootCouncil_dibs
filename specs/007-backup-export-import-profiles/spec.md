@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-09
 
-**Status**: Implemented on `dev` in version 0.5.5-dev; Retail visual validation remains scheduled.
+**Status**: Implemented on `dev` in version 0.5.6-dev; Retail visual validation remains scheduled.
 
 **Input**: User description: "Add backups, export, import, and configuration profiles for RCLootCouncil_dibs so a guild can recover after a problem, move settings between characters or guilds, and share a safe configuration without accidentally overwriting the Dibs ledger."
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.6-dev - 2026-09-10
+
+- Apply the same safe table sizing and vertical section layout to Player,
+  Officer, History and Logs windows.
+- Recalculate long inner scroll pages when a Dibs window is resized so their
+  content follows the main window instead of keeping a stale fixed height.
+
 ## 0.5.5-dev - 2026-09-10
 
 - Reserve the sortable table header and body height in the AceGUI layout so

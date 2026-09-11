@@ -32,7 +32,7 @@ test mirror can be used for guild testers without exposing the source repository
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
 - Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
 - Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
-- Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions (dev 0.5.5).
+- Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions (dev 0.5.6).
 - SavedVariables migrations and localized English/French runtime strings.
 
 ## How to use

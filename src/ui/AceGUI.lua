@@ -130,6 +130,28 @@ function Adapter.CreateWindow(title, width, height, point)
   -- widget in the shell: Refresh() releases and recreates those widgets, and
   -- a tracking array would retain the historical numeric slots forever.
   local shell = { gui = gui, window = window, frame = window.frame }
+  shell._dibsResizeHandlers = {}
+  shell._dibsResponsiveScrolls = {}
+  function shell:AddResizeHandler(callback)
+    if type(callback) ~= "function" then return false end
+    self._dibsResizeHandlers[#self._dibsResizeHandlers + 1] = callback
+    return true
+  end
+  if window.frame and type(window.frame.HookScript) == "function" then
+    window.frame:HookScript("OnSizeChanged", function()
+      local height = window.frame.GetHeight and window.frame:GetHeight() or nil
+      if height then
+        for _, scroll in ipairs(shell._dibsResponsiveScrolls) do
+          if scroll and scroll.SetHeight and scroll._dibsResizeOffset then
+            scroll:SetHeight(math.max(120, height - scroll._dibsResizeOffset))
+          end
+          if scroll and scroll.DoLayout then scroll:DoLayout() end
+        end
+      end
+      if window.DoLayout then window:DoLayout() end
+      for _, callback in ipairs(shell._dibsResizeHandlers) do pcall(callback, shell) end
+    end)
+  end
   call(window, "SetCallback", "OnClose", function(widget)
     if shell and shell.frame == widget.frame then
       shell.frame = nil
@@ -159,6 +181,13 @@ local function releaseMSAControls(widget, seen)
   seen = seen or {}
   if seen[widget] then return end
   seen[widget] = true
+  if widget._dibsShell and widget._dibsShell._dibsResponsiveScrolls then
+    for index = #widget._dibsShell._dibsResponsiveScrolls, 1, -1 do
+      if widget._dibsShell._dibsResponsiveScrolls[index] == widget then
+        table.remove(widget._dibsShell._dibsResponsiveScrolls, index)
+      end
+    end
+  end
   local control = widget._dibsMSAControl
   if control then
     if control.Hide then pcall(control.Hide, control) end
@@ -231,7 +260,10 @@ function Adapter.AddSection(shell, parent, title, description)
   if not section then section = Adapter.Create(shell, "SimpleGroup", parent) end
   if not section then return parent end
   call(section, "SetFullWidth", true)
-  call(section, "SetLayout", "Flow")
+  -- Sections contain labels, fields and actions. Stack them so a fixed-width
+  -- control cannot share a row with the next label while the parent is being
+  -- measured; compact horizontal toolbars should use AddInlineGroup instead.
+  call(section, "SetLayout", "List")
   if title and title ~= "" then call(section, "SetTitle", tostring(title)) end
   return Adapter.AddTooltip(section, title, description)
 end
@@ -375,6 +407,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
       name = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
       baseName = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
       width = width,
+      baseWidth = width,
       align = column.align or "LEFT",
       tooltip = column.tooltip,
       defaultsort = column.defaultsort,
@@ -430,12 +463,35 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     pcall(st.SetDefaultHighlight, st, 0.18, 0.42, 0.62, 0.38)
   end
   if type(st.EnableSelection) == "function" then st:EnableSelection(true) end
+
+  -- A table is often created before its List/TreeGroup parent receives its
+  -- final width. Reapply the original column proportions whenever AceGUI
+  -- measures the host, otherwise the first 300px default becomes permanent
+  -- and date/item text is needlessly wrapped in every window.
+  local baseOnWidthSet = host.OnWidthSet
+  local function applyTableWidth(width)
+    if baseOnWidthSet then baseOnWidthSet(host, width) end
+    local available = tonumber(width)
+    if not available or available <= 20 then return end
+    available = math.max(240, available - 12)
+    local scale = desiredWidth > available and (available / desiredWidth) or 1
+    local used = 0
+    for index, column in ipairs(tableColumns) do
+      local nextWidth = math.floor((column.baseWidth or column.width) * scale)
+      if index == #tableColumns then nextWidth = math.max(48, available - used) end
+      column.width = nextWidth
+      used = used + nextWidth
+    end
+    st._dibsUpdateHeaders()
+    if st.frame and st.frame.SetWidth then st.frame:SetWidth(used) end
+  end
+  host.OnWidthSet = applyTableWidth
   if st.frame then
     st.frame:ClearAllPoints()
     -- Keep the lib-st header inside the AceGUI host instead of letting it
     -- float into the heading/control row above the table.
     st.frame:SetPoint("TOPLEFT", host.frame, "TOPLEFT", 0, -rowHeight)
-    st.frame:SetWidth(desiredWidth)
+    applyTableWidth(host.frame.GetWidth and host.frame:GetWidth() or desiredWidth)
   end
 
   local function sortColumn(index)
@@ -1036,6 +1092,16 @@ function Adapter.AddScrollableList(shell, parent, height)
   call(scroll, "SetHeight", height or 260)
   call(scroll, "SetFullWidth", true)
   call(scroll, "SetLayout", "List")
+  -- Long pages should follow a resizable Dibs window. Keep compact embedded
+  -- lists (for example multiselect checkboxes) at their requested height.
+  local requestedHeight = tonumber(height) or 260
+  local frameHeight = shell and shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or nil
+  if shell and requestedHeight >= 380 and frameHeight and frameHeight > requestedHeight then
+    scroll._dibsShell = shell
+    scroll._dibsResizeOffset = frameHeight - requestedHeight
+    shell._dibsResponsiveScrolls = shell._dibsResponsiveScrolls or {}
+    shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll
+  end
   return scroll
 end
 

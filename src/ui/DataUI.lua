@@ -40,6 +40,7 @@ end
 local function clear(shell)
   local parent = pageParent(shell)
   if Dibs.AceGUI and Dibs.AceGUI.Clear and parent then Dibs.AceGUI.Clear(parent) end
+  if shell then shell.contentPage = nil end
 end
 
 local function setStatus(message)
@@ -378,28 +379,31 @@ local function addTransfer(shell, parent)
   end
 end
 
+local function relayout(shell)
+  if not shell then return end
+  local height = shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or 560
+  local contentHeight = math.max(320, height - 105)
+  if shell.contentHost and shell.contentHost.SetHeight then shell.contentHost:SetHeight(contentHeight) end
+  if shell.contentPage and shell.contentPage ~= shell.contentHost and shell.contentPage.SetHeight then
+    shell.contentPage:SetHeight(math.max(320, contentHeight - 8))
+  end
+  if shell.window and shell.window.DoLayout then shell.window:DoLayout() end
+  if shell.pageHost and shell.pageHost.DoLayout then shell.pageHost:DoLayout() end
+  if shell.contentHost and shell.contentHost.DoLayout then shell.contentHost:DoLayout() end
+  if shell.contentPage and shell.contentPage.DoLayout then shell.contentPage:DoLayout() end
+end
+
 function UI.Refresh()
   if not currentShell then return end
   clear(currentShell)
   local parent = pageParent(currentShell)
   if not parent then return end
-  if currentShell.contentHost and currentShell.contentHost.SetHeight then
-    local height = currentShell.frame and currentShell.frame.GetHeight and currentShell.frame:GetHeight() or 680
-    currentShell.contentHost:SetHeight(math.max(320, height - 105))
-  end
-  if currentShell.window and currentShell.window.DoLayout then currentShell.window:DoLayout() end
-  if currentShell.pageHost and currentShell.pageHost.DoLayout then
-    -- SetFullWidth changes the child metadata; ask the List parent to apply
-    -- that width before the scroll page is created. Without this pass AceGUI
-    -- keeps the SimpleGroup's 300px default width on Retail.
-    currentShell.pageHost:DoLayout()
-  end
+  relayout(currentShell)
   local page = createContentPage(currentShell) or parent
   if state.tab == "profiles" then addProfiles(currentShell, page)
   elseif state.tab == "transfer" then addTransfer(currentShell, page)
   else addBackups(currentShell, page) end
-  if page and page.DoLayout then page:DoLayout() end
-  if currentShell.contentHost and currentShell.contentHost.DoLayout then currentShell.contentHost:DoLayout() end
+  relayout(currentShell)
 end
 
 function UI.Open(tab)
@@ -435,6 +439,11 @@ function UI.Open(tab)
     shell.contentHost:SetLayout("Flow")
     local height = shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or 680
     shell.contentHost:SetHeight(math.max(320, height - 105))
+  end
+  if shell.AddResizeHandler then
+    shell:AddResizeHandler(function(resizedShell)
+      if currentShell == resizedShell then relayout(resizedShell) end
+    end)
   end
   if shell.pageHost and shell.pageHost.DoLayout then shell.pageHost:DoLayout() end
   if shell.window and shell.window.DoLayout then shell.window:DoLayout() end
