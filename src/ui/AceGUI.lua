@@ -334,12 +334,37 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     return nil
   end
   options = options or {}
+  local tableHeight = tonumber(height) or 260
+  local rowHeight = tonumber(options.rowHeight) or 20
   local definitions = columns or {}
   if #definitions == 0 then return nil end
   local host = Adapter.Create(shell, "SimpleGroup", parent)
   if not host or not host.frame then return nil end
   call(host, "SetFullWidth", true)
+  -- lib-st owns a native frame that is taller than AceGUI's SimpleGroup
+  -- default. Reserve the same height in the parent layout or the next widget
+  -- is placed over the table (most visible on the Profiles and Data pages).
+  -- Its sortable header is anchored just above that native frame, so include
+  -- one row for the header in the host's allocation as well.
+  call(host, "SetHeight", tableHeight + rowHeight)
   call(host, "SetLayout", "Fill")
+  -- Give the header the same readable panel treatment as the rows. The
+  -- embedded lib-st frame supplies its own backdrop for the body; this small
+  -- background fills the reserved header band without changing AceGUI's
+  -- global theme.
+  if host.frame.CreateTexture then
+    local background = host.frame:CreateTexture(nil, "BACKGROUND")
+    if background then
+      if background.SetColorTexture then
+        background:SetColorTexture(0.10, 0.11, 0.12, 0.94)
+      elseif background.SetTexture then
+        background:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
+        if background.SetVertexColor then background:SetVertexColor(0.10, 0.11, 0.12, 0.94) end
+      end
+      if background.SetAllPoints then background:SetAllPoints(host.frame) end
+      host._dibsTableBackground = background
+    end
+  end
 
   local desiredWidth = 0
   local tableColumns = {}
@@ -357,7 +382,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     }
   end
 
-  local availableWidth = host.frame.GetWidth and host.frame:GetWidth() or 0
+  local availableWidth = tonumber(options.widthHint) or (host.frame.GetWidth and host.frame:GetWidth() or 0)
   if availableWidth <= 0 and shell.frame and shell.frame.GetWidth then
     availableWidth = math.max(360, (shell.frame:GetWidth() or desiredWidth) - 220)
   end
@@ -388,8 +413,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     for index = 1, #tableColumns do rowData[1].cols[index] = index == 1 and "No entries" or "" end
   end
 
-  local rowHeight = tonumber(options.rowHeight) or 20
-  local visibleRows = math.max(1, math.floor((tonumber(height) or 260) / rowHeight))
+  local visibleRows = math.max(1, math.floor(tableHeight / rowHeight))
   local ok, st = pcall(library.CreateST, library, tableColumns, visibleRows, rowHeight,
     options.highlight or { r = 0.22, g = 0.45, b = 0.65, a = 0.35 }, host.frame)
   if not ok or not st then return nil end
@@ -408,7 +432,9 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   if type(st.EnableSelection) == "function" then st:EnableSelection(true) end
   if st.frame then
     st.frame:ClearAllPoints()
-    st.frame:SetPoint("TOPLEFT", host.frame, "TOPLEFT", 0, 0)
+    -- Keep the lib-st header inside the AceGUI host instead of letting it
+    -- float into the heading/control row above the table.
+    st.frame:SetPoint("TOPLEFT", host.frame, "TOPLEFT", 0, -rowHeight)
     st.frame:SetWidth(desiredWidth)
   end
 
@@ -484,6 +510,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
 end
 
 function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, options)
+  options = options or {}
   local scrolling = Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
   if scrolling then return scrolling end
   local scroll = Adapter.AddScrollableList(shell, parent, height)
@@ -491,7 +518,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
   local definitions = columns or {}
   local desiredWidth = 0
   for _, column in ipairs(definitions) do desiredWidth = desiredWidth + (tonumber(column.width) or 100) end
-  local frameWidth = scroll.frame and scroll.frame.GetWidth and scroll.frame:GetWidth() or 0
+  local frameWidth = tonumber(options.widthHint) or (scroll.frame and scroll.frame.GetWidth and scroll.frame:GetWidth() or 0)
   if frameWidth <= 0 and parent and parent.frame and parent.frame.GetWidth then frameWidth = parent.frame:GetWidth() or 0 end
   if frameWidth <= 0 and shell and shell.frame and shell.frame.GetWidth then frameWidth = (shell.frame:GetWidth() or 760) - 220 end
   frameWidth = math.max(360, frameWidth > 0 and frameWidth - 8 or math.min(desiredWidth, 760))
@@ -551,7 +578,9 @@ function Adapter.AddPropertyTable(shell, parent, rows, height)
   return Adapter.AddTable(shell, parent, {
     { title = "Field", width = 150, tooltip = "Property name." },
     { title = "Value", width = 520, tooltip = "Recorded value." },
-  }, rows, height or 190)
+  }, rows, height or 190, nil, {
+    widthHint = shell and shell.frame and shell.frame.GetWidth and math.max(360, (shell.frame:GetWidth() or 760) - 50) or nil,
+  })
 end
 
 function Adapter.AddButton(shell, parent, text, callback, width)

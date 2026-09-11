@@ -127,5 +127,17 @@ describe("Backup, import/export and profiles", function()
       end
     end
     assert_true(hasPackageText)
+
+    dibs.DataUI.Open("profiles")
+    local created = false
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.text == "Create profile" and widget.callbacks and widget.callbacks.OnClick then
+        widget.callbacks.OnClick(widget)
+        created = true
+        break
+      end
+    end
+    assert_true(created)
+    assert_not_nil(dibs.Profiles.Get("New profile", "local"))
   end)
 end)

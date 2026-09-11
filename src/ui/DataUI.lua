@@ -58,6 +58,27 @@ local function addChoice(gui, shell, parent, label, values, callback, width, val
   return control
 end
 
+-- Data pages are deliberately stacked. A Flow parent is useful for compact
+-- button rows, but it lets a fixed-width control share a row with the next
+-- label while AceGUI is still measuring the page. Each Data section gets a
+-- titled List container so labels, fields, buttons and tables keep a stable
+-- vertical rhythm at every supported window size.
+local function addStack(gui, shell, parent, title, description)
+  local section = gui and gui.Create and gui.Create(shell, "InlineGroup", parent)
+  if not section and gui and gui.Create then section = gui.Create(shell, "SimpleGroup", parent) end
+  if not section then return parent end
+  if section.SetFullWidth then section:SetFullWidth(true) end
+  if section.SetLayout then section:SetLayout("List") end
+  if title and title ~= "" and section.SetTitle then section:SetTitle(title) end
+  if gui.AddTooltip then gui.AddTooltip(section, title, description) end
+  return section
+end
+
+local function tableWidthHint(shell)
+  local width = shell and shell.frame and shell.frame.GetWidth and shell.frame:GetWidth() or 760
+  return math.max(360, (tonumber(width) or 760) - 50)
+end
+
 local function tableRows()
   local rows = {}
   for _, snapshot in ipairs(Dibs.Backup.List(nil, nil)) do
@@ -89,7 +110,9 @@ end
 
 local function addPreview(gui, shell, parent, title, preview)
   if not preview then return end
-  gui.AddHeading(shell, parent, title, "Review this read-only preview before confirming the operation.")
+  if title and title ~= "" then
+    gui.AddHeading(shell, parent, title, "Review this read-only preview before confirming the operation.")
+  end
   local rows = {
     { "Preview", tostring(preview.previewId or "") },
     { "Created", labelDate(preview.createdAt) },
@@ -115,12 +138,13 @@ local function addBackups(shell, parent)
   local gui = Dibs.AceGUI
   gui.AddHeading(shell, parent, "Safety backups", "Create a dated recovery point before restoring or importing data.")
   showStatus(gui, shell, parent)
-  addChoice(gui, shell, parent, "Backup scope", {
+  local controls = addStack(gui, shell, parent, "Create a backup", "Choose which Dibs data should be captured before a restore or import.")
+  addChoice(gui, shell, controls, "Backup scope", {
     ["local"] = "Local presentation",
     guild = "Guild configuration (Officer)",
     full = "Full Dibs data (GM/Officer)",
   }, function(value) state.backupScope = value or "local" end, 280, state.backupScope)
-  gui.AddButton(shell, parent, "Create backup", function()
+  gui.AddButton(shell, controls, "Create backup", function()
     local snapshot, prunedOrReason = Dibs.Backup.Create(state.backupScope, "manual", nil)
     if snapshot then
       state.selectedSnapshot = snapshot.snapshotId
@@ -131,7 +155,8 @@ local function addBackups(shell, parent)
     end
     UI.Refresh()
   end, 150)
-  gui.AddTable(shell, parent, {
+  local tablePanel = addStack(gui, shell, parent, "Available backups", "Newest recovery points appear first. Select one to preview its restore.")
+  gui.AddTable(shell, tablePanel, {
     { title = "Date", width = 145, tooltip = "Creation date." },
     { title = "Scope", width = 120, tooltip = "Data included in the snapshot." },
     { title = "Size", width = 75, tooltip = "Package size in characters." },
@@ -145,10 +170,11 @@ local function addBackups(shell, parent)
       setStatus("Selected backup: " .. tostring(row.id))
       UI.Refresh()
     end }
-  end, { defaultSortColumn = 1 })
+  end, { defaultSortColumn = 1, widthHint = tableWidthHint(shell) })
   if state.selectedSnapshot then
-    gui.AddLabel(shell, parent, "Selected backup: " .. tostring(state.selectedSnapshot), true)
-    gui.AddButton(shell, parent, "Preview restore", function()
+    local selectedPanel = addStack(gui, shell, parent, "Selected backup", "Preview the changes before restoring this recovery point.")
+    gui.AddLabel(shell, selectedPanel, tostring(state.selectedSnapshot), true)
+    gui.AddButton(shell, selectedPanel, "Preview restore", function()
       local preview, reason = Dibs.Backup.PreviewRestore(state.selectedSnapshot, nil)
       if preview then state.restorePreviewId = preview.previewId; setStatus("Restore preview ready. Review it before confirming.")
       else setStatus("Restore preview failed: " .. tostring(reason or "UNKNOWN_ERROR")) end
@@ -157,15 +183,16 @@ local function addBackups(shell, parent)
   end
   if state.restorePreviewId then
     local preview = Dibs.GetDB().pendingRestores and Dibs.GetDB().pendingRestores[state.restorePreviewId] and Dibs.GetDB().pendingRestores[state.restorePreviewId].preview
-    addPreview(gui, shell, parent, "Restore preview", preview)
-    gui.AddLabel(shell, parent, "This restore is pending confirmation. No active data has changed.", true)
-    gui.AddButton(shell, parent, "Confirm restore", function()
+    local previewPanel = addStack(gui, shell, parent, "Restore preview", "This is read-only until you explicitly confirm the restore.")
+    addPreview(gui, shell, previewPanel, "", preview)
+    gui.AddLabel(shell, previewPanel, "No active data has changed yet.", true)
+    gui.AddButton(shell, previewPanel, "Confirm restore", function()
       local result, reason = Dibs.Backup.Restore(state.restorePreviewId, true, "confirmed by user", nil)
       if result then setStatus("Restore completed."); state.restorePreviewId = nil
       else setStatus("Restore failed: " .. tostring(reason or "UNKNOWN_ERROR")) end
       UI.Refresh()
     end, 150)
-    gui.AddButton(shell, parent, "Cancel restore", function()
+    gui.AddButton(shell, previewPanel, "Cancel restore", function()
       local result, reason = Dibs.Backup.Restore(state.restorePreviewId, false, "cancelled by user", nil)
       if result then setStatus("Restore cancelled."); state.restorePreviewId = nil
       else setStatus("Unable to cancel restore: " .. tostring(reason or "UNKNOWN_ERROR")) end
@@ -192,7 +219,8 @@ local function addProfiles(shell, parent)
   local gui = Dibs.AceGUI
   gui.AddHeading(shell, parent, "Configuration profiles", "Profiles store presentation settings separately from the append-only ledger.")
   showStatus(gui, shell, parent)
-  gui.AddTable(shell, parent, {
+  local tablePanel = addStack(gui, shell, parent, "Saved profiles", "Name, scope, last update and activation are shown together in this table.")
+  gui.AddTable(shell, tablePanel, {
     { title = "Name", width = 220, tooltip = "Profile name." },
     { title = "Scope", width = 100, tooltip = "Local character or guild policy." },
     { title = "Updated", width = 145, tooltip = "Last profile change." },
@@ -206,12 +234,13 @@ local function addProfiles(shell, parent)
       setStatus("Selected profile: " .. tostring(row.name) .. " (" .. tostring(row.scope) .. ").")
       UI.Refresh()
     end }
-  end, { defaultSortColumn = 3 })
+  end, { defaultSortColumn = 3, widthHint = tableWidthHint(shell) })
   if state.selectedProfileName and state.selectedProfileScope then
     local selected = Dibs.Profiles.Get(state.selectedProfileName, state.selectedProfileScope)
     if selected then
-      gui.AddLabel(shell, parent, "Selected profile: " .. tostring(state.selectedProfileName) .. " (" .. tostring(state.selectedProfileScope) .. ")", true)
-      local activate = gui.AddButton(shell, parent, "Activate selected", function()
+      local selectedPanel = addStack(gui, shell, parent, "Selected profile", "Choose an action for the profile selected above.")
+      gui.AddLabel(shell, selectedPanel, tostring(state.selectedProfileName) .. " (" .. tostring(state.selectedProfileScope) .. ")", true)
+      local activate = gui.AddButton(shell, selectedPanel, "Activate selected", function()
         local value, reason, preview = Dibs.Profiles.Activate(state.selectedProfileName, state.selectedProfileScope, nil, state.profileConfirm == state.selectedProfileName)
         if value then
           state.profileConfirm = nil
@@ -225,23 +254,23 @@ local function addProfiles(shell, parent)
         UI.Refresh()
       end, 150)
       if selected.active and activate then gui.SetDisabled(activate, true) end
-      gui.AddButton(shell, parent, "Copy selected", function()
+      gui.AddButton(shell, selectedPanel, "Copy selected", function()
         local value, reason = Dibs.Profiles.Copy(state.selectedProfileName, state.profileName, state.selectedProfileScope, nil)
         setStatus(value and ("Profile copied as " .. tostring(value.name) .. ".") or ("Profile copy failed: " .. tostring(reason or "UNKNOWN_ERROR")))
         UI.Refresh()
       end, 130)
-      gui.AddButton(shell, parent, "Rename selected", function()
+      gui.AddButton(shell, selectedPanel, "Rename selected", function()
         local value, reason = Dibs.Profiles.Rename(state.selectedProfileName, state.profileName, state.selectedProfileScope, nil)
         if value then state.selectedProfileName = value.name; setStatus("Profile renamed to " .. tostring(value.name) .. ".")
         else setStatus("Profile rename failed: " .. tostring(reason or "UNKNOWN_ERROR")) end
         UI.Refresh()
       end, 140)
-      gui.AddButton(shell, parent, "Reset selected", function()
+      gui.AddButton(shell, selectedPanel, "Reset selected", function()
         local value, reason = Dibs.Profiles.Reset(state.selectedProfileName, state.selectedProfileScope, nil)
         setStatus(value and "Profile reset." or ("Profile reset failed: " .. tostring(reason or "UNKNOWN_ERROR")))
         UI.Refresh()
       end, 125)
-      gui.AddButton(shell, parent, "Delete selected", function()
+      gui.AddButton(shell, selectedPanel, "Delete selected", function()
         local value, reason = Dibs.Profiles.Delete(state.selectedProfileName, state.selectedProfileScope, nil)
         if value then state.selectedProfileName, state.selectedProfileScope = nil, nil; setStatus("Profile deleted.")
         else setStatus("Profile deletion failed: " .. tostring(reason or "UNKNOWN_ERROR")) end
@@ -249,34 +278,39 @@ local function addProfiles(shell, parent)
       end, 125)
     end
   end
-  local profileNameBox = gui.AddEditBox(shell, parent, "New name (create, copy or rename)", function(value) state.profileName = tostring(value or "") end, 300)
+  local createPanel = addStack(gui, shell, parent, "Create a profile", "Save the current presentation settings under a name you can activate later.")
+  local profileNameBox = gui.AddEditBox(shell, createPanel, "Profile name", function(value) state.profileName = tostring(value or "") end, 360)
   if profileNameBox and state.profileName ~= "" and profileNameBox.SetText then pcall(profileNameBox.SetText, profileNameBox, state.profileName) end
-  gui.AddButton(shell, parent, "Create profile", function()
-    local profile, reason = Dibs.Profiles.Create(state.profileName, state.profileScope, nil, nil)
-    setStatus(profile and ("Profile created: " .. tostring(profile.name) .. ".") or ("Profile creation failed: " .. tostring(reason or "UNKNOWN_ERROR")))
-    UI.Refresh()
-  end, 145)
-  addChoice(gui, shell, parent, "New profile scope", {
+  addChoice(gui, shell, createPanel, "Profile scope", {
     ["local"] = "Local presentation",
     guild = "Guild policy (Officer)",
-  }, function(value) state.profileScope = value or "local" end, 260, state.profileScope)
+  }, function(value) state.profileScope = value or "local" end, 360, state.profileScope)
+  gui.AddButton(shell, createPanel, "Create profile", function()
+    local profile, reason = Dibs.Profiles.Create(state.profileName, state.profileScope, nil, nil)
+    setStatus(profile and ("Profile created: " .. tostring(profile.name) .. ".") or ("Profile creation failed: " .. tostring(reason or "UNKNOWN_ERROR")))
+    if profile then
+      state.selectedProfileName, state.selectedProfileScope = profile.name, profile.scope
+    end
+    UI.Refresh()
+  end, 145)
 end
 
 local function addTransfer(shell, parent)
   local gui = Dibs.AceGUI
   gui.AddHeading(shell, parent, "Import / export", "Copy a package, paste it on another character, validate the preview, then confirm explicitly.")
   showStatus(gui, shell, parent)
-  addChoice(gui, shell, parent, "Export scope", {
+  local exportPanel = addStack(gui, shell, parent, "Export package", "Choose what to copy out of this character or guild.")
+  addChoice(gui, shell, exportPanel, "Export scope", {
     ["local"] = "Local presentation",
     guild = "Guild configuration (Officer)",
     full = "Full Dibs data (GM/Officer)",
   }, function(value) state.exportScope = value or "local"; state.exportConfirmed = false; state.exportText = nil end, 280, state.exportScope)
   if state.exportScope == "full" then
-    gui.AddLabel(shell, parent, "Full export contains guild ledger, award history and player identities. Treat the copied text as sensitive.", true)
+    gui.AddLabel(shell, exportPanel, "Full export contains guild ledger, award history and player identities. Treat the copied text as sensitive.", true)
   elseif state.exportScope == "guild" then
-    gui.AddLabel(shell, parent, "Guild export contains policy and profile settings. Review the scope before sharing it.", true)
+    gui.AddLabel(shell, exportPanel, "Guild export contains policy and profile settings. Review the scope before sharing it.", true)
   end
-  gui.AddButton(shell, parent, "Export package", function()
+  gui.AddButton(shell, exportPanel, "Export package", function()
     if state.exportScope == "full" and not state.exportConfirmed then
       state.exportConfirmed = true
       setStatus("Full export is sensitive. Click Export package again to confirm, or use Export redacted config.")
@@ -293,7 +327,7 @@ local function addTransfer(shell, parent)
     UI.Refresh()
   end, 150)
   if state.exportScope ~= "local" then
-    gui.AddButton(shell, parent, "Export redacted config", function()
+    gui.AddButton(shell, exportPanel, "Export redacted config", function()
       local text, packageOrReason = Dibs.ImportExport.Export(state.exportScope, { redacted = true })
       if text then
         state.exportText = text
@@ -304,20 +338,21 @@ local function addTransfer(shell, parent)
       UI.Refresh()
     end, 175)
   end
-  if state.exportText then gui.AddSelectableText(shell, parent, "Package (copy this text)", state.exportText, 700, 180) end
-  local importBox = gui.AddEditBox(shell, parent, "Paste package to import", function(value) state.importText = tostring(value or "") end, 700)
+  if state.exportText then gui.AddSelectableText(shell, exportPanel, "Package (copy this text)", state.exportText, 700, 180) end
+  local importPanel = addStack(gui, shell, parent, "Import package", "Paste a Dibs package, validate it, then confirm the read-only preview.")
+  local importBox = gui.AddEditBox(shell, importPanel, "Paste package to import", function(value) state.importText = tostring(value or "") end, 700)
   if importBox and state.importText ~= "" and importBox.SetText then pcall(importBox.SetText, importBox, state.importText) end
-  addChoice(gui, shell, parent, "Import scope", {
+  addChoice(gui, shell, importPanel, "Import scope", {
     ["local"] = "Local presentation",
     guild = "Guild configuration (Officer)",
     full = "Full Dibs data (GM/Officer)",
   }, function(value) state.importScope = value or "local" end, 280, state.importScope)
-  addChoice(gui, shell, parent, "Import strategy", {
+  addChoice(gui, shell, importPanel, "Import strategy", {
     merge = "Merge settings",
     replace = "Replace settings",
     append = "Append ledger (deduplicate)",
   }, function(value) state.strategy = value or "merge" end, 280, state.strategy)
-  gui.AddButton(shell, parent, "Validate and preview", function()
+  gui.AddButton(shell, importPanel, "Validate and preview", function()
     local preview, reason = Dibs.ImportExport.Preview(state.importText, state.importScope, state.strategy, nil)
     if preview then state.importPreviewId = preview.previewId; setStatus("Import preview ready. Review the scope and impact before confirming.")
     else setStatus("Import preview failed: " .. tostring(reason or "UNKNOWN_ERROR")) end
@@ -325,15 +360,16 @@ local function addTransfer(shell, parent)
   end, 175)
   if state.importPreviewId then
     local preview = Dibs.GetDB().pendingImports and Dibs.GetDB().pendingImports[state.importPreviewId] and Dibs.GetDB().pendingImports[state.importPreviewId].preview
-    addPreview(gui, shell, parent, "Import preview", preview)
-    gui.AddLabel(shell, parent, "This import is pending confirmation. No active data has changed.", true)
-    gui.AddButton(shell, parent, "Confirm import", function()
+    local previewPanel = addStack(gui, shell, parent, "Import preview", "This is read-only until you explicitly confirm the import.")
+    addPreview(gui, shell, previewPanel, "", preview)
+    gui.AddLabel(shell, previewPanel, "No active data has changed yet.", true)
+    gui.AddButton(shell, previewPanel, "Confirm import", function()
       local result, reason = Dibs.ImportExport.Apply(state.importPreviewId, true, "confirmed by user", nil)
       if result then setStatus("Import completed."); state.importPreviewId = nil
       else setStatus("Import failed: " .. tostring(reason or "UNKNOWN_ERROR")) end
       UI.Refresh()
     end, 145)
-    gui.AddButton(shell, parent, "Cancel import", function()
+    gui.AddButton(shell, previewPanel, "Cancel import", function()
       local result, reason = Dibs.ImportExport.Apply(state.importPreviewId, false, "cancelled by user", nil)
       if result then setStatus("Import cancelled."); state.importPreviewId = nil
       else setStatus("Unable to cancel import: " .. tostring(reason or "UNKNOWN_ERROR")) end

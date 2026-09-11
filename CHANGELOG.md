@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5-dev - 2026-09-10
+
+- Reserve the sortable table header and body height in the AceGUI layout so
+  controls after Backups and Profiles no longer overlap the table.
+- Group Data controls, tables and previews into titled vertical panels with a
+  readable table background and predictable spacing.
+- Keep profile creation covered by the visible Data control center action.
+
 ## 0.5.4-dev - 2026-09-10
 
 - Resize the Data workspace to a compact 760x560 window and force AceGUI
