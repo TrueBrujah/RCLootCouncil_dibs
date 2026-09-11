@@ -2455,6 +2455,7 @@ local REASON_DIAGNOSTIC_KEYS = {
   HISTORY_RESPONSE_IDENTITY_AMBIGUOUS = "HISTORY_RESPONSE_IDENTITY_AMBIGUOUS",
   HISTORY_REJECTED_BY_OFFICER = "HISTORY_REJECTED_BY_OFFICER",
   HISTORY_FINAL_STATUS_UNKNOWN = "HISTORY_FINAL_STATUS_UNKNOWN",
+  HISTORY_FINAL_STATUS_INFERRED = "HISTORY_FINAL_STATUS_INFERRED",
 }
 
 local REASON_DIAGNOSTIC_FALLBACKS = {
@@ -2491,6 +2492,7 @@ local REASON_DIAGNOSTIC_FALLBACKS = {
   HISTORY_RESPONSE_IDENTITY_AMBIGUOUS = "The response label maps to more than one RCLootCouncil response identity.",
   HISTORY_REJECTED_BY_OFFICER = "Rejected by an Officer during reconciliation.",
   HISTORY_FINAL_STATUS_UNKNOWN = "The finalization status is unavailable; manual review is required.",
+  HISTORY_FINAL_STATUS_INFERRED = "Finalization was inferred from the recorded RCLootCouncil history entry; confirmation is still required.",
 }
 
 local function reasonDiagnostic(reasonCode)
@@ -3071,6 +3073,28 @@ local function historyStatus(row)
   return row.finalStatus or row.sourceStatus or row.awardStatus or row.status or (row.isAwarded and "awarded" or nil)
 end
 
+local function historyDifficulty(row)
+  local value = row.difficultyName or row.difficultyText or row.difficulty or row.difficultyID
+  if type(value) == "table" then value = value.name or value.text or value.label or value.id end
+  if value == nil then return nil end
+  local id = tonumber(value)
+  if id and type(_G.GetDifficultyInfo) == "function" then
+    local ok, name = pcall(_G.GetDifficultyInfo, id)
+    if ok and name and trimHistoryText(name) ~= "" then return tostring(name) end
+  end
+  return value
+end
+
+local function historyVoteCount(row)
+  local value = row.votes or row.voteCount or row.numVotes
+  if type(value) == "table" then
+    local count = #value
+    if count == 0 then for _ in pairs(value) do count = count + 1 end end
+    return count
+  end
+  return tonumber(value) or value
+end
+
 local function historyTimestamp(row)
   for _, key in ipairs({ "originalAwardTime", "timestamp", "createdAt", "timeStamp", "dateValue" }) do
     local value = tonumber(row[key])
@@ -3082,7 +3106,7 @@ local function historyTimestamp(row)
 end
 
 local function historyTimestampText(row)
-  local dateText, timeText = row.date or row.dateText or row.awardDate, row.clock or row.timeText or row.awardTime
+  local dateText, timeText = row.date or row.dateText or row.awardDate, row.clock or row.timeText or row.awardTime or row.time
   dateText, timeText = trimHistoryText(dateText), trimHistoryText(timeText)
   if dateText == "" then dateText = nil end
   if timeText == "" then timeText = nil end
@@ -3131,10 +3155,17 @@ local function historyRowsFromDB(historyDB)
       encounterID = tonumber(row.encounterID or row.bossID or row.encounterId),
       responseText = responseText,
       response = responseText,
+      awardReason = row.awardReason or row.awardReasonText or row.reason,
       responseIdentity = row.responseID or row.responseId or row.responseIdentity,
       sourceStatus = sourceStatus,
       finalStatus = sourceStatus,
       difficulty = row.difficulty or row.difficultyID,
+      difficultyText = historyDifficulty(row),
+      instanceName = row.instance or row.instanceName or row.zone or row.zoneName,
+      encounterName = row.boss or row.bossName or row.encounter or row.encounterName,
+      voteCount = historyVoteCount(row),
+      itemReplaced1 = row.itemReplaced1,
+      itemReplaced2 = row.itemReplaced2,
       finalized = row.finalized == true or HISTORY_FINAL_STATES[string.lower(tostring(sourceStatus or ""))] == true,
       originalAwardTime = historyTimestamp(row),
       originalAwardTimeText = historyTimestampText(row),
@@ -3265,7 +3296,7 @@ function Dibs.RCLootCouncil.GetHistoryRows(options)
   return filtered, nil, { scanned = scanned, hiddenNonDib = hiddenNonDib }
 end
 
-local function classifyHistoryRow(row, aliases, seasonId, identityMap)
+local function classifyHistoryRow(row, aliases, seasonId, identityMap, inferFinalStatus)
   local normalizedResponse = Dibs.RCLootCouncil.NormalizeResponseAlias(row.responseText)
   local aliasUsed
   for _, alias in ipairs(aliases or {}) do
@@ -3278,9 +3309,19 @@ local function classifyHistoryRow(row, aliases, seasonId, identityMap)
     local state = string.lower(tostring(row.sourceStatus or ""))
     return state == "test" or state == "test_mode" or state == "pending" or state == "rejected" or state == "open" or state == "in_progress"
   end)() then classification, reasonCode = "rejected", "HISTORY_NON_FINAL"
-  elseif not row.finalized and not HISTORY_FINAL_STATES[string.lower(tostring(row.sourceStatus or ""))] then classification, reasonCode = "ambiguous", "HISTORY_FINAL_STATUS_UNKNOWN"
   elseif not row.itemID or not row.playerName then classification, reasonCode = "unsupported", "HISTORY_UNSUPPORTED"
   elseif not row.awardRef then classification, reasonCode = "ambiguous", "HISTORY_IDENTITY_REQUIRED"
+  elseif not row.finalized and not HISTORY_FINAL_STATES[string.lower(tostring(row.sourceStatus or ""))] then
+    -- Older RC history records often have a stable id/date but no separate
+    -- final-status field. Treat that as a reviewable inferred final state so
+    -- the Officer can transfer it with an annotation, while keeping the
+    -- inference visible in the row reason and audit evidence.
+    if inferFinalStatus and (row.historyRef or row.originalAwardTime or row.originalAwardTimeText) then
+      row.finalStatusInferred = true
+      classification, reasonCode = "eligible", "HISTORY_FINAL_STATUS_INFERRED"
+    else
+      classification, reasonCode = "ambiguous", "HISTORY_FINAL_STATUS_UNKNOWN"
+    end
   end
   if classification == "eligible" and aliasUsed and identityMap and identityMap[aliasUsed] and identityMap[aliasUsed].ambiguous then
     classification, reasonCode = "ambiguous", "HISTORY_RESPONSE_IDENTITY_AMBIGUOUS"
@@ -3317,6 +3358,7 @@ function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
   local rows, reason, metadata = Dibs.RCLootCouncil.GetHistoryRows(scanOptions)
   if not rows then return nil, reason or "HISTORY_UNAVAILABLE" end
   local candidates = {}
+  local inferFinalStatus = options.inferFinalStatus ~= false
   local counts = {
     scanned = #rows,
     sourceScanned = tonumber(metadata and metadata.scanned) or #rows,
@@ -3338,9 +3380,39 @@ function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
     entry.ambiguous = count > 1
   end
   for _, row in ipairs(rows) do
-    local candidate = classifyHistoryRow(row, aliases, seasonId, identityMap)
+    local candidate = classifyHistoryRow(row, aliases, seasonId, identityMap, inferFinalStatus)
     candidates[#candidates + 1] = candidate
     counts[candidate.classification] = (counts[candidate.classification] or 0) + 1
+  end
+  -- Keep a compact cross-check for duplicate item records. A single item can
+  -- legitimately appear in Normal and Heroic history with different winners;
+  -- showing those variants lets an Officer apply a rule without merging rows.
+  local itemGroups = {}
+  for _, candidate in ipairs(candidates) do
+    local key = candidate.itemID and ("id:" .. tostring(candidate.itemID))
+      or candidate.itemLink and ("link:" .. tostring(candidate.itemLink))
+      or ("candidate:" .. tostring(candidate.candidateId))
+    itemGroups[key] = itemGroups[key] or {}
+    itemGroups[key][#itemGroups[key] + 1] = candidate
+  end
+  for _, group in pairs(itemGroups) do
+    if #group > 1 then
+      local winners, difficulties = {}, {}
+      local winnerSeen, difficultySeen = {}, {}
+      for _, candidate in ipairs(group) do
+        local winner = trimHistoryText(candidate.playerName)
+        if winner ~= "" and not winnerSeen[winner] then winnerSeen[winner] = true; winners[#winners + 1] = winner end
+        local difficulty = trimHistoryText(candidate.difficultyText or candidate.difficulty)
+        if difficulty ~= "" and not difficultySeen[difficulty] then difficultySeen[difficulty] = true; difficulties[#difficulties + 1] = difficulty end
+      end
+      table.sort(winners)
+      table.sort(difficulties)
+      for _, candidate in ipairs(group) do
+        candidate.relatedHistoryCount = #group - 1
+        candidate.relatedWinners = table.concat(winners, ", ")
+        candidate.relatedDifficulties = table.concat(difficulties, ", ")
+      end
+    end
   end
   local session = {
     sessionId = Dibs.NewId and Dibs.NewId("reconciliation") or ("reconciliation-" .. tostring(time())),
@@ -3353,6 +3425,11 @@ function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
     counts = counts,
     candidates = candidates,
     source = "RCLootCouncil history",
+    rules = {
+      exactResponseAlias = true,
+      inferFinalStatusFromHistory = inferFinalStatus,
+      requireAnnotation = true,
+    },
     fromTime = fromTime, toTime = toTime,
   }
   reconciliationState().sessions[session.sessionId] = session
@@ -3415,8 +3492,13 @@ function Dibs.RCLootCouncil.ConfirmReconciliationCandidate(sessionId, candidateI
       sessionId = candidate.sessionIdentity or "unknown", itemID = candidate.itemID or "unknown",
       itemLink = candidate.itemLink or "unknown", playerName = candidate.playerName or "unknown",
       originalOwner = candidate.originalOwner or "unknown",
-      responseText = candidate.responseText or "unknown", responseIdentity = candidate.responseIdentity or "unknown",
-      finalStatus = candidate.sourceStatus or "unknown", difficulty = candidate.difficulty or "unknown", aliasUsed = candidate.aliasUsed or "unknown",
+      responseText = candidate.responseText or "unknown", awardReason = candidate.awardReason or "unknown",
+      responseIdentity = candidate.responseIdentity or "unknown",
+      finalStatus = candidate.sourceStatus or "unknown", finalStatusInferred = candidate.finalStatusInferred == true,
+      difficulty = candidate.difficultyText or candidate.difficulty or "unknown",
+      instanceName = candidate.instanceName or "unknown", encounterName = candidate.encounterName or "unknown",
+      voteCount = candidate.voteCount or "unknown", itemReplaced1 = candidate.itemReplaced1 or "unknown", itemReplaced2 = candidate.itemReplaced2 or "unknown",
+      aliasUsed = candidate.aliasUsed or "unknown",
       targetSeasonId = session.targetSeasonId or "unknown", originalAwardTime = candidate.originalAwardTime or candidate.originalAwardTimeText or "unknown",
       importedAt = time(), importedBy = decision.actorId, reason = options.reason,
       transactionId = result.value.transactionId,

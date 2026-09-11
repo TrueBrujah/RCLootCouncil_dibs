@@ -7,7 +7,7 @@ history to the Dibs protected accounting path.
 
 | Input | Required behavior |
 | --- | --- |
-| Target season, scope/date range, aliases, review mode | Required before search starts |
+| Target season, scope/date range, aliases | Required before search starts; the Officer uses one annotation-confirm flow |
 | History row | Read-only normalization; retain original source values |
 | Explicit alias | Match after case/outer-whitespace normalization only |
 | Final status, item, winner, stable identity | Required for guided eligibility |
@@ -17,6 +17,11 @@ history to the Dibs protected accounting path.
 Preview returns matching DIB rows, source rows checked, hidden non-DIB rows, eligible,
 already-accounted, ambiguous, rejected, and unsupported counts. It does not write a Dibs
 transaction.
+
+When a legacy row has a stable history id or date but no separate final-status field, the
+preview may apply the explicit history-final-status rule and mark the row as
+`HISTORY_FINAL_STATUS_INFERRED`. The row remains reviewable and still requires an Officer
+annotation before confirmation.
 
 ## Confirmation
 

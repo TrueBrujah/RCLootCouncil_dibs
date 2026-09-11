@@ -116,7 +116,7 @@ As a guild administrator, I want to choose which season and date range a confirm
 
 - **FR-001**: The system MUST provide a clearly labeled reconciliation action in the Officer interface that is available only to a verified guild GM or Officer.
 - **FR-002**: The system MUST NOT scan, import, debit, or modify historical records automatically during addon load, reload, login, RCLootCouncil initialization, or history viewing.
-- **FR-003**: Before searching, the guided flow MUST ask for a target season, history scope or date range, response aliases, and whether the administrator wants guided review or manual review.
+- **FR-003**: Before searching, the Officer flow MUST ask for a target season, history scope or date range, and response aliases. The UI MUST use one annotation-confirm flow instead of exposing separate guided/manual choices.
 - **FR-004**: The system MUST generate a read-only preview before any historical ledger mutation and MUST show total scanned rows and counts for eligible, already accounted, ambiguous, rejected, and unsupported rows.
 - **FR-005**: Response aliases MUST be explicitly configured by a GM or Officer and MUST match after documented normalization of case and surrounding whitespace; fuzzy or guessed labels MUST NOT be accepted automatically.
 - **FR-006**: A guided candidate MUST include a finalized award status, an explicit configured response alias, a stable award or history identity, a resolvable winner, and a resolvable item before it can be confirmed through the normal flow.
@@ -138,6 +138,7 @@ As a guild administrator, I want to choose which season and date range a confirm
 - **FR-022**: All buttons, questions, statuses, rejection reasons, evidence fields, and help text MUST be localized with English fallback and MUST explain whether the action changes the ledger or consumes a Dibs.
 - **FR-023**: Every search, alias change, confirmation, rejection, manual override, and correction MUST be attributable to the authorized actor and retained in an append-only audit trail.
 - **FR-024**: The Officer confirmation view MUST show only rows whose normalized response exactly matches a configured DIB alias and MUST provide one clear confirmation action that records an annotation and confirms the row as DIB.
+- **FR-025**: The Officer preview MUST preserve difficulty, vote, award-reason, instance, encounter, and related-winner context when multiple history rows refer to the same item, so rules never merge Normal and Heroic awards implicitly.
 
 ### Key Entities
 

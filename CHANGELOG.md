@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.9-dev - 2026-09-11
+
+- Replace the RC History action menu with a clear **Transfer** button and
+  remove the generic right-click sort menu from that workflow.
+- Add a selectable history rule that infers a reviewable final state from a
+  stable RC history id/date while keeping the annotation and confirmation gate.
+- Preserve and display vote count, difficulty variants, instance/encounter,
+  award reason and related winners so Normal and Heroic records stay separate.
+
 ## 0.5.8-dev - 2026-09-10
 
 - Filter RC History previews to exact configured DIB response aliases and show

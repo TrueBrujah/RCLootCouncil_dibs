@@ -109,6 +109,31 @@ describe("RCLootCouncil history reconciliation", function()
     assert_nil(rows[1].originalAwardTimeText)
   end)
 
+  it("infers a reviewable final state from dated history and keeps difficulty variants separate", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
+      ["Heroic-Winner"] = {
+        { id = "heroic-1", itemID = 19019, lootWon = "item:19019", response = "DIB", reason = "Dibs", date = "2026/09/09", time = "22:14", difficultyName = "Heroic", votes = 3 },
+      },
+      ["Normal-Winner"] = {
+        { id = "normal-1", itemID = 19019, lootWon = "item:19019", response = "DIB", date = "2026/09/02", time = "21:05", difficultyName = "Normal", votes = 2 },
+      },
+    } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local session = dibs.RCLootCouncil.CreateReconciliationSession({ aliases = { "DIB" } }, nil)
+    assert_equal(2, session.counts.eligible)
+    assert_true(session.candidates[1].finalStatusInferred)
+    assert_equal("HISTORY_FINAL_STATUS_INFERRED", session.candidates[1].reasonCode)
+    assert_equal(1, session.candidates[1].relatedHistoryCount)
+    assert_true(session.candidates[1].relatedWinners:find("Heroic-Winner", 1, true) ~= nil)
+    assert_true(session.candidates[1].relatedWinners:find("Normal-Winner", 1, true) ~= nil)
+    assert_true(session.candidates[1].relatedDifficulties:find("Heroic", 1, true) ~= nil)
+    assert_true(session.candidates[1].relatedDifficulties:find("Normal", 1, true) ~= nil)
+    assert_equal("Dibs", session.candidates[1].awardReason)
+    assert_equal(3, session.candidates[1].voteCount)
+    local strictSession = dibs.RCLootCouncil.CreateReconciliationSession({ aliases = { "DIB" }, inferFinalStatus = false }, nil)
+    assert_equal("ambiguous", strictSession.candidates[1].classification)
+  end)
+
   it("requires acknowledgement and a reason for ambiguous manual rows", function()
     local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = {
       ["Tester-Realm"] = {

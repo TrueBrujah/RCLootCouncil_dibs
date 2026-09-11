@@ -20,13 +20,14 @@ addon only initializes these empty tables and never scans or imports history.
 ## Retail acceptance
 
 1. As a GM/Officer, open **RC History** in the Officer window (or use `/dibs reconcile`).
-2. Select target season, bounded date/history scope, explicit response aliases, and guided
-   or manual review. Confirm that opening the form does not alter balances.
+2. Select target season, bounded date/history scope, and explicit response aliases. Keep
+   the history-final-status rule enabled when older rows contain a stable id/date but no
+   final-status field. Confirm that opening the form does not alter balances.
 3. Run the search and inspect counts plus one row in each classification.
-4. Confirm one eligible row, reject one, defer one ambiguous row, and repeat the first
+4. Use **Transfer** on one row, enter a transfer note, confirm it as DIB, and repeat the
    confirmation. Verify exactly one Dibs consumption and an idempotent repeat result.
-5. Use manual confirmation on an ambiguous row with an acknowledgement and reason; verify
-   the evidence and audit entry.
+5. Disable the history-final-status rule and verify that a row without a final status stays
+   ambiguous until it is reviewed; verify the evidence and audit entry.
 6. Check Officer evidence and a player's own history. Verify privacy and explicit unknown
    fields.
 7. Repeat with no group, no channel, absent/degraded RCLootCouncil, a full/old history,

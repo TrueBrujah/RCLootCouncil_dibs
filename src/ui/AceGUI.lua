@@ -559,6 +559,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     OnClick = function(rowFrame, cellFrame, data, cols, row, realrow, column, table, button)
       local record = realrow and table:GetRow(realrow)
       if button == "RightButton" then
+        if options and options.disableContextMenu then return true end
         return showTableContextMenu(table, record, definitions, options)
       end
       if button ~= "LeftButton" then return false end

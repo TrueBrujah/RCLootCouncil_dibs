@@ -71,15 +71,15 @@ Players see only a safe readiness status in their Summary view.
 The **RC History** Officer page is a deliberate recovery workflow for history
 that predates Dibs installation. Configure exact aliases, choose a target
 season and optional timestamp bounds, then press **Search history (preview)**.
-The preview is bounded and read-only. It classifies each row as eligible,
-already accounted, ambiguous, rejected or unsupported and preserves the raw
-response text, response identity, item, winner, status and original timestamp.
-**Confirm guided** requires a final row, an exact alias and stable history
-identity. **Confirm manual** requires an explicit acknowledgement and a reason
-for an ambiguous legacy row. Confirmed rows append one ledger debit with source
-`rclootcouncil_history` and immutable evidence; repeated confirmation returns
-the original transaction. `RCMLAwardSuccess` and `FinalizeAward` are shown only
-as source/accounting evidence labels. No search runs at load time and no
+Only matching DIB rows are shown; the preview also reports how many unrelated
+rows were hidden. The **Transfer** button opens the selected row with its
+original response/reason, date, difficulty, votes, instance, encounter and
+related winners. A transfer note and one **Confirm as DIB** click are required
+before a ledger debit is appended. When a legacy row has an id/date but no
+final-status field, the optional history-final-status rule marks it as inferred;
+Normal and Heroic rows remain separate. Repeated confirmation returns the
+original transaction. `RCMLAwardSuccess` and `FinalizeAward` are shown only as
+source/accounting evidence labels. No search runs at load time and no
 RCLootCouncil history row is modified.
 
 When RCLootCouncil is available, the adapter projects a locked `Dib` response into the indexed Master Looter button/response arrays. It adds the response to the active default set and every enabled additional-button set, preserves the existing responses, and re-applies after profile changes or late module loading. A full `maxButtons` configuration is left untouched so no existing RCLootCouncil response is overwritten; the runtime Dibs button still fails closed when the candidate is not eligible.
@@ -98,7 +98,7 @@ Raid Dibs is a community stream, distinct from RAID chat. Its selection remains 
 
 ## Automated validation
 
-2026-09-10: full Lua suite passed: 222 tests, 0 failures, 54 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, exact DIB history filtering, zero-date handling, simplified history confirmation, sync privacy, options fallback, combat deferral, standalone operation, RC loot policy cache invalidation, indexed DIB response projection, AceDB profile discovery, malformed-count bounds, normalized voting-row Dibs display, the real lib-st callback signature, slash output with diagnostics disabled, rank allocation for candidates without ledger history, Catalyst exclusion, semantic Curio/Tier Set mapping, ordinary equipment fallback, Miscellaneous Armor Token disambiguation, Cosmetic blocking, Installation assistant controls, Raid Readiness states and invalidation, safe reports, selectable report windows with version metadata, dry-run replay, shared award validation, and no-mutation checks. Retail visual and delivery checks remain pending.
+2026-09-11: full Lua suite passed: 223 tests, 0 failures, 54 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, exact DIB history filtering, zero-date handling, simplified history confirmation, inferred history final-status rules, duplicate item difficulty context, transfer-only table actions, sync privacy, options fallback, combat deferral, standalone operation, RC loot policy cache invalidation, indexed DIB response projection, AceDB profile discovery, malformed-count bounds, normalized voting-row Dibs display, the real lib-st callback signature, slash output with diagnostics disabled, rank allocation for candidates without ledger history, Catalyst exclusion, semantic Curio/Tier Set mapping, ordinary equipment fallback, Miscellaneous Armor Token disambiguation, Cosmetic blocking, Installation assistant controls, Raid Readiness states and invalidation, safe reports, selectable report windows with version metadata, dry-run replay, shared award validation, and no-mutation checks. Retail visual and delivery checks remain pending.
 
 The `/dibs officer` window uses the same vertical navigation pattern as the RCLootCouncil options. It has a **Loot types** page with the same dynamic type list, checkboxes and both presets as the RCLootCouncil options. Changes use the same callbacks; reopening or refreshing either view reads the current values. The Player window uses the same navigation pattern for its Summary, History, and **My requests** pages. A player can submit a bounded report with an optional ledger entry, answer an Officer question, and read the final explanation. Use `/dibs requests` for the Player page and `/dibs review` for the authorized Officer queue. Focused options and combat/UI regression validation: 20 tests passed.
 

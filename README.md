@@ -32,7 +32,7 @@ test mirror can be used for guild testers without exposing the source repository
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
 - Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
 - Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
-- Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions (dev 0.5.8).
+- Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions (dev 0.5.9).
 - SavedVariables migrations and localized English/French runtime strings.
 
 ## How to use
@@ -125,19 +125,19 @@ selectable window with the addon version, and shows whether a qualifying live
 award could consume a Dib after final revalidation.
 
 The **RC History** page is the recovery tool for an existing RCLootCouncil
-history. It asks for a target season, optional timestamp range, exact response
-aliases (for example `DIB`, `Reserve`, or a localized label), and guided or
-manual review. **Search history (preview)** is read-only and reports eligible,
-already accounted, ambiguous, rejected, and unsupported rows. Select a row to
-inspect its immutable source evidence. Guided confirmation accepts only a final
-award with a stable history identity and an exact alias; manual confirmation is
-available for legacy rows only after an Officer checks an acknowledgement and
-enters a reason. Each confirmed row appends one `rclootcouncil_history` debit,
-keeps the original award time beside the import time, and is idempotent across
-reloads. RCLootCouncil history is never rewritten and these controls are
-available only to verified guild GMs and Officers. Select a row and use **Open
-in Adventure Guide** to jump to its raid and boss when the Adventure Guide
-catalogue can identify them.
+history. It asks for a target season, optional timestamp range and exact response
+aliases (for example `DIB`, `Reserve`, or a localized label). **Search history
+(preview)** is read-only and shows only matching DIB rows while counting hidden
+unrelated rows. Select **Transfer** to inspect the immutable source evidence,
+including the date, response reason, difficulty, votes, instance, encounter and
+related winners. A transfer note plus one **Confirm as DIB** click is required
+before a row appends one `rclootcouncil_history` debit. An optional
+history-final-status rule can infer a reviewable final state from a stable id or
+date when older RC records omit that field; Normal and Heroic rows remain
+separate. Confirmations are idempotent across reloads, RCLootCouncil history is
+never rewritten, and these controls are available only to verified guild GMs
+and Officers. Use **Open in Adventure Guide** to jump to the raid and boss when
+the catalogue can identify them.
 
 ### Backup, profiles and transfer
 
