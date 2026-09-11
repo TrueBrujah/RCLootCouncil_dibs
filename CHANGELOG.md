@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.4-dev - 2026-09-10
+
+- Resize the Data workspace to a compact 760x560 window and force AceGUI
+  containers to recalculate their full width before rendering each page, so
+  backup and profile tables use the available space instead of a narrow
+  default column.
+
 ## 0.5.3-dev - 2026-09-10
 
 - Rework the Data workspace layout with a bounded scrollable page so headings,

@@ -180,6 +180,11 @@ local function createContentPage(shell)
   local height = shell.contentHost.height or 560
   local page = gui.AddScrollableList(shell, shell.contentHost, math.max(320, height - 8)) or shell.contentHost
   shell.contentPage = page
+  -- The ScrollFrame is added after the List parent has been laid out. Ask
+  -- both containers to recalculate now so Retail does not retain AceGUI's
+  -- 300px SimpleGroup default for the page and its tables.
+  if shell.contentHost.DoLayout then shell.contentHost:DoLayout() end
+  if page and page.DoLayout then page:DoLayout() end
   return page
 end
 
@@ -346,10 +351,19 @@ function UI.Refresh()
     local height = currentShell.frame and currentShell.frame.GetHeight and currentShell.frame:GetHeight() or 680
     currentShell.contentHost:SetHeight(math.max(320, height - 105))
   end
+  if currentShell.window and currentShell.window.DoLayout then currentShell.window:DoLayout() end
+  if currentShell.pageHost and currentShell.pageHost.DoLayout then
+    -- SetFullWidth changes the child metadata; ask the List parent to apply
+    -- that width before the scroll page is created. Without this pass AceGUI
+    -- keeps the SimpleGroup's 300px default width on Retail.
+    currentShell.pageHost:DoLayout()
+  end
   local page = createContentPage(currentShell) or parent
   if state.tab == "profiles" then addProfiles(currentShell, page)
   elseif state.tab == "transfer" then addTransfer(currentShell, page)
   else addBackups(currentShell, page) end
+  if page and page.DoLayout then page:DoLayout() end
+  if currentShell.contentHost and currentShell.contentHost.DoLayout then currentShell.contentHost:DoLayout() end
 end
 
 function UI.Open(tab)
@@ -360,7 +374,7 @@ function UI.Open(tab)
     return currentShell
   end
   local gui = Dibs.AceGUI
-  local shell = gui and gui.CreateWindow and gui.CreateWindow("RCLootCouncil - Dibs | Data", 900, 680, { "CENTER", 0, 0 })
+  local shell = gui and gui.CreateWindow and gui.CreateWindow("RCLootCouncil - Dibs | Data", 760, 560, { "CENTER", 0, 0 })
   if not shell then return nil end
   currentShell = shell
   state.tab = tab or state.tab
@@ -386,6 +400,8 @@ function UI.Open(tab)
     local height = shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or 680
     shell.contentHost:SetHeight(math.max(320, height - 105))
   end
+  if shell.pageHost and shell.pageHost.DoLayout then shell.pageHost:DoLayout() end
+  if shell.window and shell.window.DoLayout then shell.window:DoLayout() end
   UI.Refresh()
   shell.window:Show()
   return shell
