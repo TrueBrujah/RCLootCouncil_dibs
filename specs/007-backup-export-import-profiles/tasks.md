@@ -8,7 +8,7 @@ description: "Task list for Dibs backups, data transfer, and configuration profi
 
 **Input**: Design documents from `/specs/007-backup-export-import-profiles/`
 
-**Status**: Implemented in 0.5.2-dev; Retail visual validation remains scheduled.
+**Status**: Implemented in 0.5.3-dev; Retail visual validation remains scheduled.
 
 ## Phase 1: Setup
 

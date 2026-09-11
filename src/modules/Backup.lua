@@ -25,7 +25,7 @@ function M.Create(scope, reason, actor)
   scope = scope or "full"; if not authorized(scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   local db = ensure(); local payload = Dibs.ImportExport and Dibs.ImportExport.GetPayload and Dibs.ImportExport.GetPayload(scope)
   if not payload then return nil, "INVALID_SCOPE" end
-  local packageText, package = Dibs.ImportExport.Export(scope, { actor = actor, reason = reason }); if not packageText then return nil, package end
+  local packageText, package = Dibs.ImportExport.Export(scope, { actor = actor, reason = reason, allowOversize = true }); if not packageText then return nil, package end
   local snapshot = { snapshotId = Dibs.NewId("snapshot"), scope = scope, guildScope = Dibs.currentGuildKey, characterScope = Dibs.GetPlayerName and Dibs.GetPlayerName() or "UnknownPlayer", schemaVersion = Dibs.ImportExport.SCHEMA_VERSION, addonVersion = Dibs.VERSION, createdAt = time(), createdBy = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), size = #packageText, checksum = package.checksum, retentionState = "active", payload = clone(payload), reason = reason }
   table.insert(db.backups, snapshot); table.sort(db.backups, function(a, b) return (a.createdAt or 0) > (b.createdAt or 0) end)
   local pruned = {}; while #db.backups > db.backupRetention do local old = table.remove(db.backups); old.retentionState = "pruned"; table.insert(pruned, old.snapshotId) end

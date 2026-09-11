@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3-dev - 2026-09-10
+
+- Rework the Data workspace layout with a bounded scrollable page so headings,
+  controls and tables stay separated and readable at supported window sizes.
+- Keep tab changes from carrying an old error message into another workspace,
+  and allow larger local safety snapshots while keeping portable exports bounded.
+
 ## 0.5.2-dev - 2026-09-10
 
 - Keep the Data control center content panel visible on first open and after

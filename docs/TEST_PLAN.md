@@ -95,7 +95,7 @@ source changes and attach the output to the test record.
 
 - [ ] Install the stable ZIP on a clean character and confirm the addon loads.
 - [ ] Install the development ZIP separately and confirm the TOC version is
-      `0.5.2-dev`.
+      `0.5.3-dev`.
 - [ ] Confirm the stable package reports the current stable version.
 - [ ] Confirm SavedVariables survive `/reload`, relog, and client restart.
 - [ ] Open `/dibs options` and confirm the correct Dibs options category opens.
@@ -274,7 +274,7 @@ contexts, and the packaged addon loads from a clean installation.
 ## Feature 005: Character Eligibility and Main/Alt Governance
 
 The automated Character Eligibility implementation is available on `dev` in
-version `0.5.2-dev`. These manual Retail checks remain required before using it
+version `0.5.3-dev`. These manual Retail checks remain required before using it
 for production guild decisions:
 
 - [ ] Curio history is tracked across linked characters and configured difficulties.

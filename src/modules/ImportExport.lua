@@ -9,6 +9,7 @@ M.PACKAGE_PREFIX = "DIBS-PKG-1|"
 M.PACKAGE_VERSION = 1
 M.SCHEMA_VERSION = 1
 M.MAX_PACKAGE_SIZE = 250000
+M.MAX_BACKUP_SIZE = 2000000
 M.MAX_DEPTH = 24
 M.MAX_NODES = 50000
 
@@ -193,9 +194,10 @@ function M.Export(scope, options)
   if options.redacted then sensitivity = "redacted"; if scope ~= "local" then payload = { settings = pick((payload.settings or {}), { "defaultAllocation", "officerMaxRankIndex", "allowPublicPreDibs" }) } end end
   local package = { packageVersion = M.PACKAGE_VERSION, scope = scope, sourceGuild = Dibs.currentGuildKey, sourceCharacter = character, sourceProfile = options.profileName, addonVersion = Dibs.VERSION, schemaVersion = M.SCHEMA_VERSION, createdAt = time(), sensitivity = sensitivity, payload = payload }
   local body, err = encodeValue(package); if not body then return nil, err end
-  if #body > M.MAX_PACKAGE_SIZE then return nil, "PACKAGE_TOO_LARGE" end
+  local sizeLimit = options.allowOversize == true and M.MAX_BACKUP_SIZE or M.MAX_PACKAGE_SIZE
+  if #body > sizeLimit then return nil, "PACKAGE_TOO_LARGE" end
   package.checksum = checksum(body); body, err = encodeValue(package); if not body then return nil, err end
-  if #body > M.MAX_PACKAGE_SIZE then return nil, "PACKAGE_TOO_LARGE" end
+  if #body > sizeLimit then return nil, "PACKAGE_TOO_LARGE" end
   M.RecordAudit("export", scope, true, options.reason, actor)
   return M.PACKAGE_PREFIX .. body, package
 end

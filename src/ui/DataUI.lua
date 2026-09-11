@@ -174,6 +174,15 @@ local function addBackups(shell, parent)
   end
 end
 
+local function createContentPage(shell)
+  local gui = Dibs.AceGUI
+  if not gui or not shell or not shell.contentHost then return shell and shell.contentHost end
+  local height = shell.contentHost.height or 560
+  local page = gui.AddScrollableList(shell, shell.contentHost, math.max(320, height - 8)) or shell.contentHost
+  shell.contentPage = page
+  return page
+end
+
 local function addProfiles(shell, parent)
   local gui = Dibs.AceGUI
   gui.AddHeading(shell, parent, "Configuration profiles", "Profiles store presentation settings separately from the append-only ledger.")
@@ -337,9 +346,10 @@ function UI.Refresh()
     local height = currentShell.frame and currentShell.frame.GetHeight and currentShell.frame:GetHeight() or 680
     currentShell.contentHost:SetHeight(math.max(320, height - 105))
   end
-  if state.tab == "profiles" then addProfiles(currentShell, parent)
-  elseif state.tab == "transfer" then addTransfer(currentShell, parent)
-  else addBackups(currentShell, parent) end
+  local page = createContentPage(currentShell) or parent
+  if state.tab == "profiles" then addProfiles(currentShell, page)
+  elseif state.tab == "transfer" then addTransfer(currentShell, page)
+  else addBackups(currentShell, page) end
 end
 
 function UI.Open(tab)
@@ -365,9 +375,9 @@ function UI.Open(tab)
   end
   local nav = gui.AddInlineGroup(shell, shell.pageHost or shell.window)
   if nav then
-    gui.AddButton(shell, nav, "Backups", function() state.tab = "backups"; UI.Refresh() end, 110)
-    gui.AddButton(shell, nav, "Profiles", function() state.tab = "profiles"; UI.Refresh() end, 110)
-    gui.AddButton(shell, nav, "Import / Export", function() state.tab = "transfer"; UI.Refresh() end, 145)
+    gui.AddButton(shell, nav, "Backups", function() state.tab = "backups"; setStatus(""); UI.Refresh() end, 110)
+    gui.AddButton(shell, nav, "Profiles", function() state.tab = "profiles"; setStatus(""); UI.Refresh() end, 110)
+    gui.AddButton(shell, nav, "Import / Export", function() state.tab = "transfer"; setStatus(""); UI.Refresh() end, 145)
   end
   shell.contentHost = gui.Create(shell, "SimpleGroup", shell.pageHost or shell.window)
   if shell.contentHost then
