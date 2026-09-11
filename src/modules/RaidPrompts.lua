@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.RaidPrompts
+Layer: Player workflow
+Purpose: Present optional encounter prompts for eligible Pre-Dibs requests.
+Responsibilities: Prompt enablement, request/accept/decline state, and event bridge.
+Non-responsibilities: It does not award loot or consume Dibs.
+Dependencies: PreDibs, EncounterJournal, Readiness.
+Blizzard events: Encounter/roster events are routed by the owning UI/runtime.
+Internal events/messages: None beyond PreDibs request calls.
+SavedVariables: db.settings.raidEntryDibPromptsEnabled and reminder text.
+RCLootCouncil: Prompt context may be sourced from RC encounter data.
+Combat safety: Prompt display is deferred during combat lockdown.
+Invariants: DIBS-RULE-002 and DIBS-RULE-003.
+Related docs: docs/player/README.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.RaidPrompts = Dibs.RaidPrompts or {}
 

@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.DataUI
+Layer: UI / persistence administration
+Purpose: Present backups, profiles, and import/export workflows in a compact data window.
+Responsibilities: Permission-filtered controls and preview-first actions.
+Non-responsibilities: It does not implement backup/profile business rules.
+Dependencies: AceGUI, Backup, Profiles, ImportExport, ProtectedActions.
+Blizzard events: None directly.
+Internal events/messages: Widget callbacks to data services.
+SavedVariables: Accessed indirectly through domain modules.
+RCLootCouncil: None directly.
+Combat safety: Window creation/refresh obeys PLAYER_REGEN_ENABLED deferral.
+Related docs: docs/officer/auditing.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.DataUI = Dibs.DataUI or {}
 local UI = Dibs.DataUI

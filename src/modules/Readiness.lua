@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.Readiness
+Layer: Runtime guard
+Purpose: Report whether live award processing and UI work have a fresh safe context.
+Responsibilities: Fingerprints, invalidation, freshness, and human-readable diagnostics.
+Non-responsibilities: It does not grant, consume, or repair Dibs.
+Dependencies: WoW roster/combat/zone APIs, RCLootCouncil capabilities.
+Blizzard events: Roster, world/zone, and PLAYER_REGEN_ENABLED invalidations via Core.
+Internal events/messages: None emitted.
+SavedVariables: None.
+RCLootCouncil: Checks capability and authority readiness for live awards.
+Combat safety: Central read-only source for DIBS-RULE-009.
+Related docs: docs/developer/combat-safety.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Readiness = Dibs.Readiness or {}
 
@@ -147,6 +162,8 @@ function Readiness.ComputeFingerprint()
   return fingerprintFor(mode, season, rcStatus, projectionSummary(), context)
 end
 
+---@param options table|nil Probe options and optional actor context.
+---@return table result Ready/degraded/blocked/unavailable report with reason codes.
 function Readiness.Evaluate(options)
   options = type(options) == "table" and options or {}
   local checkedAt = now()
@@ -354,6 +371,8 @@ function Readiness.GetLast()
   return Readiness.state and Readiness.state.last or nil
 end
 
+---@param reason string|nil Invalidation reason.
+---@return table result Current invalidated readiness state.
 function Readiness.Invalidate(reason)
   local last = Readiness.GetLast()
   if last then
@@ -373,6 +392,8 @@ function Readiness.IsFresh(result)
   return result.fingerprint == Readiness.ComputeFingerprint()
 end
 
+---@return boolean allowed Whether a verified, fresh live-award context exists.
+---@return string|nil reasonCode
 function Readiness.CanProcessLiveAward()
   local result = Readiness.Evaluate({ forAward = true })
   if result.integrationStatus == "Blocked" or result.standaloneStatus == "Blocked" then

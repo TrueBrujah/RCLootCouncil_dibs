@@ -1,3 +1,17 @@
+--[[
+Module: Dibs.Locale.frFR
+Layer: Presentation data
+Purpose: Provide French translations for the Dibs UI and diagnostics.
+Responsibilities: Localized strings keyed like the English fallback.
+Non-responsibilities: No policy, persistence, event handling, or UI layout.
+Dependencies: Dibs locale registry.
+Blizzard events/messages: None.
+SavedVariables: None directly.
+RCLootCouncil: Strings may describe the optional integration.
+Combat safety: Annotation/data only.
+Related docs: docs/developer/modules.md.
+]]
+
 local Dibs = _G.Dibs
 if type(GetLocale) == "function" and GetLocale() ~= "frFR" then return end
 Dibs.L = Dibs.L or {}

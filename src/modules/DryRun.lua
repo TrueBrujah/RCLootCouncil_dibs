@@ -1,3 +1,17 @@
+--[[
+Module: Dibs.DryRun
+Layer: Test/developer support
+Purpose: Evaluate commands and workflows without committing mutations.
+Responsibilities: Parse dry-run input and format hypothetical results.
+Non-responsibilities: It never persists data or sends live award commands.
+Dependencies: Core APIs and domain services.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: Reads configuration only; writes no persistent state.
+RCLootCouncil: Can inspect integration status without acting on it.
+Combat safety: Safe because no protected mutation is performed.
+Related docs: docs/developer/testing.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.DryRun = Dibs.DryRun or {}
 

@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.Seasons
+Layer: Domain / persistence
+Purpose: Manage the seasonal allocation boundary.
+Responsibilities: Create, select, list, rename, and archive seasons.
+Non-responsibilities: Rank amounts and ledger mutations are delegated to RankRules and Ledger.
+Dependencies: Dibs.GetDB, Dibs.Permissions, time().
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: db.seasons, db.currentSeasonId.
+RCLootCouncil: None.
+Combat safety: Pure data operations; callers still defer UI refreshes in combat.
+Invariants: DIBS-RULE-005 and DIBS-RULE-006.
+Related docs: docs/developer/data-model.md, docs/officer/configuration.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Seasons = Dibs.Seasons or {}
 

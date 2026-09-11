@@ -1,3 +1,17 @@
+--[[
+Module: Dibs.DeveloperMode
+Layer: Test/developer support
+Purpose: Gate diagnostic and test slash commands.
+Responsibilities: Developer-mode status, toggles, and test item command dispatch.
+Non-responsibilities: It does not change production allocation rules.
+Dependencies: Permissions, Core, EncounterJournal, DryRun.
+Blizzard events: None directly.  Internal events/messages: Debug output only.
+SavedVariables: db.settings.developerModeEnabled.
+RCLootCouncil: Test helpers can inspect integration capabilities.
+Combat safety: Test commands must not bypass ProtectedActions.
+Related docs: docs/developer/testing.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.DeveloperMode = Dibs.DeveloperMode or {}
 

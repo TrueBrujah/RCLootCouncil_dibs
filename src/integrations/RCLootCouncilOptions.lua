@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.RCOptions
+Layer: Optional configuration integration
+Purpose: Register the officer options projection beside RCLootCouncil options.
+Responsibilities: Build and register stable options groups and preview/degraded states.
+Non-responsibilities: It does not own Dibs persistence or perform loot awards.
+Dependencies: AceConfig/AceConfigDialog, RCLootCouncil integration, OfficerUI.
+Blizzard events: PLAYER_LOGIN, ADDON_LOADED, PLAYER_REGEN_ENABLED bootstrap.
+Internal events/messages: Options callbacks call OfficerUI and domain services.
+SavedVariables: Reads db.settings and guild policy through Core.
+RCLootCouncil: Registration is optional and capability-aware.
+Combat safety: Option opening/refresh is deferred when protected frames are locked.
+Related docs: docs/developer/rclc-integration.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.RCOptions = Dibs.RCOptions or {}
 

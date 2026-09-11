@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.LootPipeline
+Layer: Application / loot adapter
+Purpose: Normalize item context and connect Pre-Dibs requests to award validation.
+Responsibilities: Resolve semantic item families and process qualifying award context.
+Non-responsibilities: It does not transfer loot or replace RC voting.
+Dependencies: RCLootCouncil, PreDibs, CharacterEligibility, Ledger.
+Blizzard events: None directly.
+Internal events/messages: Uses RC award callbacks through the integration.
+SavedVariables: Indirectly through Ledger and PreDibs.
+RCLootCouncil: Primary optional integration point for item/award context.
+Combat safety: Award finalization obeys ProtectedActions and DIBS-RULE-009.
+Related docs: docs/developer/rclc-integration.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.LootPipeline = Dibs.LootPipeline or {}
 

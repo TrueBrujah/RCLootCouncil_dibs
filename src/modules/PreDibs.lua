@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.PreDibs
+Layer: Domain / request workflow
+Purpose: Manage player item requests before an encounter and their lifecycle.
+Responsibilities: Validation, confirmation, sync upserts, fulfillment, and display-only Vault records.
+Non-responsibilities: A request does not select a winner or transfer an item.
+Dependencies: Ledger, Seasons, Permissions, Sync, EncounterJournal.
+Blizzard events: None directly; announcement transport uses WoW chat APIs.
+Internal events/messages: Sends configured public/officer announcements through chat.
+SavedVariables: db.preDibs requests, modePolicies, acquisitions; db.settings announcement templates.
+RCLootCouncil: Request context may be projected into RC voting.
+Combat safety: Chat/data operations are separated from protected UI actions.
+Invariants: DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-005.
+Related docs: docs/developer/data-model.md, docs/player/README.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.PreDibs = Dibs.PreDibs or {}
 
@@ -380,6 +396,13 @@ function Dibs.PreDibs.SetModePolicy(seasonId, mode, actor)
   return policy
 end
 
+---@param itemID integer Item identifier.
+---@param seasonId string Season scope.
+---@param context table|nil Encounter, difficulty, and eligibility context.
+---@return boolean accepted
+---@return string|nil reasonCode
+---@return table|nil policy
+---@return table|nil validation Normalized request context when accepted.
 function Dibs.PreDibs.ValidatePublicRequest(itemID, seasonId, context)
   local targetItem = tonumber(itemID)
   if not targetItem or targetItem <= 0 then return nil, "INVALID_ITEM" end
@@ -461,6 +484,15 @@ function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId)
   return request
 end
 
+---@param playerName string|nil Request owner; defaults to local player.
+---@param itemID integer Item identifier.
+---@param itemName string|nil Display name captured for the request.
+---@param seasonId string|nil Season scope; defaults to active season.
+---@param source string|nil Request source label.
+---@param context table|nil Encounter/difficulty context.
+---@return DibsPreDibRequest|nil request
+---@return string|nil reasonCode
+-- Side effects: Persists/updates a confirmed request and may send configured announcements.
 function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, source, context)
   ensureState()
   if Dibs.PreDibs.IsPublicEnabled() ~= true then
@@ -553,6 +585,11 @@ function Dibs.PreDibs.GetTestHistory()
   return Dibs.runtime.dev.requests
 end
 
+---@param requestId string Stable request ID.
+---@param status DibsRequestStatus New lifecycle status.
+---@return DibsPreDibRequest|nil request
+---@return string|nil reasonCode
+-- Side effects: Advances a request revision and records lifecycle timestamps.
 function Dibs.PreDibs.UpdateStatus(requestId, status)
   ensureState()
 
@@ -582,6 +619,11 @@ function Dibs.PreDibs.UpdateStatus(requestId, status)
   return nil
 end
 
+---@param incoming DibsPreDibRequest|table Validated synchronized request.
+---@param senderName string|nil Sender identity used for owner checks.
+---@return DibsPreDibRequest|nil request
+---@return string|nil reasonCode
+-- Side effects: Applies only newer, owner-matching request revisions.
 function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
   ensureState()
   local incomingItemId = type(incoming) == "table" and tonumber(incoming.itemID) or nil
@@ -650,6 +692,8 @@ function Dibs.PreDibs.AcknowledgeDelivery(requestId, revision, officerName)
   return nil, "UNKNOWN_REQUEST"
 end
 
+---@param requestId string Stable request ID.
+---@return DibsPreDibRequest|nil request
 function Dibs.PreDibs.Confirm(requestId)
   return Dibs.PreDibs.UpdateStatus(requestId, "confirmed")
 end
@@ -679,6 +723,8 @@ function Dibs.PreDibs.Invalidate(requestId)
   return Dibs.PreDibs.UpdateStatus(requestId, "invalidated")
 end
 
+---@param requestId string Stable request ID.
+---@return DibsPreDibRequest|nil request
 function Dibs.PreDibs.Fulfill(requestId)
   return Dibs.PreDibs.UpdateStatus(requestId, "fulfilled")
 end
@@ -723,6 +769,11 @@ function Dibs.PreDibs.GetConfirmedRequestForPlayer(playerName, itemID, seasonId,
   return nil
 end
 
+---@param playerName string|nil Character/player identity.
+---@param itemID integer Item identifier.
+---@param difficulty DibsDifficulty|nil Difficulty context.
+---@return DibsVaultAcquisition|nil acquisition
+-- Side effects: Persists a display-only acquisition; it never consumes a Dib.
 function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty)
   ensureState()
   local targetItem = tonumber(itemID)

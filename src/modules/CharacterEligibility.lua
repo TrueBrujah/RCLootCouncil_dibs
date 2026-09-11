@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.CharacterEligibility
+Layer: Domain policy
+Purpose: Evaluate Curio/Tier Set eligibility across approved main/alt relationships.
+Responsibilities: Policy, probation, exceptions, acquisitions, and review decisions.
+Non-responsibilities: It never infers relationships or rewrites the ledger.
+Dependencies: Ledger, Seasons, Permissions, Dibs.GetDB.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: db.characterEligibility and its versioned sub-tables.
+RCLootCouncil: Eligibility may be queried while projecting candidate status.
+Combat safety: Pure data evaluation.
+Invariants: DIBS-RULE-010 and DIBS-RULE-011.
+Related docs: docs/developer/data-model.md, docs/officer/configuration.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.CharacterEligibility = Dibs.CharacterEligibility or {}
 Dibs.Eligibility = Dibs.CharacterEligibility
@@ -190,6 +205,11 @@ function Eligibility.GetPolicy(seasonId, family)
   return result
 end
 
+---@param input DibsEligibilityPolicy|table Policy fields plus season/family.
+---@param actor string|nil Officer actor identity.
+---@return DibsEligibilityPolicy|nil policy
+---@return string|nil reasonCode
+-- Side effects: Persists a versioned season/family eligibility policy.
 function Eligibility.SetPolicy(input, actor)
   local targetSeason = currentSeason(input and input.seasonId)
   if not validSeason(targetSeason) then return nil, "SEASON_NOT_FOUND" end
@@ -246,6 +266,10 @@ local function relationshipForCharacter(character, seasonId)
   return nil
 end
 
+---@param input table Main/alt relationship declaration.
+---@param actor string|nil Declaring player identity.
+---@return table|nil relationship Pending relationship record.
+---@return string|nil reasonCode
 function Eligibility.DeclareRelationship(input, actor)
   local options = type(input) == "table" and input or {}
   local targetSeason = currentSeason(options.seasonId)
@@ -275,6 +299,12 @@ function Eligibility.DeclareRelationship(input, actor)
   return copy(relationship)
 end
 
+---@param relationshipId string Relationship record ID.
+---@param decision string Approval/rejection decision.
+---@param actor string Officer reviewer.
+---@param reason string|nil Review reason.
+---@return table|nil relationship Reviewed record.
+---@return string|nil reasonCode
 function Eligibility.ReviewRelationship(relationshipId, decision, actor, reason)
   if not Dibs.Permissions or not Dibs.Permissions.Can or not Dibs.Permissions.Can("eligibility.relationship.review", actor) then
     return nil, "GUILD_ADMIN_REQUIRED"
@@ -496,6 +526,10 @@ local function buildDecision(context, playerName, seasonId, outcome, reasonCode,
   return decision
 end
 
+---@param context table Item and difficulty context.
+---@param playerName string Player identity.
+---@param seasonId string Season scope.
+---@return table decision Explainable eligibility outcome and reason.
 function Eligibility.Evaluate(context, playerName, seasonId)
   local input = type(context) == "table" and context or {}
   local targetSeason = currentSeason(seasonId or input.seasonId)
@@ -593,6 +627,12 @@ Eligibility.IsEligible = function(context, playerName, seasonId)
   return decision.outcome == "allow" or decision.outcome == "warn", decision
 end
 
+---@param record table Acquisition/evidence record.
+---@param actor string|nil Officer/system actor.
+---@param internal boolean|nil Internal trusted call marker.
+---@return table|nil acquisition Stored acquisition.
+---@return string|nil reasonCode
+-- Side effects: Persists immutable acquisition evidence for future eligibility checks.
 function Eligibility.RecordAcquisition(record, actor, internal)
   local input = type(record) == "table" and record or {}
   if internal ~= true and (not Dibs.Permissions or not Dibs.Permissions.Can or not Dibs.Permissions.Can("eligibility.history.add", actor)) then

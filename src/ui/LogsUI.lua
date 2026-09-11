@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.LogsUI
+Layer: UI / read-only audit views
+Purpose: Display player, acquisition, and officer history.
+Responsibilities: Read-only projection and navigation to relevant detail views.
+Non-responsibilities: It does not mutate ledger or RC history.
+Dependencies: AceGUI, Ledger, PreDibs, Disputes, Permissions.
+Blizzard events: None directly.
+Internal events/messages: Widget callbacks only.
+SavedVariables: Reads via domain services.
+RCLootCouncil: Displays award/evidence references when available.
+Combat safety: Read-only windows still follow UI combat restrictions.
+Related docs: docs/officer/auditing.md, docs/player/README.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.LogsUI = Dibs.LogsUI or {}
 

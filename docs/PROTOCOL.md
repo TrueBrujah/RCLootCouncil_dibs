@@ -1,25 +1,16 @@
 # Synchronization Protocol Notes
 
+The maintained protocol reference is [docs/developer/sync-protocol.md](developer/sync-protocol.md). This file remains a compatibility note and lists only behavior confirmed by `src/modules/Sync.lua`.
+
 The Pre-Dib recovery protocol uses the registered `DIBS` addon-message prefix. It is compact, versioned, bounded, and transfers only persisted active Pre-Dib state.
 
 When AceComm and AceSerializer are available through `LibStub`, Dibs serializes each logical protocol message through AceSerializer and sends it through AceComm. AceComm supplies addon-message registration and fragmentation without changing message fields, validation, transfer bounds, or trust rules. Standalone clients without Ace3 retain the legacy `DIBS1:<type>[:requestId:revision]` compatibility payload.
 
-## Message classes
+## Message types
 
-Suggested logical classes:
-
-- HELLO
-- DIGEST
-- DELTA_REQUEST
-- DELTA_CHUNK
-- SNAPSHOT_REQUEST
-- SNAPSHOT_CHUNK
-- TX_PROPOSE
-- TX_COMMIT
-- TX_ACK
-- REQUEST_STATE
-- RELAY_HEARTBEAT
-- RELAY_ELECTION
+The implementation accepts exactly: `HELLO`, `MANIFEST`, `FETCH`, `TRANSFER_BEGIN`,
+`TRANSFER_CHUNK`, `TRANSFER_END`, `REQUEST_ACK`, and `REQUEST`. Names such as
+`DIGEST`, `TX_COMMIT`, or `RELAY_ELECTION` are not protocol messages.
 
 ## Pre-Dib recovery
 
@@ -40,19 +31,13 @@ Persisted request records include normalized `Normal`, `Heroic`, `Mythic`, or `U
 
 Great Vault acquisitions are local, display-only SavedVariables records. They are not protocol payloads and never cause a request transition or ledger transaction.
 
-## Transaction rules
+## Snapshot projection
 
-Each committed transaction must have:
-
-- protocolVersion
-- transactionID
-- seasonID
-- actorGUID
-- playerGUID
-- timestamp/logical ordering metadata
-- action
-- payload
-- optional referenceTransactionID
+The officer-only `SyncSnapshot` projection may carry bounded ledger transaction
+fields and Pre-Dib request fields. Applying it validates each transaction and
+request, preserves idempotence, and never accepts live loot candidates, votes,
+responses, or item transfers. It is accounting metadata synchronization, not a
+loot-session protocol.
 
 ## Required properties
 

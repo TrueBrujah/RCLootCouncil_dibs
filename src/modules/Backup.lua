@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.Backup
+Layer: Persistence safety
+Purpose: Create bounded recovery snapshots before restore/import operations.
+Responsibilities: Retention, checksums, preview, and explicit restore.
+Non-responsibilities: It does not synchronize backups or infer business decisions.
+Dependencies: ImportExport, Dibs.GetDB, Permissions.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: db.backups and db.backupRetention.
+RCLootCouncil: Snapshot data can include RC reconciliation metadata, never live loot state.
+Combat safety: Data-only, with UI invocation subject to officer/combat policy.
+Invariants: Restore is explicit and bounded; DIBS-RULE-008.
+Related docs: docs/developer/saved-variables.md, docs/officer/auditing.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Backup = Dibs.Backup or {}
 local M = Dibs.Backup
@@ -21,6 +36,12 @@ local function sizeOf(payload)
   end
   return 0
 end
+---@param scope string|nil Snapshot scope.
+---@param reason string|nil Why the snapshot was created.
+---@param actor string Officer actor identity.
+---@return DibsBackupSnapshot|nil snapshot
+---@return string|nil reasonCode
+-- Side effects: Persists a bounded recovery snapshot before risky data operations.
 function M.Create(scope, reason, actor)
   scope = scope or "full"; if not authorized(scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   local db = ensure(); local payload = Dibs.ImportExport and Dibs.ImportExport.GetPayload and Dibs.ImportExport.GetPayload(scope)
@@ -43,12 +64,23 @@ end
 function M.Get(snapshotId)
   local db = ensure(); for _, snapshot in ipairs(db.backups) do if snapshot.snapshotId == snapshotId then return snapshot end end; return nil
 end
+---@param snapshotId string Snapshot identifier.
+---@param actor string Officer actor identity.
+---@return table|nil preview Validated restore preview.
+---@return string|nil reasonCode
 function M.PreviewRestore(snapshotId, actor)
   local snapshot = M.Get(snapshotId); if not snapshot then return nil, "SNAPSHOT_NOT_FOUND" end
   if not authorized(snapshot.scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   local preview = { previewId = Dibs.NewId("restore"), snapshotId = snapshotId, targetScope = snapshot.scope, strategy = "replace", additions = 0, changes = { "declared scope: " .. snapshot.scope }, omissions = {}, conflicts = {}, migrations = {}, sensitiveFields = snapshot.scope == "full" and { "ledger", "player identities" } or {}, expectedLedgerImpact = { replace = snapshot.scope == "full" and 1 or 0 }, createdAt = time(), actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), decision = "pending" }
   local db = ensure(); db.pendingRestores = db.pendingRestores or {}; db.pendingRestores[preview.previewId] = { preview = preview, snapshot = snapshot }; audit("restore_preview", snapshot, "success", nil, actor); return preview
 end
+---@param previewId string Preview identifier.
+---@param confirm boolean Explicit confirmation.
+---@param reason string|nil Restore reason.
+---@param actor string Officer actor identity.
+---@return boolean restored
+---@return string|nil reasonCode
+-- Side effects: Restores a snapshot only after explicit preview and confirmation.
 function M.Restore(previewId, confirm, reason, actor)
   local db = ensure(); local pending = db.pendingRestores and db.pendingRestores[previewId]; if not pending then return nil, "PREVIEW_NOT_FOUND" end
   if confirm ~= true then pending.preview.decision = "cancelled"; audit("restore_cancel", pending.snapshot, "success", reason, actor); return pending.preview end

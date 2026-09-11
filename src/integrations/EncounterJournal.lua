@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.EncounterJournal
+Layer: Blizzard UI integration
+Purpose: Read encounter loot context and expose safe Pre-Dib actions.
+Responsibilities: Catalog lookup, retrying Blizzard data availability, and item action labels.
+Non-responsibilities: It does not decide eligibility or award loot.
+Dependencies: Encounter Journal APIs, PreDibs, RaidPrompts, AceTimer.
+Blizzard events: PLAYER_LOGIN and ADDON_LOADED bootstrap; encounter journal refreshes.
+Internal events/messages: None emitted.
+SavedVariables: None directly.
+RCLootCouncil: Context may be passed to the RC projection.
+Combat safety: Protected UI opening is retried after combat.
+Related docs: docs/developer/combat-safety.md, docs/player/README.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.EncounterJournal = Dibs.EncounterJournal or {}
 local EJ_RETRY_MAX_ATTEMPTS = 120

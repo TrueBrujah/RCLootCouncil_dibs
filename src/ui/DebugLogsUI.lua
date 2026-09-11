@@ -1,3 +1,17 @@
+--[[
+Module: Dibs.DebugLogs
+Layer: UI / diagnostics
+Purpose: Keep a bounded in-memory diagnostic log and display it to authorized users.
+Responsibilities: Add, clear, and open debug entries.
+Non-responsibilities: It is not an audit ledger and is not synchronized.
+Dependencies: Core debug settings, AceGUI.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: None; entries are runtime-only.
+RCLootCouncil: May display integration diagnostics.
+Combat safety: Opening the window is deferred during combat.
+Related docs: docs/developer/testing.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.DebugLogs = Dibs.DebugLogs or { entries = {}, maxEntries = 300 }
 

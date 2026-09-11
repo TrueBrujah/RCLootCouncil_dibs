@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.ProtectedActions
+Layer: Application command boundary
+Purpose: Gate authoritative mutations and defer protected UI work during combat.
+Responsibilities: Permission checks, readiness checks, and safe execution wrappers.
+Non-responsibilities: It does not define business calculations.
+Dependencies: Permissions, Readiness, WoW combat state.
+Blizzard events: PLAYER_REGEN_ENABLED is consumed by UI retry paths.
+Internal events/messages: None emitted.
+SavedVariables: Indirectly through delegated services.
+RCLootCouncil: Final live awards require verified local authority.
+Combat safety: Central enforcement point for DIBS-RULE-009.
+Related docs: docs/developer/combat-safety.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.ProtectedActions = Dibs.ProtectedActions or {}
 
@@ -233,6 +248,10 @@ local function executeSeasonArchive(actor, payload, decision)
   return buildResult(season ~= nil, season, decision, season and nil or text("SEASON_NOT_FOUND", "Season not found."))
 end
 
+---@param actor string|nil Actor identity.
+---@param payload table Live or historical award context.
+---@return table result Protected decision and accounting result.
+-- Side effects: May append one idempotent ledger use after authority, readiness, and award validation.
 function Dibs.ProtectedActions.FinalizeAward(actor, payload)
   local command = payload or {}
   if command.source == "rclootcouncil" then
@@ -549,6 +568,11 @@ local function executeEligibilityException(actor, payload, decision)
   return buildResult(value ~= nil, value, decision, reason)
 end
 
+---@param actionId string Stable protected action identifier.
+---@param actor string|nil Actor identity.
+---@param payload table|nil Action-specific validated input.
+---@return table result `{ok, value?, decision, reasonCode?}`.
+-- Side effects: Dispatches an authorized domain mutation; rejects invalid actions before validation.
 function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   local command = payload or {}
   if not isValidAction(actionId) then

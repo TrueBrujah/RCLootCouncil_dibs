@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.RankRules
+Layer: Domain policy
+Purpose: Map guild rank snapshots to seasonal starting allocations.
+Responsibilities: Store and read rank allocations and transaction-time rank information.
+Non-responsibilities: It never rewrites existing ledger history.
+Dependencies: Dibs.GetDB, Dibs.Permissions, Dibs.Seasons.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: db.rankRules and transaction rank fields through Ledger.
+RCLootCouncil: None.
+Combat safety: Pure data operations.
+Invariants: DIBS-RULE-006 and DIBS-RULE-007.
+Related docs: docs/developer/data-model.md, docs/officer/configuration.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.RankRules = Dibs.RankRules or {}
 

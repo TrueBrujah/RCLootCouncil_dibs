@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.OfficerUI
+Layer: Officer UI controller
+Purpose: Provide navigation and actions for seasons, rules, requests, history, and audits.
+Responsibilities: Build permission-filtered views and delegate mutations to services.
+Non-responsibilities: It does not contain the accounting source of truth.
+Dependencies: AceGUI, CoreAPI, all officer-facing domain modules, optional RCOptions.
+Blizzard events: PLAYER_REGEN_ENABLED for deferred UI work.
+Internal events/messages: UI callbacks and refreshes.
+SavedVariables: Through delegated services.
+RCLootCouncil: Shows capability/status and reconciliation tools.
+Combat safety: ProtectedActions and readiness gate authoritative callbacks.
+Invariants: DIBS-RULE-007, DIBS-RULE-008, DIBS-RULE-009.
+Related docs: docs/officer/README.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.OfficerUI = Dibs.OfficerUI or {}
 
@@ -693,6 +709,12 @@ function Dibs.OfficerUI.BuildPreDibDetails(seasonId)
   return { requests = result, activeRequestCount = activeRequestCount, hiddenRequestCount = hiddenRequestCount }
 end
 
+---@param view string Officer view identifier.
+---@param seasonId string|nil Season scope.
+---@param page integer|nil One-based page number.
+---@param pageSize integer|nil Bounded page size.
+---@param query string|nil Search/filter text.
+---@return table page Paged rows and pagination metadata.
 function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query)
   if not canViewOfficerData() then
     return emptyOfficerPage(view, query)
@@ -2347,6 +2369,8 @@ function Dibs.OfficerUI.GetCandidateFallback(playerName, itemID)
   return status, status.diagnostic
 end
 
+---@return table|nil frame Officer window when UI is available.
+-- Side effects: Creates/shows the permission-filtered officer control center.
 function Dibs.OfficerUI.Show()
   if not canViewOfficerData() then
     Dibs.Message("Only the guild master or an officer may open the officer view.")
@@ -2372,6 +2396,8 @@ function Dibs.OfficerUI.Show()
   return overview
 end
 
+---@param forceShow boolean|nil Force visible state when true.
+---@return boolean visible Whether the officer window is visible after the toggle.
 function Dibs.OfficerUI.Toggle(forceShow)
   if not canViewOfficerData() then
     Dibs.Message("Only the guild master or an officer may open the officer view.")

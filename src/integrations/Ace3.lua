@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.Ace3
+Layer: Framework adapter
+Purpose: Isolate optional AceComm, AceSerializer, AceEvent, AceTimer, AceGUI, and AceConfig APIs.
+Responsibilities: Capability probes, serialization, event/comm registration, and timers.
+Non-responsibilities: It does not own addon business state.
+Dependencies: Optional LibStub libraries.
+Blizzard events: Indirectly through AceEvent registration.
+Internal events/messages: Forwards registered callbacks and DIBS comm payloads.
+SavedVariables: None directly.
+RCLootCouncil: None directly.
+Combat safety: Timer/transport safe; UI callers remain responsible for lockdown.
+Related docs: docs/developer/architecture.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Ace3 = Dibs.Ace3 or {}
 
@@ -40,6 +55,8 @@ function Adapter.Has(name)
   return Adapter.libs[name] ~= nil
 end
 
+---@param value any Lua value supported by AceSerializer.
+---@return string|nil payload Serialized payload, or nil when AceSerializer is unavailable.
 function Adapter.Serialize(value)
   local serializer = Adapter.libs.serializer
   if not serializer or type(serializer.Serialize) ~= "function" then return nil end
@@ -50,6 +67,8 @@ function Adapter.Serialize(value)
   return nil
 end
 
+---@param payload string Serialized AceSerializer payload.
+---@return any|nil value Decoded value, or nil when decoding fails.
 function Adapter.Deserialize(payload)
   local serializer = Adapter.libs.serializer
   if not serializer or type(serializer.Deserialize) ~= "function" then return nil end
@@ -58,6 +77,11 @@ function Adapter.Deserialize(payload)
   return nil
 end
 
+---@param prefix string Addon communication prefix.
+---@param message table Message to serialize.
+---@param channel string|nil WoW chat channel.
+---@param target string|nil Whisper target.
+---@return boolean sent
 function Adapter.SendComm(prefix, message, channel, target)
   local comm = Adapter.libs.comm
   local payload = Adapter.Serialize(message)
@@ -66,6 +90,9 @@ function Adapter.SendComm(prefix, message, channel, target)
   return ok and sent ~= false
 end
 
+---@param prefix string Addon communication prefix.
+---@param callback DibsCommCallback Handler invoked for matching payloads.
+---@return boolean registered
 function Adapter.RegisterComm(prefix, callback)
   if not Adapter.libs.comm or type(aceRegisterComm) ~= "function" then return false end
   Adapter.handlers.comms[prefix] = callback
@@ -76,6 +103,9 @@ function Adapter.RegisterComm(prefix, callback)
   return ok
 end
 
+---@param event string Blizzard/Ace event name.
+---@param callback DibsEventCallback Handler invoked for the event.
+---@return boolean registered
 function Adapter.RegisterEvent(event, callback)
   if not Adapter.libs.event or type(aceRegisterEvent) ~= "function" then return false end
   Adapter.handlers.events[event] = callback

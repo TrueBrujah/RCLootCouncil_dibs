@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.ImportExport
+Layer: Persistence boundary
+Purpose: Encode, validate, preview, and apply portable Dibs packages.
+Responsibilities: Versioned envelopes, checksums, bounded decoding, and audit records.
+Non-responsibilities: It never silently applies imported data.
+Dependencies: Dibs.GetDB, serializer/JSON test adapter, Permissions.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: Reads/writes guild DB and auditLog through explicit Apply calls.
+RCLootCouncil: Imports may contain RC evidence but remain preview-first.
+Combat safety: Data-only; officer UI must not apply while protected UI is locked.
+Invariants: DIBS-RULE-008 and bounded package limits.
+Related docs: docs/developer/saved-variables.md, docs/officer/auditing.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.ImportExport = Dibs.ImportExport or {}
 
@@ -186,6 +201,11 @@ function M.GetPayload(scope)
   return nil, nil, nil, "INVALID_SCOPE"
 end
 
+---@param scope "local"|"guild"|"full"|nil Export scope; defaults to local.
+---@param options table|nil Actor, profile, redaction, and reason options.
+---@return string|nil encoded Versioned package text.
+---@return table|string|nil package Package metadata or reason code.
+-- Side effects: Records an export audit event; does not mutate ledger data.
 function M.Export(scope, options)
   options = options or {}; scope = scope or "local"; local actor = options.actor
   if not roleAllowed(scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
@@ -202,6 +222,9 @@ function M.Export(scope, options)
   return M.PACKAGE_PREFIX .. body, package
 end
 
+---@param text string Encoded package text.
+---@return table|nil package Validated package envelope.
+---@return string|nil reasonCode
 function M.Decode(text)
   text = trim(text); if #text == 0 or #text > M.MAX_PACKAGE_SIZE + #M.PACKAGE_PREFIX + 200 then return nil, "INVALID_PACKAGE_SIZE" end
   if text:sub(1, #M.PACKAGE_PREFIX) ~= M.PACKAGE_PREFIX then return nil, "INVALID_PACKAGE_PREFIX" end
@@ -234,6 +257,12 @@ local function describeMapDiff(changes, additions, source, target, prefix)
   end
 end
 
+---@param text string|table Encoded package or decoded envelope.
+---@param targetScope "local"|"guild"|"full"|nil Target scope.
+---@param strategy "merge"|"replace"|"append"|nil Apply strategy.
+---@param actor string Officer actor for guild/full scopes.
+---@return table|nil preview Preview with changes/conflicts and pending ID.
+---@return string|nil reasonCode
 function M.Preview(text, targetScope, strategy, actor)
   local package, reason = type(text) == "table" and text or M.Decode(text); if not package then return nil, reason end
   targetScope = targetScope or package.scope; strategy = strategy or (package.scope == "full" and "append" or "merge")
@@ -273,6 +302,13 @@ local function mergeInto(target, source, replace)
   if replace then for k in pairs(target) do target[k] = nil end end
   for k, v in pairs(source or {}) do target[k] = clone(v) end
 end
+---@param previewId string Preview identifier.
+---@param confirm boolean Explicit confirmation.
+---@param reason string|nil Apply reason.
+---@param actor string Officer actor for guild/full scopes.
+---@return table|nil result Applied/cancelled preview.
+---@return string|nil reasonCode
+-- Side effects: Applies only a previously validated preview and records audit/safety snapshot data.
 function M.Apply(previewId, confirm, reason, actor)
   local db = Dibs.GetDB(); local pending = db.pendingImports and db.pendingImports[previewId]; if not pending then return nil, "PREVIEW_NOT_FOUND" end
   if confirm ~= true then pending.preview.decision = "cancelled"; M.RecordAudit("import_cancel", pending.preview.targetScope, true, reason, actor); return pending.preview end

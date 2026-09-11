@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.RCLootCouncil
+Layer: Optional external integration
+Purpose: Project Dibs semantics into RCLootCouncil while preserving authority boundaries.
+Responsibilities: Capability probes, response normalization, item families, award evidence, and history reconciliation.
+Non-responsibilities: It does not replace RC voting or transfer loot between raids.
+Dependencies: Optional RCLootCouncil API, Ledger, PreDibs, CharacterEligibility, Permissions.
+Blizzard events: None directly; registers RCMLAwardSuccess when available.
+Internal events/messages: RCMLAwardSuccess callback and Dibs audit records.
+SavedVariables: db.settings RC projections and db.reconciliation.
+RCLootCouncil: Optional; states are absent, operational, degraded, or unsupported.
+Combat safety: Live finalization requires verified local RC Master Looter plus Dibs authority.
+Invariants: DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-004, DIBS-RULE-009, DIBS-RULE-012.
+Related docs: docs/developer/rclc-integration.md.
+]]
+
 local Dibs = _G.Dibs
 -- Change log 0.5.1-dev (2026-09-10): repair the modeless data control center
 -- workflows and keep guild-scoped backup/profile reads permission filtered.
@@ -498,6 +514,11 @@ local function resolvePriorityCategoryRule(rules, candidates)
   return nil, false
 end
 
+---@param itemID integer Item identifier.
+---@param responseType string|nil RCLootCouncil response label.
+---@param options table|nil Context such as difficulty and semantic family.
+---@return boolean allowed
+---@return string|nil reasonCode
 function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
   options = type(options) == "table" and options or {}
   local strictWhitelist = options.strictWhitelist == true
@@ -751,6 +772,9 @@ local function normalizeDibResponse(value, rc, responseType)
   return nil, "EMPTY_RESPONSE"
 end
 
+---@param value string|nil Raw RC response label.
+---@param responseType string|nil Fallback response type.
+---@return string|nil normalized Canonical Dibs response or nil.
 function Dibs.RCLootCouncil.NormalizeDibResponse(value, responseType)
   return normalizeDibResponse(value, getRC(), responseType)
 end
@@ -1358,6 +1382,10 @@ end
 -- function deliberately reads the current policy only; it never consumes a
 -- Dib, writes history, sends an RCLootCouncil response, or invokes a protected
 -- action.
+---@param payload table Award context from RC or a dry run.
+---@return boolean valid
+---@return string|nil reasonCode
+---@return table|nil normalized Validated award context.
 function Dibs.RCLootCouncil.ValidateAwardInput(payload)
   payload = type(payload) == "table" and payload or {}
   local itemID = tonumber(payload.itemID) or parseItemID(payload.itemLink or payload.item)
@@ -2566,6 +2594,7 @@ local function capabilitySnapshot()
   return snapshot
 end
 
+---@return table capabilities Capability probe with authority and callback flags.
 function Dibs.RCLootCouncil.GetCapabilities()
   return capabilitySnapshot()
 end
@@ -2578,6 +2607,9 @@ function Dibs.RCLootCouncil.IsAvailable()
   return Dibs.RCLootCouncil.GetAvailability() == "operational"
 end
 
+---@param actionId string Authoritative action identifier.
+---@param actor string|nil Actor identity.
+---@return table decision RC capability/authority decision.
 function Dibs.RCLootCouncil.EvaluateAuthority(actionId, actor)
   local before = Dibs.RCLootCouncil.GetAvailability()
   local actorId = actor == nil and Dibs.Permissions.CanonicalPlayerId(nil) or playerIdentity(actor)
@@ -2783,6 +2815,14 @@ removeDibFromSet = function(buttons, responses)
   return true
 end
 
+---@param _ any Callback owner supplied by RCLootCouncil.
+---@param session table|nil RC loot session context.
+---@param winner string|table Winner identity.
+---@param status string Award status.
+---@param itemLink string Item link.
+---@param responseText string|nil RC response label.
+---@return boolean accepted Whether the callback produced a qualifying accounting result.
+-- Side effects: May append one idempotent ledger use after authority/readiness validation.
 function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink, responseText)
   if not Dibs.ProtectedActions or not winner or not itemLink then
     return ignoredAward("AWARD_INVALID")
@@ -3270,6 +3310,8 @@ local function copyHistoryRow(row)
   return copy
 end
 
+---@param options table|nil Filter and pagination options.
+---@return table[] rows Permission-filtered RC history candidates with precise timestamps.
 function Dibs.RCLootCouncil.GetHistoryRows(options)
   options = type(options) == "table" and options or {}
   if Dibs.Permissions and Dibs.Permissions.Can and not Dibs.Permissions.Can("history.confirm", options.actor) then
@@ -3364,6 +3406,11 @@ local function classifyHistoryRow(row, aliases, seasonId, identityMap, inferFina
   return row
 end
 
+---@param options table|nil History filter/options.
+---@param actor string|nil Officer actor identity.
+---@return DibsReconciliationSession|nil session
+---@return string|nil reasonCode
+-- Side effects: Persists a preview session; it does not consume Dibs.
 function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
   options = type(options) == "table" and options or {}
   local seasonId = options.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
@@ -3480,6 +3527,13 @@ function Dibs.RCLootCouncil.ListReconciliationSessions(actor)
   return sessions
 end
 
+---@param sessionId string Reconciliation session ID.
+---@param candidateId string Candidate ID.
+---@param options table Confirmation annotation and optional evidence fields.
+---@param actor string Officer identity.
+---@return DibsTransaction|nil transaction
+---@return string|nil reasonCode
+-- Side effects: Requires an annotation and explicit confirmation before historical debit.
 function Dibs.RCLootCouncil.ConfirmReconciliationCandidate(sessionId, candidateId, options, actor)
   local session, reason = Dibs.RCLootCouncil.GetReconciliationSession(sessionId, actor)
   if not session then return nil, reason end

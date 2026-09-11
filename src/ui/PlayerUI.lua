@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.PlayerUI
+Layer: Player UI controller
+Purpose: Show a player's balance, requests, acquisition history, and Pre-Dib actions.
+Responsibilities: Player-scoped read views and request submission.
+Non-responsibilities: It does not expose officer data or decide awards.
+Dependencies: AceGUI, Ledger, PreDibs, EncounterJournal, Permissions.
+Blizzard events: None directly.
+Internal events/messages: UI callbacks to PreDibs.
+SavedVariables: Reads via domain services.
+RCLootCouncil: Optional item context only.
+Combat safety: Request/UI actions respect combat lockdown and readiness.
+Invariants: DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-005.
+Related docs: docs/player/README.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.PlayerUI = Dibs.PlayerUI or {}
 
@@ -237,6 +253,8 @@ local function disputeStatusLabel(request)
   return tostring(request.status or "Open") .. " | " .. tostring(request.categoryLabel or request.category or "Other")
 end
 
+---@param playerName string|nil Player identity; defaults to local player.
+---@return table summary Player-scoped balance and request summary.
 function Dibs.PlayerUI.GetSummary(playerName)
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
   local balance = Dibs.Ledger and Dibs.Ledger.GetBalance(playerName or Dibs.GetPlayerName(), season and season.id) or 0
@@ -256,6 +274,10 @@ function Dibs.PlayerUI.GetSummary(playerName)
   }
 end
 
+---@param itemID integer Item identifier.
+---@param difficulty DibsDifficulty|nil Difficulty context.
+---@return DibsVaultAcquisition|nil acquisition
+---@return string|nil reasonCode
 function Dibs.PlayerUI.RecordVaultAcquisition(itemID, difficulty)
   if not (Dibs.PreDibs and Dibs.PreDibs.RecordVaultAcquisition) then return nil, "ACQUISITIONS_UNAVAILABLE" end
   return Dibs.PreDibs.RecordVaultAcquisition(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, itemID, difficulty)
@@ -962,6 +984,8 @@ function Dibs.PlayerUI.SetDevContext(context)
   end
 end
 
+---@return table|nil frame Player window when UI is available.
+-- Side effects: Creates/shows a player-scoped window; protected frame work may be deferred.
 function Dibs.PlayerUI.Show()
   local frame = Dibs.PlayerUI.CreateWindow()
   local wasShown = frame:IsShown()

@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.Sync
+Layer: Distributed synchronization
+Purpose: Exchange bounded, guild-scoped accounting and Pre-Dibs metadata.
+Responsibilities: Envelope validation, idempotence, manifests, chunked transfer, and peer state.
+Non-responsibilities: Live loot candidates, votes, responses, and item transfer never sync.
+Dependencies: AceComm/AceSerializer adapter, Permissions, PreDibs, WoW addon chat.
+Blizzard events: CHAT_MSG_ADDON via Core.
+Internal events/messages: Prefix DIBS; HELLO, MANIFEST, FETCH, TRANSFER_BEGIN, TRANSFER_CHUNK, TRANSFER_END, REQUEST_ACK, REQUEST.
+SavedVariables: db.sync.seenTransactions and peerStates.
+RCLootCouncil: Only accounting/evidence references may cross the boundary.
+Combat safety: Transport may run in combat; UI application remains protected.
+Invariants: DIBS-RULE-008 and DIBS-RULE-012.
+Related docs: docs/developer/sync-protocol.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Sync = Dibs.Sync or {}
 
@@ -74,6 +90,7 @@ local function expireTransfers()
   end
 end
 
+---@return DibsSyncManifest manifest Current active-request revisions for this guild.
 function Dibs.Sync.BuildManifest()
   local requests = {}
   for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests() or {}) do
@@ -82,6 +99,10 @@ function Dibs.Sync.BuildManifest()
   return { version = Dibs.PROTOCOL_VERSION or 1, guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil, type = "MANIFEST", senderId = Dibs.GetPlayerName(), requests = requests }
 end
 
+---@param message DibsSyncEnvelope Sync envelope; live loot fields are rejected.
+---@param channel string|nil WoW addon channel, default `RAID`.
+---@param target string|nil Whisper target when channel is `WHISPER`.
+---@return boolean sent
 function Dibs.Sync.Send(message, channel, target)
   if type(message) ~= "table" or not MESSAGE_TYPES[message.type] or Dibs.Sync.ContainsForbiddenLiveLootData(message) then return false end
   if not message.version then message.version = Dibs.PROTOCOL_VERSION or 1 end
@@ -97,6 +118,9 @@ function Dibs.Sync.Send(message, channel, target)
   return pcall(api.SendAddonMessage, "DIBS", payload, channel or "RAID", target) == true
 end
 
+---@param message DibsSyncEnvelope Received envelope.
+---@param sender string Sender identity.
+---@return boolean|table result Accepted status or a response envelope.
 function Dibs.Sync.Receive(message, sender)
   ensureState()
   expireTransfers()
@@ -180,6 +204,11 @@ function Dibs.Sync.Receive(message, sender)
   return message.type == "HELLO" or message.type == "FETCH"
 end
 
+---@param prefix string WoW addon prefix.
+---@param payload string Serialized or compact payload.
+---@param channel string Transport channel.
+---@param sender string Sender identity.
+---@return boolean|table result Receive result or response envelope.
 function Dibs.Sync.OnAddonMessage(prefix, payload, channel, sender)
   if prefix ~= "DIBS" or type(payload) ~= "string" then return false end
   if Dibs.Ace3 and Dibs.Ace3.Deserialize then
@@ -195,6 +224,7 @@ function Dibs.Sync.OnAddonMessage(prefix, payload, channel, sender)
   return Dibs.Sync.Receive({ type = messageType, requestId = requestId ~= "" and requestId or nil, revision = tonumber(revision) }, sender)
 end
 
+---@return boolean registered Whether AceComm registration succeeded.
 function Dibs.Sync.RegisterTransport()
   if Dibs.Sync.transportRegistered then return true end
   if Dibs.Ace3 and Dibs.Ace3.RegisterComm and Dibs.Ace3.RegisterComm("DIBS", Dibs.Sync.OnAddonMessage) then
@@ -229,6 +259,9 @@ function Dibs.Sync.HasSeenTransaction(transactionId)
   return Dibs.db.sync.seenTransactions and Dibs.db.sync.seenTransactions[tostring(transactionId)] == true
 end
 
+---@param peerId string Peer identity.
+---@param state table|nil Bounded peer state without live loot data.
+---@return table|nil stored State record, or nil for invalid scope/input.
 function Dibs.Sync.RegisterPeer(peerId, state)
   ensureState()
   if not peerId then

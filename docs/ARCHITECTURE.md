@@ -1,5 +1,15 @@
 # Architecture
 
+This file is the historical overview. The maintained pass-specific references
+are in [docs/developer/](developer/README.md): [architecture](developer/architecture.md),
+[modules](developer/modules.md), [data model](developer/data-model.md),
+[events](developer/events.md), [SavedVariables](developer/saved-variables.md),
+[sync](developer/sync-protocol.md), [RCLootCouncil](developer/rclc-integration.md),
+[combat safety](developer/combat-safety.md), and [naming](developer/naming-conventions.md).
+
+The stable rule identifiers used by this overview are defined in
+`docs/developer/architecture.md` and referenced by source-module headers.
+
 ## Modules
 
 ### Core

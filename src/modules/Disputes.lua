@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.Disputes
+Layer: Application / audit workflow
+Purpose: Track player reports, evidence, replies, review, and corrections.
+Responsibilities: Permission-filtered dispute lifecycle and append-only correction links.
+Non-responsibilities: It does not edit historical transactions in place.
+Dependencies: Ledger, Permissions, Dibs.GetDB.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: db.disputes.requests, order, and corrections.
+RCLootCouncil: Evidence may reference RC history and award identifiers.
+Combat safety: Data-only; officer UI actions still use ProtectedActions.
+Invariants: DIBS-RULE-007 and DIBS-RULE-008.
+Related docs: docs/officer/auditing.md, docs/developer/data-model.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Disputes = Dibs.Disputes or {}
 
@@ -468,6 +483,11 @@ function Disputes.GetActionLabels()
   }
 end
 
+---@param payload DibsDisputeRequest|table Report category, target, reason, and evidence.
+---@param actor string Player or officer actor identity.
+---@return DibsDisputeRequest|nil request
+---@return string|nil reasonCode
+-- Side effects: Persists a bounded dispute request and normalized evidence.
 function Disputes.CreateReport(payload, actor)
   payload = type(payload) == "table" and payload or {}
   actor = actor or payload.actor
@@ -564,6 +584,9 @@ function Disputes.ListForPlayer(actor, options)
   return result
 end
 
+---@param actor string Officer actor identity.
+---@param options table|nil Filter/pagination options.
+---@return DibsDisputeRequest[] requests Permission-filtered officer queue.
 function Disputes.ListForOfficer(actor, options)
   options = type(options) == "table" and options or {}
   if not isOfficer(actor) then return {}, "GUILD_ADMIN_REQUIRED" end
@@ -594,6 +617,11 @@ end
 Disputes.GetPlayerRequests = Disputes.ListForPlayer
 Disputes.GetReviewQueue = Disputes.ListForOfficer
 
+---@param requestId string Dispute ID.
+---@param replyText string Reply or requested information.
+---@param actor string Actor identity.
+---@return table|nil reply Stored reply record.
+---@return string|nil reasonCode
 function Disputes.AddReply(requestId, replyText, actor)
   local request, officer = canReadRequest(requestId, actor)
   if not request then return nil, officer end
@@ -916,6 +944,13 @@ local function applyCorrection(request, action, actor, options)
   return { ok = true, request = copy(request), transaction = copy(transaction), changedBalance = true }
 end
 
+---@param requestId string Dispute ID.
+---@param action string Resolution action.
+---@param options table|nil Correction/annotation fields.
+---@param actor string Officer actor identity.
+---@return DibsDisputeRequest|nil request Updated dispute.
+---@return string|nil reasonCode
+-- Side effects: Appends an auditable correction when requested; never edits old transactions.
 function Disputes.Resolve(requestId, action, options, actor)
   options = type(options) == "table" and options or {}
   actor = actor or options.actor

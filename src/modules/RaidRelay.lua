@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.RaidRelay
+Layer: Application / multi-raid coordination
+Purpose: Identify an active relay and send raid-scoped reminders.
+Responsibilities: Relay selection, local state, and reminder broadcast.
+Non-responsibilities: It never transfers loot or changes ledger ownership.
+Dependencies: Permissions, PreDibs, Sync, WoW chat APIs.
+Blizzard events: None directly.
+Internal events/messages: Raid reminder messages through the configured channel.
+SavedVariables: Uses db.settings and transient runtime state.
+RCLootCouncil: None directly.
+Combat safety: Chat is safe; UI prompt creation is deferred when required.
+Invariants: DIBS-RULE-012.
+Related docs: docs/officer/multi-raid-sync.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.RaidRelay = Dibs.RaidRelay or {}
 

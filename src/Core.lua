@@ -1,3 +1,19 @@
+--[[
+Module: Dibs.Core
+Layer: Composition root and application services
+Purpose: Create the guild-scoped runtime, expose stable APIs, and connect WoW events.
+Responsibilities: SavedVariables migration, slash commands, permissions-aware orchestration, and startup.
+Non-responsibilities: Ledger rules, loot ownership, and UI layout belong to their modules.
+Dependencies: WoW API; optional Ace3 and RCLootCouncil integrations.
+Blizzard events: ADDON_LOADED, PLAYER_LOGIN, GROUP_ROSTER_UPDATE, PLAYER_ENTERING_WORLD, ZONE_CHANGED_NEW_AREA, PLAYER_REGEN_ENABLED, CHAT_MSG_ADDON.
+Internal events/messages: Routes CHAT_MSG_ADDON to Dibs.Sync; invalidates readiness on roster/zone/combat changes.
+SavedVariables: RCLootCouncil_dibsDB, guild-scoped schema version 6.
+RCLootCouncil: Initializes capability-aware integration when the optional addon is present.
+Combat safety: Defers protected UI work until PLAYER_REGEN_ENABLED.
+Invariants: DIBS-RULE-001, DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-004, DIBS-RULE-009.
+Related docs: docs/developer/architecture.md, docs/developer/saved-variables.md.
+]]
+
 local addonName, RCLootCouncil_dibs = ...
 
 RCLootCouncil_dibs = RCLootCouncil_dibs or {}
@@ -93,6 +109,7 @@ local function normalizeGuildKey(realm, name)
 end
 
 -- Isolates all Dibs data by guild so alts in different guilds never share seasons/ledger/requests.
+---@return string guildKey Stable normalized guild identity used for persistence and sync.
 function Dibs.GetGuildKey()
   local realm = type(GetRealmName) == "function" and GetRealmName() or "unknown-realm"
   if type(IsInGuild) == "function" and IsInGuild() and type(GetGuildInfo) == "function" then
@@ -295,6 +312,7 @@ local function ensureDB()
   _G.DibsDB = Dibs.db
 end
 
+---@return DibsGuildDB db Active guild-scoped database after migration/defaulting.
 function Dibs.GetDB()
   ensureDB()
   return Dibs.db
@@ -330,6 +348,9 @@ local function coreActorMatchesPlayer(actor, player)
   return actorId ~= nil and playerId ~= nil and string.lower(tostring(actorId)) == string.lower(tostring(playerId))
 end
 
+---@param request table|nil Request containing `name` and optional actor identity.
+---@return DibsSeason|nil season Created season, or nil when authority/validation fails.
+-- Side effects: Persists a season through ProtectedActions.
 function Dibs.CoreAPI.createSeason(request)
   local payload = request or {}
   local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
@@ -337,6 +358,9 @@ function Dibs.CoreAPI.createSeason(request)
   return result and result.ok and result.value or nil
 end
 
+---@param request table|nil Request containing `seasonId` and optional actor identity.
+---@return table|nil result Active season ID, or nil when the action is denied.
+-- Side effects: Updates `db.currentSeasonId`.
 function Dibs.CoreAPI.setActiveSeason(request)
   local payload = request or {}
   local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
@@ -344,6 +368,8 @@ function Dibs.CoreAPI.setActiveSeason(request)
   return result and result.ok and { activeSeasonId = result.value } or nil
 end
 
+---@param request table|nil Optional officer actor context.
+---@return table result `{seasons=...}` or an empty officer-scoped result.
 function Dibs.CoreAPI.listSeasons(request)
   if not coreActorCanViewAll(request and (request.actor or request.actorIdentity) or nil) then
     return { seasons = {}, reasonCode = "OFFICER_SCOPE_REQUIRED" }
@@ -432,6 +458,9 @@ function Dibs.CoreAPI.createProbationException(request)
   return result and result.ok and result.value or { reasonCode = result and result.reasonCode or "AUTHORITY_UNAVAILABLE" }
 end
 
+---@param request table Transaction fields plus actor/actorIdentity.
+---@return table result Append result with `accepted`, `value`, and optional `reasonCode`.
+-- Side effects: Appends exactly one immutable ledger transaction or records an idempotent replay.
 function Dibs.CoreAPI.appendTransaction(request)
   local payload = request or {}
   if not Dibs.Ledger or not Dibs.Ledger.AppendTransaction then
@@ -459,6 +488,8 @@ function Dibs.CoreAPI.appendTransaction(request)
   return Dibs.Ledger.AppendTransaction(transaction)
 end
 
+---@param request table|nil Player/season query and actor identity.
+---@return table result Permission-filtered transaction list.
 function Dibs.CoreAPI.getTransactions(request)
   local payload = request or {}
   local actor = payload.actor or payload.actorIdentity
@@ -486,6 +517,8 @@ function Dibs.CoreAPI.getPlayerSeasonState(request)
   return Dibs.Ledger and Dibs.Ledger.GetPlayerSeasonState and Dibs.Ledger.GetPlayerSeasonState(payload.seasonId, requestedPlayer)
 end
 
+---@param request table Action ID and actor identity to evaluate.
+---@return table decision Authorization/readiness decision with stable reason code.
 function Dibs.CoreAPI.canExecuteAuthoritativeAction(request)
   local payload = request or {}
   local decision = Dibs.Permissions and Dibs.Permissions.Evaluate and Dibs.Permissions.Evaluate(payload.actionId, payload.actor)
@@ -499,12 +532,15 @@ function Dibs.CoreAPI.canExecuteAuthoritativeAction(request)
   }
 end
 
+---@param prefix string|nil Identifier prefix.
+---@return string id Opaque unique identifier containing a timestamp/counter.
 function Dibs.NewId(prefix)
   local timestamp = tostring(time() or 0)
   local randomPart = tostring(math.random(100000, 999999))
   return (prefix or "dibs") .. "-" .. timestamp .. "-" .. randomPart
 end
 
+---@return string|nil seasonId Active season identifier, if configured.
 function Dibs.GetCurrentSeasonId()
   ensureDB()
   if Dibs.db.currentSeasonId and Dibs.db.currentSeasonId ~= "" then
@@ -521,10 +557,12 @@ function Dibs.GetCurrentSeasonId()
   return Dibs.db.currentSeasonId
 end
 
+---@return string|nil playerName Canonical local player name/GUID representation.
 function Dibs.GetPlayerName()
   return UnitName("player") or "UnknownPlayer"
 end
 
+---@return integer timestamp Current Unix timestamp.
 function Dibs.GetTimestamp()
   return time()
 end

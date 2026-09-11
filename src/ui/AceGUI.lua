@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.AceGUI
+Layer: UI toolkit adapter
+Purpose: Provide consistent AceGUI container, table, and action helpers.
+Responsibilities: Widget construction, scrolling tables, safe callbacks, and layout sizing.
+Non-responsibilities: It does not decide business policy or persist data.
+Dependencies: AceGUI-3.0, ScrollingTable, Dibs.Ace3.
+Blizzard events: None directly.
+Internal events/messages: Widget callbacks to owning UI controllers.
+SavedVariables: None directly.
+RCLootCouncil: Supports the options projection but is otherwise independent.
+Combat safety: Frame creation and mutation must be deferred outside combat lockdown.
+Related docs: docs/developer/architecture.md, docs/developer/combat-safety.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.AceGUI = Dibs.AceGUI or {}
 

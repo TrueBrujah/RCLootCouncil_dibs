@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.Ledger
+Layer: Domain / append-only store
+Purpose: Account for Dibs grants, uses, refunds, and audited historical awards.
+Responsibilities: Validate and append transactions and derive balances/history.
+Non-responsibilities: It does not decide loot winners or transfer items.
+Dependencies: Dibs.GetDB, ProtectedActions, Seasons, RankRules.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: db.ledger.transactions, playerStates, awardTransactions, evidenceTransactions.
+RCLootCouncil: Award references/evidence are accepted as accounting metadata.
+Combat safety: Data-only; authoritative callers enforce permission and combat policy.
+Invariants: DIBS-RULE-001 through DIBS-RULE-008.
+Related docs: docs/developer/data-model.md, docs/developer/combat-safety.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Ledger = Dibs.Ledger or {}
 
@@ -70,6 +85,9 @@ local function ensurePlayerState(playerKey, seasonId)
   return Dibs.db.ledger.playerStates[targetSeason][playerKey]
 end
 
+---@param playerName string|nil Player name/GUID; defaults to the local player.
+---@param seasonId string|nil Season scope; defaults to the active season.
+---@return DibsPlayerSeasonState state Derived player state (zero-filled when absent).
 function Dibs.Ledger.GetPlayerState(playerName, seasonId)
   ensureState()
   local playerKey = normalizePlayerKey(playerName)
@@ -83,6 +101,9 @@ function Dibs.Ledger.GetPlayerState(playerName, seasonId)
   return state
 end
 
+---@param playerName string|nil Player name/GUID.
+---@param seasonId string|nil Season scope.
+---@return integer balance Sum of the season allocation and valid ledger deltas.
 function Dibs.Ledger.GetBalance(playerName, seasonId)
   ensureState()
   local playerKey = normalizePlayerKey(playerName)
@@ -104,6 +125,9 @@ function Dibs.Ledger.GetBalance(playerName, seasonId)
   return balance
 end
 
+---@param record DibsTransaction|table Transaction fields; missing audit fields are normalized.
+---@return DibsTransaction|nil transaction Stored transaction, or nil plus a reason code.
+-- Side effects: Appends to the guild ledger and updates the player index; duplicate IDs are idempotent.
 function Dibs.Ledger.AddTransaction(record)
   ensureState()
 
@@ -161,6 +185,9 @@ function Dibs.Ledger.AddTransaction(record)
   return tx
 end
 
+---@param record DibsTransaction|table Candidate transaction.
+---@return boolean valid
+---@return string|nil reasonCode Stable validation failure code.
 function Dibs.Ledger.ValidateTransaction(record)
   ensureState()
   local tx = record or {}
@@ -207,6 +234,9 @@ function Dibs.Ledger.ValidateTransaction(record)
   return true, nil
 end
 
+---@param record DibsTransaction|table Candidate transaction.
+---@return table result `{accepted, idempotentReplay, value?, reasonCode?}`.
+-- Side effects: Delegates to the append-only transaction store after validation.
 function Dibs.Ledger.AppendTransaction(record)
   ensureState()
   local tx = record or {}
@@ -237,6 +267,14 @@ local function mergeAudit(record, audit)
   return record
 end
 
+---@param playerName string|nil Player identity.
+---@param amount number|nil Positive number of Dibs; defaults to 1.
+---@param reason string|nil Accounting reason.
+---@param source string|nil Origin label.
+---@param seasonId string|nil Season scope.
+---@param audit table|nil Additional immutable audit fields.
+---@return DibsTransaction|nil transaction
+---@return string|nil reasonCode
 function Dibs.Ledger.Grant(playerName, amount, reason, source, seasonId, audit)
   local numericAmount = amount == nil and 1 or tonumber(amount)
   if not finiteNumber(numericAmount) or numericAmount <= 0 then return nil, "INVALID_AMOUNT" end
@@ -250,6 +288,14 @@ function Dibs.Ledger.Grant(playerName, amount, reason, source, seasonId, audit)
   }, audit))
 end
 
+---@param playerName string|nil Player identity.
+---@param amount number|nil Positive number of Dibs to consume; defaults to 1.
+---@param reason string|nil Accounting reason.
+---@param source string|nil Origin label.
+---@param seasonId string|nil Season scope.
+---@param audit table|nil Additional immutable audit fields.
+---@return DibsTransaction|nil transaction
+---@return string|nil reasonCode
 function Dibs.Ledger.Use(playerName, amount, reason, source, seasonId, audit)
   local numericAmount = amount == nil and 1 or tonumber(amount)
   if not finiteNumber(numericAmount) or numericAmount <= 0 then return nil, "INVALID_AMOUNT" end
@@ -303,6 +349,14 @@ end
 
 -- Historical reconciliation uses the same append-only debit path as a live award.
 -- The evidence and award references make repeated confirmations idempotent.
+---@param playerName string Player who received the historical award.
+---@param seasonId string Season scope.
+---@param awardRef string|nil Stable RC award reference.
+---@param evidenceId string|nil Evidence reference.
+---@param reason string|nil Officer annotation/reason.
+---@param audit table|nil Additional source metadata.
+---@return DibsTransaction|nil transaction
+-- Side effects: Appends one idempotent historical debit; it never edits an existing transaction.
 function Dibs.Ledger.RecordHistoricalAward(playerName, seasonId, awardRef, evidenceId, reason, audit)
   local fields = mergeAudit({ awardRef = awardRef, evidenceId = evidenceId }, audit)
   local tx = Dibs.Ledger.Use(playerName, 1, reason or "Historical RCLootCouncil award", "rclootcouncil_history", seasonId, fields)

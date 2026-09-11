@@ -1,3 +1,17 @@
+--[[
+Module: Dibs.Locale.enUS
+Layer: Presentation data
+Purpose: Provide the default English strings used by domain diagnostics and UI.
+Responsibilities: Stable localization keys and English fallback text.
+Non-responsibilities: No policy, persistence, event handling, or UI layout.
+Dependencies: Dibs locale registry.
+Blizzard events/messages: None.
+SavedVariables: None directly.
+RCLootCouncil: Strings may describe the optional integration.
+Combat safety: Annotation/data only.
+Related docs: docs/developer/modules.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.L = Dibs.L or {}
 

@@ -1,3 +1,18 @@
+--[[
+Module: Dibs.Permissions
+Layer: Policy / authorization
+Purpose: Resolve guild roles, installation mode, and officer authority.
+Responsibilities: Canonical identities and capability checks for all authoritative actions.
+Non-responsibilities: It does not mutate ledger or season data.
+Dependencies: GuildRoster WoW APIs and Dibs.GetDB.
+Blizzard events: None directly.  Internal events/messages: None emitted.
+SavedVariables: db.permissions and db.settings installation/rank fields.
+RCLootCouncil: Guild authority remains independent from RC Master Looter authority.
+Combat safety: Checks are data-only; UI action callers still respect combat lockdown.
+Invariants: DIBS-RULE-009.
+Related docs: docs/developer/architecture.md, docs/developer/combat-safety.md.
+]]
+
 local Dibs = _G.Dibs
 Dibs.Permissions = Dibs.Permissions or {}
 
