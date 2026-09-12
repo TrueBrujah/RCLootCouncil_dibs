@@ -170,7 +170,7 @@ function M.load(opts)
   wow.resetGlobals()
   wow.install(opts.wow)
 
-  if type(opts.savedVariables) == "table" then
+  if opts.savedVariables ~= nil then
     _G.RCLootCouncil_dibsDB = opts.savedVariables
   end
 

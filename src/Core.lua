@@ -71,14 +71,20 @@ if Dibs ~= RCLootCouncil_dibs then
   _G.RCLootCouncil_dibs = Dibs
 end
 
-local function deepcopy(value)
+local function deepcopy(value, seen)
   if type(value) ~= "table" then
     return value
   end
 
+  seen = seen or {}
+  if seen[value] then
+    return seen[value]
+  end
+
   local copy = {}
+  seen[value] = copy
   for key, item in pairs(value) do
-    copy[key] = deepcopy(item)
+    copy[deepcopy(key, seen)] = deepcopy(item, seen)
   end
   return copy
 end
@@ -196,6 +202,13 @@ local defaultDB = {
 }
 
 local FLAT_ROOT_MARKERS = { "seasons", "preDibs", "ledger", "permissions", "settings" }
+local ROOT_SCHEMA_VERSION = 6
+local GUILD_SCHEMA_VERSION = 6
+local RECOVERY_METADATA_VERSION = 1
+local MAX_STARTUP_BACKUPS = 3
+local MAX_QUARANTINE_RECORDS = 25
+
+Dibs.Persistence = Dibs.Persistence or {}
 
 local function isFlatLegacyRoot(persisted)
   if type(persisted.guilds) == "table" then return false end
@@ -205,110 +218,406 @@ local function isFlatLegacyRoot(persisted)
   return false
 end
 
-local function ensureDB()
-  local dbName = Dibs.SAVED_VARIABLE_NAME or "RCLootCouncil_dibsDB"
-  local persisted = _G[dbName]
+local function isWholeNumber(value)
+  return type(value) == "number" and value >= 0 and value < math.huge and value == math.floor(value)
+end
 
-  if type(persisted) ~= "table" and type(_G.DibsDB) == "table" then
-    persisted = _G.DibsDB
+local function sortedKeys(value)
+  local keys = {}
+  for key in pairs(value or {}) do table.insert(keys, key) end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  return keys
+end
+
+local function newRoot()
+  return {
+    schemaVersion = ROOT_SCHEMA_VERSION,
+    guilds = {},
+    persistenceRecovery = {
+      version = RECOVERY_METADATA_VERSION,
+      backups = {},
+      quarantine = {},
+      nextBackupId = 1,
+    },
+  }
+end
+
+local function ensureRecoveryMetadata(root, changes)
+  local existing = root.persistenceRecovery
+  if type(existing) ~= "table" then
+    root.persistenceRecovery = {
+      version = RECOVERY_METADATA_VERSION,
+      backups = {},
+      quarantine = {},
+      nextBackupId = 1,
+    }
+    changes.changed = true
+    if existing ~= nil then
+      changes.recovery = true
+      changes.needsBackup = true
+      table.insert(root.persistenceRecovery.quarantine, {
+        scope = "root.persistenceRecovery",
+        reason = "EXPECTED_TABLE",
+        original = deepcopy(existing),
+      })
+    end
   end
 
-  if type(persisted) ~= "table" then
-    persisted = {}
+  local metadata = root.persistenceRecovery
+  if type(metadata.quarantine) ~= "table" then
+    local invalid = metadata.quarantine
+    metadata.quarantine = {}
+    changes.changed, changes.recovery, changes.needsBackup = true, true, true
+    if invalid ~= nil then table.insert(metadata.quarantine, { scope = "root.persistenceRecovery.quarantine", reason = "EXPECTED_TABLE", original = deepcopy(invalid) }) end
+  end
+  if not isWholeNumber(metadata.version) or metadata.version ~= RECOVERY_METADATA_VERSION then
+    local invalid = metadata.version
+    metadata.version = RECOVERY_METADATA_VERSION
+    changes.changed = true
+    if invalid ~= nil then
+      changes.recovery = true
+      changes.needsBackup = true
+      table.insert(metadata.quarantine, {
+        scope = "root.persistenceRecovery.version",
+        reason = "UNSUPPORTED_METADATA_VERSION",
+        original = invalid,
+      })
+    end
+  end
+  if type(metadata.backups) ~= "table" then
+    local invalid = metadata.backups
+    metadata.backups = {}
+    changes.changed, changes.recovery, changes.needsBackup = true, true, true
+    if invalid ~= nil then table.insert(metadata.quarantine, { scope = "root.persistenceRecovery.backups", reason = "EXPECTED_TABLE", original = deepcopy(invalid) }) end
+  end
+  if not isWholeNumber(metadata.nextBackupId) or metadata.nextBackupId < 1 then
+    metadata.nextBackupId = #metadata.backups + 1
+    changes.changed = true
+  end
+  return metadata
+end
+
+local function quarantine(root, changes, scope, reason, original)
+  local metadata = ensureRecoveryMetadata(root, changes)
+  table.insert(metadata.quarantine, {
+    scope = scope,
+    reason = reason,
+    original = deepcopy(original),
+  })
+  while #metadata.quarantine > MAX_QUARANTINE_RECORDS do table.remove(metadata.quarantine, 1) end
+  changes.changed, changes.recovery, changes.needsBackup = true, true, true
+end
+
+local function recoverySnapshot(source)
+  if type(source) ~= "table" then return deepcopy(source) end
+  local snapshot = {}
+  for key, value in pairs(source) do
+    -- Recovery snapshots do not recursively retain earlier recovery snapshots.
+    if key ~= "persistenceRecovery" then snapshot[deepcopy(key)] = deepcopy(value) end
+  end
+  return snapshot
+end
+
+local function addStartupBackup(root, source, reason)
+  local metadata = root.persistenceRecovery
+  local backup = {
+    backupId = "startup-" .. tostring(metadata.nextBackupId),
+    reason = reason,
+    sourceSchemaVersion = type(source) == "table" and source.schemaVersion or nil,
+    snapshot = recoverySnapshot(source),
+  }
+  metadata.nextBackupId = metadata.nextBackupId + 1
+  table.insert(metadata.backups, backup)
+  while #metadata.backups > MAX_STARTUP_BACKUPS do table.remove(metadata.backups, 1) end
+  return backup
+end
+
+local function ensureTable(owner, key, template, root, changes, scope)
+  if owner[key] == nil then
+    owner[key] = deepcopy(template)
+    changes.changed = true
+  elseif type(owner[key]) ~= "table" then
+    quarantine(root, changes, scope, "EXPECTED_TABLE", owner[key])
+    owner[key] = deepcopy(template)
+  end
+  return owner[key]
+end
+
+local function sanitizeRecordMap(container, root, changes, scope)
+  for _, key in ipairs(sortedKeys(container)) do
+    if type(container[key]) ~= "table" then
+      quarantine(root, changes, scope .. "[" .. tostring(key) .. "]", "EXPECTED_RECORD_TABLE", container[key])
+      container[key] = nil
+    end
+  end
+end
+
+local function sanitizeNestedRecordMap(container, root, changes, scope)
+  for _, key in ipairs(sortedKeys(container)) do
+    if type(container[key]) ~= "table" then
+      quarantine(root, changes, scope .. "[" .. tostring(key) .. "]", "EXPECTED_TABLE", container[key])
+      container[key] = nil
+    else
+      sanitizeRecordMap(container[key], root, changes, scope .. "[" .. tostring(key) .. "]")
+    end
+  end
+end
+
+local function validateGuildSubtrees(db, root, changes, guildKey)
+  local scope = "guilds[" .. tostring(guildKey) .. "]"
+  ensureTable(db, "seasons", {}, root, changes, scope .. ".seasons")
+  sanitizeRecordMap(db.seasons, root, changes, scope .. ".seasons")
+  ensureTable(db, "rankRules", {}, root, changes, scope .. ".rankRules")
+  sanitizeRecordMap(db.rankRules, root, changes, scope .. ".rankRules")
+
+  local ledger = ensureTable(db, "ledger", defaultDB.ledger, root, changes, scope .. ".ledger")
+  ensureTable(ledger, "transactions", {}, root, changes, scope .. ".ledger.transactions")
+  ensureTable(ledger, "playerStates", {}, root, changes, scope .. ".ledger.playerStates")
+  ensureTable(ledger, "awardTransactions", {}, root, changes, scope .. ".ledger.awardTransactions")
+  ensureTable(ledger, "evidenceTransactions", {}, root, changes, scope .. ".ledger.evidenceTransactions")
+  sanitizeRecordMap(ledger.transactions, root, changes, scope .. ".ledger.transactions")
+  sanitizeNestedRecordMap(ledger.playerStates, root, changes, scope .. ".ledger.playerStates")
+
+  local permissions = ensureTable(db, "permissions", defaultDB.permissions, root, changes, scope .. ".permissions")
+  ensureTable(permissions, "adminEvents", {}, root, changes, scope .. ".permissions.adminEvents")
+  ensureTable(permissions, "activeStandaloneAdmins", {}, root, changes, scope .. ".permissions.activeStandaloneAdmins")
+
+  local preDibs = ensureTable(db, "preDibs", defaultDB.preDibs, root, changes, scope .. ".preDibs")
+  ensureTable(preDibs, "requests", {}, root, changes, scope .. ".preDibs.requests")
+  ensureTable(preDibs, "modePolicies", {}, root, changes, scope .. ".preDibs.modePolicies")
+  ensureTable(preDibs, "acquisitions", {}, root, changes, scope .. ".preDibs.acquisitions")
+  sanitizeRecordMap(preDibs.requests, root, changes, scope .. ".preDibs.requests")
+  sanitizeRecordMap(preDibs.modePolicies, root, changes, scope .. ".preDibs.modePolicies")
+  sanitizeRecordMap(preDibs.acquisitions, root, changes, scope .. ".preDibs.acquisitions")
+
+  local disputes = ensureTable(db, "disputes", defaultDB.disputes, root, changes, scope .. ".disputes")
+  ensureTable(disputes, "requests", {}, root, changes, scope .. ".disputes.requests")
+  ensureTable(disputes, "order", {}, root, changes, scope .. ".disputes.order")
+  ensureTable(disputes, "corrections", {}, root, changes, scope .. ".disputes.corrections")
+
+  local reconciliation = ensureTable(db, "reconciliation", defaultDB.reconciliation, root, changes, scope .. ".reconciliation")
+  for _, key in ipairs({ "sessions", "aliases", "aliasHistory", "decisions", "evidence", "evidenceIndex" }) do
+    ensureTable(reconciliation, key, {}, root, changes, scope .. ".reconciliation." .. key)
   end
 
-  if isFlatLegacyRoot(persisted) then
-    local guildKey = Dibs.GetGuildKey()
-    local legacy = persisted
-    persisted = { schemaVersion = 6, guilds = { [guildKey] = legacy } }
+  local eligibility = ensureTable(db, "characterEligibility", defaultDB.characterEligibility, root, changes, scope .. ".characterEligibility")
+  for _, key in ipairs({ "policies", "acquisitions", "acquisitionIndex", "relationships", "relationshipOrder", "mainChanges", "mainChangeOrder", "exceptions", "decisions" }) do
+    ensureTable(eligibility, key, {}, root, changes, scope .. ".characterEligibility." .. key)
   end
 
-  persisted.schemaVersion = persisted.schemaVersion or 6
-  persisted.guilds = persisted.guilds or {}
-
-  local guildKey = Dibs.GetGuildKey()
-  Dibs.currentGuildKey = guildKey
-  persisted.guilds[guildKey] = persisted.guilds[guildKey] or {}
-
-  Dibs.db = persisted.guilds[guildKey]
-  mergeDefaults(Dibs.db, defaultDB)
-  if (tonumber(Dibs.db.version) or 0) < 2 then
-    Dibs.db.permissions = Dibs.db.permissions or { adminEvents = {}, activeStandaloneAdmins = {} }
-    Dibs.db.permissions.adminEvents = Dibs.db.permissions.adminEvents or {}
-    Dibs.db.permissions.activeStandaloneAdmins = Dibs.db.permissions.activeStandaloneAdmins or {}
-    Dibs.db.ledger = Dibs.db.ledger or { transactions = {}, playerStates = {}, awardTransactions = {}, evidenceTransactions = {} }
-    Dibs.db.ledger.awardTransactions = Dibs.db.ledger.awardTransactions or {}
-    Dibs.db.ledger.evidenceTransactions = Dibs.db.ledger.evidenceTransactions or {}
-    Dibs.db.version = 2
+  ensureTable(db, "backups", {}, root, changes, scope .. ".backups")
+  ensureTable(db, "auditLog", {}, root, changes, scope .. ".auditLog")
+  local sync = ensureTable(db, "sync", defaultDB.sync, root, changes, scope .. ".sync")
+  ensureTable(sync, "seenTransactions", {}, root, changes, scope .. ".sync.seenTransactions")
+  ensureTable(sync, "peerStates", {}, root, changes, scope .. ".sync.peerStates")
+  local settings = ensureTable(db, "settings", defaultDB.settings, root, changes, scope .. ".settings")
+  for key, value in pairs(defaultDB.settings) do
+    if type(value) == "table" then ensureTable(settings, key, value, root, changes, scope .. ".settings." .. key) end
   end
-  if (tonumber(Dibs.db.version) or 0) < 3 then
-    Dibs.db.preDibs = Dibs.db.preDibs or { requests = {}, modePolicies = {} }
-    Dibs.db.preDibs.requests = Dibs.db.preDibs.requests or {}
-    Dibs.db.preDibs.modePolicies = Dibs.db.preDibs.modePolicies or {}
-    for _, request in ipairs(Dibs.db.preDibs.requests) do
+
+  if db.profiles ~= nil then
+    local profiles = ensureTable(db, "profiles", {}, root, changes, scope .. ".profiles")
+    for _, key in ipairs({ "local", "guild", "active" }) do
+      if profiles[key] ~= nil then ensureTable(profiles, key, {}, root, changes, scope .. ".profiles." .. key) end
+    end
+  end
+  for _, key in ipairs({ "pendingRestores", "pendingImports" }) do
+    if db[key] ~= nil then ensureTable(db, key, {}, root, changes, scope .. "." .. key) end
+  end
+  if db.currentSeasonId ~= nil and type(db.currentSeasonId) ~= "string" then
+    quarantine(root, changes, scope .. ".currentSeasonId", "EXPECTED_OPTIONAL_STRING", db.currentSeasonId)
+    db.currentSeasonId = nil
+  end
+  if db.backupRetention ~= nil and (type(db.backupRetention) ~= "number" or db.backupRetention < 1 or db.backupRetention > 25 or db.backupRetention ~= math.floor(db.backupRetention)) then
+    quarantine(root, changes, scope .. ".backupRetention", "OUT_OF_RANGE", db.backupRetention)
+    db.backupRetention = defaultDB.backupRetention
+  end
+end
+
+local function migrateGuild(db)
+  if db.version < 2 then
+    db.permissions = db.permissions or { adminEvents = {}, activeStandaloneAdmins = {} }
+    db.permissions.adminEvents = db.permissions.adminEvents or {}
+    db.permissions.activeStandaloneAdmins = db.permissions.activeStandaloneAdmins or {}
+    db.ledger = db.ledger or { transactions = {}, playerStates = {}, awardTransactions = {}, evidenceTransactions = {} }
+    db.ledger.awardTransactions = db.ledger.awardTransactions or {}
+    db.ledger.evidenceTransactions = db.ledger.evidenceTransactions or {}
+    db.version = 2
+  end
+  if db.version < 3 then
+    db.preDibs = db.preDibs or { requests = {}, modePolicies = {} }
+    db.preDibs.requests = db.preDibs.requests or {}
+    db.preDibs.modePolicies = db.preDibs.modePolicies or {}
+    for _, request in ipairs(db.preDibs.requests) do
       request.revision = math.max(1, tonumber(request.revision) or 1)
       request.modeAtCreation = request.modeAtCreation or "WILD_OPEN"
       request.delivery = request.delivery or { state = "PENDING" }
     end
-    Dibs.db.version = 3
+    db.version = 3
   end
-  if (tonumber(Dibs.db.version) or 0) < 4 then
-    Dibs.db.preDibs = Dibs.db.preDibs or { requests = {}, modePolicies = {}, acquisitions = {} }
-    Dibs.db.preDibs.requests = Dibs.db.preDibs.requests or {}
-    Dibs.db.preDibs.acquisitions = Dibs.db.preDibs.acquisitions or {}
-    for _, request in ipairs(Dibs.db.preDibs.requests) do
-      request.difficulty = request.difficulty or "UNKNOWN"
+  if db.version < 4 then
+    db.preDibs = db.preDibs or { requests = {}, modePolicies = {}, acquisitions = {} }
+    db.preDibs.requests = db.preDibs.requests or {}
+    db.preDibs.acquisitions = db.preDibs.acquisitions or {}
+    for _, request in ipairs(db.preDibs.requests) do request.difficulty = request.difficulty or "UNKNOWN" end
+    db.version = 4
+  end
+  if db.version < 5 then
+    db.preDibs = db.preDibs or { requests = {}, modePolicies = {}, acquisitions = {} }
+    db.preDibs.requests = db.preDibs.requests or {}
+    for _, request in ipairs(db.preDibs.requests) do
+      if request.difficulty == nil or request.difficulty == "" or request.difficulty == "UNKNOWN" then request.difficulty = "Normal" end
     end
-    Dibs.db.version = 4
+    db.version = 5
   end
-  if (tonumber(Dibs.db.version) or 0) < 5 then
-    Dibs.db.preDibs = Dibs.db.preDibs or { requests = {}, modePolicies = {}, acquisitions = {} }
-    Dibs.db.preDibs.requests = Dibs.db.preDibs.requests or {}
-    for _, request in ipairs(Dibs.db.preDibs.requests) do
-      if request.difficulty == nil or request.difficulty == "" or request.difficulty == "UNKNOWN" then
-        request.difficulty = "Normal"
-      end
+  if db.version < 6 then
+    db.disputes = db.disputes or { version = 1, requests = {}, order = {}, corrections = {} }
+    db.disputes.version = tonumber(db.disputes.version) or 1
+    db.disputes.requests = db.disputes.requests or {}
+    db.disputes.order = db.disputes.order or {}
+    db.disputes.corrections = db.disputes.corrections or {}
+    db.version = 6
+  end
+end
+
+Dibs.Persistence.MigrateGuild = Dibs.Persistence.MigrateGuild or migrateGuild
+
+local function persistenceStatus(state, diagnostic, readOnly)
+  return { state = state, diagnostic = diagnostic, readOnly = readOnly == true }
+end
+
+function Dibs.GetPersistenceStatus()
+  return deepcopy(Dibs.persistenceStatus or persistenceStatus("VALID", nil, false))
+end
+
+local function setReadOnlyRecovery(source, state, diagnostic)
+  Dibs._persistenceRuntimeDB = Dibs._persistenceRuntimeDB or deepcopy(defaultDB)
+  Dibs.db = Dibs._persistenceRuntimeDB
+  Dibs.persistenceStatus = persistenceStatus(state, diagnostic, true)
+  Dibs._persistenceSource = source
+end
+
+local function isReadyRoot(root, guildKey)
+  if type(root) ~= "table" or root.schemaVersion ~= ROOT_SCHEMA_VERSION or type(root.guilds) ~= "table" or type(root.persistenceRecovery) ~= "table" then return false end
+  local db = root.guilds[guildKey]
+  if type(db) ~= "table" or db.version ~= GUILD_SCHEMA_VERSION then return false end
+  for _, key in ipairs({ "seasons", "rankRules", "ledger", "permissions", "preDibs", "disputes", "reconciliation", "characterEligibility", "backups", "auditLog", "sync", "settings" }) do
+    if type(db[key]) ~= "table" then return false end
+  end
+  return true
+end
+
+local function ensureDB()
+  local dbName = Dibs.SAVED_VARIABLE_NAME or "RCLootCouncil_dibsDB"
+  local guildKey = Dibs.GetGuildKey()
+  Dibs.currentGuildKey = guildKey
+  local source = _G[dbName]
+  if source == nil and type(_G.DibsDB) == "table" then source = _G.DibsDB end
+
+  if Dibs._persistenceSource == source and isReadyRoot(source, guildKey) then
+    Dibs.db = source.guilds[guildKey]
+    Dibs.persistenceStatus = Dibs.persistenceStatus or persistenceStatus("VALID", nil, false)
+    _G.DibsDB = Dibs.db
+    return
+  end
+
+  if type(source) == "table" and isWholeNumber(source.schemaVersion) and source.schemaVersion > ROOT_SCHEMA_VERSION then
+    setReadOnlyRecovery(source, "FUTURE_UNSUPPORTED", "SavedVariables schema " .. tostring(source.schemaVersion) .. " is newer than supported schema " .. tostring(ROOT_SCHEMA_VERSION) .. "; update RCLootCouncil_dibs before modifying data.")
+    return
+  end
+
+  local changes = { changed = false, migration = false, recovery = false, needsBackup = false }
+  local staged
+  if source == nil then
+    staged = newRoot()
+    changes.changed = true
+  elseif type(source) ~= "table" then
+    staged = newRoot()
+    quarantine(staged, changes, "root", "EXPECTED_TABLE", source)
+  else
+    staged = deepcopy(source)
+  end
+
+  if isFlatLegacyRoot(staged) then
+    local legacy = staged
+    staged = newRoot()
+    staged.guilds[guildKey] = legacy
+    changes.changed, changes.migration, changes.needsBackup = true, true, true
+  elseif not isWholeNumber(staged.schemaVersion) then
+    if staged.schemaVersion ~= nil then quarantine(staged, changes, "root.schemaVersion", "EXPECTED_SUPPORTED_INTEGER", staged.schemaVersion) end
+    staged.schemaVersion = ROOT_SCHEMA_VERSION
+    changes.changed, changes.migration, changes.needsBackup = true, true, true
+  elseif staged.schemaVersion < ROOT_SCHEMA_VERSION then
+    staged.schemaVersion = ROOT_SCHEMA_VERSION
+    changes.changed, changes.migration, changes.needsBackup = true, true, true
+  end
+
+  ensureRecoveryMetadata(staged, changes)
+  if type(staged.guilds) ~= "table" then
+    quarantine(staged, changes, "root.guilds", "EXPECTED_TABLE", staged.guilds)
+    staged.guilds = {}
+  end
+  for _, key in ipairs(sortedKeys(staged.guilds)) do
+    if type(staged.guilds[key]) ~= "table" then
+      quarantine(staged, changes, "root.guilds[" .. tostring(key) .. "]", "EXPECTED_GUILD_TABLE", staged.guilds[key])
+      staged.guilds[key] = nil
     end
-    Dibs.db.version = 5
   end
-  if (tonumber(Dibs.db.version) or 0) < 6 then
-    Dibs.db.disputes = Dibs.db.disputes or { version = 1, requests = {}, order = {}, corrections = {} }
-    Dibs.db.disputes.version = tonumber(Dibs.db.disputes.version) or 1
-    Dibs.db.disputes.requests = Dibs.db.disputes.requests or {}
-    Dibs.db.disputes.order = Dibs.db.disputes.order or {}
-    Dibs.db.disputes.corrections = Dibs.db.disputes.corrections or {}
-    Dibs.db.version = 6
+
+  local existingGuild = staged.guilds[guildKey]
+  local isNewGuild = existingGuild == nil
+  if existingGuild == nil then
+    staged.guilds[guildKey] = {}
+    changes.changed = true
   end
-  -- Reconciliation has its own additive schema so legacy Dibs version 6
-  -- databases remain compatible while the feature can evolve independently.
-  Dibs.db.reconciliation = Dibs.db.reconciliation or {
-    version = 1, sessions = {}, aliases = {}, aliasHistory = {}, decisions = {}, evidence = {}, evidenceIndex = {},
-  }
-  local reconciliation = Dibs.db.reconciliation
-  reconciliation.version = tonumber(reconciliation.version) or 1
-  reconciliation.sessions = reconciliation.sessions or {}
-  reconciliation.aliases = reconciliation.aliases or {}
-  reconciliation.aliasHistory = reconciliation.aliasHistory or {}
-  reconciliation.decisions = reconciliation.decisions or {}
-  reconciliation.evidence = reconciliation.evidence or {}
-  reconciliation.evidenceIndex = reconciliation.evidenceIndex or {}
-  Dibs.db.characterEligibility = Dibs.db.characterEligibility or {
-    version = 1, policies = {}, acquisitions = {}, acquisitionIndex = {},
-    relationships = {}, relationshipOrder = {}, mainChanges = {},
-    mainChangeOrder = {}, exceptions = {}, decisions = {},
-  }
-  local eligibility = Dibs.db.characterEligibility
-  eligibility.version = tonumber(eligibility.version) or 1
-  eligibility.policies = eligibility.policies or {}
-  eligibility.acquisitions = eligibility.acquisitions or {}
-  eligibility.acquisitionIndex = eligibility.acquisitionIndex or {}
-  eligibility.relationships = eligibility.relationships or {}
-  eligibility.relationshipOrder = eligibility.relationshipOrder or {}
-  eligibility.mainChanges = eligibility.mainChanges or {}
-  eligibility.mainChangeOrder = eligibility.mainChangeOrder or {}
-  eligibility.exceptions = eligibility.exceptions or {}
-  eligibility.decisions = eligibility.decisions or {}
-  _G[dbName] = persisted
+  local db = staged.guilds[guildKey]
+  if type(db) ~= "table" then
+    quarantine(staged, changes, "root.guilds[" .. tostring(guildKey) .. "]", "EXPECTED_GUILD_TABLE", db)
+    db = {}
+    staged.guilds[guildKey] = db
+  end
+
+  if not isNewGuild then
+    if isWholeNumber(db.version) and db.version > GUILD_SCHEMA_VERSION then
+      setReadOnlyRecovery(source, "FUTURE_UNSUPPORTED", "Guild database version " .. tostring(db.version) .. " is newer than supported version " .. tostring(GUILD_SCHEMA_VERSION) .. "; update RCLootCouncil_dibs before modifying data.")
+      return
+    elseif db.version == nil then
+      db.version = 1
+      changes.changed, changes.recovery, changes.migration, changes.needsBackup = true, true, true, true
+    elseif not isWholeNumber(db.version) or db.version < 1 then
+      quarantine(staged, changes, "guilds[" .. tostring(guildKey) .. "].version", "EXPECTED_SUPPORTED_INTEGER", db.version)
+      db.version = 1
+      changes.migration = true
+    elseif db.version < GUILD_SCHEMA_VERSION then
+      changes.migration, changes.needsBackup = true, true
+    end
+  end
+
+  validateGuildSubtrees(db, staged, changes, guildKey)
+  if changes.migration then
+    local ok, migrationError = pcall(Dibs.Persistence.MigrateGuild, db)
+    if not ok then
+      setReadOnlyRecovery(source, "RECOVERABLE_INVALID", "SavedVariables migration failed without committing changes: " .. tostring(migrationError))
+      return
+    end
+  end
+  mergeDefaults(db, defaultDB)
+
+  if changes.needsBackup and source ~= nil then addStartupBackup(staged, source, changes.recovery and "recovery" or "migration") end
+  if changes.migration or changes.recovery then
+    staged.persistenceRecovery.lastMigration = {
+      sourceSchemaVersion = type(source) == "table" and source.schemaVersion or nil,
+      targetSchemaVersion = ROOT_SCHEMA_VERSION,
+      guildKey = guildKey,
+      result = changes.recovery and "RECOVERABLE_INVALID" or "MIGRATABLE",
+    }
+  end
+
+  _G[dbName] = staged
+  Dibs.db = staged.guilds[guildKey]
+  Dibs._persistenceRuntimeDB = nil
+  Dibs._persistenceSource = staged
+  Dibs.persistenceStatus = persistenceStatus(changes.recovery and "RECOVERABLE_INVALID" or (changes.migration and "MIGRATABLE" or "VALID"), nil, false)
   _G.DibsDB = Dibs.db
 end
 
