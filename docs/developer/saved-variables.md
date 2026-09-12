@@ -27,6 +27,6 @@ subtrees are placed in `persistenceRecovery.quarantine` before only the affected
 runtime subtree is rebuilt. A failed staged migration leaves the original
 SavedVariables root unchanged.
 
-Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `preDibs`, `reconciliation`, `characterEligibility`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
+Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `preDibs`, `reconciliation`, `characterEligibility`, `governance`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
 
 Backups are bounded snapshots with a configurable retention (default 5, maximum 25). Import/export is versioned and preview-first; applying a package or restoring a snapshot is explicit and audited. No live loot candidates, votes, or item transfers belong in SavedVariables or sync payloads.

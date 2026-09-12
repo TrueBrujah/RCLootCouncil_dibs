@@ -122,6 +122,27 @@ runtime state or changing addon load order.
 ---@field updatedAt integer
 ---@field settings table
 
+---@class DibsIdentitySnapshot
+---@field memberKey string Normalized Name-Realm comparison/wire key.
+---@field displayName string Name-Realm display value observed at snapshot time.
+---@field guidWitness? string Optional corroborating GUID; never a wire key.
+---@field rosterGeneration integer Current roster generation when observed.
+
+---@class DibsGovernanceRecord
+---@field schema integer
+---@field recordClass "GOVERNANCE"
+---@field guildKey string
+---@field governanceRevision integer
+---@field parentRevision integer
+---@field parentHash string
+---@field authorNameRealm string
+---@field authorMemberKey string
+---@field authorSnapshot DibsIdentitySnapshot
+---@field timestamp integer
+---@field audit table
+---@field content table
+---@field contentHash string
+
 ---@class DibsSyncEnvelope
 ---@field type DibsSyncMessageType
 ---@field version integer
@@ -154,6 +175,7 @@ runtime state or changing addon load order.
 ---@field disputes table
 ---@field reconciliation table
 ---@field characterEligibility table
+---@field governance table
 ---@field backups DibsBackupSnapshot[]
 ---@field backupRetention integer
 ---@field auditLog table[]

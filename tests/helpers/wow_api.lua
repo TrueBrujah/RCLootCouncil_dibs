@@ -416,4 +416,11 @@ function M.installEncounterJournalContext(opts)
   end
 end
 
+function M.setGuildRoster(members, rankIndices, options)
+  options = options or {}
+  guildMembers = members or {}
+  guildRankIndices = rankIndices or {}
+  if options.guildLeader ~= nil then guildLeader = options.guildLeader == true end
+end
+
 return M

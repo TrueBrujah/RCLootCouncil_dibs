@@ -6,6 +6,8 @@ local TOC_FILES = {
   "Core.lua",
   "locales/enUS.lua",
   "locales/frFR.lua",
+  "modules/Identity.lua",
+  "modules/Governance.lua",
   "modules/Seasons.lua",
   "modules/RankRules.lua",
   "modules/Ledger.lua",

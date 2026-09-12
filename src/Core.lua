@@ -27,6 +27,8 @@ _G.Dibs = Dibs
 -- the ordered module list reaches it; initializing it here is intentionally
 -- side-effect free and preserves an existing table during reloads.
 Dibs.Permissions = Dibs.Permissions or {}
+Dibs.Identity = Dibs.Identity or {}
+Dibs.Governance = Dibs.Governance or {}
 Dibs.ProtectedActions = Dibs.ProtectedActions or {}
 Dibs.PreDibs = Dibs.PreDibs or {}
 Dibs.Seasons = Dibs.Seasons or {}
@@ -174,6 +176,17 @@ local defaultDB = {
     mainChangeOrder = {},
     exceptions = {},
     decisions = {},
+  },
+  governance = {
+    schema = 1,
+    status = "POLICY_UNINITIALIZED",
+    revision = 0,
+    hash = "GENESIS",
+    records = {},
+    auditLog = {},
+    conflicts = {},
+    aliases = { schema = 1, records = {} },
+    future = { coordinator = nil, ledgerEpoch = nil, protocolState = "LEGACY_LOCAL", baseline = nil },
   },
   backups = {},
   backupRetention = 5,
@@ -405,6 +418,34 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
     ensureTable(eligibility, key, {}, root, changes, scope .. ".characterEligibility." .. key)
   end
 
+  local governance = ensureTable(db, "governance", defaultDB.governance, root, changes, scope .. ".governance")
+  ensureTable(governance, "records", {}, root, changes, scope .. ".governance.records")
+  ensureTable(governance, "auditLog", {}, root, changes, scope .. ".governance.auditLog")
+  ensureTable(governance, "conflicts", {}, root, changes, scope .. ".governance.conflicts")
+  local aliases = ensureTable(governance, "aliases", { schema = 1, records = {} }, root, changes, scope .. ".governance.aliases")
+  ensureTable(aliases, "records", {}, root, changes, scope .. ".governance.aliases.records")
+  local future = ensureTable(governance, "future", defaultDB.governance.future, root, changes, scope .. ".governance.future")
+  if governance.schema ~= 1 then
+    quarantine(root, changes, scope .. ".governance.schema", "UNSUPPORTED_GOVERNANCE_SCHEMA", governance.schema)
+    governance.schema = 1
+  end
+  if governance.status ~= "POLICY_UNINITIALIZED" and governance.status ~= "GOVERNANCE_ADOPTED" then
+    quarantine(root, changes, scope .. ".governance.status", "INVALID_GOVERNANCE_STATUS", governance.status)
+    governance.status = "POLICY_UNINITIALIZED"
+  end
+  if not isWholeNumber(governance.revision) then
+    quarantine(root, changes, scope .. ".governance.revision", "EXPECTED_NONNEGATIVE_INTEGER", governance.revision)
+    governance.revision = 0
+  end
+  if type(governance.hash) ~= "string" or governance.hash == "" then
+    quarantine(root, changes, scope .. ".governance.hash", "EXPECTED_NONEMPTY_HASH", governance.hash)
+    governance.hash = "GENESIS"
+  end
+  if future.coordinator ~= nil or future.ledgerEpoch ~= nil or future.baseline ~= nil or future.protocolState ~= "LEGACY_LOCAL" then
+    quarantine(root, changes, scope .. ".governance.future", "B02A_FUTURE_FIELDS_INACTIVE", future)
+    governance.future = deepcopy(defaultDB.governance.future)
+  end
+
   ensureTable(db, "backups", {}, root, changes, scope .. ".backups")
   ensureTable(db, "auditLog", {}, root, changes, scope .. ".auditLog")
   local sync = ensureTable(db, "sync", defaultDB.sync, root, changes, scope .. ".sync")
@@ -501,7 +542,7 @@ local function isReadyRoot(root, guildKey)
   if type(root) ~= "table" or root.schemaVersion ~= ROOT_SCHEMA_VERSION or type(root.guilds) ~= "table" or type(root.persistenceRecovery) ~= "table" then return false end
   local db = root.guilds[guildKey]
   if type(db) ~= "table" or db.version ~= GUILD_SCHEMA_VERSION then return false end
-  for _, key in ipairs({ "seasons", "rankRules", "ledger", "permissions", "preDibs", "disputes", "reconciliation", "characterEligibility", "backups", "auditLog", "sync", "settings" }) do
+  for _, key in ipairs({ "seasons", "rankRules", "ledger", "permissions", "preDibs", "disputes", "reconciliation", "characterEligibility", "governance", "backups", "auditLog", "sync", "settings" }) do
     if type(db[key]) ~= "table" then return false end
   end
   return true
@@ -1550,6 +1591,7 @@ local function onRuntimeEvent(event, ...)
   end
   if event == "CHAT_MSG_ADDON" and Dibs.Sync and Dibs.Sync.OnAddonMessage then return Dibs.Sync.OnAddonMessage(...) end
   if event == "GROUP_ROSTER_UPDATE" and Dibs.Sync and Dibs.Sync.OnRosterChanged then Dibs.Sync.OnRosterChanged() end
+  if event == "GUILD_ROSTER_UPDATE" and Dibs.Identity and Dibs.Identity.OnRosterChanged then Dibs.Identity.OnRosterChanged() end
   if Dibs.Readiness and Dibs.Readiness.Invalidate
     and (event == "GROUP_ROSTER_UPDATE" or event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_REGEN_ENABLED")
   then
@@ -1560,7 +1602,7 @@ end
 
 function Dibs.SetupRuntimeEvents()
   if Dibs.runtimeEventsRegistered then return true end
-  local events = { "PLAYER_LOGIN", "ADDON_LOADED", "GROUP_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_REGEN_ENABLED" }
+  local events = { "PLAYER_LOGIN", "ADDON_LOADED", "GROUP_ROSTER_UPDATE", "GUILD_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_REGEN_ENABLED" }
   local usingAceEvent = Dibs.Ace3 and Dibs.Ace3.RegisterEvent
   if usingAceEvent then
     for _, event in ipairs(events) do Dibs.Ace3.RegisterEvent(event, onRuntimeEvent) end
