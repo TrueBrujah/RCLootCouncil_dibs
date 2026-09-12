@@ -835,7 +835,7 @@ function Dibs.CoreAPI.appendTransaction(request)
     if key ~= "actor" and key ~= "actorIdentity" then transaction[key] = value end
   end
   transaction.actorId = transaction.actorId or decision.actorId
-  return Dibs.Ledger.AppendTransaction(transaction)
+  return Dibs.Ledger.AppendTransaction(transaction, { action = actionId, actor = actor })
 end
 
 ---@param request table|nil Player/season query and actor identity.

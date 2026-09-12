@@ -21,7 +21,7 @@ describe("RCLootCouncil finalized-award contract", function()
     local first = dibs.RCLootCouncil.OnAwardSuccess(nil, 7, "Tester-Realm", "normal", "item:19019", "DIB")
     local second = dibs.RCLootCouncil.OnAwardSuccess(nil, 7, "Tester-Realm", "normal", "item:19019", "DIB")
 
-    assert_true(first and first.ok)
+    assert_true(first and first.ok, tostring(first and first.reasonCode))
     assert_true(second and second.ok)
     assert_equal("awarded", first.outcome)
     assert_equal("duplicate", second.outcome)

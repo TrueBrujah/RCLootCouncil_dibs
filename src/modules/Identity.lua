@@ -51,7 +51,7 @@ local function parseNameRealm(value)
   local display = trim(actorName(value))
   if not display then return nil, nil, "INVALID_IDENTITY" end
   -- A Player GUID is witness data, never a Name-Realm wire identity.
-  if display:match("^Player%-%d+%-%") then return nil, display, "GUID_IS_NOT_MEMBER_KEY" end
+  if display:match("^Player%-%d+%-") then return nil, display, "GUID_IS_NOT_MEMBER_KEY" end
   local name, realm = display:match("^([^%-]+)%-(.+)$")
   name, realm = trim(name), trim(realm)
   if not name or not realm then return nil, display, "SHORT_NAME" end

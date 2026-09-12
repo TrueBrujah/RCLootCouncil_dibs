@@ -325,7 +325,9 @@ function Dibs.Sync.SyncSnapshot()
     }
   end
   ensureState()
-  local transactionFields = { "transactionId", "type", "playerKey", "playerId", "playerName", "seasonId", "amount", "createdAt", "reason", "source", "action", "actorId", "playerRank", "itemID", "itemLink", "awardRef" }
+  -- B03 deliberately does not replicate ledger events. B04 will define the
+  -- authenticated envelope, ordering, conflict, and anti-entropy rules needed
+  -- before a ledger detail can leave or enter this client.
   local requestFields = { "requestId", "playerKey", "playerName", "itemID", "itemName", "seasonId", "status", "createdAt", "updatedAt", "confirmedAt", "fulfilledAt", "cancelledAt" }
   local function project(record, fields)
     local copy = {}
@@ -333,10 +335,6 @@ function Dibs.Sync.SyncSnapshot()
       if record[field] ~= nil then copy[field] = record[field] end
     end
     return copy
-  end
-  local transactions = {}
-  for _, tx in ipairs(Dibs.Ledger and Dibs.Ledger.GetAllTransactions() or {}) do
-    table.insert(transactions, project(tx, transactionFields))
   end
   local requests = {}
   for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory() or {}) do
@@ -346,7 +344,8 @@ function Dibs.Sync.SyncSnapshot()
     version = Dibs.VERSION,
     protocolVersion = Dibs.PROTOCOL_VERSION,
     season = Dibs.GetCurrentSeasonId(),
-    transactions = transactions,
+    transactions = {},
+    ledgerStatus = "LOCAL_ONLY",
     preDibs = requests,
   }
 end
@@ -381,16 +380,17 @@ function Dibs.Sync.ApplySnapshot(snapshot, actor)
   if type(snapshot.transactions) == "table" and #snapshot.transactions > 10000 then return false end
   if type(snapshot.preDibs) == "table" and #snapshot.preDibs > 10000 then return false end
 
+  if type(snapshot.transactions) == "table" and #snapshot.transactions > 0 then
+    return false, "LEDGER_SYNC_NOT_AVAILABLE"
+  end
   if type(snapshot.transactions) == "table" then
     for _, tx in ipairs(snapshot.transactions) do
       if type(tx) ~= "table" or not tx.transactionId then return false end
       local valid = Dibs.Ledger.ValidateTransaction and Dibs.Ledger.ValidateTransaction(tx)
       if valid ~= true then return false end
     end
-    for _, tx in ipairs(snapshot.transactions) do
-      local result = Dibs.Ledger.AppendTransaction(tx)
-      if not result or result.accepted ~= true then return false end
-    end
+    -- Empty legacy payloads remain harmless. Non-empty ledger payloads were
+    -- rejected above rather than being re-attributed as a local B03 commit.
   end
 
   if type(snapshot.preDibs) == "table" then

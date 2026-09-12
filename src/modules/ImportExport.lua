@@ -331,6 +331,10 @@ function M.Apply(previewId, confirm, reason, actor)
       end
       local existing = targetLedger.transactions[id]
       if existing and (existing.playerName ~= tx.playerName or tonumber(existing.amount) ~= tonumber(tx.amount)) then return nil, "TRANSACTION_CONFLICT" end
+      -- B03 local-canonical transactions are never imported as a second durable
+      -- write path. Existing identical IDs remain idempotent; a future baseline
+      -- reconciliation batch owns any cross-client canonical ledger adoption.
+      if not existing and tx.classification == "LOCAL_CANONICAL" then return nil, "CANONICAL_LEDGER_IMPORT_UNAVAILABLE" end
       if not existing then staged[id] = tx end
     end
     for ref, id in pairs(ledger.awardTransactions or {}) do

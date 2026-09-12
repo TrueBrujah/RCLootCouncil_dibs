@@ -374,8 +374,9 @@ local function executeAwardFinalize(actor, payload, decision)
       end
     end
   end
-  local tx = Dibs.Ledger.Use(command.playerName, 1, command.reason or "Finalized loot award", command.source or "rclootcouncil", command.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()), buildAudit("award.finalize", actor, command, decision))
+  local tx, ledgerReason = Dibs.Ledger.Use(command.playerName, 1, command.reason or "Finalized loot award", command.source or "rclootcouncil", command.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()), buildAudit("award.finalize", actor, command, decision))
   local result = buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+  if not tx then result.reasonCode = ledgerReason or result.reasonCode end
   result.outcome = tx and "awarded" or "rejected"
   result.eligibility = eligibilityDecision
   if tx and eligibilityDecision and Dibs.CharacterEligibility.ConsumeException then

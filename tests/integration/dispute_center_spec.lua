@@ -36,13 +36,14 @@ describe("Dispute center", function()
   end)
 
   it("deduplicates an active report and rejects another player's evidence", function()
-    local dibs, season = setup({ guildLeader = true })
+    local dibs, season = setup({ guildLeader = true, guildMembers = { "Tester-Realm", "Other-Realm" } })
     local tx = dibs.Ledger.AddTransaction(fixtures.transaction("Tester-Realm", season.id, { transactionId = "tx-own" }))
     local first = dibs.Disputes.CreateReport({ category = "duplicate", transactionRef = tx.transactionId })
     local second, reason, duplicate = dibs.Disputes.CreateReport({ category = "duplicate", transactionRef = tx.transactionId })
     assert_equal(first.requestId, second.requestId)
     assert_equal("DUPLICATE_ACTIVE", reason)
     assert_true(duplicate)
+    dibs.Ledger.Grant("Other-Realm", 1, "Test allocation", "test", season.id)
     local other = dibs.Ledger.AddTransaction(fixtures.transaction("Other-Realm", season.id, { transactionId = "tx-other", awardRef = "history:other-award" }))
     assert_equal("Other-Realm", other.playerName)
     assert_equal("other-realm", dibs.Permissions.CanonicalPlayerId(other.playerName))
@@ -118,7 +119,7 @@ describe("Dispute center", function()
   end)
 
   it("corrects a wrong item or player with an auditable target change", function()
-    local dibs, season = setup({ guildLeader = true })
+    local dibs, season = setup({ guildLeader = true, guildMembers = { "Tester-Realm", "Recipient-Realm" } })
     local original = dibs.Ledger.AddTransaction(fixtures.transaction("Tester-Realm", season.id, {
       transactionId = "tx-target-correction",
       itemID = 19019,

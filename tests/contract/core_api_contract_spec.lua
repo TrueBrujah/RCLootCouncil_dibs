@@ -43,7 +43,7 @@ describe("Core API contract", function()
       playerName = "Tester-Realm",
       actionType = "DIB_GRANTED",
       quantityDelta = 2,
-      reason = "Contract grant replay",
+      reason = "Contract grant",
     })
     assert_true(replay.accepted)
     assert_true(replay.idempotentReplay)
