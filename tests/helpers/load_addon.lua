@@ -23,6 +23,7 @@ local TOC_FILES = {
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
   "modules/SyncV2.lua",
+  "modules/LegacyBaseline.lua",
   "modules/RaidRelay.lua",
   "modules/RaidPrompts.lua",
   "modules/Readiness.lua",

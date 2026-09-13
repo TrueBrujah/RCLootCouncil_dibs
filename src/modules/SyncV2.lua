@@ -211,7 +211,7 @@ local function requestDetail(target, requestId)
   return Sync.SendDetail("PREDIB_REQUEST", requestId, tonumber(request.revision) or 1, requestHash(request), request, target)
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_RECOVERY_PACKAGE" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local encoded = Dibs.Ace3.Serialize(payload); if type(encoded) ~= "string" or #encoded > MAX_BYTES then return false, "PAYLOAD_TOO_LARGE" end
   local transferId = Dibs.NewId("v2transfer"); local chunks = {}
@@ -222,6 +222,13 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   if not sent then return false, "SYNC_UNAVAILABLE" end
   for index, chunk in ipairs(chunks) do if not Sync.Send({ type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, "WHISPER", target) then return false, "SYNC_UNAVAILABLE" end end
   return Sync.Send({ type = "TRANSFER_END", transferId = transferId }, "WHISPER", target)
+end
+
+-- B05a evidence transport: the receiving side stages this as non-canonical
+-- runtime evidence. It never imports a ledger or finalizes a baseline itself.
+function Sync.SendLegacyRecoveryPackage(package, target)
+  if type(package) ~= "table" or type(package.contentHash) ~= "string" then return false, "INVALID_RECOVERY_PACKAGE" end
+  return Sync.SendDetail("LEGACY_RECOVERY_PACKAGE", package.contentHash, 1, package.contentHash, package, target)
 end
 
 local function applyRequest(payload, transfer, sender)
@@ -322,7 +329,7 @@ function Sync.Receive(message, sender)
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" then return false, "UNSUPPORTED_ENTITY" end
     if message.entityType == "OPERATIONAL_POLICY" then
       local writerAllowed, writerReason = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(resolved.displayName)
       if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
@@ -369,6 +376,17 @@ function Sync.Receive(message, sender)
         end
       elseif ok then clearResolvedPolicyGap() end
       return ok, applyReason
+    end
+    if transfer.entityType == "LEGACY_RECOVERY_PACKAGE" and Dibs.LegacyBaseline and Dibs.LegacyBaseline.StageRecoveryPackage then
+      if payload.contentHash ~= transfer.contentHash or transfer.entityId ~= payload.contentHash then return false, "CONTENT_HASH_MISMATCH" end
+      local staged, stageReason = Dibs.LegacyBaseline.StageRecoveryPackage(payload, { sender = resolved.displayName })
+      if not staged then return false, stageReason end
+      Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.legacyRecoveryPackages = Dibs.runtime.legacyRecoveryPackages or {}
+      local pending = Dibs.runtime.legacyRecoveryPackages
+      local pendingCount = 0; for _ in pairs(pending) do pendingCount = pendingCount + 1 end
+      if not pending[payload.contentHash] and pendingCount >= MAX_TRANSFERS then return false, "RECOVERY_STAGE_CAPACITY" end
+      pending[payload.contentHash] = { staged = staged, senderNameRealm = resolved.displayName, receivedAt = time() }
+      return true, "RECOVERY_PENDING_REVIEW"
     end
     return false, "UNSUPPORTED_ENTITY"
   end

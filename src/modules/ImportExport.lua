@@ -212,7 +212,10 @@ function M.Export(scope, options)
   local payload, realm, character, reason = M.GetPayload(scope); if not payload then return nil, reason end
   local sensitivity = scope == "full" and "sensitive" or (scope == "guild" and "policy" or "local")
   if options.redacted then sensitivity = "redacted"; if scope ~= "local" then payload = { settings = pick((payload.settings or {}), { "defaultAllocation", "officerMaxRankIndex", "allowPublicPreDibs" }) } end end
-  local package = { packageVersion = M.PACKAGE_VERSION, scope = scope, sourceGuild = Dibs.currentGuildKey, sourceCharacter = character, sourceProfile = options.profileName, addonVersion = Dibs.VERSION, schemaVersion = M.SCHEMA_VERSION, createdAt = time(), sensitivity = sensitivity, payload = payload }
+  local package = { packageVersion = M.PACKAGE_VERSION, scope = scope, sourceGuild = Dibs.currentGuildKey, sourceCharacter = character, sourceProfile = options.profileName, addonVersion = Dibs.VERSION, schemaVersion = M.SCHEMA_VERSION, createdAt = time(), sensitivity = sensitivity, payload = payload,
+    -- B05a recovery is an explicit, complete LEGACY_RECOVERY_PACKAGE. Full
+    -- ImportExport packages remain compatibility/diagnostic imports only.
+    recoveryClass = scope == "full" and "LEGACY_DIAGNOSTIC_ONLY" or nil }
   local body, err = encodeValue(package); if not body then return nil, err end
   local sizeLimit = options.allowOversize == true and M.MAX_BACKUP_SIZE or M.MAX_PACKAGE_SIZE
   if #body > sizeLimit then return nil, "PACKAGE_TOO_LARGE" end
@@ -273,6 +276,10 @@ function M.Preview(text, targetScope, strategy, actor)
   if package.scope == "full" and package.sourceGuild ~= Dibs.currentGuildKey then return nil, "CROSS_GUILD_FULL_BLOCKED" end
   local db = Dibs.GetDB(); local current = targetScope == "local" and (db.settings or {}) or db
   local preview = { previewId = Dibs.NewId("preview"), packageId = package.checksum, targetScope = targetScope, strategy = strategy, additions = 0, changes = {}, omissions = {}, conflicts = {}, migrations = {}, sensitiveFields = package.sensitivity == "sensitive" and { "player identities", "ledger history" } or {}, expectedLedgerImpact = { additions = package.scope == "full" and count(package.payload.ledger and package.payload.ledger.transactions or {}) or 0, duplicates = 0 }, createdAt = time(), actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), decision = "pending" }
+  if package.scope == "full" then
+    preview.recoveryClass = "LEGACY_DIAGNOSTIC_ONLY"
+    preview.omissions[#preview.omissions + 1] = "not an authoritative B05a recovery package"
+  end
   local newFields = {}
   if targetScope == "local" then
     describeMapDiff(preview.changes, newFields, package.payload.presentation, current, "presentation")

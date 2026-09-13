@@ -30,6 +30,7 @@ Dibs.Permissions = Dibs.Permissions or {}
 Dibs.Identity = Dibs.Identity or {}
 Dibs.Governance = Dibs.Governance or {}
 Dibs.OperationalPolicy = Dibs.OperationalPolicy or {}
+Dibs.LegacyBaseline = Dibs.LegacyBaseline or {}
 Dibs.ProtectedActions = Dibs.ProtectedActions or {}
 Dibs.PreDibs = Dibs.PreDibs or {}
 Dibs.Seasons = Dibs.Seasons or {}
@@ -192,6 +193,18 @@ local defaultDB = {
   operationalPolicy = {
     schema = 1, status = "POLICY_UNINITIALIZED", policyRevision = 0, hash = "GENESIS",
     records = {}, auditLog = {}, conflicts = {},
+  },
+  legacyBaseline = {
+    schema = 1,
+    status = "LEGACY_PREPARED",
+    evidence = {},
+    sources = {},
+    findings = {},
+    decisions = {},
+    activeDecisionByEvidence = {},
+    baseline = nil,
+    recoveries = {},
+    auditLog = {},
   },
   backups = {},
   backupRetention = 5,
@@ -468,6 +481,21 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   elseif type(operationalPolicy.hash) ~= "string" or operationalPolicy.hash == "" then
     quarantine(root, changes, scope .. ".operationalPolicy.hash", "EXPECTED_NONEMPTY_HASH", operationalPolicy.hash)
     operationalPolicy.hash = "GENESIS"
+  end
+
+  local legacyBaseline = ensureTable(db, "legacyBaseline", defaultDB.legacyBaseline, root, changes, scope .. ".legacyBaseline")
+  for _, key in ipairs({ "evidence", "sources", "findings", "decisions", "activeDecisionByEvidence", "recoveries", "auditLog" }) do
+    ensureTable(legacyBaseline, key, {}, root, changes, scope .. ".legacyBaseline." .. key)
+  end
+  if legacyBaseline.schema ~= 1 then
+    quarantine(root, changes, scope .. ".legacyBaseline.schema", "UNSUPPORTED_LEGACY_BASELINE_SCHEMA", legacyBaseline.schema)
+    db.legacyBaseline = deepcopy(defaultDB.legacyBaseline)
+  elseif legacyBaseline.status ~= "LEGACY_PREPARED" and legacyBaseline.status ~= "BASELINE_APPROVED" then
+    quarantine(root, changes, scope .. ".legacyBaseline.status", "INVALID_LEGACY_BASELINE_STATUS", legacyBaseline.status)
+    legacyBaseline.status = "LEGACY_PREPARED"
+  elseif legacyBaseline.baseline ~= nil and type(legacyBaseline.baseline) ~= "table" then
+    quarantine(root, changes, scope .. ".legacyBaseline.baseline", "EXPECTED_OPTIONAL_TABLE", legacyBaseline.baseline)
+    legacyBaseline.baseline = nil
   end
 
   ensureTable(db, "backups", {}, root, changes, scope .. ".backups")
