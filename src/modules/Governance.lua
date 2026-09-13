@@ -171,8 +171,10 @@ local function authorityContent(value, current)
     or type(value.transition) ~= "table" or type(value.transition.kind) ~= "string" then return nil, "INVALID_AUTHORITY_STATE" end
   local coordinator, coordinatorReason = snapshot(value.coordinator.displayName)
   if not coordinator or coordinator.memberKey ~= value.coordinator.memberKey then return nil, coordinatorReason or "INVALID_COORDINATOR_IDENTITY" end
+  local requestedProtocol = value.protocolState or "CUTOVER_PREPARED"
+  if requestedProtocol ~= "CUTOVER_PREPARED" and requestedProtocol ~= "V2_ENFORCED" then return nil, "INVALID_PROTOCOL_STATE" end
   local normalized = { schema = AUTHORITY_SCHEMA, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = value.ledgerEpoch,
-    transition = copy(value.transition), protocolState = "CUTOVER_PREPARED" }
+    transition = copy(value.transition), protocolState = requestedProtocol }
   local kind, prior = normalized.transition.kind, current or legacyAuthority()
   if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return nil, "SYNC_BEHIND" end
   if kind == "INITIAL" then
@@ -185,6 +187,7 @@ local function authorityContent(value, current)
     if not prior.predecessorClosure or closure.closureHash ~= prior.predecessorClosure.closureHash then return nil, "CLOSURE_CONFLICT" end
     if closure.previousEpoch ~= prior.ledgerEpoch or closure.coordinator.memberKey ~= prior.coordinator.memberKey
       or normalized.ledgerEpoch ~= prior.ledgerEpoch + 1 or normalized.transition.parentClosureHash ~= closure.closureHash then return nil, "HANDOFF_PARENT_MISMATCH" end
+    if requestedProtocol == "V2_ENFORCED" and prior.protocolState ~= "V2_ENFORCED" then return nil, "PROTOCOL_CUTOVER_REQUIRED" end
   elseif kind == "FORCED_RECOVERY" then
     if prior.state ~= "RECOVERY_PENDING" or normalized.ledgerEpoch ~= (prior.ledgerEpoch or 0) + 1 then return nil, "RECOVERY_PENDING_REQUIRED" end
     if not trim(normalized.transition.baselineHash) or not approvedBaseline(normalized.transition.baselineHash)
@@ -203,12 +206,40 @@ local function governanceContent(proposal, currentAuthority)
   if proposal.coordinator ~= nil or proposal.ledgerEpoch ~= nil or proposal.baseline ~= nil or proposal.protocolState == "V2_ENFORCED" then return nil, "FUTURE_GOVERNANCE_INACTIVE" end
   local futureInput = proposal.future or {}
   if type(futureInput) ~= "table" then return nil, "INVALID_FUTURE_GOVERNANCE" end
+  if futureInput.cutover ~= nil then
+    local cutover = futureInput.cutover
+    if type(cutover) ~= "table" or cutover.schema ~= AUTHORITY_SCHEMA or cutover.state ~= "V2_ENFORCED" then return nil, "INVALID_CUTOVER" end
+    local current = currentAuthority or legacyAuthority()
+    local baselineHash = current.transition and current.transition.baselineHash
+    if current.state ~= "ACTIVE" or not baselineHash or not approvedBaseline(baselineHash) then return nil, "AUTHORITY_BASELINE_REQUIRED" end
+    if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return nil, "SYNC_BEHIND" end
+    local writers = cutover.writers or { current.coordinator and current.coordinator.displayName }
+    local coordinatorListed = false
+    for _, writer in ipairs(writers or {}) do
+      local writerSnapshot = snapshot(writer)
+      if writerSnapshot and current.coordinator and writerSnapshot.memberKey == current.coordinator.memberKey then coordinatorListed = true end
+    end
+    if not coordinatorListed then return nil, "WRITER_COMPATIBILITY_REQUIRED" end
+    if Dibs.Sync and Dibs.Sync.CanEnforceV2 then
+      local compatible, compatibleReason = Dibs.Sync.CanEnforceV2(writers)
+      if not compatible then return nil, compatibleReason or "WRITER_COMPATIBILITY_REQUIRED" end
+    end
+    local authority = copy(current)
+    authority.proposals, authority.orphanedEvidence, authority.auditLog = nil, nil, nil
+    authority.protocolState = "V2_ENFORCED"
+    return {
+      officerAuthorityRule = copy(proposal.officerAuthorityRule or { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 }),
+      policyWriterRule = copy(proposal.policyWriterRule or { kind = "GOVERNANCE_ONLY" }),
+      future = { coordinator = copy(authority.coordinator), ledgerEpoch = authority.ledgerEpoch, protocolState = "V2_ENFORCED",
+        baseline = baselineHash, authority = authority, cutover = { schema = AUTHORITY_SCHEMA, state = "V2_ENFORCED", baselineHash = baselineHash, writers = copy(writers) } },
+    }
+  end
   if (futureInput.coordinator ~= nil or futureInput.ledgerEpoch ~= nil or futureInput.baseline ~= nil) and futureInput.authority == nil then return nil, "FUTURE_GOVERNANCE_INACTIVE" end
-  if futureInput.protocolState == "V2_ENFORCED" then return nil, "PROTOCOL_CUTOVER_NOT_AVAILABLE" end
+  if futureInput.protocolState == "V2_ENFORCED" and futureInput.authority == nil then return nil, "PROTOCOL_CUTOVER_NOT_AVAILABLE" end
   local authority, authorityReason = authorityContent(futureInput.authority, currentAuthority)
   if futureInput.authority ~= nil and not authority then return nil, authorityReason end
   local future = authority and { coordinator = copy(authority.coordinator), ledgerEpoch = authority.ledgerEpoch,
-    protocolState = "CUTOVER_PREPARED", baseline = authority.transition.baselineHash, authority = authority }
+    protocolState = authority.protocolState, baseline = authority.transition.baselineHash, authority = authority }
     or { coordinator = nil, ledgerEpoch = nil, protocolState = "LEGACY_LOCAL", baseline = nil }
   local officerRule = proposal.officerAuthorityRule or { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 }
   local writerRule = proposal.policyWriterRule or { kind = "GOVERNANCE_ONLY" }
@@ -327,6 +358,9 @@ function Governance.ApplyRecord(record, sender)
   state.hash = record.contentHash
   state.records[tostring(record.governanceRevision)] = copy(record)
   state.future = copy(record.content.future)
+  if state.future.protocolState == "V2_ENFORCED" and Dibs.Sync and Dibs.Sync.SetProtocolState then
+    Dibs.Sync.SetProtocolState("V2_ENFORCED", true)
+  end
   if record.content.future.authority then
     local nextAuthority = copy(record.content.future.authority)
     local previous = authorityState(state)
@@ -347,6 +381,14 @@ end
 
 function Governance.GetAuthorityState()
   return copy(authorityState(ensureState()))
+end
+
+function Governance.IsV2Enforced()
+  return ensureState().future and ensureState().future.protocolState == "V2_ENFORCED"
+end
+
+function Governance.EnableV2(actor, writers)
+  return Governance.Change(actor, { reason = "B06_V2_ENFORCED", future = { cutover = { schema = AUTHORITY_SCHEMA, state = "V2_ENFORCED", writers = copy(writers) } } })
 end
 
 function Governance.GetDibUseGate()

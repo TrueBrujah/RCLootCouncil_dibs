@@ -108,6 +108,27 @@ end
 function Sync.ClearSyncBehind()
   local state = ensure(); state.syncBehind, state.reason = false, nil; return status("SYNC_READY")
 end
+local function requestAwardCommit(target, epoch, sequence, contentHash)
+  return Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "AWARD_COMMIT", entityId = tostring(epoch) .. ":" .. tostring(sequence), revision = sequence, contentHash = contentHash } } }, "WHISPER", target)
+end
+local function clearResolvedLedgerGap(sender)
+  local state, target = ensure(), ensure().ledgerTarget
+  if not target or not (Dibs.Ledger and Dibs.Ledger.GetCanonicalState) then return false end
+  local current = Dibs.Ledger.GetCanonicalState()
+  if tonumber(current.epoch) ~= tonumber(target.epoch) then return false end
+  local localLast = tonumber(current.nextSeq or 1) - 1
+  if localLast < tonumber(target.lastSeq) then
+    requestAwardCommit(sender, target.epoch, localLast + 1, target.rootHash)
+    return false
+  end
+  if localLast == tonumber(target.lastSeq) and current.rootHash == target.rootHash then
+    state.ledgerTarget = nil
+    if state.syncBehind and state.reason == "LEDGER_GAP" then Sync.ClearSyncBehind() end
+    return true
+  end
+  Sync.MarkSyncBehind("CANONICAL_ROOT_CONFLICT")
+  return false
+end
 local function clearResolvedPolicyGap()
   local state = ensure(); local target = state.policyTarget
   if not target or not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState) then return false end
@@ -120,11 +141,27 @@ local function clearResolvedPolicyGap()
   return false
 end
 function Sync.GetProtocolState() return ensure().protocolState end
-function Sync.SetProtocolState(state)
+function Sync.SetProtocolState(state, governanceApproved)
   -- B04 represents state but cannot independently enable enforcement.
-  if state == "V2_ENFORCED" then return false, "GOVERNANCE_CUTOVER_REQUIRED" end
-  if state ~= "LEGACY_LOCAL" and state ~= "CUTOVER_PREPARED" then return false, "INVALID_PROTOCOL_STATE" end
+  if state == "V2_ENFORCED" and governanceApproved ~= true then return false, "GOVERNANCE_CUTOVER_REQUIRED" end
+  if state ~= "LEGACY_LOCAL" and state ~= "CUTOVER_PREPARED" and state ~= "V2_ENFORCED" then return false, "INVALID_PROTOCOL_STATE" end
   ensure().protocolState = state; return true, state
+end
+function Sync.CanEnforceV2(writers)
+  local localMember = localSnapshot(); if not localMember then return false, "ROSTER_UNAVAILABLE" end
+  writers = writers or { localMember.displayName }
+  if type(writers) ~= "table" or #writers < 1 or #writers > 32 then return false, "WRITER_COMPATIBILITY_REQUIRED" end
+  local state = ensure()
+  for _, writer in ipairs(writers) do
+    local resolved, reason = member(writer); if not resolved then return false, reason end
+    if resolved.memberKey ~= localMember.memberKey then
+      local peer = state.peers[resolved.memberKey]
+      if not peer or not peer.protocol or tonumber(peer.protocol.major) ~= MAJOR or not (peer.protocol.capabilities or {}).authoritySignals then
+        return false, "WRITER_COMPATIBILITY_REQUIRED"
+      end
+    end
+  end
+  return true, "WRITER_COMPATIBLE"
 end
 
 function Sync.BuildEnvelope(message)
@@ -164,8 +201,12 @@ function Sync.BuildManifest()
   return { type = "DIGEST", entityType = "PREDIB_INDEX", entityId = "current", revision = 1, contentHash = hash(Sync.BuildRequestIndex()), index = Sync.BuildRequestIndex(), protocolState = Sync.GetProtocolState() }
 end
 function Sync.BuildLedgerDigest()
-  -- Intent only: B04 neither serializes nor applies ledger events.
-  return { type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = Dibs.GetCurrentSeasonId() or "none", revision = 0, contentHash = "LOCAL_ONLY", nextSeq = nil, previousHash = nil }
+  if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
+    return { type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = Dibs.GetCurrentSeasonId() or "none", revision = 0, contentHash = "LOCAL_ONLY" }
+  end
+  local state = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState() or {}
+  return { type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = tostring(state.epoch or "none"), revision = tonumber(state.nextSeq or 1) - 1,
+    contentHash = state.rootHash or "UNINITIALIZED", ledgerEpoch = state.epoch, lastSeq = tonumber(state.nextSeq or 1) - 1, rootHash = state.rootHash }
 end
 function Sync.BuildAuthorityDigest()
   local signal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
@@ -217,7 +258,7 @@ local function requestDetail(target, requestId)
   return Sync.SendDetail("PREDIB_REQUEST", requestId, tonumber(request.revision) or 1, requestHash(request), request, target)
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local encoded = Dibs.Ace3.Serialize(payload); if type(encoded) ~= "string" or #encoded > MAX_BYTES then return false, "PAYLOAD_TOO_LARGE" end
   local transferId = Dibs.NewId("v2transfer"); local chunks = {}
@@ -246,6 +287,19 @@ function Sync.SendAuthorityOrphan(event, target)
   local evidenceId = event.evidenceId or event.eventId or event.transactionId
   if type(evidenceId) ~= "string" then return false, "INVALID_ORPHANED_EVIDENCE" end
   return Sync.SendDetail("AUTHORITY_ORPHAN", evidenceId, 1, Sync.CalculateContentHash(event), event, target)
+end
+function Sync.SendAwardCommit(commit, target)
+  if type(commit) ~= "table" or type(commit.commitHash) ~= "string" or not commit.ledgerEpoch or not commit.sequence then return false, "INVALID_AWARD_COMMIT" end
+  return Sync.SendDetail("AWARD_COMMIT", tostring(commit.ledgerEpoch) .. ":" .. tostring(commit.sequence), commit.sequence, commit.commitHash, commit, target)
+end
+function Sync.AnnounceAwardCommit(commit)
+  if type(commit) ~= "table" then return false, "INVALID_AWARD_COMMIT" end
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  local localMember = localSnapshot()
+  if not authority or authority.state ~= "ACTIVE" or not localMember or not authority.coordinator
+    or authority.coordinator.memberKey ~= localMember.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+  return Sync.Send({ type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = tostring(commit.ledgerEpoch), revision = commit.sequence,
+    contentHash = commit.commitHash, ledgerEpoch = commit.ledgerEpoch, lastSeq = commit.sequence, rootHash = commit.commitHash }, "GUILD")
 end
 
 local function applyRequest(payload, transfer, sender)
@@ -280,10 +334,24 @@ function Sync.Receive(message, sender)
     return true, "HELLO"
   end
   if message.type == "LEDGER_DIGEST" then
-    -- A newer non-contiguous future ledger is represented only as a gap. B06
-    -- will define commits; B04 must not accept or infer their balances.
-    if message.revision and tonumber(message.revision) > 0 then Sync.MarkSyncBehind("LEDGER_GAP") end
-    return true, "LEDGER_DIGEST_ONLY"
+    if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
+      if message.revision and tonumber(message.revision) > 0 then Sync.MarkSyncBehind("LEDGER_GAP") end
+      return true, "LEDGER_DIGEST_ONLY"
+    end
+    if not finiteInteger(message.ledgerEpoch) or not finiteInteger(message.lastSeq) or type(message.rootHash) ~= "string" then return false, "INVALID_LEDGER_DIGEST" end
+    local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+    if not authority or authority.state ~= "ACTIVE" or not authority.coordinator or authority.coordinator.memberKey ~= resolved.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+    local localState = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState() or {}
+    if tonumber(message.ledgerEpoch) ~= tonumber(localState.epoch) then return false, "STALE_EPOCH" end
+    local localLast = tonumber(localState.nextSeq or 1) - 1
+    if tonumber(message.lastSeq) > localLast then
+      local state = ensure(); state.ledgerTarget = { epoch = message.ledgerEpoch, lastSeq = message.lastSeq, rootHash = message.rootHash }
+      Sync.MarkSyncBehind("LEDGER_GAP")
+      requestAwardCommit(resolved.displayName, message.ledgerEpoch, localLast + 1, message.contentHash)
+      return true, "LEDGER_DETAIL_REQUESTED"
+    end
+    if tonumber(message.lastSeq) == localLast and message.rootHash ~= localState.rootHash then return false, "CANONICAL_ROOT_CONFLICT" end
+    return true, "LEDGER_CURRENT"
   end
   if message.type == "DIGEST" and message.entityType == "GOVERNANCE" then
     if resolved.role ~= "gm" or not finiteInteger(message.revision) or type(message.contentHash) ~= "string" then return false, "INVALID_GOVERNANCE_DIGEST" end
@@ -355,13 +423,20 @@ function Sync.Receive(message, sender)
         if signal and signal.state ~= "LEGACY_LOCAL" and (localRole() == "gm" or (signal.coordinator and signal.coordinator.memberKey == (localSnapshot() or {}).memberKey)) then
           Sync.SendAuthoritySignal(resolved.displayName)
         end
+      elseif requested.entityType == "AWARD_COMMIT" and Dibs.Ledger and Dibs.Ledger.GetCanonicalCommit then
+        local epoch, sequence = tostring(requested.entityId or ""):match("^(%d+):(%d+)$")
+        local commit = epoch and sequence and Dibs.Ledger.GetCanonicalCommit(tonumber(epoch), tonumber(sequence))
+        local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+        local localMember = localSnapshot()
+        if commit and authority and authority.state == "ACTIVE" and localMember and authority.coordinator
+          and authority.coordinator.memberKey == localMember.memberKey then Sync.SendAwardCommit(commit, resolved.displayName) end
       end
     end
     return true, "DETAIL_SENT"
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" then return false, "UNSUPPORTED_ENTITY" end
     if message.entityType == "OPERATIONAL_POLICY" then
       local writerAllowed, writerReason = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(resolved.displayName)
       if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
@@ -430,6 +505,12 @@ function Sync.Receive(message, sender)
       if Sync.CalculateContentHash(payload) ~= transfer.contentHash or transfer.entityId ~= (payload.evidenceId or payload.eventId or payload.transactionId) then return false, "CONTENT_HASH_MISMATCH" end
       return Dibs.Governance.ApplyOrphanedEvidence(payload, resolved.displayName)
     end
+    if transfer.entityType == "AWARD_COMMIT" and Dibs.Ledger and Dibs.Ledger.ApplyAwardCommit then
+      if payload.commitHash ~= transfer.contentHash or transfer.entityId ~= tostring(payload.ledgerEpoch) .. ":" .. tostring(payload.sequence) then return false, "CONTENT_HASH_MISMATCH" end
+      local applied = Dibs.Ledger.ApplyAwardCommit(payload, resolved.displayName)
+      if applied.accepted and not applied.idempotentReplay then clearResolvedLedgerGap(resolved.displayName) end
+      return applied.accepted, applied.reasonCode
+    end
     return false, "UNSUPPORTED_ENTITY"
   end
   return false, "UNSUPPORTED_MESSAGE"
@@ -464,6 +545,12 @@ function Sync.OnLifecycle(reason)
   end
   local authority = Sync.BuildAuthorityDigest()
   if authority then Sync.Send(authority, "GUILD") end
+  local localMember = localSnapshot()
+  local authorityState = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  if Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()
+    and authorityState and authorityState.state == "ACTIVE" and localMember and authorityState.coordinator and authorityState.coordinator.memberKey == localMember.memberKey then
+    Sync.Send(Sync.BuildLedgerDigest(), "GUILD")
+  end
   scheduleHeartbeat()
   return sent, digest
 end

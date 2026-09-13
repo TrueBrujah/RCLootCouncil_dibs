@@ -142,6 +142,7 @@ local defaultDB = {
     playerStates = {},
     awardTransactions = {},
     evidenceTransactions = {},
+    canonical = { schema = 1, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} },
   },
   permissions = {
     adminEvents = {},
@@ -408,6 +409,16 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   ensureTable(ledger, "playerStates", {}, root, changes, scope .. ".ledger.playerStates")
   ensureTable(ledger, "awardTransactions", {}, root, changes, scope .. ".ledger.awardTransactions")
   ensureTable(ledger, "evidenceTransactions", {}, root, changes, scope .. ".ledger.evidenceTransactions")
+  local canonicalLedger = ensureTable(ledger, "canonical", defaultDB.ledger.canonical, root, changes, scope .. ".ledger.canonical")
+  ensureTable(canonicalLedger, "commits", {}, root, changes, scope .. ".ledger.canonical.commits")
+  ensureTable(canonicalLedger, "transactionIndex", {}, root, changes, scope .. ".ledger.canonical.transactionIndex")
+  ensureTable(canonicalLedger, "positions", {}, root, changes, scope .. ".ledger.canonical.positions")
+  if canonicalLedger.schema ~= 1 or (canonicalLedger.epoch ~= nil and not isWholeNumber(canonicalLedger.epoch))
+    or not isWholeNumber(canonicalLedger.nextSeq) or canonicalLedger.nextSeq < 1
+    or (canonicalLedger.rootHash ~= nil and type(canonicalLedger.rootHash) ~= "string") then
+    quarantine(root, changes, scope .. ".ledger.canonical", "UNSUPPORTED_CANONICAL_LEDGER", canonicalLedger)
+    ledger.canonical = deepcopy(defaultDB.ledger.canonical)
+  end
   sanitizeRecordMap(ledger.transactions, root, changes, scope .. ".ledger.transactions")
   sanitizeNestedRecordMap(ledger.playerStates, root, changes, scope .. ".ledger.playerStates")
 

@@ -18,6 +18,7 @@ local Ledger = Dibs.Ledger
 
 local SCHEMA = 3
 local CLASSIFICATION = "LOCAL_CANONICAL"
+local CANONICAL_SCHEMA = 1
 local VALID_ACTION_TYPES = {
   SEASON_ALLOCATION = true, DIB_GRANTED = true, DIB_USED = true,
   DIB_REFUNDED = true, DIB_REVOKED = true, DIB_ADMIN_ADJUSTMENT = true,
@@ -40,6 +41,9 @@ local function ensureState()
   local ledger = Dibs.db.ledger
   ledger.transactions = ledger.transactions or {}; ledger.playerStates = ledger.playerStates or {}
   ledger.awardTransactions = ledger.awardTransactions or {}; ledger.evidenceTransactions = ledger.evidenceTransactions or {}
+  ledger.canonical = ledger.canonical or { schema = CANONICAL_SCHEMA, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} }
+  ledger.canonical.commits = ledger.canonical.commits or {}; ledger.canonical.transactionIndex = ledger.canonical.transactionIndex or {}; ledger.canonical.positions = ledger.canonical.positions or {}
+  if ledger.canonical.schema ~= CANONICAL_SCHEMA then ledger.canonical = { schema = CANONICAL_SCHEMA, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} } end
   return ledger
 end
 
@@ -126,6 +130,60 @@ local function transactionCanonicalHash(tx)
   if not serialized then return nil, reason end
   return contentHash(serialized), serialized
 end
+
+local function canonicalCommitHash(commit)
+  local projection = { schema = commit.schema, recordClass = commit.recordClass, guildKey = commit.guildKey,
+    protocolMajor = commit.protocolMajor, ledgerEpoch = commit.ledgerEpoch, sequence = commit.sequence,
+    previousHash = commit.previousHash, canonicalTransactionId = commit.canonicalTransactionId,
+    transactionHash = commit.transactionHash, coordinator = commit.coordinator, proposalId = commit.proposalId,
+    transaction = canonicalContent(commit.transaction) }
+  local serialized, reason = canonicalSerialize(projection)
+  if not serialized then return nil, reason end
+  return contentHash(serialized)
+end
+
+local function authority()
+  return Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or nil
+end
+local function v2Enforced()
+  return Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced() == true
+end
+local function localCoordinator(authorityState, actor)
+  if not authorityState or authorityState.state ~= "ACTIVE" or type(authorityState.coordinator) ~= "table" then return nil, "COORDINATOR_UNAVAILABLE" end
+  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return nil, "SYNC_BEHIND" end
+  if not Dibs.Identity or type(Dibs.Identity.CreateSnapshot) ~= "function" then return nil, "IDENTITY_UNAVAILABLE" end
+  local localSnapshot, localReason = Dibs.Identity.CreateSnapshot(Dibs.GetPlayerName())
+  if not localSnapshot then return nil, localReason end
+  if actor ~= nil then
+    local requested, requestedReason = Dibs.Identity.CreateSnapshot(actor)
+    if not requested then return nil, requestedReason end
+    if requested.memberKey ~= localSnapshot.memberKey then return nil, "LOCAL_COORDINATOR_REQUIRED" end
+  end
+  if localSnapshot.memberKey ~= authorityState.coordinator.memberKey then return nil, "CURRENT_COORDINATOR_REQUIRED" end
+  return localSnapshot
+end
+local function authorityRoot(authorityState)
+  local transition = authorityState and authorityState.transition or {}
+  if transition.kind == "NORMAL_HANDOFF" and transition.parentClosure then return transition.parentClosure.rootHash end
+  return transition.baselineHash
+end
+local function canonicalStateForAuthority(ledger, authorityState)
+  local canonical = ledger.canonical
+  if canonical.epoch == nil then
+    local root = authorityRoot(authorityState)
+    if type(root) ~= "string" or root == "" then return nil, "CANONICAL_BASELINE_REQUIRED" end
+    canonical.epoch, canonical.nextSeq, canonical.rootHash = authorityState.ledgerEpoch, 1, root
+    return canonical
+  end
+  if canonical.epoch == authorityState.ledgerEpoch then return canonical end
+  if canonical.epoch > authorityState.ledgerEpoch then return nil, "STALE_EPOCH" end
+  local root = authorityRoot(authorityState)
+  if type(root) ~= "string" or root == "" then return nil, "CANONICAL_BASELINE_REQUIRED" end
+  if authorityState.transition and authorityState.transition.kind == "NORMAL_HANDOFF" and canonical.rootHash ~= root then return nil, "HANDOFF_ROOT_MISMATCH" end
+  canonical.epoch, canonical.nextSeq, canonical.rootHash = authorityState.ledgerEpoch, 1, root
+  return canonical
+end
+local function positionKey(epoch, sequence) return tostring(epoch) .. ":" .. tostring(sequence) end
 
 local function sameCanonicalContent(existing, candidate)
   return existing.classification == CLASSIFICATION and type(existing.canonicalContentHash) == "string"
@@ -247,6 +305,11 @@ function Ledger.CommitLocalTransaction(context, record)
   local existing = inputId and ledger.transactions[inputId] or nil
   local tx, reason = buildDetachedTransaction(context or {}, input)
   if not tx then return { accepted = false, idempotentReplay = false, reasonCode = reason } end
+  if tx.type == "DIB_USED" and v2Enforced() and not (context and context.b06Canonical == true) then
+    local proposal = Dibs.Governance and Dibs.Governance.RecordAwardProposal and Dibs.Governance.RecordAwardProposal(
+      context and context.actor or Dibs.GetPlayerName(), input)
+    return { accepted = false, idempotentReplay = false, reasonCode = "DISTRIBUTED_COMMIT_REQUIRED", proposal = proposal }
+  end
   -- B05b fences local consumption while coordinator authority is unavailable,
   -- closing, or recovering. This is deliberately not a B06 distributed commit.
   if tx.type == "DIB_USED" and Dibs.Governance and Dibs.Governance.GetDibUseGate then
@@ -273,12 +336,123 @@ function Ledger.CommitLocalTransaction(context, record)
   return { accepted = true, idempotentReplay = false, reasonCode = "COMMITTED_LOCAL", value = copy(appendValidated(tx)) }
 end
 
--- B03 equivalent of the future coordinator command. Explicitly local-only: no
--- coordinator, epoch, sequence, previous hash, or transport is accepted here.
+local function proposalFor(context, evidence)
+  return Dibs.Governance and Dibs.Governance.RecordAwardProposal and Dibs.Governance.RecordAwardProposal(
+    context and context.actor or Dibs.GetPlayerName(), evidence)
+end
+
+function Ledger.GetCanonicalState()
+  local ledger = ensureState()
+  if v2Enforced() then
+    local authorityState = authority()
+    if authorityState and authorityState.state == "ACTIVE" then canonicalStateForAuthority(ledger, authorityState) end
+  end
+  local canonical = ledger.canonical
+  return copy({ schema = canonical.schema, epoch = canonical.epoch, nextSeq = canonical.nextSeq, rootHash = canonical.rootHash,
+    commitCount = (function() local n = 0; for _ in pairs(canonical.commits) do n = n + 1 end; return n end)() })
+end
+
+function Ledger.GetCanonicalCommit(epoch, sequence)
+  return copy(ensureState().canonical.commits[positionKey(epoch, sequence)])
+end
+
+function Ledger.CommitAwardProposal(context, proposalId, awardEvidence)
+  if not v2Enforced() then return { accepted = false, reasonCode = "V2_ENFORCED_REQUIRED" } end
+  local authorityState = authority(); local coordinator, coordinatorReason = localCoordinator(authorityState, context and context.actor)
+  if not coordinator then return { accepted = false, reasonCode = coordinatorReason, proposal = proposalFor(context, awardEvidence) } end
+  local evidence = copy(awardEvidence or {})
+  local proposal = nil
+  for _, candidate in ipairs(Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}) do
+    if candidate.proposalId == proposalId then proposal = candidate break end
+  end
+  if not proposal or proposal.status ~= "PENDING_RECONCILIATION" then return { accepted = false, reasonCode = "PROPOSAL_NOT_PENDING" } end
+  evidence.playerName = evidence.playerName or proposal.playerSnapshot.displayName
+  evidence.itemID = evidence.itemID or proposal.itemID; evidence.itemLink = evidence.itemLink or proposal.itemLink
+  evidence.awardRef = evidence.awardRef or proposal.awardRef; evidence.evidenceId = evidence.evidenceId or proposal.evidenceId
+  evidence.proposalId = proposal.proposalId
+  return Ledger.CommitDibUse(context, evidence)
+end
+
+function Ledger.ApplyAwardCommit(commit, sender)
+  if not v2Enforced() then return { accepted = false, reasonCode = "V2_ENFORCED_REQUIRED" } end
+  if type(commit) ~= "table" or commit.schema ~= CANONICAL_SCHEMA or commit.recordClass ~= "AWARD_COMMIT"
+    or commit.guildKey ~= Dibs.GetGuildKey() or commit.protocolMajor ~= 2 then return { accepted = false, reasonCode = "INVALID_AWARD_COMMIT" } end
+  local authorityState = authority()
+  if not authorityState or authorityState.state ~= "ACTIVE" or commit.ledgerEpoch ~= authorityState.ledgerEpoch
+    or type(commit.coordinator) ~= "table" or commit.coordinator.memberKey ~= authorityState.coordinator.memberKey then return { accepted = false, reasonCode = "STALE_EPOCH" } end
+  if Dibs.Identity and Dibs.Identity.CreateSnapshot then
+    local senderSnapshot, senderReason = Dibs.Identity.CreateSnapshot(sender)
+    if not senderSnapshot then return { accepted = false, reasonCode = senderReason } end
+    if senderSnapshot.memberKey ~= commit.coordinator.memberKey then return { accepted = false, reasonCode = "CURRENT_COORDINATOR_REQUIRED" } end
+  end
+  local ledger = ensureState(); local canonical, canonicalReason = canonicalStateForAuthority(ledger, authorityState)
+  if not canonical then return { accepted = false, reasonCode = canonicalReason } end
+  local key = positionKey(commit.ledgerEpoch, commit.sequence); local known = canonical.commits[key]
+  local expectedHash, hashReason = canonicalCommitHash(commit)
+  if not expectedHash or expectedHash ~= commit.commitHash then return { accepted = false, reasonCode = hashReason or "COMMIT_HASH_MISMATCH" } end
+  if known then
+    if known.commitHash == commit.commitHash then return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) } end
+    return { accepted = false, reasonCode = "CANONICAL_POSITION_CONFLICT" }
+  end
+  if commit.sequence ~= canonical.nextSeq then
+    if commit.sequence > canonical.nextSeq and Dibs.Sync and Dibs.Sync.MarkSyncBehind then Dibs.Sync.MarkSyncBehind("LEDGER_GAP") end
+    return { accepted = false, reasonCode = commit.sequence > canonical.nextSeq and "SYNC_BEHIND" or "STALE_SEQUENCE" }
+  end
+  if commit.previousHash ~= canonical.rootHash then return { accepted = false, reasonCode = "PREVIOUS_HASH_MISMATCH" } end
+  if type(commit.transaction) ~= "table" or commit.transaction.transactionId ~= commit.canonicalTransactionId
+    or commit.transaction.canonicalContentHash ~= commit.transactionHash then return { accepted = false, reasonCode = "TRANSACTION_HASH_MISMATCH" } end
+  local transactionHash = transactionCanonicalHash(commit.transaction)
+  if transactionHash ~= commit.transactionHash then return { accepted = false, reasonCode = "TRANSACTION_HASH_MISMATCH" } end
+  local valid, validationReason = Ledger.ValidateTransaction(commit.transaction)
+  if not valid then return { accepted = false, reasonCode = validationReason } end
+  local existing = ledger.transactions[commit.canonicalTransactionId]
+  if existing then return { accepted = false, reasonCode = existing.canonicalContentHash == commit.transactionHash and "TRANSACTION_ALREADY_LOCAL" or "TRANSACTION_CONFLICT" } end
+  -- All validation is complete before either transaction projection or chain state mutates.
+  appendValidated(copy(commit.transaction))
+  canonical.commits[key], canonical.positions[key], canonical.transactionIndex[commit.canonicalTransactionId] = copy(commit), commit.commitHash, key
+  canonical.nextSeq, canonical.rootHash = canonical.nextSeq + 1, commit.commitHash
+  return { accepted = true, idempotentReplay = false, reasonCode = "CANONICAL_APPLIED", value = copy(commit) }
+end
+
+-- B06 canonical command. Legacy local operation remains unchanged until the
+-- GM explicitly enforces V2; after cutover this is the only DIB_USED writer.
 function Ledger.CommitDibUse(context, awardEvidence)
   local evidence = copy(awardEvidence or {}); evidence.type, evidence.actionType = "DIB_USED", "DIB_USED"
   evidence.amount = -math.abs(tonumber(evidence.amount) or 1)
-  return Ledger.CommitLocalTransaction(context, evidence)
+  if not v2Enforced() then return Ledger.CommitLocalTransaction(context, evidence) end
+  local authorityState = authority(); local coordinator, coordinatorReason = localCoordinator(authorityState, context and context.actor)
+  if not coordinator then return { accepted = false, idempotentReplay = false, reasonCode = coordinatorReason, proposal = proposalFor(context, evidence) } end
+  local ledger = ensureState(); local canonical, canonicalReason = canonicalStateForAuthority(ledger, authorityState)
+  if not canonical then return { accepted = false, idempotentReplay = false, reasonCode = canonicalReason } end
+  local stableAwardId = evidence.transactionId or evidence.proposalId or evidence.awardRef or evidence.evidenceId
+  if type(stableAwardId) ~= "string" or stableAwardId == "" then
+    return { accepted = false, idempotentReplay = false, reasonCode = "STABLE_AWARD_ID_REQUIRED" }
+  end
+  evidence.transactionId = evidence.transactionId or ("c" .. tostring(authorityState.ledgerEpoch) .. "-" .. stableAwardId)
+  local tx, txReason = buildDetachedTransaction({ action = (context and context.action) or "ledger.use", actor = coordinator.displayName,
+    debtPolicy = context and context.debtPolicy, b06Canonical = true }, evidence)
+  if not tx then return { accepted = false, idempotentReplay = false, reasonCode = txReason } end
+  local existing = ledger.transactions[tx.transactionId]
+  if existing then
+    local key = canonical.transactionIndex[tx.transactionId]; local known = key and canonical.commits[key]
+    if known and existing.canonicalContentHash == tx.canonicalContentHash then return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) } end
+    return { accepted = false, idempotentReplay = false, reasonCode = "TRANSACTION_CONFLICT" }
+  end
+  if tx.debtPolicy.allowDebt ~= true and getCurrentBalance(tx.memberKey, tx.seasonId) + tx.amount < 0 then return { accepted = false, idempotentReplay = false, reasonCode = "INSUFFICIENT_BALANCE" } end
+  local commit = { schema = CANONICAL_SCHEMA, recordClass = "AWARD_COMMIT", guildKey = Dibs.GetGuildKey(), protocolMajor = 2,
+    ledgerEpoch = authorityState.ledgerEpoch, sequence = canonical.nextSeq, previousHash = canonical.rootHash,
+    canonicalTransactionId = tx.transactionId, transactionHash = tx.canonicalContentHash, transaction = tx,
+    coordinator = { memberKey = coordinator.memberKey, displayName = coordinator.displayName, guidWitness = coordinator.guidWitness }, proposalId = evidence.proposalId }
+  local commitHash, hashReason = canonicalCommitHash(commit); if not commitHash then return { accepted = false, idempotentReplay = false, reasonCode = hashReason } end
+  commit.commitHash = commitHash
+  -- Stage construction completed. The durable transaction and canonical cursor
+  -- now advance together before any caller can broadcast this commit.
+  appendValidated(tx)
+  local key = positionKey(commit.ledgerEpoch, commit.sequence)
+  canonical.commits[key], canonical.positions[key], canonical.transactionIndex[tx.transactionId] = copy(commit), commit.commitHash, key
+  canonical.nextSeq, canonical.rootHash = canonical.nextSeq + 1, commit.commitHash
+  if Dibs.Sync and Dibs.Sync.AnnounceAwardCommit then Dibs.Sync.AnnounceAwardCommit(copy(commit)) end
+  return { accepted = true, idempotentReplay = false, reasonCode = "CANONICAL_COMMITTED", value = copy(commit) }
 end
 
 -- Compatibility validation for imported/legacy records; it never upgrades them.
@@ -404,5 +578,6 @@ function Ledger.GetPlayerSeasonState(seasonId, playerGuidOrName)
   return { seasonId = targetSeason, playerGuid = tostring(playerGuidOrName or state.playerId or playerName), playerName = playerName, currentRankIndex = 0, baseAllocation = tonumber(state.allocation) or 0, transactionDelta = delta, remainingBalance = Ledger.GetBalance(playerName, targetSeason), historySummary = { count = #transactions }, lastComputedAt = time() }
 end
 function Ledger.CalculateCanonicalContentHash(record) return transactionCanonicalHash(record or {}) end
+function Ledger.CalculateCanonicalCommitHash(record) return canonicalCommitHash(record or {}) end
 
 return Ledger
