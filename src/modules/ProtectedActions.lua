@@ -255,7 +255,13 @@ end
 function Dibs.ProtectedActions.FinalizeAward(actor, payload)
   local command = payload or {}
   if command.source == "rclootcouncil" then
-    if command.responseValidated ~= true or not isStableRCLootCouncilReference(command.awardRef) then
+    if command.responseValidated ~= true or command.evidenceValidated ~= true
+      or tonumber(command.evidenceSchemaVersion) ~= 1
+      or type(command.adapterProfile) ~= "string" or command.adapterProfile == ""
+      or command.semanticStatus ~= "FINAL_AWARD"
+      or command.sourceStatus ~= "FINAL_AWARD"
+      or not isStableRCLootCouncilReference(command.awardRef)
+    then
       local result = buildResult(false, nil, nil, text("AWARD_DIB_RESPONSE_REQUIRED", "Only a finalized DIB response can consume a Dib."))
       result.outcome = "rejected"
       result.reasonCode = "AWARD_PROVENANCE_INVALID"
@@ -318,7 +324,9 @@ end
 
 local function executeAwardFinalize(actor, payload, decision)
   local command = payload or {}
-  if command.source == "rclootcouncil" and command.responseValidated ~= true then
+  if command.source == "rclootcouncil" and (command.responseValidated ~= true
+    or command.evidenceValidated ~= true or tonumber(command.evidenceSchemaVersion) ~= 1
+    or command.semanticStatus ~= "FINAL_AWARD" or command.sourceStatus ~= "FINAL_AWARD") then
     local result = buildResult(false, nil, decision, text("AWARD_DIB_RESPONSE_REQUIRED", "Only a finalized DIB response can consume a Dib."))
     result.outcome = "rejected"
     result.reasonCode = "AWARD_PROVENANCE_INVALID"
@@ -374,10 +382,15 @@ local function executeAwardFinalize(actor, payload, decision)
       end
     end
   end
-  local tx, ledgerReason = Dibs.Ledger.Use(command.playerName, 1, command.reason or "Finalized loot award", command.source or "rclootcouncil", command.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()), buildAudit("award.finalize", actor, command, decision))
-  local result = buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
-  if not tx then result.reasonCode = ledgerReason or result.reasonCode end
+  local accounting = Dibs.Ledger and Dibs.Ledger.CommitDibUse and Dibs.Ledger.CommitDibUse({
+    action = "award.finalize", actor = actor, debtPolicy = command.debtPolicy,
+  }, command)
+  local tx = accounting and accounting.value and (accounting.value.transaction or accounting.value) or nil
+  local result = buildResult(accounting and accounting.accepted == true, tx, decision,
+    tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for award."))
+  if not tx then result.reasonCode = accounting and accounting.reasonCode or result.reasonCode end
   result.outcome = tx and "awarded" or "rejected"
+  result.proposal = accounting and accounting.proposal or nil
   result.eligibility = eligibilityDecision
   if tx and eligibilityDecision and Dibs.CharacterEligibility.ConsumeException then
     Dibs.CharacterEligibility.ConsumeException(eligibilityDecision)
@@ -405,6 +418,9 @@ end
 
 local function executeHistoryConfirm(actor, payload, decision)
   local command = payload or {}
+  if command.legacySynthetic == true then
+    return reject(decision, "Legacy synthetic RCLootCouncil history is display-only.")
+  end
   local mode = tostring(command.mode or "guided"):lower()
   if mode ~= "guided" and mode ~= "manual" then
     return reject(decision, "A guided or manual reconciliation mode is required.")

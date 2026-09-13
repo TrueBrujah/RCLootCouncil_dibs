@@ -331,14 +331,6 @@ local function announcePreDib(request)
   end
 end
 
-local function logPreDibToRCLootCouncil(request, sourceLabel)
-  if not (Dibs and Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.LogPreDibRequest) == "function") then
-    return false
-  end
-  local ok = pcall(Dibs.RCLootCouncil.LogPreDibRequest, request, sourceLabel)
-  return ok == true
-end
-
 local function isRequestActive(request)
   return request.status ~= "fulfilled" and request.status ~= "cancelled" and request.status ~= "invalidated"
 end
@@ -537,7 +529,6 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
       existing.revision = (tonumber(existing.revision) or 1) + 1
       existing.source = source or existing.source or "public"
       announcePreDib(existing)
-      logPreDibToRCLootCouncil(existing, source)
     end
     return existing
   end
@@ -563,7 +554,6 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
 
   table.insert(Dibs.db.preDibs.requests, request)
   announcePreDib(request)
-  logPreDibToRCLootCouncil(request, source)
   return request
 end
 
@@ -622,7 +612,6 @@ function Dibs.PreDibs.UpdateStatus(requestId, status)
       if status == "confirmed" and request.confirmedAt == nil then
         request.confirmedAt = request.updatedAt
         announcePreDib(request)
-        logPreDibToRCLootCouncil(request)
       elseif status == "fulfilled" and request.fulfilledAt == nil then
         request.fulfilledAt = request.updatedAt
       elseif status == "cancelled" and request.cancelledAt == nil then

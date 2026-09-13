@@ -1,5 +1,12 @@
 local loader = require("helpers.load_addon")
 
+local function supportedRC(options)
+  options = options or {}
+  options.version = "DIBS_TEST_RCLC_AWARD_V1"
+  options.dibsAdapterProfile = "DIBS_RCLC_AWARD_TEST_V1"
+  return loader.makeRCLootCouncil(options)
+end
+
 describe("Finalize award flow", function()
   it("does not consume on non-final status", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
@@ -62,25 +69,25 @@ describe("Finalize award flow", function()
   end)
 
   it("requires a DIB response for RCLootCouncil awards and ignores test awards", function()
-    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
-    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = false, guildMembers = { "Tester-Realm" }, guildRankIndices = { [1] = 3 } } })
+    local rc = supportedRC({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
     dibs.GetDB().settings.allowPublicPreDibs = false
     local before = dibs.Ledger.GetBalance("Tester-Realm")
 
-    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19021", "Need")
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "awarded", "item:19021", "Need")
     assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
 
     dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "test_mode", "item:19022", "Dib")
     assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
 
-    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19023", "Dib")
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "awarded", "item:19023", "Dib")
     assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
-    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19023", "Dib")
+    dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "awarded", "item:19023", "Dib")
     assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
   end)
 
   it("rejects a personal Catalyst award even when an old DIB response exists", function()
-    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
+    local rc = supportedRC({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
     rc.lootTable = {
       [1] = { itemGUID = "catalyst-guid", item = { link = "item:19027", typeCode = "CATALYST" } },
     }
@@ -88,7 +95,7 @@ describe("Finalize award flow", function()
     dibs.GetDB().settings.allowPublicPreDibs = false
     local before = dibs.Ledger.GetBalance("Tester-Realm")
 
-    local result = dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "normal", "item:19027", "Dib")
+    local result = dibs.RCLootCouncil.OnAwardSuccess(nil, 1, "Tester-Realm", "awarded", "item:19027", "Dib")
     assert_false(result.ok)
     assert_equal("AWARD_PERSONAL_ITEM", result.reasonCode)
     assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))

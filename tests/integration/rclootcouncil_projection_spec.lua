@@ -1,7 +1,7 @@
 local loader = require("helpers.load_addon")
 
 describe("RCLootCouncil Dibs projections", function()
-  it("accepts partial optional award metadata without mutating RC data", function()
+  it("rejects partial optional award metadata without mutating RC data", function()
     local history = { ["Tester-Realm"] = {} }
     local rc = loader.makeRCLootCouncil({ enabled = true, currentSessionId = "projection-session" })
     rc.GetHistoryDB = function() return history end
@@ -11,8 +11,9 @@ describe("RCLootCouncil Dibs projections", function()
     local result = dibs.RCLootCouncil.OnAwardSuccess(nil, nil, "Tester-Realm", "normal", "item:19019", "DIB")
     local statusAfter = dibs.RCLootCouncil.GetStatusForCandidate("Tester-Realm", 19019)
 
-    assert_true(result and result.ok)
-    assert_equal(statusBefore.balance - 1, statusAfter.balance)
+    assert_true(result and result.ignored)
+    assert_equal("RC_VERSION_UNSUPPORTED", result.reasonCode)
+    assert_equal(statusBefore.balance, statusAfter.balance)
     assert_equal(0, #history["Tester-Realm"])
   end)
 

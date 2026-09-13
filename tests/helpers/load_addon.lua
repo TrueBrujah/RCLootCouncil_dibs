@@ -151,6 +151,8 @@ local function makeRC(opts)
     enabled = opts.enabled ~= false,
     optionsFrame = opts.optionsFrame,
     masterLooter = opts.masterLooter or { guid = "Player-1-TESTER", name = "Tester-Realm" },
+    version = opts.version,
+    dibsAdapterProfile = opts.dibsAdapterProfile,
     currentSessionId = currentSessionId,
     sessionID = opts.sessionID,
     lootSessionId = opts.lootSessionId,

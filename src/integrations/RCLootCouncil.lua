@@ -1674,106 +1674,16 @@ local function getHistoryModule(rc)
   return nil
 end
 
-local function sanitizeRCLootCouncilHistory(rc)
-  if type(rc) ~= "table" or type(rc.GetHistoryDB) ~= "function" then return false end
-  local ok, historyDB = pcall(rc.GetHistoryDB, rc)
-  if not ok or type(historyDB) ~= "table" then return false end
-  local changed = false
-  for _, entries in pairs(historyDB) do
-    if type(entries) == "table" then
-      for index, entry in ipairs(entries) do
-        if type(entry) == "table" and entry.dibsOrigin == "RCLootCouncil_dibs" then
-          local id = tostring(entry.id or "")
-          local timestamp, counter = id:match("^(%d+)%-(%d+)$")
-          if not timestamp or not counter then
-            local first = id:match("^(%d+)") or tostring(time())
-            entry.id = first .. "-" .. tostring(index)
-            changed = true
-          end
-        end
-      end
-    end
-  end
-  return changed
-end
-
 local function buildFallbackItemLink(itemID, itemName)
   local id = tonumber(itemID) or 0
   local label = tostring(itemName or ("Item " .. tostring(id)))
   return string.format("|cffffffff|Hitem:%d::::::::::::|h[%s]|h|r", id, label)
 end
 
-local function getDateParts()
-  local now = time()
-  local stamp = date("*t", now)
-  if type(stamp) ~= "table" then
-    return "1970/01/01", "00:00:00"
-  end
-  local dateValue = string.format("%04d/%02d/%02d", stamp.year or 1970, stamp.month or 1, stamp.day or 1)
-  local timeValue = string.format("%02d:%02d:%02d", stamp.hour or 0, stamp.min or 0, stamp.sec or 0)
-  return dateValue, timeValue
-end
-
+-- Kept as an explicit compatibility no-op so older callers cannot write
+-- synthetic Dibs rows into RCLootCouncil-owned history.
 function Dibs.RCLootCouncil.LogPreDibRequest(request, sourceLabel)
-  local rc = getRC()
-  if type(rc) ~= "table" then return false end
-
-  local history = getHistoryModule(rc)
-  local playerName = request and request.playerName or (Dibs.GetPlayerName and Dibs.GetPlayerName() or "Unknown")
-  local itemID = tonumber(request and request.itemID) or 0
-  local itemLink = request and request.itemName
-  if type(itemLink) ~= "string" or not itemLink:find("|Hitem:", 1, true) then
-    itemLink = buildFallbackItemLink(itemID)
-  end
-
-  local dateValue, timeValue = getDateParts()
-  local classTag = select(2, UnitClass and UnitClass("player") or nil) or "PRIEST"
-  local groupSize = (GetNumGroupMembers and tonumber(GetNumGroupMembers()) or 0)
-  local eventId = request and request.requestId or Dibs.NewId and Dibs.NewId("predib") or tostring(time())
-  local numericCounter = tonumber(tostring(eventId):match("%d+")) or 0
-  local sourceText = tostring(sourceLabel or request and request.source or "Adventure Guide")
-  local historyEntry = {
-    dibsOrigin = "RCLootCouncil_dibs",
-    date = dateValue,
-    time = timeValue,
-    id = tostring(time()) .. "-" .. tostring(numericCounter),
-    lootWon = itemLink,
-    response = "Pre-Dib",
-    responseID = FORCED_DIB_BUTTON_INDEX,
-    votes = 0,
-    class = classTag,
-    instance = "Pre-Dibs",
-    boss = sourceText,
-    difficultyID = 0,
-    mapID = 0,
-    groupSize = groupSize,
-    itemReplaced1 = "",
-    itemReplaced2 = "",
-    isAwardReason = false,
-    typeCode = "default",
-    color = { FORCED_DIB_COLOR[1], FORCED_DIB_COLOR[2], FORCED_DIB_COLOR[3], FORCED_DIB_COLOR[4] },
-    note = "[Dibs] Pre-Dib reservation",
-    owner = playerName,
-  }
-
-  if history and type(history.OnHistoryReceived) == "function" then
-    local ok = pcall(history.OnHistoryReceived, history, playerName, historyEntry)
-    return ok == true
-  end
-
-  if type(rc.GetHistoryDB) == "function" then
-    local ok, historyDB = pcall(rc.GetHistoryDB, rc)
-    if ok and type(historyDB) == "table" then
-      historyDB[playerName] = historyDB[playerName] or {}
-      table.insert(historyDB[playerName], historyEntry)
-      if history and type(history.BuildData) == "function" and type(history.frame) == "table" and type(history.frame.IsVisible) == "function" and history.frame:IsVisible() then
-        pcall(history.BuildData, history)
-      end
-      return true
-    end
-  end
-
-  return false
+  return false, "RC_HISTORY_WRITE_DISABLED"
 end
 
 local function applyDibsButtonState(lootFrame)
@@ -2376,6 +2286,12 @@ local REASON_DIAGNOSTIC_KEYS = {
   RC_AWARD_CALLBACK_UNAVAILABLE = "RC_REASON_AWARD_CALLBACK_UNAVAILABLE",
   RC_AWARD_IDENTITY_UNAVAILABLE = "RC_REASON_AWARD_IDENTITY_UNAVAILABLE",
   RC_RESPONSE_UNSUPPORTED = "RC_REASON_RESPONSE_UNSUPPORTED",
+  RC_VERSION_UNKNOWN = "RC_REASON_VERSION_UNKNOWN",
+  RC_VERSION_UNSUPPORTED = "RC_REASON_VERSION_UNSUPPORTED",
+  RC_AWARD_PROFILE_UNSUPPORTED = "RC_REASON_AWARD_PROFILE_UNSUPPORTED",
+  RC_AWARD_CALLBACK_UNSUPPORTED = "RC_REASON_AWARD_CALLBACK_UNSUPPORTED",
+  AWARD_EVIDENCE_CONFLICT = "AWARD_EVIDENCE_CONFLICT",
+  AWARD_EVIDENCE_UNSUPPORTED = "AWARD_EVIDENCE_UNSUPPORTED",
   RC_OPERATIONAL = "RC_REASON_OPERATIONAL",
   AWARD_INVALID = "AWARD_INVALID",
   NON_DIB_RESPONSE = "AWARD_NON_DIB_RESPONSE",
@@ -2402,6 +2318,7 @@ local REASON_DIAGNOSTIC_KEYS = {
   HISTORY_REJECTED_BY_OFFICER = "HISTORY_REJECTED_BY_OFFICER",
   HISTORY_FINAL_STATUS_UNKNOWN = "HISTORY_FINAL_STATUS_UNKNOWN",
   HISTORY_FINAL_STATUS_INFERRED = "HISTORY_FINAL_STATUS_INFERRED",
+  HISTORY_LEGACY_DISPLAY_ONLY = "HISTORY_LEGACY_DISPLAY_ONLY",
 }
 
 local REASON_DIAGNOSTIC_FALLBACKS = {
@@ -2413,6 +2330,12 @@ local REASON_DIAGNOSTIC_FALLBACKS = {
   RC_AWARD_CALLBACK_UNAVAILABLE = "RCLootCouncil does not expose the required award callback.",
   RC_AWARD_IDENTITY_UNAVAILABLE = "RCLootCouncil did not expose a stable award identity.",
   RC_RESPONSE_UNSUPPORTED = "RCLootCouncil response mapping is unsupported.",
+  RC_VERSION_UNKNOWN = "RCLootCouncil did not expose a version supported by the award adapter.",
+  RC_VERSION_UNSUPPORTED = "This RCLootCouncil version is not approved for automatic award evidence.",
+  RC_AWARD_PROFILE_UNSUPPORTED = "RCLootCouncil award evidence is disabled for this adapter profile.",
+  RC_AWARD_CALLBACK_UNSUPPORTED = "This RCLootCouncil award callback is not part of the supported adapter contract.",
+  AWARD_EVIDENCE_CONFLICT = "The same RCLootCouncil award identity carried different evidence; manual review is required.",
+  AWARD_EVIDENCE_UNSUPPORTED = "RCLootCouncil award evidence is not available for automatic Dib consumption.",
   RC_OPERATIONAL = "RCLootCouncil integration is operational.",
   AWARD_INVALID = "The finalized award payload is incomplete.",
   NON_DIB_RESPONSE = "The award response was not an explicit DIB.",
@@ -2439,11 +2362,57 @@ local REASON_DIAGNOSTIC_FALLBACKS = {
   HISTORY_REJECTED_BY_OFFICER = "Rejected by an Officer during reconciliation.",
   HISTORY_FINAL_STATUS_UNKNOWN = "The finalization status is unavailable; manual review is required.",
   HISTORY_FINAL_STATUS_INFERRED = "Finalization was inferred from the recorded RCLootCouncil history entry; confirmation is still required.",
+  HISTORY_LEGACY_DISPLAY_ONLY = "This legacy synthetic Dibs row is display-only and cannot consume a Dib.",
 }
 
 local function reasonDiagnostic(reasonCode)
   local key = REASON_DIAGNOSTIC_KEYS[reasonCode]
   return text(key, REASON_DIAGNOSTIC_FALLBACKS[reasonCode] or tostring(reasonCode or "Integration action ignored."))
+end
+
+-- B09 deliberately starts with one fixture-only compatibility profile.  No
+-- Retail version is promoted to automated award evidence until B10 validates
+-- it in a real client.  Requiring both markers prevents a coincidental RC
+-- field layout from becoming an implicit compatibility promise.
+local AWARD_ADAPTER_PROFILES = {
+  DIBS_RCLC_AWARD_TEST_V1 = {
+    id = "DIBS_RCLC_AWARD_TEST_V1",
+    rcVersion = "DIBS_TEST_RCLC_AWARD_V1",
+    callback = "RCMLAwardSuccess",
+    evidenceSchemaVersion = 1,
+    finalStatuses = { awarded = "FINAL_AWARD" },
+  },
+}
+
+local function detectedRCVersion(rc)
+  local value = type(rc) == "table" and (rc.version or rc.VERSION or rc.revision) or nil
+  value = value == nil and nil or tostring(value)
+  return value ~= "" and value or nil
+end
+
+local function detectAwardAdapterProfile(rc)
+  local version = detectedRCVersion(rc)
+  if not version then return nil, "RC_VERSION_UNKNOWN", version end
+  local profile = AWARD_ADAPTER_PROFILES[tostring(rc and rc.dibsAdapterProfile or "")]
+  if not profile then return nil, "RC_VERSION_UNSUPPORTED", version end
+  if version ~= profile.rcVersion then return nil, "RC_VERSION_UNSUPPORTED", version end
+  if type(rc.RegisterMessage) ~= "function" then return nil, "RC_AWARD_CALLBACK_UNAVAILABLE", version end
+  if not stableSessionIdentity(rc) then return nil, "RC_AWARD_IDENTITY_UNAVAILABLE", version end
+  return profile, nil, version
+end
+
+local function adapterEvidenceState()
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  db.rclootcouncilAdapter = db.rclootcouncilAdapter or { schema = 1, evidence = {} }
+  db.rclootcouncilAdapter.evidence = db.rclootcouncilAdapter.evidence or {}
+  return db.rclootcouncilAdapter
+end
+
+local function evidenceFingerprint(evidence)
+  return table.concat({ tostring(evidence.adapterProfile), tostring(evidence.rcVersion),
+    tostring(evidence.callback), tostring(evidence.semanticStatus), tostring(evidence.recipient),
+    tostring(evidence.itemID), tostring(evidence.itemLink), tostring(evidence.response),
+    tostring(evidence.awardRef) }, "|")
 end
 
 local function capabilitySnapshot()
@@ -2473,7 +2442,7 @@ local function capabilitySnapshot()
     snapshot.reasonCode = "RC_INSTANCE_UNAVAILABLE"
     return snapshot
   end
-  snapshot.observedVersion = rc.version or rc.VERSION or rc.revision
+  snapshot.observedVersion = detectedRCVersion(rc)
   if rc.enabled == false then
     snapshot.reasonCode = "RC_DISABLED"
     return snapshot
@@ -2486,17 +2455,26 @@ local function capabilitySnapshot()
 
   snapshot.capabilities.discovery = true
   snapshot.capabilities.enabledState = true
+  local profile, profileReason = detectAwardAdapterProfile(rc)
+  snapshot.adapter = {
+    identity = profile and profile.id or "unsupported",
+    version = snapshot.observedVersion,
+    state = profile and "AVAILABLE" or "UNSUPPORTED",
+    reasonCode = profileReason,
+    evidenceSchemaVersion = profile and profile.evidenceSchemaVersion or nil,
+  }
   snapshot.capabilities.masterLooter = playerIdentity(rc.masterLooter) ~= nil
   snapshot.capabilities.awardCallback = type(rc.RegisterMessage) == "function"
     and Dibs.RCLootCouncil.callbackOwner == rc
-  snapshot.capabilities.awardIdentity = hasHistoryIdentitySurface(rc)
-    or stableSessionIdentity(rc) ~= nil
+  snapshot.capabilities.awardIdentity = stableSessionIdentity(rc) ~= nil
   snapshot.capabilities.responseValidation = type(Dibs.RCLootCouncil.IsDibResponse) == "function"
+  snapshot.capabilities.awardEvidence = profile ~= nil and snapshot.capabilities.awardCallback
+  snapshot.capabilities.uiProjection = true
 
   if not snapshot.capabilities.masterLooter then
     snapshot.state = "degraded"
     snapshot.reasonCode = "RC_MASTER_LOOTER_UNVERIFIABLE"
-  elseif not snapshot.capabilities.awardCallback then
+  elseif not snapshot.capabilities.awardCallback and profile ~= nil then
     snapshot.state = "degraded"
     snapshot.reasonCode = "RC_AWARD_CALLBACK_UNAVAILABLE"
   elseif not snapshot.capabilities.awardIdentity then
@@ -2507,6 +2485,9 @@ local function capabilitySnapshot()
     snapshot.reasonCode = "RC_RESPONSE_UNSUPPORTED"
   else
     snapshot.state = "operational"
+    -- An unsupported award-evidence profile does not disable B08's optional
+    -- UI projection or standalone Dibs. Its automation sub-capability remains
+    -- explicitly unavailable in `snapshot.adapter`.
     snapshot.reasonCode = "RC_OPERATIONAL"
   end
   return snapshot
@@ -2515,6 +2496,17 @@ end
 ---@return table capabilities Capability probe with authority and callback flags.
 function Dibs.RCLootCouncil.GetCapabilities()
   return capabilitySnapshot()
+end
+
+function Dibs.RCLootCouncil.GetAwardAdapterStatus()
+  local snapshot = capabilitySnapshot()
+  return {
+    identity = snapshot.adapter and snapshot.adapter.identity or "unsupported",
+    state = snapshot.adapter and snapshot.adapter.state or "UNAVAILABLE",
+    reasonCode = snapshot.adapter and snapshot.adapter.reasonCode,
+    detectedVersion = snapshot.observedVersion,
+    awardEvidence = snapshot.capabilities and snapshot.capabilities.awardEvidence == true,
+  }
 end
 
 function Dibs.RCLootCouncil.GetAvailability()
@@ -2642,58 +2634,18 @@ function Dibs.RCLootCouncil.ValidateResponse(playerName, itemID, response)
 end
 
 local function getAwardIdentity(rc, session, winner, itemID, itemLink)
-  local sources = { rc, getRCMLModule(rc) }
-  local entry
-  for _, source in ipairs(sources) do
-    local lootTable = source and source.lootTable
-    if type(lootTable) == "table" and lootTable[tonumber(session)] then
-      entry = lootTable[tonumber(session)]
-      break
-    end
-  end
-
-  local unique = entry and (entry.itemGUID or entry.itemGuid or entry.guid or entry.lootGUID or entry.id)
-  if unique then
-    return "entry:" .. tostring(unique)
-  end
-
+  -- The award profile intentionally does not consult RC's mutable loot table
+  -- or history. A profile supplies a session identity and callback session,
+  -- which are sufficient to form a deterministic, replay-safe evidence key.
   local sessionKey = stableSessionIdentity(rc)
   local winnerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
     and Dibs.Permissions.CanonicalPlayerId(winner) or playerNameIdentity(winner)
-  if sessionKey and winnerId and tonumber(itemID) then
+  if sessionKey and winnerId and tostring(winner):find("-", 1, true) and tonumber(itemID)
+    and (type(session) == "string" or type(session) == "number") and tostring(session) ~= ""
+  then
     return "session:" .. sessionKey .. ":" .. tostring(session or "unknown") .. ":"
       .. tostring(winnerId) .. ":" .. tostring(tonumber(itemID))
   end
-
-  -- RCLootCouncil writes an immutable history id for completed awards. Use it only
-  -- when exactly one matching row exists; choosing the newest matching row can map
-  -- a delayed callback to a different award of the same item.
-  if rc and type(rc.GetHistoryDB) == "function" then
-    local ok, historyDB = pcall(rc.GetHistoryDB, rc)
-    if ok and type(historyDB) == "table" then
-      local matches = {}
-      for playerKey, entries in pairs(historyDB) do
-        if type(entries) == "table" and (not winnerId or not Dibs.Permissions or not Dibs.Permissions.CanonicalPlayerId
-          or Dibs.Permissions.CanonicalPlayerId(playerKey) == winnerId) then
-          for _, historyEntry in ipairs(entries) do
-            if type(historyEntry) == "table" and historyEntry.id then
-              local historyItem = historyEntry.lootWon or historyEntry.itemLink or historyEntry.item
-              local historyItemId = tonumber(historyEntry.itemID) or parseItemID(historyItem)
-              if historyItemId == tonumber(itemID) then
-                table.insert(matches, "history:" .. tostring(historyEntry.id))
-              end
-            end
-          end
-        end
-      end
-      if #matches == 1 then
-        return matches[1]
-      elseif #matches > 1 then
-        return nil, "AWARD_IDENTITY_AMBIGUOUS"
-      end
-    end
-  end
-
   return nil, "AWARD_IDENTITY_UNAVAILABLE"
 end
 
@@ -2733,50 +2685,19 @@ removeDibFromSet = function(buttons, responses)
   return true
 end
 
----@param _ any Callback owner supplied by RCLootCouncil.
----@param session table|nil RC loot session context.
----@param winner string|table Winner identity.
----@param status string Award status.
----@param itemLink string Item link.
----@param responseText string|nil RC response label.
----@return boolean accepted Whether the callback produced a qualifying accounting result.
--- Side effects: May append one idempotent ledger use after authority/readiness validation.
-function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink, responseText)
-  if not Dibs.ProtectedActions or not winner or not itemLink then
-    return ignoredAward("AWARD_INVALID")
-  end
+local function normalizeAwardEvidence(callback, session, winner, status, itemLink, responseText)
   local rc = getRC()
+  local profile, profileReason, rcVersion = detectAwardAdapterProfile(rc)
+  if not profile then return nil, profileReason or "AWARD_EVIDENCE_UNSUPPORTED" end
+  if callback ~= profile.callback then return nil, "RC_AWARD_CALLBACK_UNSUPPORTED" end
+  if not winner or not itemLink then return nil, "AWARD_INVALID" end
   local normalizedResponse, responseReason = normalizeDibResponse(responseText, rc)
-  if not normalizedResponse then
-    return ignoredAward(responseReason or "NON_DIB_RESPONSE")
-  end
+  if not normalizedResponse then return nil, responseReason or "NON_DIB_RESPONSE" end
   local statusKey = string.lower(tostring(status or ""))
-  if statusKey == "test_mode" or statusKey == "test" then
-    return ignoredAward("AWARD_TEST_MODE")
-  end
-  local mode = Dibs.Permissions and Dibs.Permissions.GetInstallationMode and Dibs.Permissions.GetInstallationMode() or "AUTO"
-  if mode == "STANDALONE" then return ignoredAward("STANDALONE_MODE") end
-  local capabilities = capabilitySnapshot()
-  if capabilities.state ~= "operational" then
-    local reasonCode = capabilities.reasonCode == "RC_AWARD_IDENTITY_UNAVAILABLE"
-      and "AWARD_IDENTITY_UNAVAILABLE" or (capabilities.reasonCode or "RC_AWARD_PATH_UNAVAILABLE")
-    return ignoredAward(reasonCode)
-  end
-  if Dibs.Readiness and type(Dibs.Readiness.CanProcessLiveAward) == "function" then
-    local allowed, readiness = Dibs.Readiness.CanProcessLiveAward()
-    if allowed == false then
-      local reasonCode = "READINESS_BLOCKED"
-      if readiness and readiness.reasonCodes then
-        for code in pairs(readiness.reasonCodes) do
-          reasonCode = tostring(code)
-          break
-        end
-      end
-      return ignoredAward(reasonCode)
-    end
-  end
+  local semanticStatus = profile.finalStatuses[statusKey]
+  if semanticStatus ~= "FINAL_AWARD" then return nil, "AWARD_STATUS_UNSUPPORTED" end
   local itemID = tonumber(tostring(itemLink):match("item:(%d+)"))
-  if not itemID then return ignoredAward("AWARD_INVALID_ITEM") end
+  if not itemID then return nil, "AWARD_INVALID_ITEM" end
   local responseType = getAwardResponseType(rc, session)
   local sharedValidation = Dibs.RCLootCouncil.ValidateAwardInput({
     itemID = itemID,
@@ -2786,20 +2707,65 @@ function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink,
     responseType = responseType,
     status = status,
   })
-  if not sharedValidation.ok then
-    return ignoredAward(sharedValidation.reasonCode or "AWARD_INVALID")
-  end
-  local actor = rc and rc.masterLooter
-  if not actor then return ignoredAward("RC_MASTER_LOOTER_UNVERIFIABLE") end
+  if not sharedValidation.ok then return nil, sharedValidation.reasonCode or "AWARD_INVALID" end
   local ref, identityReason = getAwardIdentity(rc, session, winner, itemID, itemLink)
-  if not ref then
-    return ignoredAward(identityReason or "AWARD_IDENTITY_UNAVAILABLE")
+  if not ref then return nil, identityReason or "AWARD_IDENTITY_UNAVAILABLE" end
+  local recipient = playerNameIdentity(winner)
+  if not recipient or not tostring(winner):find("-", 1, true) then return nil, "AWARD_IDENTITY_UNAVAILABLE" end
+  local evidence = {
+    evidenceSchemaVersion = profile.evidenceSchemaVersion,
+    adapterProfile = profile.id, rcVersion = rcVersion, callback = callback,
+    semanticStatus = semanticStatus, rawStatus = statusKey, recipient = recipient,
+    playerName = tostring(winner), itemID = itemID, itemLink = tostring(itemLink),
+    response = normalizedResponse, responseType = responseType, awardRef = ref,
+    evidenceId = "rclc:" .. ref, sessionId = stableSessionIdentity(rc),
+    provenance = "RCLootCouncil callback / " .. profile.id,
+  }
+  return evidence
+end
+
+-- Narrow award-adapter entry point. It admits only a documented callback from
+-- an exact profile, persists no RC table, and can reach accounting solely via
+-- the protected command boundary.
+function Dibs.RCLootCouncil.HandleAwardCallback(callback, session, winner, status, itemLink, responseText)
+  if not Dibs.ProtectedActions then return ignoredAward("AWARD_INVALID") end
+  local mode = Dibs.Permissions and Dibs.Permissions.GetInstallationMode and Dibs.Permissions.GetInstallationMode() or "AUTO"
+  if mode == "STANDALONE" then return ignoredAward("STANDALONE_MODE") end
+  local evidence, reasonCode = normalizeAwardEvidence(callback, session, winner, status, itemLink, responseText)
+  if not evidence then return ignoredAward(reasonCode) end
+  local state = adapterEvidenceState()
+  local fingerprint = evidenceFingerprint(evidence)
+  local existing = state.evidence[evidence.evidenceId]
+  if existing then
+    if existing.fingerprint ~= fingerprint then return ignoredAward("AWARD_EVIDENCE_CONFLICT") end
+    return { ok = true, duplicate = true, outcome = "duplicate", reasonCode = "IDEMPOTENT_EVIDENCE", evidenceId = evidence.evidenceId }
   end
-  local result = Dibs.ProtectedActions.FinalizeAward(actor, { awardRef = ref, playerName = winner, itemID = itemID, itemLink = itemLink, sourceStatus = status, source = "rclootcouncil", response = normalizedResponse, responseType = responseType, responseValidated = true })
+  -- Persist a Dibs-owned, normalized receipt before the protected path so a
+  -- duplicate or late callback cannot silently create a second consumption.
+  state.evidence[evidence.evidenceId] = {
+    fingerprint = fingerprint, receivedAt = time(), adapterProfile = evidence.adapterProfile,
+    rcVersion = evidence.rcVersion, callback = evidence.callback, semanticStatus = evidence.semanticStatus,
+    recipient = evidence.recipient, itemID = evidence.itemID, awardRef = evidence.awardRef,
+  }
+  local actor = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
+  local result = Dibs.ProtectedActions.FinalizeAward(actor, {
+    awardRef = evidence.awardRef, evidenceId = evidence.evidenceId, playerName = evidence.playerName,
+    itemID = evidence.itemID, itemLink = evidence.itemLink, sourceStatus = "FINAL_AWARD",
+    finalized = true, source = "rclootcouncil", response = evidence.response,
+    responseType = evidence.responseType, responseValidated = true, evidenceValidated = true,
+    evidenceSchemaVersion = evidence.evidenceSchemaVersion, adapterProfile = evidence.adapterProfile,
+    semanticStatus = evidence.semanticStatus, provenance = evidence.provenance,
+  })
+  state.evidence[evidence.evidenceId].outcome = result and result.outcome or "PENDING_RECONCILIATION"
+  state.evidence[evidence.evidenceId].reasonCode = result and result.reasonCode or "PROTECTED_ACTION_UNAVAILABLE"
   if result and result.ok == false and Dibs.DebugLogs and type(Dibs.DebugLogs.Add) == "function" then
     Dibs.DebugLogs.Add("RCLootCouncil", 2, tostring(result.reasonCode or "AWARD_REJECTED"))
   end
   return result
+end
+
+function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink, responseText)
+  return Dibs.RCLootCouncil.HandleAwardCallback("RCMLAwardSuccess", session, winner, status, itemLink, responseText)
 end
 
 function Dibs.RCLootCouncil.Initialize()
@@ -2814,8 +2780,8 @@ function Dibs.RCLootCouncil.Initialize()
     ensureRuntimeHooks(120)
     return true
   end
-  sanitizeRCLootCouncilHistory(rc)
-  if type(rc.RegisterMessage) == "function" and Dibs.RCLootCouncil.callbackOwner ~= rc then
+  local profile = detectAwardAdapterProfile(rc)
+  if profile and type(rc.RegisterMessage) == "function" and Dibs.RCLootCouncil.callbackOwner ~= rc then
     local ok, result = pcall(rc.RegisterMessage, rc, "RCMLAwardSuccess", Dibs.RCLootCouncil.OnAwardSuccess)
     if ok and result ~= false then
       Dibs.RCLootCouncil.callbackOwner = rc
@@ -2845,6 +2811,8 @@ function Dibs.RCLootCouncil.GetLocalStatus()
     compatibility = capabilities.compatibility,
     diagnostic = reasonDiagnostic(capabilities.reasonCode),
     observedVersion = capabilities.observedVersion,
+    adapter = capabilities.adapter,
+    automaticConsumption = capabilities.capabilities.awardEvidence == true,
     protocolVersion = Dibs.PROTOCOL_VERSION,
     initialized = Dibs.RCLootCouncil.initialized == true,
   }
@@ -2858,6 +2826,9 @@ function Dibs.RCLootCouncil.GetAwardEvidence(context)
   local status = Dibs.RCLootCouncil.GetLocalStatus()
   return {
     source = "rclootcouncil",
+    provenance = "read-only RCLootCouncil projection",
+    verified = false,
+    automaticEligible = false,
     awardRef = context.awardRef,
     historyRef = context.historyRef,
     transactionRef = context.transactionRef,
@@ -3113,6 +3084,7 @@ local function historyRowsFromDB(historyDB)
   local rows = {}
   local function add(playerKey, index, row)
     if type(row) ~= "table" then return end
+    local legacySynthetic = row.dibsOrigin == "RCLootCouncil_dibs"
     local historyRef = row.id and "history:" .. tostring(row.id) or nil
     local rawItemLink = row.lootWon or row.itemLink or row.item or row.link
     local responseText = historyResponse(row)
@@ -3125,7 +3097,8 @@ local function historyRowsFromDB(historyDB)
       historyRef = historyRef,
       awardRef = historyRef,
       evidenceId = "reconciliation:" .. rowKey,
-      historySource = row.source or row.dibsOrigin or "RCLootCouncil",
+      historySource = legacySynthetic and "Dibs legacy synthetic history" or (row.source or "RCLootCouncil"),
+      legacySynthetic = legacySynthetic,
       historyEvent = row.event or row.eventName or row.sourceEvent,
       playerName = winner,
       winner = winner,
@@ -3290,7 +3263,8 @@ local function classifyHistoryRow(row, aliases, seasonId, identityMap, inferFina
     if normalizedResponse == alias then aliasUsed = alias break end
   end
   local classification, reasonCode = "eligible", nil
-  if normalizedResponse == "" then classification, reasonCode = "rejected", "NON_DIB_RESPONSE"
+  if row.legacySynthetic == true then classification, reasonCode = "legacy", "HISTORY_LEGACY_DISPLAY_ONLY"
+  elseif normalizedResponse == "" then classification, reasonCode = "rejected", "NON_DIB_RESPONSE"
   elseif not aliasUsed then classification, reasonCode = "rejected", "NON_DIB_RESPONSE"
   elseif (function()
     local state = string.lower(tostring(row.sourceStatus or ""))
@@ -3355,7 +3329,7 @@ function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
     scanned = #rows,
     sourceScanned = tonumber(metadata and metadata.scanned) or #rows,
     hiddenNonDib = tonumber(metadata and metadata.hiddenNonDib) or 0,
-    eligible = 0, already_accounted = 0, ambiguous = 0, rejected = 0, unsupported = 0,
+    eligible = 0, already_accounted = 0, ambiguous = 0, rejected = 0, unsupported = 0, legacy = 0,
   }
   local identityMap = {}
   for _, row in ipairs(rows) do
@@ -3458,6 +3432,7 @@ function Dibs.RCLootCouncil.ConfirmReconciliationCandidate(sessionId, candidateI
   local candidate
   for _, row in ipairs(session.candidates or {}) do if tostring(row.candidateId) == tostring(candidateId) then candidate = row break end end
   if not candidate then return nil, "HISTORY_CANDIDATE_NOT_FOUND" end
+  if candidate.legacySynthetic == true then return nil, "HISTORY_LEGACY_DISPLAY_ONLY" end
   options = type(options) == "table" and options or {}
   local payload = {}
   for key, value in pairs(candidate) do payload[key] = value end

@@ -19,7 +19,7 @@ describe("RCLootCouncil authority matrix", function()
     assert_equal("officer", officer.role)
   end)
 
-  it("limits a local non-admin Master Looter to the award exception", function()
+  it("does not let a local non-admin Master Looter bypass guild authority", function()
     local rc = loader.makeRCLootCouncil({ masterLooter = { guid = "Player-1-ML", name = "ML-Realm" }, currentSessionId = "matrix-session" })
     local _, dibs = loader.load({
       rclootcouncil = rc,
@@ -30,9 +30,10 @@ describe("RCLootCouncil authority matrix", function()
     local manual = dibs.Permissions.Evaluate("ledger.grant", nil)
 
     assert_false(settings.allowed)
-    assert_true(award.allowed)
+    assert_false(award.allowed)
     assert_false(manual.allowed)
-    assert_equal("rclootcouncil", award.authority)
+    assert_equal("guild", award.authority)
+    assert_equal("GUILD_ADMIN_REQUIRED", award.reasonCode)
   end)
 
   it("does not promote raid leader, assistant, council, or remote claims", function()

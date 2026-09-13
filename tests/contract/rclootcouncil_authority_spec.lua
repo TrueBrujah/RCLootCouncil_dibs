@@ -17,17 +17,17 @@ describe("RCLootCouncil authority contract", function()
     assert_false(playerDecision.allowed)
   end)
 
-  it("allows only a local verified ML to use the award exception", function()
+  it("uses guild authority rather than the RCLootCouncil Master Looter", function()
     local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
-    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = false, guildMembers = { "Tester-Realm" }, guildRankIndices = { [1] = 3 } } })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
 
     local localDecision = dibs.Permissions.Evaluate("award.finalize", { guid = "Player-1-TESTER", name = "Tester-Realm" })
     local remoteDecision = dibs.Permissions.Evaluate("award.finalize", { guid = "Player-2-OTHER", name = "Other-Realm" })
 
     assert_true(localDecision.allowed)
-    assert_equal("rclootcouncil", localDecision.authority)
+    assert_equal("guild", localDecision.authority)
     assert_false(remoteDecision.allowed)
-    assert_equal("RC_ACTOR_NOT_LOCAL", remoteDecision.reasonCode)
+    assert_equal("GUILD_ADMIN_REQUIRED", remoteDecision.reasonCode)
   end)
 
   it("rejects a forged RCLootCouncil payload without stable provenance", function()

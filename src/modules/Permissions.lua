@@ -246,18 +246,8 @@ function Dibs.Permissions.Evaluate(actionId, actor)
     return { allowed = false, authority = "guild", availability = "local", actionId = actionId, actorId = actorId, reasonCode = "GUILD_ADMIN_REQUIRED", diagnostic = text("AUTHORITY_STANDALONE_NOT_AUTHORIZED", "Only the guild master or an officer may perform this Dibs action.") }
   end
 
-  if actionId == "award.finalize" and Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetAvailability then
-    local ok, availability = pcall(Dibs.RCLootCouncil.GetAvailability)
-    if not ok then availability = "degraded" end
-    local mode = Dibs.Permissions.GetInstallationMode()
-    if mode == "RCLootCouncil" or (mode == "AUTO" and availability == "operational") then
-      if availability == "operational" then
-        local success, decision = pcall(Dibs.RCLootCouncil.EvaluateAuthority, actionId, actor)
-        if success and type(decision) == "table" and type(decision.allowed) == "boolean" then return decision end
-      end
-      return { allowed = false, authority = "rclootcouncil", availability = availability, actionId = actionId, actorId = actorId, reasonCode = "RC_AUTHORITY_UNVERIFIABLE", diagnostic = text("AUTHORITY_RC_UNVERIFIABLE", "RCLootCouncil authority could not be verified.") }
-    end
-  end
+  -- RCLootCouncil supplies optional award evidence only. It cannot grant
+  -- authority to mutate the Dibs ledger; guild policy remains authoritative.
   return Dibs.Permissions.EvaluateStandalone(actionId, actor)
 end
 
