@@ -108,6 +108,17 @@ end
 function Sync.ClearSyncBehind()
   local state = ensure(); state.syncBehind, state.reason = false, nil; return status("SYNC_READY")
 end
+local function clearResolvedPolicyGap()
+  local state = ensure(); local target = state.policyTarget
+  if not target or not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState) then return false end
+  local current = Dibs.OperationalPolicy.GetState()
+  if tonumber(current.policyRevision) == tonumber(target.revision) and current.hash == target.contentHash then
+    state.policyTarget = nil
+    if state.syncBehind and (state.reason == "POLICY_PARENT_MISSING" or state.reason == "POLICY_CHAIN_MISSING") then Sync.ClearSyncBehind() end
+    return true
+  end
+  return false
+end
 function Sync.GetProtocolState() return ensure().protocolState end
 function Sync.SetProtocolState(state)
   -- B04 represents state but cannot independently enable enforcement.
@@ -165,6 +176,16 @@ function Sync.BuildGovernanceDigest()
     parentHash = record and record.parentHash or nil, protocolState = Sync.GetProtocolState(),
   }
 end
+function Sync.BuildOperationalPolicyDigest()
+  local state = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or {}
+  local record = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetCurrentRecord and Dibs.OperationalPolicy.GetCurrentRecord()
+  return {
+    type = "DIGEST", entityType = "OPERATIONAL_POLICY", entityId = tostring(state.policyRevision or 0),
+    revision = tonumber(state.policyRevision) or 0, contentHash = state.hash or "GENESIS",
+    parentHash = record and record.parentHash or nil, parentRevision = record and record.parentRevision or nil,
+    protocolState = Sync.GetProtocolState(),
+  }
+end
 
 local function validateEnvelope(message, sender)
   if type(message) ~= "table" or not TYPES[message.type] or type(message.protocol) ~= "table" then return nil, "MALFORMED_ENVELOPE" end
@@ -190,7 +211,7 @@ local function requestDetail(target, requestId)
   return Sync.SendDetail("PREDIB_REQUEST", requestId, tonumber(request.revision) or 1, requestHash(request), request, target)
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local encoded = Dibs.Ace3.Serialize(payload); if type(encoded) ~= "string" or #encoded > MAX_BYTES then return false, "PAYLOAD_TOO_LARGE" end
   local transferId = Dibs.NewId("v2transfer"); local chunks = {}
@@ -251,6 +272,20 @@ function Sync.Receive(message, sender)
     if tonumber(message.revision) == (tonumber(current.revision) or 0) and message.contentHash ~= current.hash then return false, "GOVERNANCE_CONFLICT" end
     return true, "GOVERNANCE_CURRENT"
   end
+  if message.type == "DIGEST" and message.entityType == "OPERATIONAL_POLICY" then
+    if not finiteInteger(message.revision) or type(message.contentHash) ~= "string" then return false, "INVALID_POLICY_DIGEST" end
+    local writerAllowed, writerReason = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(resolved.displayName)
+    if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+    local current = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or { policyRevision = 0, hash = "GENESIS" }
+    if tonumber(message.revision) > (tonumber(current.policyRevision) or 0) then
+      local state = ensure(); state.policyTarget = { revision = message.revision, contentHash = message.contentHash }
+      Sync.MarkSyncBehind("POLICY_CHAIN_MISSING")
+      Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "OPERATIONAL_POLICY", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, parentRevision = message.parentRevision } } }, "WHISPER", resolved.displayName)
+      return true, "POLICY_DETAIL_REQUESTED"
+    end
+    if tonumber(message.revision) == (tonumber(current.policyRevision) or 0) and message.contentHash ~= current.hash then return false, "POLICY_CONFLICT" end
+    return true, "POLICY_CURRENT"
+  end
   if message.type == "DIGEST" then
     if message.entityType ~= "PREDIB_INDEX" or type(message.index) ~= "table" or #message.index > MAX_INDEX then return false, "INVALID_DIGEST" end
     local needed = {}
@@ -275,13 +310,23 @@ function Sync.Receive(message, sender)
         if record and tonumber(record.governanceRevision) == tonumber(requested.revision) then
           Sync.SendDetail("GOVERNANCE", tostring(record.governanceRevision), record.governanceRevision, record.contentHash, record, resolved.displayName)
         end
+      elseif requested.entityType == "OPERATIONAL_POLICY" and Dibs.OperationalPolicy then
+        local allowed = Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(nil)
+        local record = Dibs.OperationalPolicy.GetRecord and Dibs.OperationalPolicy.GetRecord(requested.revision)
+        if allowed and record and tonumber(record.policyRevision) == tonumber(requested.revision) then
+          Sync.SendDetail("OPERATIONAL_POLICY", tostring(record.policyRevision), record.policyRevision, record.contentHash, record, resolved.displayName)
+        end
       end
     end
     return true, "DETAIL_SENT"
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType == "OPERATIONAL_POLICY" then
+      local writerAllowed, writerReason = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(resolved.displayName)
+      if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+    end
     local existing = Dibs.runtime.v2Transfers[message.transferId]
     if existing then
       if existing.sender == resolved.memberKey and existing.entityType == message.entityType and existing.entityId == message.entityId
@@ -313,6 +358,18 @@ function Sync.Receive(message, sender)
       local ok, applyReason = applyRequest(payload, transfer, resolved); if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end; return ok, applyReason
     end
     if transfer.entityType == "GOVERNANCE" and Dibs.Governance and Dibs.Governance.ApplyRecord then return Dibs.Governance.ApplyRecord(payload, resolved.displayName) end
+    if transfer.entityType == "OPERATIONAL_POLICY" and Dibs.OperationalPolicy and Dibs.OperationalPolicy.ApplyRecord then
+      local ok, applyReason = Dibs.OperationalPolicy.ApplyRecord(payload, resolved.displayName)
+      if not ok and applyReason == "POLICY_PARENT_MISSING" then
+        local state = ensure()
+        state.policyTarget = state.policyTarget or { revision = transfer.revision, contentHash = transfer.contentHash }
+        Sync.MarkSyncBehind(applyReason)
+        if type(payload) == "table" and finiteInteger(payload.parentRevision) and type(payload.parentHash) == "string" then
+          Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "OPERATIONAL_POLICY", entityId = tostring(payload.parentRevision), revision = payload.parentRevision, contentHash = payload.parentHash } } }, "WHISPER", resolved.displayName)
+        end
+      elseif ok then clearResolvedPolicyGap() end
+      return ok, applyReason
+    end
     return false, "UNSUPPORTED_ENTITY"
   end
   return false, "UNSUPPORTED_MESSAGE"
@@ -342,8 +399,15 @@ end
 function Sync.OnLifecycle(reason)
   if not Sync.RegisterTransport() then return false, "SYNC_UNAVAILABLE" end
   local digest = Sync.BuildManifest(); local sent = Sync.Send(digest, "GUILD")
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted() then
+    Sync.Send(Sync.BuildOperationalPolicyDigest(), "GUILD")
+  end
   scheduleHeartbeat()
   return sent, digest
+end
+function Sync.AnnounceOperationalPolicy()
+  if not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()) then return false, "POLICY_UNINITIALIZED" end
+  return Sync.Send(Sync.BuildOperationalPolicyDigest(), "GUILD")
 end
 function Sync.OnRosterChanged()
   -- Core invalidates the B02a roster before this hook.  Do not synchronously

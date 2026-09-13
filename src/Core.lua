@@ -29,6 +29,7 @@ _G.Dibs = Dibs
 Dibs.Permissions = Dibs.Permissions or {}
 Dibs.Identity = Dibs.Identity or {}
 Dibs.Governance = Dibs.Governance or {}
+Dibs.OperationalPolicy = Dibs.OperationalPolicy or {}
 Dibs.ProtectedActions = Dibs.ProtectedActions or {}
 Dibs.PreDibs = Dibs.PreDibs or {}
 Dibs.Seasons = Dibs.Seasons or {}
@@ -187,6 +188,10 @@ local defaultDB = {
     conflicts = {},
     aliases = { schema = 1, records = {} },
     future = { coordinator = nil, ledgerEpoch = nil, protocolState = "LEGACY_LOCAL", baseline = nil },
+  },
+  operationalPolicy = {
+    schema = 1, status = "POLICY_UNINITIALIZED", policyRevision = 0, hash = "GENESIS",
+    records = {}, auditLog = {}, conflicts = {},
   },
   backups = {},
   backupRetention = 5,
@@ -447,6 +452,24 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
     governance.future = deepcopy(defaultDB.governance.future)
   end
 
+  local operationalPolicy = ensureTable(db, "operationalPolicy", defaultDB.operationalPolicy, root, changes, scope .. ".operationalPolicy")
+  ensureTable(operationalPolicy, "records", {}, root, changes, scope .. ".operationalPolicy.records")
+  ensureTable(operationalPolicy, "auditLog", {}, root, changes, scope .. ".operationalPolicy.auditLog")
+  ensureTable(operationalPolicy, "conflicts", {}, root, changes, scope .. ".operationalPolicy.conflicts")
+  if operationalPolicy.schema ~= 1 then
+    quarantine(root, changes, scope .. ".operationalPolicy.schema", "UNSUPPORTED_OPERATIONAL_POLICY_SCHEMA", operationalPolicy.schema)
+    db.operationalPolicy = deepcopy(defaultDB.operationalPolicy)
+  elseif operationalPolicy.status ~= "POLICY_UNINITIALIZED" and operationalPolicy.status ~= "POLICY_ADOPTED" then
+    quarantine(root, changes, scope .. ".operationalPolicy.status", "INVALID_OPERATIONAL_POLICY_STATUS", operationalPolicy.status)
+    operationalPolicy.status = "POLICY_UNINITIALIZED"
+  elseif not isWholeNumber(operationalPolicy.policyRevision) then
+    quarantine(root, changes, scope .. ".operationalPolicy.policyRevision", "EXPECTED_NONNEGATIVE_INTEGER", operationalPolicy.policyRevision)
+    operationalPolicy.policyRevision = 0
+  elseif type(operationalPolicy.hash) ~= "string" or operationalPolicy.hash == "" then
+    quarantine(root, changes, scope .. ".operationalPolicy.hash", "EXPECTED_NONEMPTY_HASH", operationalPolicy.hash)
+    operationalPolicy.hash = "GENESIS"
+  end
+
   ensureTable(db, "backups", {}, root, changes, scope .. ".backups")
   ensureTable(db, "auditLog", {}, root, changes, scope .. ".auditLog")
   local sync = ensureTable(db, "sync", defaultDB.sync, root, changes, scope .. ".sync")
@@ -457,6 +480,7 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   ensureTable(syncV2, "tombstones", {}, root, changes, scope .. ".sync.v2.tombstones")
   ensureTable(syncV2, "replay", {}, root, changes, scope .. ".sync.v2.replay")
   ensureTable(syncV2, "peers", {}, root, changes, scope .. ".sync.v2.peers")
+  if syncV2.policyTarget ~= nil then ensureTable(syncV2, "policyTarget", {}, root, changes, scope .. ".sync.v2.policyTarget") end
   if syncV2.schema ~= 1 then
     quarantine(root, changes, scope .. ".sync.v2.schema", "UNSUPPORTED_SYNC_V2_SCHEMA", syncV2.schema)
     sync.v2 = deepcopy(defaultDB.sync.v2)

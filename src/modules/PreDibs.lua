@@ -368,12 +368,22 @@ end
 
 function Dibs.PreDibs.IsPublicEnabled()
   ensureState()
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+    and Dibs.OperationalPolicy.GetPublicPreDibsEnabled then
+    local shared = Dibs.OperationalPolicy.GetPublicPreDibsEnabled()
+    if shared ~= nil then return shared end
+  end
   return Dibs.db.settings.allowPublicPreDibs ~= false
 end
 
 function Dibs.PreDibs.GetModePolicy(seasonId)
   ensureState()
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+    and Dibs.OperationalPolicy.GetPreDibMode then
+    local sharedMode = Dibs.OperationalPolicy.GetPreDibMode(targetSeason)
+    if sharedMode then return { seasonId = targetSeason, mode = sharedMode, source = "OPERATIONAL_POLICY" } end
+  end
   local policy = targetSeason and Dibs.db.preDibs.modePolicies[targetSeason] or nil
   if type(policy) ~= "table" then
     return { seasonId = targetSeason, mode = "WILD_OPEN" }
@@ -391,6 +401,12 @@ function Dibs.PreDibs.SetModePolicy(seasonId, mode, actor)
   local normalized = string.upper(tostring(mode or ""))
   if not targetSeason then return nil, "NO_ACTIVE_SEASON" end
   if not VALID_MODES[normalized] then return nil, "INVALID_PREDIB_MODE" end
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+    and Dibs.OperationalPolicy.SetPreDibMode then
+    local applied, reason, record = Dibs.OperationalPolicy.SetPreDibMode(targetSeason, normalized, actor)
+    if not applied then return nil, reason end
+    return { seasonId = targetSeason, mode = normalized, changedAt = record.timestamp, changedBy = record.authorNameRealm, policyRevision = record.policyRevision, source = "OPERATIONAL_POLICY" }
+  end
   local policy = { seasonId = targetSeason, mode = normalized, changedAt = time(), changedBy = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName() or "Unknown") }
   Dibs.db.preDibs.modePolicies[targetSeason] = policy
   return policy

@@ -58,6 +58,23 @@ end
 local function audit(action, scope, name, reason, outcome, actor)
   local db = Dibs.GetDB(); db.auditLog = db.auditLog or {}; table.insert(db.auditLog, { auditId = Dibs.NewId("audit"), action = action, scope = scope, profile = name, actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), createdAt = time(), outcome = outcome or "success", reason = reason })
 end
+local function applyGuildProfilePolicy(profile, actor)
+  local values = profile.authoritativePolicy or {}
+  if not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()) then
+    local db = Dibs.GetDB(); db.settings = db.settings or {}
+    for key, value in pairs(values) do if key ~= "permissions" then db.settings[key] = clone(value) end end
+    return true
+  end
+  local patch = {}
+  for key, value in pairs(values) do
+    if key == "allowPublicPreDibs" then patch.allowPublicPreDibs = value
+    else return nil, "PROFILE_SHARED_POLICY_UNSUPPORTED" end
+  end
+  if next(patch) == nil then return true end
+  local applied, reason = Dibs.OperationalPolicy.Change(actor, patch, "PROFILE_ACTIVATION")
+  if not applied then return nil, reason end
+  return true
+end
 
 function M.List(scope, actor)
   scope = scopeName(scope)
@@ -116,7 +133,8 @@ function M.Activate(name, scope, actor, confirmation)
   local activationPreview = M.PreviewActivation(name, scope)
   if activationPreview and activationPreview.requiresConfirmation and confirmation ~= true then return nil, "POLICY_CONFIRM_REQUIRED", activationPreview end
   if profile.authoritativePolicy and scope == "guild" then
-    db.settings = db.settings or {}; for k, v in pairs(profile.authoritativePolicy) do if k ~= "permissions" then db.settings[k] = clone(v) end end
+    local applied, policyReason = applyGuildProfilePolicy(profile, actor)
+    if not applied then return nil, policyReason, activationPreview end
   end
   db.settings = db.settings or {}
   for k, v in pairs(profile.presentation or {}) do db.settings[k] = clone(v) end
