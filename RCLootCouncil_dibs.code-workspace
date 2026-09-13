@@ -1,0 +1,30 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"specify": true,
+			".specify/scripts/powershell/check-prerequisites.ps1": true
+		},
+		"luahelper.base.report": false,
+		"chat.sessionSync.enabled": true,
+		"Lua.runtime.version": "Lua 5.1",
+		"Lua.runtime.builtin": {
+			"basic": "disable",
+			"debug": "disable",
+			"io": "disable",
+			"math": "disable",
+			"os": "disable",
+			"package": "disable",
+			"string": "disable",
+			"table": "disable",
+			"utf8": "disable"
+		},
+		"Lua.workspace.library": [
+			"~\\.vscode\\extensions\\ketho.wow-api-0.22.3\\Annotations\\Core"
+		]
+	}
+}
