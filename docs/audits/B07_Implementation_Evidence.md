@@ -5,7 +5,7 @@
 - Branch: `dev`
 - `B07_START_COMMIT=e26a09e8acc48d4cbc4a3c712106483e55c2c9b8`
 - `B07_CHECKPOINT_COMMIT=e26a09e8acc48d4cbc4a3c712106483e55c2c9b8`
-- `B07_RESULT_COMMIT=b103836`
+- `B07_RESULT_COMMIT=b103836715869e3a6493d508a8b903dcd17cfe3f`
 
 The pre-B07 HEAD was used as the verified checkpoint. The working tree already
 contained unrelated user changes to `docs/RC_OPTIONS.md` and
