@@ -1871,7 +1871,12 @@ do
     if event == "ADDON_LOADED" and loadedAddon ~= "Blizzard_EncounterJournal" then
       return
     end
-    Dibs.EncounterJournal.AddActionIfAvailable(0)
+    if Dibs.Capabilities and Dibs.Capabilities.Retry and Dibs.Capabilities.Get and Dibs.Capabilities.Get("encounter_journal") then
+      if event ~= "ADDON_LOADED" then return end
+      Dibs.Capabilities.Retry("encounter_journal", "Blizzard_EncounterJournal_LOADED")
+    else
+      Dibs.EncounterJournal.AddActionIfAvailable(0)
+    end
   end
 
   local registeredWithAce = Dibs.Ace3 and type(Dibs.Ace3.RegisterEvent) == "function"

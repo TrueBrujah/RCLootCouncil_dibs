@@ -1737,5 +1737,9 @@ bootstrapFrame:SetScript("OnEvent", function(_, event, loadedAddon)
     end
   end
 
-  Dibs.RCOptions.EnsureRegistered(DEFAULT_MAX_ATTEMPTS)
+  if Dibs.Capabilities and Dibs.Capabilities.Retry and Dibs.Capabilities.Get and Dibs.Capabilities.Get("rclootcouncil_options") then
+    Dibs.Capabilities.Retry("rclootcouncil_options", event == "ADDON_LOADED" and "RCLootCouncil_LOADED" or event)
+  else
+    Dibs.RCOptions.EnsureRegistered(DEFAULT_MAX_ATTEMPTS)
+  end
 end)

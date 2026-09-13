@@ -33,6 +33,7 @@ modules/RaidRelay.lua
 modules/RaidPrompts.lua
 modules/Readiness.lua
 modules/DryRun.lua
+modules/Capabilities.lua
 integrations/Ace3.lua
 integrations/DeveloperMode.lua
 integrations/EncounterJournal.lua

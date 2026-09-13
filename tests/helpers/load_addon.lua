@@ -28,6 +28,7 @@ local TOC_FILES = {
   "modules/RaidPrompts.lua",
   "modules/Readiness.lua",
   "modules/DryRun.lua",
+  "modules/Capabilities.lua",
   "integrations/Ace3.lua",
   "integrations/DeveloperMode.lua",
   "integrations/EncounterJournal.lua",
@@ -205,7 +206,7 @@ function M.load(opts)
   end
 
   local dibs = _G.Dibs
-  if dibs and dibs.Initialize then
+  if dibs and dibs.Initialize and opts.skipInitialize ~= true then
     dibs.Initialize()
   end
 

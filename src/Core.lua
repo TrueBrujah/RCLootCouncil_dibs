@@ -1068,6 +1068,7 @@ function Dibs.BuildDebugReport()
     "Version: " .. tostring(Dibs.VERSION),
     "Framework: " .. Dibs.GetFrameworkStatus(),
     "RCLootCouncil: " .. tostring(rc and (rc.diagnostic or rc.status or "available") or "absent") .. " reason=" .. tostring(rc and rc.reasonCode or "RC_ABSENT"),
+    "Capabilities: " .. tostring(Dibs.Capabilities and Dibs.Capabilities.FormatDiagnostics and Dibs.Capabilities.FormatDiagnostics() or "unavailable"),
     "RCLootCouncil capabilities: " .. tostring(rc and rc.capabilities and (rc.capabilities.masterLooter and "masterLooter " or "") .. (rc.capabilities.awardCallback and "awardCallback " or "") .. (rc.capabilities.awardIdentity and "awardIdentity" or "none") or "none"),
     "Config projection: addon=" .. tostring(projection.addonFound == true) .. " profiles=" .. tostring(projection.profileCount or 0) .. " defaultButtons=" .. tostring(projectionDefault.activeButtons or "none") .. " dibButton=" .. tostring(projectionDefault.buttonDibIndex or "none") .. " dibResponse=" .. tostring(projectionDefault.responseDibIndex or "none") .. " additionalSets=" .. tostring(additionalCount),
     "Voting frame: module=" .. tostring(vote.moduleFound) .. " AddColumn=" .. tostring(vote.addColumn) .. " scrollCols=" .. tostring(vote.scrollColumns) .. " count=" .. tostring(vote.scrollColumnCount) .. " hasDibs=" .. tostring(vote.scrollHasDibs) .. " renderedDibs=" .. tostring(vote.renderedHasDibs) .. " DibsColumn=" .. tostring(vote.dibsColumnInstalled),
@@ -1595,6 +1596,42 @@ function Dibs.RegisterOptionsPanel()
   return panel
 end
 
+local function registerOptionalCapabilities()
+  local capabilities = Dibs.Capabilities
+  if not capabilities or not capabilities.Register then return end
+  capabilities.Register("player_ui", { dependency = "Dibs UI", initialize = function()
+    return Dibs.PlayerUI and Dibs.PlayerUI.CreateWindow and Dibs.PlayerUI.CreateWindow() or false
+  end })
+  capabilities.Register("officer_ui", { dependency = "Dibs UI", initialize = function()
+    return Dibs.OfficerUI and Dibs.OfficerUI.CreateWindow and Dibs.OfficerUI.CreateWindow() or false
+  end })
+  capabilities.Register("rclootcouncil", { dependency = "RCLootCouncil", retryEvents = { "RCLootCouncil_LOADED", "PLAYER_ENTERING_WORLD" }, initialize = function()
+    local ok = Dibs.RCLootCouncil and Dibs.RCLootCouncil.Initialize and Dibs.RCLootCouncil.Initialize()
+    if ok then return true end
+    local status = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
+    return false, status.reasonCode or "RCLC_UNAVAILABLE"
+  end })
+  capabilities.Register("encounter_journal", { dependency = "Blizzard_EncounterJournal", retryEvents = { "Blizzard_EncounterJournal_LOADED" }, initialize = function()
+    local ok, reason = Dibs.EncounterJournal and Dibs.EncounterJournal.AddActionIfAvailable and Dibs.EncounterJournal.AddActionIfAvailable(0)
+    return ok == true, reason or "ENCOUNTER_JOURNAL_UNAVAILABLE"
+  end })
+  capabilities.Register("options_panel", { dependency = "Retail Settings", initialize = function()
+    Dibs.RegisterOptionsPanel(); return true
+  end })
+  capabilities.Register("rclootcouncil_options", { dependency = "RCLootCouncil options", retryEvents = { "RCLootCouncil_LOADED", "PLAYER_REGEN_ENABLED" }, initialize = function()
+    local ok = Dibs.RCOptions and Dibs.RCOptions.EnsureRegistered and Dibs.RCOptions.EnsureRegistered(1)
+    return ok == true, "RC_OPTIONS_UNAVAILABLE"
+  end })
+end
+
+local function initializeOptionalCapabilities()
+  local capabilities = Dibs.Capabilities
+  if not capabilities or not capabilities.Initialize then return end
+  for _, id in ipairs({ "player_ui", "officer_ui", "rclootcouncil", "encounter_journal", "options_panel", "rclootcouncil_options" }) do
+    capabilities.Initialize(id, "STARTUP")
+  end
+end
+
 function Dibs.Initialize()
   if Dibs.initialized then
     return true
@@ -1610,32 +1647,14 @@ function Dibs.Initialize()
     Dibs.ApplyDefaultRules()
   end
 
-  if Dibs.PlayerUI and Dibs.PlayerUI.CreateWindow then
-    Dibs.PlayerUI.CreateWindow()
-  end
-
-  if Dibs.OfficerUI and Dibs.OfficerUI.CreateWindow then
-    Dibs.OfficerUI.CreateWindow()
-  end
-
-  if Dibs.RCLootCouncil and Dibs.RCLootCouncil.Initialize then
-    Dibs.RCLootCouncil.Initialize()
-  end
-
-  if Dibs.EncounterJournal and Dibs.EncounterJournal.AddActionIfAvailable then
-    Dibs.EncounterJournal.AddActionIfAvailable()
-  end
-
   if Dibs.Sync and Dibs.Sync.RegisterTransport then
     Dibs.Sync.RegisterTransport()
   end
   if Dibs.Sync and Dibs.Sync.OnLifecycle then Dibs.Sync.OnLifecycle("STARTUP") end
 
   Dibs.SetupSlashCommands()
-  Dibs.RegisterOptionsPanel()
-  if Dibs.RCOptions and Dibs.RCOptions.EnsureRegistered then
-    Dibs.RCOptions.EnsureRegistered(120)
-  end
+  registerOptionalCapabilities()
+  initializeOptionalCapabilities()
   Dibs.initialized = true
   Dibs.Message("Dibs initialized")
   return true
@@ -1648,9 +1667,7 @@ local function onRuntimeEvent(event, ...)
     -- Core initialization must never depend on the optional adapter.  A late
     -- RCLootCouncil load is rechecked after Dibs is ready, while Standalone
     -- mode still receives the normal database, UI, and slash-command setup.
-    if Dibs.RCLootCouncil and Dibs.RCLootCouncil.TryUseRCModule then
-      Dibs.RCLootCouncil.TryUseRCModule()
-    end
+    if Dibs.Capabilities and Dibs.Capabilities.Retry then Dibs.Capabilities.Retry("rclootcouncil", "PLAYER_LOGIN") end
     if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("PLAYER_LOGIN") end
     return
   end
@@ -1659,23 +1676,26 @@ local function onRuntimeEvent(event, ...)
     -- RCLootCouncil can be enabled load-on-demand after Dibs. Re-run only the
     -- optional adapter when its addon becomes available; Standalone mode is
     -- unaffected.
-    if loadedAddon == "RCLootCouncil"
-      and Dibs.RCLootCouncil
-      and Dibs.RCLootCouncil.TryUseRCModule
-    then
-      Dibs.RCLootCouncil.TryUseRCModule()
+    if loadedAddon == "RCLootCouncil" then
+      if Dibs.Capabilities and Dibs.Capabilities.Retry then
+        Dibs.Capabilities.Retry("rclootcouncil", "RCLootCouncil_LOADED")
+        Dibs.Capabilities.Retry("rclootcouncil_options", "RCLootCouncil_LOADED")
+      end
       if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("RCLootCouncil lifecycle") end
+    end
+    if loadedAddon == "Blizzard_EncounterJournal" and Dibs.Capabilities and Dibs.Capabilities.Retry then
+      Dibs.Capabilities.Retry("encounter_journal", "Blizzard_EncounterJournal_LOADED")
     end
     return
   end
   if event == "PLAYER_ENTERING_WORLD"
-    and Dibs.RCLootCouncil
-    and Dibs.RCLootCouncil.TryUseRCModule
+    and Dibs.Capabilities
+    and Dibs.Capabilities.Retry
   then
     -- A reload can restore RCLootCouncil's AceDB after ADDON_LOADED. Retry at
     -- the first world entry so its profile and ML module are ready before the
     -- Master Looter options are opened.
-    Dibs.RCLootCouncil.TryUseRCModule()
+    Dibs.Capabilities.Retry("rclootcouncil", "PLAYER_ENTERING_WORLD")
     if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("PLAYER_ENTERING_WORLD") end
   end
   if event == "CHAT_MSG_ADDON" and Dibs.Sync and Dibs.Sync.OnAddonMessage then return Dibs.Sync.OnAddonMessage(...) end
