@@ -21,6 +21,7 @@ local TOC_FILES = {
   "modules/CharacterEligibility.lua",
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
+  "modules/SyncV2.lua",
   "modules/RaidRelay.lua",
   "modules/RaidPrompts.lua",
   "modules/Readiness.lua",

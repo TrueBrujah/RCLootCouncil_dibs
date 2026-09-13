@@ -194,6 +194,7 @@ local defaultDB = {
   sync = {
     seenTransactions = {},
     peerStates = {},
+    v2 = { schema = 1, protocolState = "LEGACY_LOCAL", requestIndex = {}, tombstones = {}, replay = {}, peers = {} },
   },
   settings = {
     language = "AUTO",
@@ -451,6 +452,18 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   local sync = ensureTable(db, "sync", defaultDB.sync, root, changes, scope .. ".sync")
   ensureTable(sync, "seenTransactions", {}, root, changes, scope .. ".sync.seenTransactions")
   ensureTable(sync, "peerStates", {}, root, changes, scope .. ".sync.peerStates")
+  local syncV2 = ensureTable(sync, "v2", defaultDB.sync.v2, root, changes, scope .. ".sync.v2")
+  ensureTable(syncV2, "requestIndex", {}, root, changes, scope .. ".sync.v2.requestIndex")
+  ensureTable(syncV2, "tombstones", {}, root, changes, scope .. ".sync.v2.tombstones")
+  ensureTable(syncV2, "replay", {}, root, changes, scope .. ".sync.v2.replay")
+  ensureTable(syncV2, "peers", {}, root, changes, scope .. ".sync.v2.peers")
+  if syncV2.schema ~= 1 then
+    quarantine(root, changes, scope .. ".sync.v2.schema", "UNSUPPORTED_SYNC_V2_SCHEMA", syncV2.schema)
+    sync.v2 = deepcopy(defaultDB.sync.v2)
+  elseif syncV2.protocolState ~= "LEGACY_LOCAL" and syncV2.protocolState ~= "CUTOVER_PREPARED" and syncV2.protocolState ~= "V2_ENFORCED" then
+    quarantine(root, changes, scope .. ".sync.v2.protocolState", "INVALID_PROTOCOL_STATE", syncV2.protocolState)
+    syncV2.protocolState = "LEGACY_LOCAL"
+  end
   local settings = ensureTable(db, "settings", defaultDB.settings, root, changes, scope .. ".settings")
   for key, value in pairs(defaultDB.settings) do
     if type(value) == "table" then ensureTable(settings, key, value, root, changes, scope .. ".settings." .. key) end
@@ -1541,6 +1554,7 @@ function Dibs.Initialize()
   if Dibs.Sync and Dibs.Sync.RegisterTransport then
     Dibs.Sync.RegisterTransport()
   end
+  if Dibs.Sync and Dibs.Sync.OnLifecycle then Dibs.Sync.OnLifecycle("STARTUP") end
 
   Dibs.SetupSlashCommands()
   Dibs.RegisterOptionsPanel()
@@ -1591,7 +1605,10 @@ local function onRuntimeEvent(event, ...)
   end
   if event == "CHAT_MSG_ADDON" and Dibs.Sync and Dibs.Sync.OnAddonMessage then return Dibs.Sync.OnAddonMessage(...) end
   if event == "GROUP_ROSTER_UPDATE" and Dibs.Sync and Dibs.Sync.OnRosterChanged then Dibs.Sync.OnRosterChanged() end
-  if event == "GUILD_ROSTER_UPDATE" and Dibs.Identity and Dibs.Identity.OnRosterChanged then Dibs.Identity.OnRosterChanged() end
+  if event == "GUILD_ROSTER_UPDATE" then
+    if Dibs.Identity and Dibs.Identity.OnRosterChanged then Dibs.Identity.OnRosterChanged() end
+    if Dibs.Sync and Dibs.Sync.OnRosterChanged then Dibs.Sync.OnRosterChanged() end
+  end
   if Dibs.Readiness and Dibs.Readiness.Invalidate
     and (event == "GROUP_ROSTER_UPDATE" or event == "ZONE_CHANGED_NEW_AREA" or event == "PLAYER_REGEN_ENABLED")
   then

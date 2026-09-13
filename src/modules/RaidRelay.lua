@@ -69,7 +69,9 @@ function Dibs.RaidRelay.Broadcast(channel)
     return state, false
   end
 
-  local destination = channel or "RAID"
+  -- B04 state notices are guild-scoped digests. Raid channels are not a
+  -- complete guild transport and must not split multi-raid convergence.
+  local destination = "GUILD"
   local helloSent = Dibs.Sync.Send({
     type = "HELLO",
     senderId = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil,

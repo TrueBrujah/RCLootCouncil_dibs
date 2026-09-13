@@ -671,6 +671,41 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
   return incoming
 end
 
+-- B04 calls this only after the V2 transport has authenticated the complete
+-- transfer envelope, owner, revision, and content hash. Unlike the legacy
+-- helper above, it retains terminal lifecycle records as bounded sync
+-- tombstone evidence so a stale client can learn cancellation/invalidation/
+-- fulfillment even when it never saw the active revision.
+function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName)
+  ensureState()
+  local revision = type(incoming) == "table" and tonumber(incoming.revision) or nil
+  local itemID = type(incoming) == "table" and tonumber(incoming.itemID) or nil
+  local allowed = incoming and (incoming.status == "pending" or incoming.status == "confirmed" or incoming.status == "cancelled" or incoming.status == "invalidated" or incoming.status == "fulfilled")
+  if type(incoming) ~= "table" or type(incoming.requestId) ~= "string" or #incoming.requestId < 1 or #incoming.requestId > 96
+    or type(incoming.playerName) ~= "string" or not itemID or itemID <= 0 or itemID ~= math.floor(itemID)
+    or (type(incoming.seasonId) ~= "string" and type(incoming.seasonId) ~= "number")
+    or not revision or revision < 1 or revision > 1000000 or revision ~= math.floor(revision) or not allowed
+  then return nil, "INVALID_REQUEST" end
+  if senderName and not samePlayer(senderName, incoming.playerName) then return nil, "OWNER_MISMATCH" end
+  for _, existing in ipairs(Dibs.db.preDibs.requests) do
+    if existing.requestId == incoming.requestId then
+      local current = tonumber(existing.revision) or 1
+      if revision <= current then return nil, "STALE_REVISION" end
+      if not samePlayer(existing.playerName, incoming.playerName) or tonumber(existing.itemID) ~= itemID or existing.seasonId ~= incoming.seasonId then return nil, "IMMUTABLE_FIELD_MISMATCH" end
+      if existing.status ~= incoming.status and (not VALID_STATUS_TRANSITIONS[existing.status] or VALID_STATUS_TRANSITIONS[existing.status][incoming.status] ~= true) then return nil, "INVALID_STATUS_TRANSITION" end
+      for key, value in pairs(incoming) do
+        if key ~= "playerName" and key ~= "itemID" and key ~= "seasonId" and key ~= "modeAtCreation" and key ~= "createdAt" and key ~= "delivery" then existing[key] = value end
+      end
+      return existing
+    end
+  end
+  local record = Dibs.DeepCopy and Dibs.DeepCopy(incoming) or incoming
+  record.revision = revision
+  record.delivery = { state = "PENDING" }
+  table.insert(Dibs.db.preDibs.requests, record)
+  return record
+end
+
 function Dibs.PreDibs.AcknowledgeDelivery(requestId, revision, officerName)
   ensureState()
   local numericRevision = tonumber(revision)
