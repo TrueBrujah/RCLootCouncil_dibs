@@ -43,6 +43,18 @@ local msaDropdownSerial = 0
 local msaDropdownPool = {}
 local contextMenuSerial = 0
 local contextMenuFrame
+local refreshState = { queued = false, dirty = false, callbacks = {} }
+
+local function runRefreshes(reason)
+  refreshState.queued = false
+  if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
+  if not refreshState.dirty then return true end
+  refreshState.dirty = false
+  local callbacks = refreshState.callbacks
+  refreshState.callbacks = {}
+  for _, pending in ipairs(callbacks) do pcall(pending, reason) end
+  return true
+end
 
 local function getScrollingTable()
   if Dibs.Ace3 and Dibs.Ace3.libs and Dibs.Ace3.libs.scrollingTable then
@@ -70,6 +82,30 @@ local function applyRCLootCouncilTheme(frame)
   if type(frame.SetBackdropBorderColor) == "function" then
     frame:SetBackdropBorderColor(0.62, 0.52, 0.22, 1)
   end
+end
+
+function Adapter.GetPresentationTokens()
+  if Dibs.EnvironmentAdapters and Dibs.EnvironmentAdapters.ResolveTokens then
+    local ok, tokens = pcall(Dibs.EnvironmentAdapters.ResolveTokens)
+    if ok and type(tokens) == "table" then return tokens end
+  end
+  return Dibs.Midnight and Dibs.Midnight.GetTokens and Dibs.Midnight.GetTokens() or nil
+end
+
+function Adapter.RequestRefresh(reason, callback)
+  refreshState.dirty = true
+  if type(callback) == "function" then refreshState.callbacks[#refreshState.callbacks + 1] = callback end
+  if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
+  if refreshState.queued then return true end
+  refreshState.queued = true
+  local flush = function() runRefreshes(reason) end
+  if Dibs.Ace3 and Dibs.Ace3.ScheduleTimer then Dibs.Ace3.ScheduleTimer(flush, 0) elseif _G.C_Timer and _G.C_Timer.After then _G.C_Timer.After(0, flush) else flush() end
+  return true
+end
+
+function Adapter.FlushRefreshes()
+  if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
+  return runRefreshes("POST_COMBAT")
 end
 
 local function addAddonLogo(frame)
@@ -123,7 +159,8 @@ function Adapter.CreateWindow(title, width, height, point)
     end
   end
   call(window, "SetLayout", "Fill")
-  applyRCLootCouncilTheme(window.frame)
+  local tokens = Adapter.GetPresentationTokens()
+  if Dibs.Midnight and tokens then Dibs.Midnight.ApplyToFrame(window.frame, tokens) else applyRCLootCouncilTheme(window.frame) end
   -- AceGUI's stock Window uses FULLSCREEN_DIALOG, which makes an Officer or
   -- Player window behave like a modal Settings page. Dibs windows are modeless
   -- control surfaces, so keep them above the game while allowing other panels
@@ -140,6 +177,9 @@ function Adapter.CreateWindow(title, width, height, point)
   if point and window.frame.SetPoint then
     if window.frame.ClearAllPoints then window.frame:ClearAllPoints() end
     window.frame:SetPoint(unpackValues(point))
+  end
+  if Dibs.WindowState and Dibs.WindowState.Register then
+    Dibs.WindowState.Register(window.frame, tostring(title or "DibsWindow"))
   end
   -- Children are owned by their AceGUI container.  Do not mirror every page
   -- widget in the shell: Refresh() releases and recreates those widgets, and
@@ -329,6 +369,34 @@ end
 
 local function safeContextText(value)
   return tostring(value or "")
+end
+
+function Adapter.ShowContextMenu(entries)
+  if type(_G.MSA_DropDownMenu_Create) ~= "function"
+    or type(_G.MSA_DropDownMenu_Initialize) ~= "function"
+    or type(_G.MSA_DropDownMenu_CreateInfo) ~= "function"
+    or type(_G.MSA_DropDownMenu_AddButton) ~= "function"
+    or type(_G.MSA_ToggleDropDownMenu) ~= "function" then return false end
+  if not contextMenuFrame then
+    contextMenuSerial = contextMenuSerial + 1
+    contextMenuFrame = _G.MSA_DropDownMenu_Create("DibsContextMenu" .. tostring(contextMenuSerial), _G.UIParent)
+  end
+  if not contextMenuFrame then return false end
+  _G.MSA_DropDownMenu_Initialize(contextMenuFrame, function(_, level)
+    if level ~= 1 then return end
+    for _, entry in ipairs(entries or {}) do
+      if type(entry) == "table" and type(entry.callback) == "function" then
+        local info = _G.MSA_DropDownMenu_CreateInfo()
+        info.text = safeContextText(entry.text or "Action")
+        info.disabled = entry.disabled == true
+        info.notCheckable = true
+        info.func = entry.callback
+        _G.MSA_DropDownMenu_AddButton(info, level)
+      end
+    end
+  end, "MENU")
+  _G.MSA_ToggleDropDownMenu(1, nil, contextMenuFrame, "cursor", 0, 0)
+  return true
 end
 
 local function showTableContextMenu(st, rowRecord, columns, options)
@@ -1198,4 +1266,10 @@ function Adapter.AddPagination(shell, onPrevious, onNext)
     end
   end
   return controls
+end
+
+if Dibs.Ace3 and Dibs.Ace3.RegisterEvent then
+  Dibs.Ace3.RegisterEvent("PLAYER_REGEN_ENABLED", function()
+    Adapter.FlushRefreshes()
+  end)
 end

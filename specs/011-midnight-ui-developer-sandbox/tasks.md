@@ -17,9 +17,9 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 **Purpose**: Register B11 modules and establish deterministic fixture seams without changing production behavior.
 
-- [ ] T001 Add the planned B11 module and UI file load order to `src/RCLootCouncil_dibs.toc` and `src/embeds.xml` without changing existing module order semantics.
+- [X] T001 Add the planned B11 module and UI file load order to `src/RCLootCouncil_dibs.toc` and `src/embeds.xml` without changing existing module order semantics.
 - [ ] T002 [P] Add B11 fixture reset helpers and production-state snapshot utilities to `tests/helpers/load_addon.lua` for comparing production state before and after sandbox operations.
-- [ ] T003 [P] Add test doubles for LibSharedMedia, LibWindow, MSA-DropDownMenu, and optional external UI environments to `tests/helpers/`.
+- [X] T003 [P] Add test doubles for LibSharedMedia, LibWindow, MSA-DropDownMenu, and optional external UI environments to `tests/helpers/`.
 - [ ] T004 [P] Add B11 test file registration and focused-suite selection documentation to `tests/run.lua` and `docs/TEST_PLAN.md`.
 
 ---
@@ -30,12 +30,12 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 **Checkpoint**: The foundation is ready when production and sandbox providers cannot be mixed, local presentation state is separate, and a shared window can defer/coalesce refreshes safely.
 
-- [ ] T005 Define the Midnight token and local presentation profile defaults in `src/ui/Midnight.lua`, including semantic states, typography, spacing, density, scale, contrast, and native fallbacks.
-- [ ] T006 [P] Add optional external UI environment probes and hint validation in `src/ui/EnvironmentAdapters.lua` for ElvUI, Tukui, EllesmereUI, and BenikUI-family environments.
-- [ ] T007 Add shared LibSharedMedia and LibWindow adapters with native media fallback and local position/scale restoration in `src/ui/Midnight.lua` and `src/ui/WindowState.lua`.
+- [X] T005 Define the Midnight token and local presentation profile defaults in `src/ui/Midnight.lua`, including semantic states, typography, spacing, density, scale, contrast, and native fallbacks.
+- [X] T006 [P] Add optional external UI environment probes and hint validation in `src/ui/EnvironmentAdapters.lua` for ElvUI, Tukui, EllesmereUI, and BenikUI-family environments.
+- [X] T007 Add shared LibSharedMedia and LibWindow adapters with native media fallback and local position/scale restoration in `src/ui/Midnight.lua` and `src/ui/WindowState.lua`.
 - [ ] T008 Define provider selection, authority origin, active mode, and fail-closed mixed-provider guards in `src/integrations/DeveloperSandbox.lua`.
 - [ ] T009 Define the versioned separate developer store, deep-copy clone validation, future-schema rejection, and reload cleanup in `src/integrations/DeveloperSandboxStore.lua` and `src/Core.lua`.
-- [ ] T010 Add dirty-state/coalesced refresh scheduling and post-combat retry integration to `src/ui/AceGUI.lua` without rebuilding complex windows for every event.
+- [X] T010 Add dirty-state/coalesced refresh scheduling and post-combat retry integration to `src/ui/AceGUI.lua` without rebuilding complex windows for every event.
 - [ ] T011 Add foundational provider, persistence, presentation fallback, refresh, and combat contract tests in `tests/contract/b11_foundation_spec.lua`.
 - [ ] T012 Add foundational developer-store migration and production-state noninterference tests in `tests/integration/b11_sandbox_store_spec.lua`.
 
@@ -49,16 +49,16 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 ### Tests for User Story 1
 
-- [ ] T013 [P] [US1] Add Midnight token, semantic-state, high-contrast, and local-scale tests in `tests/unit/midnight_ui_spec.lua`.
-- [ ] T014 [P] [US1] Add external environment adapter success, unsupported, failure, invalid-hint, and native-fallback tests in `tests/unit/ui_environment_adapters_spec.lua`.
-- [ ] T015 [P] [US1] Add shared component sizing, context-menu secondary-action, tooltip, and LibWindow restoration tests in `tests/integration/midnight_components_spec.lua`.
+- [X] T013 [P] [US1] Add Midnight token, semantic-state, high-contrast, and local-scale tests in `tests/unit/midnight_ui_spec.lua`.
+- [X] T014 [P] [US1] Add external environment adapter success, unsupported, failure, invalid-hint, and native-fallback tests in `tests/unit/ui_environment_adapters_spec.lua`.
+- [X] T015 [P] [US1] Add shared component sizing, context-menu secondary-action, tooltip, and LibWindow restoration tests in `tests/integration/midnight_components_spec.lua`.
 
 ### Implementation for User Story 1
 
-- [ ] T016 [US1] Implement Midnight shared windows, panels, navigation, buttons, fields, status badges, tables, modals, tooltips, and empty states in `src/ui/Midnight.lua` and `src/ui/AceGUI.lua`.
-- [ ] T017 [US1] Implement presentation-hint application and native fallback in `src/ui/EnvironmentAdapters.lua` without exposing policy or authority values to adapters.
-- [ ] T018 [US1] Add shared context-menu registration through `src/ui/AceGUI.lua` and `src/libs/MSA-DropDownMenu-1.0/` integration points, keeping critical actions visible outside menus.
-- [ ] T019 [US1] Add local presentation profile and window position/scale persistence through `src/ui/WindowState.lua` without writing guild policy or sync state.
+- [X] T016 [US1] Implement Midnight shared windows, panels, navigation, buttons, fields, status badges, tables, modals, tooltips, and empty states in `src/ui/Midnight.lua` and `src/ui/AceGUI.lua`.
+- [X] T017 [US1] Implement presentation-hint application and native fallback in `src/ui/EnvironmentAdapters.lua` without exposing policy or authority values to adapters.
+- [X] T018 [US1] Add shared context-menu registration through `src/ui/AceGUI.lua` and `src/libs/MSA-DropDownMenu-1.0/` integration points, keeping critical actions visible outside menus.
+- [X] T019 [US1] Add local presentation profile and window position/scale persistence through `src/ui/WindowState.lua` without writing guild policy or sync state.
 - [ ] T020 [US1] Integrate Midnight component lifecycle and coalesced refresh behavior into `src/ui/PlayerUI.lua`, `src/ui/OfficerUI.lua`, `src/ui/LogsUI.lua`, and `src/ui/DataUI.lua`.
 
 **Checkpoint**: User Story 1 is independently functional when all complex Dibs windows share Midnight tokens, survive adapter failure, preserve local position/scale, and pass the focused UI tests.

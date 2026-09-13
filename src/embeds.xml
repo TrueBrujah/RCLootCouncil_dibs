@@ -3,6 +3,8 @@
   <Include file="libs\lib-st\lib-st.xml"/>
   <Include file="libs\MSA-DropDownMenu-1.0\MSA-DropDownMenu-1.0.xml"/>
   <Include file="libs\CallbackHandler-1.0\CallbackHandler-1.0.xml"/>
+  <Include file="libs\LibSharedMedia-3.0\lib.xml"/>
+  <Script file="libs\LibWindow-1.1\LibWindow-1.1.lua"/>
   <Include file="libs\AceEvent-3.0\AceEvent-3.0.xml"/>
   <Include file="libs\AceTimer-3.0\AceTimer-3.0.xml"/>
   <Include file="libs\AceGUI-3.0\AceGUI-3.0.xml"/>

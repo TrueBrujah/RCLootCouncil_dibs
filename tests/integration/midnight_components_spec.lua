@@ -1,0 +1,52 @@
+local loader = require("helpers.load_addon")
+local mocks = require("helpers.b11_ui_mocks")
+
+local function installMSA()
+  return mocks.installMSA()
+end
+
+describe("B11a Midnight components", function()
+  after_each(function() mocks.clear() end)
+
+  it("restores local window state and keeps it outside the guild database", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local previous = _G.LibStub
+    local _, window = mocks.installLibraries(previous)
+    local shell = dibs.AceGUI.CreateWindow("B11a", 640, 420)
+    assert_not_nil(shell)
+    assert_equal(shell.frame, window.restored)
+    assert_equal(shell.frame, window.draggable)
+    assert_not_nil(_G.RCLootCouncil_dibsLocalDB)
+    assert_not_nil(_G.RCLootCouncil_dibsLocalDB.presentation)
+    assert_nil(dibs.GetDB().presentation)
+  end)
+
+  it("creates one reusable context-menu registration for repeated calls", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local state = installMSA()
+    assert_true(dibs.AceGUI.ShowContextMenu({ { text = "One", callback = function() end } }))
+    assert_true(dibs.AceGUI.ShowContextMenu({ { text = "Two", callback = function() end } }))
+    assert_equal(1, state.created)
+    assert_equal(2, state.initialized)
+    assert_equal(2, state.shown)
+  end)
+
+  it("coalesces refresh callbacks and defers during combat", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { inCombat = true } })
+    local calls = 0
+    assert_false(dibs.AceGUI.RequestRefresh("combat", function() calls = calls + 1 end))
+    assert_false(dibs.AceGUI.RequestRefresh("combat", function() calls = calls + 1 end))
+    assert_equal(0, calls)
+    require("helpers.wow_api").setCombat(false)
+    assert_true(dibs.AceGUI.FlushRefreshes())
+    assert_equal(2, calls)
+  end)
+
+  it("keeps the existing B08 and B09 boundaries available", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    local _, dibs = loader.load({ rclootcouncil = rc, withAce3 = true })
+    assert_not_nil(dibs.RCLootCouncil)
+    assert_not_nil(dibs.Readiness)
+    assert_true(dibs.AceGUI.IsAvailable())
+  end)
+end)
