@@ -599,6 +599,13 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
     return buildResult(false, nil, { reasonCode = "AUTHORITY_UNAVAILABLE" }, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
 
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
+    local decision = { allowed = false, authority = "simulated_sandbox", authorityOrigin = "simulated_sandbox",
+      provider = "sandbox", actionId = actionId, reasonCode = "MIXED_PROVIDER_REJECTED",
+      diagnostic = "Protected production actions are unavailable while the developer sandbox is active." }
+    return reject(decision)
+  end
+
   local decision = Dibs.Permissions.Evaluate(actionId, actor)
   if not decision.allowed then
     return reject(decision)

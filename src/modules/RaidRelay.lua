@@ -36,6 +36,9 @@ local function emptyState()
 end
 
 function Dibs.RaidRelay.SetActiveRelay(enabled, actor)
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
+    return nil, "MIXED_PROVIDER_REJECTED"
+  end
   if not Dibs.Permissions or type(Dibs.Permissions.Can) ~= "function"
     or not Dibs.Permissions.Can("settings.modify", actor) then
     return nil, "GUILD_ADMIN_REQUIRED"
@@ -61,6 +64,9 @@ function Dibs.RaidRelay.GetLocalState()
 end
 
 function Dibs.RaidRelay.Broadcast(channel)
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
+    return emptyState(), false, "MIXED_PROVIDER_REJECTED"
+  end
   if not localIsGuildAdmin() then return emptyState(), false, "GUILD_ADMIN_REQUIRED" end
   local state = Dibs.RaidRelay.GetLocalState()
   Dibs.Sync = Dibs.Sync or {}
@@ -81,6 +87,9 @@ function Dibs.RaidRelay.Broadcast(channel)
 end
 
 function Dibs.RaidRelay.SendReminder(message)
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
+    return false, "MIXED_PROVIDER_REJECTED"
+  end
   local allowed, reason = false, "REMINDER_NOT_AUTHORIZED"
   if Dibs.Permissions and Dibs.Permissions.CanSendReminder then
     allowed, reason = Dibs.Permissions.CanSendReminder()

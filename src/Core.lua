@@ -47,7 +47,11 @@ Dibs.Eligibility = Dibs.CharacterEligibility
 Dibs.Disputes = Dibs.Disputes or {}
 Dibs.Ace3 = Dibs.Ace3 or {}
 Dibs.AceGUI = Dibs.AceGUI or {}
+Dibs.DeveloperUI = Dibs.DeveloperUI or {}
 Dibs.DeveloperMode = Dibs.DeveloperMode or {}
+Dibs.DeveloperSandboxStore = Dibs.DeveloperSandboxStore or {}
+Dibs.DeveloperSandbox = Dibs.DeveloperSandbox or {}
+Dibs.DeveloperSandboxScenarios = Dibs.DeveloperSandboxScenarios or {}
 Dibs.EncounterJournal = Dibs.EncounterJournal or {}
 Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 Dibs.RCOptions = Dibs.RCOptions or {}
@@ -753,6 +757,10 @@ end
 ---@return DibsGuildDB db Active guild-scoped database after migration/defaulting.
 function Dibs.GetDB()
   ensureDB()
+
+  if Dibs.DeveloperSandboxStore and Dibs.DeveloperSandboxStore.Initialize then
+    Dibs.DeveloperSandboxStore.Initialize()
+  end
   return Dibs.db
 end
 

@@ -18,7 +18,7 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 **Purpose**: Register B11 modules and establish deterministic fixture seams without changing production behavior.
 
 - [X] T001 Add the planned B11 module and UI file load order to `src/RCLootCouncil_dibs.toc` and `src/embeds.xml` without changing existing module order semantics.
-- [ ] T002 [P] Add B11 fixture reset helpers and production-state snapshot utilities to `tests/helpers/load_addon.lua` for comparing production state before and after sandbox operations.
+- [X] T002 [P] Add B11 fixture reset helpers and production-state snapshot utilities to `tests/helpers/load_addon.lua` for comparing production state before and after sandbox operations.
 - [X] T003 [P] Add test doubles for LibSharedMedia, LibWindow, MSA-DropDownMenu, and optional external UI environments to `tests/helpers/`.
 - [ ] T004 [P] Add B11 test file registration and focused-suite selection documentation to `tests/run.lua` and `docs/TEST_PLAN.md`.
 
@@ -33,11 +33,11 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 - [X] T005 Define the Midnight token and local presentation profile defaults in `src/ui/Midnight.lua`, including semantic states, typography, spacing, density, scale, contrast, and native fallbacks.
 - [X] T006 [P] Add optional external UI environment probes and hint validation in `src/ui/EnvironmentAdapters.lua` for ElvUI, Tukui, EllesmereUI, and BenikUI-family environments.
 - [X] T007 Add shared LibSharedMedia and LibWindow adapters with native media fallback and local position/scale restoration in `src/ui/Midnight.lua` and `src/ui/WindowState.lua`.
-- [ ] T008 Define provider selection, authority origin, active mode, and fail-closed mixed-provider guards in `src/integrations/DeveloperSandbox.lua`.
-- [ ] T009 Define the versioned separate developer store, deep-copy clone validation, future-schema rejection, and reload cleanup in `src/integrations/DeveloperSandboxStore.lua` and `src/Core.lua`.
+- [X] T008 Define provider selection, authority origin, active mode, and fail-closed mixed-provider guards in `src/integrations/DeveloperSandbox.lua`.
+- [X] T009 Define the versioned separate developer store, deep-copy clone validation, future-schema rejection, and reload cleanup in `src/integrations/DeveloperSandboxStore.lua` and `src/Core.lua`.
 - [X] T010 Add dirty-state/coalesced refresh scheduling and post-combat retry integration to `src/ui/AceGUI.lua` without rebuilding complex windows for every event.
 - [ ] T011 Add foundational provider, persistence, presentation fallback, refresh, and combat contract tests in `tests/contract/b11_foundation_spec.lua`.
-- [ ] T012 Add foundational developer-store migration and production-state noninterference tests in `tests/integration/b11_sandbox_store_spec.lua`.
+- [X] T012 Add foundational developer-store migration and production-state noninterference tests in `tests/integration/b11_sandbox_lifecycle_spec.lua`.
 
 ---
 
@@ -73,19 +73,19 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 ### Tests for User Story 2
 
-- [ ] T021 [P] [US2] Add `/dibs dev on`, `/dibs dev off`, `/dibs dev status`, inactive-sandbox, and default-hidden navigation tests in `tests/unit/developer_mode_spec.lua`.
-- [ ] T022 [P] [US2] Add sandbox lifecycle, role/coordinator simulation, retained-data-after-reload, and no-write-back tests in `tests/integration/b11_sandbox_lifecycle_spec.lua`.
-- [ ] T023 [P] [US2] Add invalid/future/malformed/oversized store and mixed-provider fail-closed contract tests in `tests/contract/b11_sandbox_provider_spec.lua`.
-- [ ] T024 [P] [US2] Add scenario/fault coverage proving no production addon messages, fake global events, live loot events, or RC evidence writes in `tests/integration/b11_sandbox_scenarios_spec.lua`.
+- [X] T021 [P] [US2] Add `/dibs dev on`, `/dibs dev off`, `/dibs dev status`, inactive-sandbox, and default-hidden navigation tests in `tests/unit/developer_mode_spec.lua`.
+- [X] T022 [P] [US2] Add sandbox lifecycle, role/coordinator simulation, retained-data-after-reload, and no-write-back tests in `tests/integration/b11_sandbox_lifecycle_spec.lua`.
+- [X] T023 [P] [US2] Add invalid/future/malformed/oversized store and mixed-provider fail-closed contract tests in `tests/unit/b11_sandbox_provider_spec.lua`.
+- [X] T024 [P] [US2] Add scenario/fault coverage proving no production addon messages, fake global events, live loot events, or RC evidence writes in `tests/integration/b11_sandbox_scenarios_spec.lua`.
 
 ### Implementation for User Story 2
 
-- [ ] T025 [US2] Implement separate developer SavedVariables initialization, schema validation, production-to-sandbox clone, refresh, reset, and explicit re-entry in `src/integrations/DeveloperSandboxStore.lua`.
-- [ ] T026 [US2] Implement sandbox provider selection, simulated PLAYER/OFFICER/GUILD_MASTER roles, coordinator state, authority origin, and mixed-provider rejection in `src/integrations/DeveloperSandbox.lua`.
-- [ ] T027 [US2] Implement required named scenarios and bounded fault injection in `src/integrations/DeveloperSandboxScenarios.lua` without calling production transport, live loot, RC evidence, or protected accounting.
-- [ ] T028 [US2] Extend DeveloperMode commands and status reporting in `src/integrations/DeveloperMode.lua` while keeping Developer Mode alone unable to grant production authority.
-- [ ] T029 [US2] Add sandbox enter/refresh/reset/exit controls, persistent warning, simulated-role display, and reload/inactive handling to `src/ui/DeveloperUI.lua` and `src/ui/OfficerUI.lua`.
-- [ ] T030 [US2] Add explicit provider-origin checks to `src/modules/ProtectedActions.lua`, `src/modules/Permissions.lua`, `src/modules/Governance.lua`, and `src/modules/RaidRelay.lua` so simulated sandbox authority is never accepted by production paths.
+- [X] T025 [US2] Implement separate developer SavedVariables initialization, schema validation, production-to-sandbox clone, refresh, reset, and explicit re-entry in `src/integrations/DeveloperSandboxStore.lua`.
+- [X] T026 [US2] Implement sandbox provider selection, simulated PLAYER/OFFICER/GUILD_MASTER roles, coordinator state, authority origin, and mixed-provider rejection in `src/integrations/DeveloperSandbox.lua`.
+- [X] T027 [US2] Implement required named scenarios and bounded fault injection in `src/integrations/DeveloperSandboxScenarios.lua` without calling production transport, live loot, RC evidence, or protected accounting.
+- [X] T028 [US2] Extend DeveloperMode commands and status reporting in `src/integrations/DeveloperMode.lua` while keeping Developer Mode alone unable to grant production authority.
+- [X] T029 [US2] Add sandbox enter/refresh/reset/exit controls, persistent warning, simulated-role display, and reload/inactive handling to `src/ui/DeveloperUI.lua` and `src/ui/OfficerUI.lua`.
+- [X] T030 [US2] Add explicit provider-origin checks to `src/modules/ProtectedActions.lua`, `src/modules/Permissions.lua`, `src/modules/Governance.lua`, and `src/modules/RaidRelay.lua` so simulated sandbox authority is never accepted by production paths.
 
 **Checkpoint**: User Story 2 is independently functional when all sandbox isolation tests pass, production snapshots remain unchanged, reload clears active simulation, and explicit re-entry restores only sandbox data.
 

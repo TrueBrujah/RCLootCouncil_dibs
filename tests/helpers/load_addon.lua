@@ -30,6 +30,9 @@ local TOC_FILES = {
   "modules/DryRun.lua",
   "modules/Capabilities.lua",
   "integrations/Ace3.lua",
+  "integrations/DeveloperSandboxStore.lua",
+  "integrations/DeveloperSandbox.lua",
+  "integrations/DeveloperSandboxScenarios.lua",
   "integrations/DeveloperMode.lua",
   "integrations/EncounterJournal.lua",
   "integrations/RCLootCouncil.lua",
@@ -37,6 +40,7 @@ local TOC_FILES = {
   "ui/EnvironmentAdapters.lua",
   "ui/WindowState.lua",
   "ui/AceGUI.lua",
+  "ui/DeveloperUI.lua",
   "ui/LogsUI.lua",
   "ui/DataUI.lua",
   "ui/PlayerUI.lua",
@@ -184,6 +188,9 @@ function M.load(opts)
   if opts.savedVariables ~= nil then
     _G.RCLootCouncil_dibsDB = opts.savedVariables
   end
+  if opts.sandboxVariables ~= nil then
+    _G.RCLootCouncil_dibsSandboxDB = opts.sandboxVariables
+  end
 
   local rc = opts.rclootcouncil
   if rc then
@@ -216,6 +223,29 @@ function M.load(opts)
   end
 
   return rc, dibs
+end
+
+local function sameValue(first, second, seen)
+  if type(first) ~= type(second) then return false end
+  if type(first) ~= "table" then return first == second end
+  seen = seen or {}
+  if seen[first] == second then return true end
+  seen[first] = second
+  for key, value in pairs(first) do
+    if not sameValue(value, second[key], seen) then return false end
+  end
+  for key in pairs(second) do
+    if first[key] == nil then return false end
+  end
+  return true
+end
+
+function M.snapshotProductionState(dibs)
+  return dibs.DeepCopy(dibs.GetDB())
+end
+
+function M.productionStateEquals(dibs, snapshot)
+  return sameValue(snapshot, dibs.GetDB())
 end
 
 register_reset(function()

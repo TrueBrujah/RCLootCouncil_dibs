@@ -303,6 +303,7 @@ function M.resetGlobals()
   _G.RCLootCouncil_dibs = nil
   _G.DibsDB = nil
   _G.RCLootCouncil_dibsDB = nil
+  _G.RCLootCouncil_dibsSandboxDB = nil
   _G.RCLootCouncil_dibsLocalDB = nil
   _G.DibsPlayerFrame = nil
   _G.DibsOfficerFrame = nil

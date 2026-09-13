@@ -20,6 +20,13 @@ local GENESIS_HASH = "GENESIS"
 local AUTHORITY_SCHEMA = 1
 local MAX_AUTHORITY_AUDIT, MAX_PROPOSALS, MAX_ORPHANS = 100, 100, 100
 
+local function rejectSandbox()
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
+    return true, "MIXED_PROVIDER_REJECTED"
+  end
+  return false
+end
+
 local function copy(value)
   return Dibs.DeepCopy and Dibs.DeepCopy(value) or value
 end
@@ -312,18 +319,21 @@ function Governance.GetCurrentRecord()
 end
 
 function Governance.CreateInitialRecord(actor, proposal)
+  local blocked, reason = rejectSandbox(); if blocked then return nil, reason end
   local state = ensureState()
   if state.status ~= "POLICY_UNINITIALIZED" or state.revision ~= 0 then return nil, "GOVERNANCE_ALREADY_ADOPTED" end
   return createRecord(actor, proposal, 1, 0, GENESIS_HASH, authorityState(state))
 end
 
 function Governance.CreateChangeRecord(actor, proposal)
+  local blocked, reason = rejectSandbox(); if blocked then return nil, reason end
   local state = ensureState()
   if state.status ~= "GOVERNANCE_ADOPTED" then return nil, "POLICY_UNINITIALIZED" end
   return createRecord(actor, proposal, state.revision + 1, state.revision, state.hash, authorityState(state))
 end
 
 function Governance.ApplyRecord(record, sender)
+  local blocked, reason = rejectSandbox(); if blocked then return false, reason end
   local state = ensureState()
   local valid, validationReason = validateRecordShape(record, authorityState(state))
   if not valid then return false, validationReason end
@@ -400,6 +410,7 @@ function Governance.GetDibUseGate()
 end
 
 function Governance.BeginHandoff(actor, details)
+  local blocked, reason = rejectSandbox(); if blocked then return nil, reason end
   local state, authority = ensureState(), authorityState(ensureState())
   if authority.state ~= "ACTIVE" then return nil, "AUTHORITY_ACTIVE_REQUIRED" end
   local actorSnapshot, reason = snapshot(actor)
@@ -418,6 +429,7 @@ function Governance.BeginHandoff(actor, details)
 end
 
 function Governance.EnterRecoveryPending(actor, reason)
+  local blocked, blockedReason = rejectSandbox(); if blocked then return nil, blockedReason end
   local authority = authorityState(ensureState())
   if authority.state ~= "ACTIVE" and authority.state ~= "HANDOFF_CLOSING" and authority.state ~= "COORDINATOR_UNAVAILABLE" then return nil, "AUTHORITY_ACTIVE_REQUIRED" end
   local gm, gmReason = currentGMSnapshot(actor); if not gm then return nil, gmReason end
@@ -428,6 +440,7 @@ function Governance.EnterRecoveryPending(actor, reason)
 end
 
 function Governance.MarkCoordinatorUnavailable(actor, reason)
+  local blocked, blockedReason = rejectSandbox(); if blocked then return nil, blockedReason end
   local authority = authorityState(ensureState())
   if authority.state ~= "ACTIVE" then return nil, "AUTHORITY_ACTIVE_REQUIRED" end
   local gm, gmReason = currentGMSnapshot(actor); if not gm then return nil, gmReason end
@@ -438,6 +451,7 @@ function Governance.MarkCoordinatorUnavailable(actor, reason)
 end
 
 function Governance.RecordAwardProposal(actor, details)
+  local blocked, reason = rejectSandbox(); if blocked then return nil, reason end
   local authority = authorityState(ensureState()); details = details or {}
   local target, targetReason = snapshot(details.playerName or details.memberKey or details.playerKey)
   if not target then return nil, targetReason end
@@ -489,6 +503,7 @@ function Governance.ClassifyLateEvidence(event)
 end
 
 function Governance.ApplyOrphanedEvidence(event, sender)
+  local blocked, reason = rejectSandbox(); if blocked then return false, reason end
   local senderSnapshot, senderReason = snapshot(sender); if not senderSnapshot then return false, senderReason end
   local accepted, reason = Governance.ClassifyLateEvidence(event)
   if reason == "ORPHANED_EVIDENCE" then
@@ -510,6 +525,7 @@ function Governance.BuildAuthoritySignal()
 end
 
 function Governance.ApplyAuthoritySignal(signal, sender)
+  local blocked, reason = rejectSandbox(); if blocked then return false, reason end
   if type(signal) ~= "table" or signal.schema ~= AUTHORITY_SCHEMA or signal.guildKey ~= Dibs.GetGuildKey()
     or type(signal.contentHash) ~= "string" then return false, "INVALID_AUTHORITY_SIGNAL" end
   local expected = copy(signal); expected.contentHash = nil

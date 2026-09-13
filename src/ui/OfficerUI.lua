@@ -68,8 +68,23 @@ local OFFICER_TAB_ALIASES = {
   rcHistory = "reconciliation",
 }
 
+local function getOfficerNavigationTree()
+  local developerEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() == true
+  local tree = {}
+  for _, entry in ipairs(OFFICER_NAV_TREE) do
+    if (entry.value ~= "developer" and entry.value ~= "debug") or developerEnabled then
+      table.insert(tree, { text = entry.text, value = entry.value })
+    end
+  end
+  return tree
+end
+
 local function normalizeOfficerTab(tab)
   return OFFICER_TAB_ALIASES[tab] or tab
+end
+
+function Dibs.OfficerUI.GetNavigationTree()
+  return getOfficerNavigationTree()
 end
 
 -- Officer views contain the guild-wide ledger, Pre-Dibs history and rank
@@ -1017,7 +1032,7 @@ local function createAceWindow()
     frame:Refresh()
   end
 
-  local tabs = Dibs.AceGUI.AddTree(shell, OFFICER_NAV_TREE, function(value)
+  local tabs = Dibs.AceGUI.AddTree(shell, getOfficerNavigationTree(), function(value)
     frame.activeTab, frame.ledgerPage = normalizeOfficerTab(value), 1
     frame:Refresh()
   end, 190)
@@ -1033,6 +1048,22 @@ local function createAceWindow()
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
     Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Officer controls use the same shared options as RCLootCouncil.")
+    if self.activeTab == "developer" then
+      if Dibs.DeveloperUI and Dibs.DeveloperUI.GetProjection then
+        local projection = Dibs.DeveloperUI.GetProjection()
+        if projection.visible then
+          Dibs.AceGUI.AddButton(shell, tabs, "Open developer sandbox", function()
+            if Dibs.DeveloperUI.Open then Dibs.DeveloperUI.Open() end
+          end, 190)
+          Dibs.AceGUI.AddLabel(shell, tabs, "Warning: " .. tostring(projection.warning), true)
+          Dibs.AceGUI.AddLabel(shell, tabs, "Provider: " .. tostring(projection.provider) .. " | Role: " .. tostring(projection.role)
+            .. " | Coordinator: " .. tostring(projection.coordinatorState), true)
+        else
+          Dibs.AceGUI.AddLabel(shell, tabs, "Developer Mode required.", true)
+        end
+      end
+      return
+    end
     local seasons = getSeasonList()
     local current = getSelectedSeason(self)
     if not current and #seasons > 0 then

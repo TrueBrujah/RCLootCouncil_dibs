@@ -80,4 +80,36 @@ describe("Developer mode", function()
     assert_true(hasUsage)
     assert_true(hasInvalid)
   end)
+
+  it("reports sandbox state through dev status and keeps navigation hidden while inactive", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    dibs.HandleSlashCommand("dev status")
+    local status = dibs.DeveloperSandbox.GetStatus()
+    assert_false(status.developerMode)
+    assert_false(status.active)
+    assert_equal("production", status.provider)
+    local hiddenNavigation = dibs.OfficerUI.GetNavigationTree()
+    for _, entry in ipairs(hiddenNavigation) do
+      assert_false(entry.value == "developer" or entry.value == "debug")
+    end
+
+    dibs.HandleSlashCommand("dev on")
+    dibs.HandleSlashCommand("dev status")
+    status = dibs.DeveloperSandbox.GetStatus()
+    assert_true(status.developerMode)
+    assert_false(status.active)
+    assert_equal("production", status.provider)
+    assert_true(status.navigationVisible)
+    local navigation = dibs.OfficerUI.GetNavigationTree()
+    local hasDeveloper, hasDebug = false, false
+    for _, entry in ipairs(navigation) do
+      hasDeveloper = hasDeveloper or entry.value == "developer"
+      hasDebug = hasDebug or entry.value == "debug"
+    end
+    assert_true(hasDeveloper)
+    assert_true(hasDebug)
+    dibs.HandleSlashCommand("dev off")
+    assert_false(dibs.DeveloperMode.IsEnabled())
+    assert_equal("production", dibs.DeveloperSandbox.GetActiveProvider())
+  end)
 end)

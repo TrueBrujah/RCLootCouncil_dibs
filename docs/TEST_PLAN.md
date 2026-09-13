@@ -72,6 +72,19 @@ git diff --check
 Expected baseline: **221 tests pass, 0 fail, 54 files**. Run this suite after
 source changes and attach the output to the test record.
 
+### B11b focused validation
+
+Run the isolated developer sandbox slice with Fengari:
+
+```powershell
+$env:DIBS_TEST_FILES = "tests/unit/developer_mode_spec.lua;tests/unit/b11_sandbox_provider_spec.lua;tests/integration/b11_sandbox_lifecycle_spec.lua;tests/integration/b11_sandbox_scenarios_spec.lua"
+node node_modules/fengari-node-cli/src/lua-cli.js tests/run.lua
+```
+
+The B11b slice must prove that retained sandbox data is version-checked and
+re-entered explicitly, active simulation never changes production state, and
+protected production actions fail closed while the sandbox provider is active.
+
 ### F. Backups, profiles and data transfer
 
 - [ ] Create a local and a full backup; verify date, scope, size, checksum and

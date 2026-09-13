@@ -50,6 +50,17 @@ function Dibs.DeveloperMode.GetStatusText()
   return "DISABLED"
 end
 
+local function sandboxStatusText()
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.GetStatus then
+    local status = Dibs.DeveloperSandbox.GetStatus()
+    return "sandbox=" .. (status.active and "ACTIVE" or "INACTIVE")
+      .. ", provider=" .. tostring(status.provider)
+      .. ", role=" .. tostring(status.role or "none")
+      .. ", warning=" .. tostring(status.warning)
+  end
+  return "sandbox=UNAVAILABLE"
+end
+
 function Dibs.DeveloperMode.HandleDevSlash(args)
   local mode = string.lower(tostring(args and args[2] or "status"))
   if mode == "on" then
@@ -58,16 +69,42 @@ function Dibs.DeveloperMode.HandleDevSlash(args)
     return true
   end
   if mode == "off" then
+    if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
+      Dibs.DeveloperSandbox.ExitSandbox()
+    end
     Dibs.DeveloperMode.SetEnabled(false)
     devMessage("Developer Mode DISABLED")
     return true
   end
   if mode == "status" or mode == "" then
-    devMessage("Developer Mode is " .. Dibs.DeveloperMode.GetStatusText())
+    devMessage("Developer Mode is " .. Dibs.DeveloperMode.GetStatusText() .. " (" .. sandboxStatusText() .. ")")
     return true
   end
 
-  devMessage("Usage: /dibs dev on | off | status")
+  if mode == "sandbox" then
+    local operation = string.lower(tostring(args and args[3] or "status"))
+    local sandbox = Dibs.DeveloperSandbox
+    if not sandbox then
+      devMessage("Developer sandbox is unavailable.")
+      return true
+    end
+    local ok, result
+    if operation == "enter" then ok, result = sandbox.EnterSandbox({ clone = args[4] == "clone" })
+    elseif operation == "refresh" then ok, result = sandbox.RefreshSandbox()
+    elseif operation == "reset" then ok, result = sandbox.ResetSandbox()
+    elseif operation == "exit" then ok, result = sandbox.ExitSandbox()
+    elseif operation == "status" or operation == "" then
+      devMessage(sandboxStatusText())
+      return true
+    else
+      devMessage("Usage: /dibs dev sandbox enter|refresh|reset|exit|status")
+      return true
+    end
+    devMessage(ok and ("Sandbox " .. operation .. " OK") or ("Sandbox " .. operation .. " failed: " .. tostring(result)))
+    return true
+  end
+
+  devMessage("Usage: /dibs dev on | off | status | sandbox enter|refresh|reset|exit|status")
   return true
 end
 

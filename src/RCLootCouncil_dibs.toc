@@ -4,7 +4,7 @@
 ## Author: Contributors
 ## Version: 0.5.10-dev
 ## IconTexture: Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo
-## SavedVariables: RCLootCouncil_dibsDB
+## SavedVariables: RCLootCouncil_dibsDB,RCLootCouncil_dibsSandboxDB
 ## SavedVariablesPerCharacter: RCLootCouncil_dibsLocalDB
 ## OptionalDeps: RCLootCouncil
 
@@ -36,6 +36,9 @@ modules/Readiness.lua
 modules/DryRun.lua
 modules/Capabilities.lua
 integrations/Ace3.lua
+integrations/DeveloperSandboxStore.lua
+integrations/DeveloperSandbox.lua
+integrations/DeveloperSandboxScenarios.lua
 integrations/DeveloperMode.lua
 integrations/EncounterJournal.lua
 integrations/RCLootCouncil.lua
@@ -43,6 +46,7 @@ ui/Midnight.lua
 ui/EnvironmentAdapters.lua
 ui/WindowState.lua
 ui/AceGUI.lua
+ui/DeveloperUI.lua
 ui/LogsUI.lua
 ui/DataUI.lua
 ui/DebugLogsUI.lua

@@ -233,6 +233,11 @@ function Dibs.Permissions.Evaluate(actionId, actor)
   if type(actionId) ~= "string" or actionId == "" then
     return { allowed = false, authority = "none", actionId = actionId, reasonCode = "INVALID_ACTION", diagnostic = "Unknown protected action." }
   end
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
+    return { allowed = false, authority = "simulated_sandbox", authorityOrigin = "simulated_sandbox",
+      provider = "sandbox", actionId = actionId, reasonCode = "MIXED_PROVIDER_REJECTED",
+      diagnostic = "Production authority is unavailable while the developer sandbox is active." }
+  end
   local actorId = Dibs.Permissions.CanonicalPlayerId(actor)
   local isLocal = isCurrentActor(actor, actorId)
 
