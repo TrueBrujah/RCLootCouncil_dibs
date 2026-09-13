@@ -130,7 +130,7 @@ end
 function Sync.BuildEnvelope(message)
   local snapshot = localSnapshot(); if not snapshot then return nil, "ROSTER_UNAVAILABLE" end
   message = copy(message or {}); if not TYPES[message.type] then return nil, "INVALID_MESSAGE_TYPE" end
-  message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, whisperDetail = true, requestTombstones = true, ledgerDigestOnly = true } }
+  message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, whisperDetail = true, requestTombstones = true, ledgerDigestOnly = true, authoritySignals = true } }
   message.messageId = message.messageId or Dibs.NewId("v2msg")
   message.guildKey = Dibs.GetGuildKey(); message.senderNameRealm = snapshot.displayName; message.senderMemberKey = snapshot.memberKey
   return message
@@ -166,6 +166,12 @@ end
 function Sync.BuildLedgerDigest()
   -- Intent only: B04 neither serializes nor applies ledger events.
   return { type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = Dibs.GetCurrentSeasonId() or "none", revision = 0, contentHash = "LOCAL_ONLY", nextSeq = nil, previousHash = nil }
+end
+function Sync.BuildAuthorityDigest()
+  local signal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
+  if not signal or signal.state == "LEGACY_LOCAL" then return nil end
+  return { type = "DIGEST", entityType = "AUTHORITY", entityId = tostring(signal.ledgerEpoch or 0), revision = 1,
+    contentHash = signal.contentHash, authorityState = signal.state, protocolState = Sync.GetProtocolState() }
 end
 function Sync.BuildGovernanceDigest()
   local record = Dibs.Governance and Dibs.Governance.GetCurrentRecord and Dibs.Governance.GetCurrentRecord()
@@ -211,7 +217,7 @@ local function requestDetail(target, requestId)
   return Sync.SendDetail("PREDIB_REQUEST", requestId, tonumber(request.revision) or 1, requestHash(request), request, target)
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_RECOVERY_PACKAGE" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local encoded = Dibs.Ace3.Serialize(payload); if type(encoded) ~= "string" or #encoded > MAX_BYTES then return false, "PAYLOAD_TOO_LARGE" end
   local transferId = Dibs.NewId("v2transfer"); local chunks = {}
@@ -229,6 +235,17 @@ end
 function Sync.SendLegacyRecoveryPackage(package, target)
   if type(package) ~= "table" or type(package.contentHash) ~= "string" then return false, "INVALID_RECOVERY_PACKAGE" end
   return Sync.SendDetail("LEGACY_RECOVERY_PACKAGE", package.contentHash, 1, package.contentHash, package, target)
+end
+function Sync.SendAuthoritySignal(target)
+  local signal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
+  if not signal or signal.state == "LEGACY_LOCAL" then return false, "AUTHORITY_INACTIVE" end
+  return Sync.SendDetail("AUTHORITY_SIGNAL", tostring(signal.ledgerEpoch or 0), 1, signal.contentHash, signal, target)
+end
+function Sync.SendAuthorityOrphan(event, target)
+  if type(event) ~= "table" then return false, "INVALID_ORPHANED_EVIDENCE" end
+  local evidenceId = event.evidenceId or event.eventId or event.transactionId
+  if type(evidenceId) ~= "string" then return false, "INVALID_ORPHANED_EVIDENCE" end
+  return Sync.SendDetail("AUTHORITY_ORPHAN", evidenceId, 1, Sync.CalculateContentHash(event), event, target)
 end
 
 local function applyRequest(payload, transfer, sender)
@@ -293,6 +310,16 @@ function Sync.Receive(message, sender)
     if tonumber(message.revision) == (tonumber(current.policyRevision) or 0) and message.contentHash ~= current.hash then return false, "POLICY_CONFLICT" end
     return true, "POLICY_CURRENT"
   end
+  if message.type == "DIGEST" and message.entityType == "AUTHORITY" then
+    if not isAdmin(resolved.displayName) or type(message.contentHash) ~= "string" then return false, "INVALID_AUTHORITY_DIGEST" end
+    local localSignal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
+    if not localSignal or localSignal.contentHash ~= message.contentHash then
+      Sync.MarkSyncBehind("AUTHORITY_DETAIL_MISSING")
+      Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "AUTHORITY_SIGNAL", entityId = message.entityId, revision = 1, contentHash = message.contentHash } } }, "WHISPER", resolved.displayName)
+      return true, "AUTHORITY_DETAIL_REQUESTED"
+    end
+    return true, "AUTHORITY_CURRENT"
+  end
   if message.type == "DIGEST" then
     if message.entityType ~= "PREDIB_INDEX" or type(message.index) ~= "table" or #message.index > MAX_INDEX then return false, "INVALID_DIGEST" end
     local needed = {}
@@ -323,13 +350,18 @@ function Sync.Receive(message, sender)
         if allowed and record and tonumber(record.policyRevision) == tonumber(requested.revision) then
           Sync.SendDetail("OPERATIONAL_POLICY", tostring(record.policyRevision), record.policyRevision, record.contentHash, record, resolved.displayName)
         end
+      elseif requested.entityType == "AUTHORITY_SIGNAL" and Dibs.Governance and Dibs.Governance.BuildAuthoritySignal then
+        local signal = Dibs.Governance.BuildAuthoritySignal()
+        if signal and signal.state ~= "LEGACY_LOCAL" and (localRole() == "gm" or (signal.coordinator and signal.coordinator.memberKey == (localSnapshot() or {}).memberKey)) then
+          Sync.SendAuthoritySignal(resolved.displayName)
+        end
       end
     end
     return true, "DETAIL_SENT"
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" then return false, "UNSUPPORTED_ENTITY" end
     if message.entityType == "OPERATIONAL_POLICY" then
       local writerAllowed, writerReason = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(resolved.displayName)
       if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
@@ -388,6 +420,16 @@ function Sync.Receive(message, sender)
       pending[payload.contentHash] = { staged = staged, senderNameRealm = resolved.displayName, receivedAt = time() }
       return true, "RECOVERY_PENDING_REVIEW"
     end
+    if transfer.entityType == "AUTHORITY_SIGNAL" and Dibs.Governance and Dibs.Governance.ApplyAuthoritySignal then
+      if payload.contentHash ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
+      local ok, applyReason = Dibs.Governance.ApplyAuthoritySignal(payload, resolved.displayName)
+      if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end
+      return ok, applyReason
+    end
+    if transfer.entityType == "AUTHORITY_ORPHAN" and Dibs.Governance and Dibs.Governance.ApplyOrphanedEvidence then
+      if Sync.CalculateContentHash(payload) ~= transfer.contentHash or transfer.entityId ~= (payload.evidenceId or payload.eventId or payload.transactionId) then return false, "CONTENT_HASH_MISMATCH" end
+      return Dibs.Governance.ApplyOrphanedEvidence(payload, resolved.displayName)
+    end
     return false, "UNSUPPORTED_ENTITY"
   end
   return false, "UNSUPPORTED_MESSAGE"
@@ -420,6 +462,8 @@ function Sync.OnLifecycle(reason)
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted() then
     Sync.Send(Sync.BuildOperationalPolicyDigest(), "GUILD")
   end
+  local authority = Sync.BuildAuthorityDigest()
+  if authority then Sync.Send(authority, "GUILD") end
   scheduleHeartbeat()
   return sent, digest
 end

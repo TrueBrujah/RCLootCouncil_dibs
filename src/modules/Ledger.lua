@@ -247,6 +247,16 @@ function Ledger.CommitLocalTransaction(context, record)
   local existing = inputId and ledger.transactions[inputId] or nil
   local tx, reason = buildDetachedTransaction(context or {}, input)
   if not tx then return { accepted = false, idempotentReplay = false, reasonCode = reason } end
+  -- B05b fences local consumption while coordinator authority is unavailable,
+  -- closing, or recovering. This is deliberately not a B06 distributed commit.
+  if tx.type == "DIB_USED" and Dibs.Governance and Dibs.Governance.GetDibUseGate then
+    local allowed, gateReason = Dibs.Governance.GetDibUseGate()
+    if not allowed then
+      local proposal = Dibs.Governance.RecordAwardProposal and Dibs.Governance.RecordAwardProposal(
+        context and context.actor or Dibs.GetPlayerName(), input)
+      return { accepted = false, idempotentReplay = false, reasonCode = gateReason, proposal = proposal }
+    end
+  end
   if existing then
     if sameCanonicalContent(existing, tx) then return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(existing) } end
     return { accepted = false, idempotentReplay = false, reasonCode = "TRANSACTION_CONFLICT" }

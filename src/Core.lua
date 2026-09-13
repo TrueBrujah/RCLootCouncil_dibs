@@ -189,6 +189,7 @@ local defaultDB = {
     conflicts = {},
     aliases = { schema = 1, records = {} },
     future = { coordinator = nil, ledgerEpoch = nil, protocolState = "LEGACY_LOCAL", baseline = nil },
+    authority = { schema = 1, state = "LEGACY_LOCAL", proposals = {}, orphanedEvidence = {}, auditLog = {} },
   },
   operationalPolicy = {
     schema = 1, status = "POLICY_UNINITIALIZED", policyRevision = 0, hash = "GENESIS",
@@ -460,8 +461,19 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
     quarantine(root, changes, scope .. ".governance.hash", "EXPECTED_NONEMPTY_HASH", governance.hash)
     governance.hash = "GENESIS"
   end
-  if future.coordinator ~= nil or future.ledgerEpoch ~= nil or future.baseline ~= nil or future.protocolState ~= "LEGACY_LOCAL" then
-    quarantine(root, changes, scope .. ".governance.future", "B02A_FUTURE_FIELDS_INACTIVE", future)
+  local authority = ensureTable(governance, "authority", defaultDB.governance.authority, root, changes, scope .. ".governance.authority")
+  ensureTable(authority, "proposals", {}, root, changes, scope .. ".governance.authority.proposals")
+  ensureTable(authority, "orphanedEvidence", {}, root, changes, scope .. ".governance.authority.orphanedEvidence")
+  ensureTable(authority, "auditLog", {}, root, changes, scope .. ".governance.authority.auditLog")
+  local validAuthorityState = authority.state == "LEGACY_LOCAL" or authority.state == "ACTIVE" or authority.state == "HANDOFF_CLOSING"
+    or authority.state == "COORDINATOR_UNAVAILABLE" or authority.state == "RECOVERY_PENDING"
+  if authority.schema ~= 1 or not validAuthorityState then
+    quarantine(root, changes, scope .. ".governance.authority", "UNSUPPORTED_AUTHORITY_STATE", authority)
+    governance.authority = deepcopy(defaultDB.governance.authority)
+  end
+  local activeFuture = type(future.authority) == "table" and future.authority.state == "ACTIVE"
+  if (future.coordinator ~= nil or future.ledgerEpoch ~= nil or future.baseline ~= nil or future.protocolState ~= "LEGACY_LOCAL") and not activeFuture then
+    quarantine(root, changes, scope .. ".governance.future", "INVALID_FUTURE_GOVERNANCE", future)
     governance.future = deepcopy(defaultDB.governance.future)
   end
 
