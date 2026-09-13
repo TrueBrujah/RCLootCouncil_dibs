@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased B10 release gate - 2026-09-13
+
+- Align release and operator documentation with the implemented V2 cutover,
+  coordinator fencing, exact-sequence synchronization, proposal-only recovery,
+  and optional fail-closed RCLootCouncil adapter behavior.
+- Add the B10 Retail/two-client validation checklist and evidence record.
+- Keep the development tree explicitly gated; no Retail RCLootCouncil profile
+  or production behavior is promoted by this documentation pass.
+
 ## 0.5.10-dev - 2026-09-11
 
 - Keep full date and time precision in Officer, Player, Data and Logs history displays.

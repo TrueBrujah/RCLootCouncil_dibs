@@ -16,6 +16,11 @@ Each release includes a WoW-ready ZIP and a SHA-256 checksum. The repository is
 currently private, so GitHub download links require repository access. A public
 test mirror can be used for guild testers without exposing the source repository.
 
+The current development tree is not a Retail production release. Standalone
+Dibs and the automated fixture contract are available, but Retail runtime,
+two-client, partition, handoff, recovery, and release-package checks remain
+pending in [the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md).
+
 ## Features
 
 - Independent seasonal Dibs balances.
@@ -26,7 +31,8 @@ test mirror can be used for guild testers without exposing the source repository
 - Standalone operation when RCLootCouncil is absent.
 - Optional RCLootCouncil Master Looter integration.
 - RCLootCouncil item-family mapping and an installation assistant for Dibs buttons.
-- Multi-raid synchronization of guild Dibs state without sharing live loot votes.
+- Guild-scoped request synchronization and, only after explicit V2 cutover,
+  coordinator-ordered multi-raid ledger commits without sharing live loot votes.
 - Developer Mode for local item and request testing.
 - Raid Readiness checks with clear Ready, Degraded, Blocked and Unavailable states.
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
