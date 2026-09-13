@@ -1430,10 +1430,22 @@ end
 
 local function isDibsButton(button)
   if type(button) ~= "table" then return false end
-  if button.dibsButton == true then return true end
-  if type(button.GetText) ~= "function" then return false end
-  local label = normalizeButtonLabel(button:GetText())
-  return label == "DIB" or label == "DIBS"
+  return button.dibsInjected == true and button.dibsButton == true
+end
+
+local function inCombatLockdown()
+  return type(InCombatLockdown) == "function" and InCombatLockdown() == true
+end
+
+local projection = Dibs.RCLootCouncil.uiProjection or { pending = {} }
+Dibs.RCLootCouncil.uiProjection = projection
+function Dibs.RCLootCouncil.QueueUIRefresh(surface)
+  projection.pending[surface] = true
+  return false, "COMBAT_DEFERRED"
+end
+function Dibs.RCLootCouncil.GetUIProjectionStatus()
+  local pending = {}; for surface in pairs(projection.pending) do pending[#pending + 1] = surface end
+  table.sort(pending); return { pending = pending, locked = inCombatLockdown() }
 end
 
 local function setButtonEnabled(button, enabled)
@@ -1460,32 +1472,9 @@ local function getButtonEnabled(button)
 end
 
 local function applyVoteLockToEntry(entry, locked)
-  if type(entry) ~= "table" or type(entry.buttons) ~= "table" then return end
-  for _, button in ipairs(entry.buttons) do
-    if type(button) == "table" then
-      if locked then
-        if button.__dibsVoteLocked ~= true then
-          button.__dibsVoteLocked = true
-          button.__dibsPrevEnabled = getButtonEnabled(button)
-        end
-        if type(button.Disable) == "function" then
-          button:Disable()
-        end
-        if type(button.SetAlpha) == "function" then
-          button:SetAlpha(0.35)
-        end
-      elseif button.__dibsVoteLocked == true then
-        if button.__dibsPrevEnabled ~= false and type(button.Enable) == "function" then
-          button:Enable()
-        end
-        if type(button.SetAlpha) == "function" then
-          button:SetAlpha(1)
-        end
-        button.__dibsVoteLocked = nil
-        button.__dibsPrevEnabled = nil
-      end
-    end
-  end
+  -- RC owns its buttons and voting semantics. Dibs projects availability only
+  -- through controls it created; it never enables/disables RC-owned buttons.
+  return entry, locked
 end
 
 local function supportsNativeDibResponse(entry)
@@ -1530,43 +1519,9 @@ local function clickDibsButton(lootFrame, entry)
 end
 
 local function installDibsClickGuard(button)
-  if type(button) ~= "table" then return end
-  if button.__dibsClickGuardInstalled then return end
-  if type(button.SetScript) ~= "function" then return end
-
-  local originalOnClick = nil
-  if type(button.GetScript) == "function" then
-    originalOnClick = button:GetScript("OnClick")
-  end
-  button.__dibsOriginalOnClick = originalOnClick
-
-  button:SetScript("OnClick", function(self, ...)
-    local entry = self and self.__dibsEntry
-    local lootFrame = self and self.__dibsLootFrame
-    local playerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
-    local itemID = parseItemID(entry and entry.item and entry.item.link)
-    local responseType = entry and entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
-    local status = Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType)
-
-    if not status or status.canUseDib ~= true then
-      setButtonEnabled(self, false)
-      return
-    end
-
-    if self.dibsInjected == true then
-      clickDibsButton(lootFrame, entry)
-      return
-    end
-
-    if type(self.__dibsOriginalOnClick) == "function" then
-      pcall(self.__dibsOriginalOnClick, self, ...)
-      return
-    end
-
-    clickDibsButton(lootFrame, entry)
-  end)
-
-  button.__dibsClickGuardInstalled = true
+  -- Dibs-owned buttons install their handler at creation. Never replace an
+  -- OnClick script on a button discovered in an RC-owned entry.
+  return button
 end
 
 local function installDibsTooltip(button, entry)
@@ -1588,9 +1543,11 @@ local function installDibsTooltip(button, entry)
   if type(button.HookScript) == "function" then
     button:HookScript("OnEnter", show)
     button:HookScript("OnLeave", hide)
-  else
+  elseif button.dibsInjected == true then
     button:SetScript("OnEnter", show)
     button:SetScript("OnLeave", hide)
+  else
+    return
   end
   button.__dibsTooltipInstalled = true
 end
@@ -1602,46 +1559,13 @@ local function isPassButton(button)
 end
 
 local function placeDibButtonFirst(entry, dibButton)
-  if type(entry) ~= "table" or type(dibButton) ~= "table" then return end
-  if entry.type == "roll" or type(entry.buttons) ~= "table" then return end
-  if type(dibButton.ClearAllPoints) ~= "function" or type(dibButton.SetPoint) ~= "function" then return end
-  if type(entry.icon) ~= "table" then return end
-
-  local passButton = nil
-  local others = {}
-  for _, button in ipairs(entry.buttons) do
-    if button ~= dibButton then
-      if isPassButton(button) then
-        passButton = button
-      else
-        table.insert(others, button)
-      end
-    end
-  end
-
-  local ordered = { dibButton }
-  for _, button in ipairs(others) do
-    table.insert(ordered, button)
-  end
-  if passButton then
-    table.insert(ordered, passButton)
-  end
-
-  local prev = nil
-  for _, button in ipairs(ordered) do
-    if type(button) == "table" and type(button.ClearAllPoints) == "function" and type(button.SetPoint) == "function" then
-      button:ClearAllPoints()
-      if prev == nil then
-        button:SetPoint("BOTTOMLEFT", entry.icon, "BOTTOMRIGHT", 5, -6)
-      else
-        button:SetPoint("LEFT", prev, "RIGHT", 5, 0)
-      end
-      prev = button
-    end
-  end
+  -- Do not reposition RC-owned controls. The Dibs-owned button keeps its own
+  -- point established on creation.
+  return entry, dibButton
 end
 
 local function createDibsButton(entry, lootFrame)
+  if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("loot") end
   if type(entry) ~= "table" or type(entry.frame) ~= "table" then return nil end
   if type(CreateFrame) ~= "function" then return nil end
 
@@ -1691,27 +1615,6 @@ local function ensureDibsButton(entry, lootFrame)
     remembered.dibsButton = true
     installDibsTooltip(remembered, entry)
     return remembered
-  end
-
-  for _, button in ipairs(entry.buttons) do
-    if isDibsButton(button) then
-      button.dibsButton = true
-      entry.dibsButton = button
-      installDibsTooltip(button, entry)
-      return button
-    end
-  end
-
-  if type(entry.UpdateButtons) == "function" then
-    pcall(entry.UpdateButtons, entry)
-    for _, button in ipairs(entry.buttons) do
-      if isDibsButton(button) and button.dibsInjected ~= true then
-        button.dibsButton = true
-        entry.dibsButton = button
-        installDibsTooltip(button, entry)
-        return button
-      end
-    end
   end
 
   return createDibsButton(entry, lootFrame)
@@ -1874,6 +1777,7 @@ function Dibs.RCLootCouncil.LogPreDibRequest(request, sourceLabel)
 end
 
 local function applyDibsButtonState(lootFrame)
+  if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("loot") end
   if type(lootFrame) ~= "table" then return end
   installForcedDibConfigHook()
   local manager = lootFrame.EntryManager
@@ -1889,17 +1793,14 @@ local function applyDibsButtonState(lootFrame)
       local itemID = parseItemID(entry.item and entry.item.link)
       local responseType = entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
       local status = Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType)
-      applyVoteLockToEntry(entry, status.lockedOutByPreDib == true)
       if dibButton and type(dibButton.Show) == "function" and type(dibButton.Hide) == "function" then
         dibButton.__dibsEntry = entry
         dibButton.__dibsLootFrame = lootFrame
-        installDibsClickGuard(dibButton)
         if showDibs and status.dibTypeEnabled == true then
           placeDibButtonFirst(entry, dibButton)
           dibButton:Show()
           setButtonEnabled(dibButton, status.canUseDib == true)
         else
-          applyVoteLockToEntry(entry, false)
           dibButton:Hide()
         end
       end
@@ -1908,6 +1809,7 @@ local function applyDibsButtonState(lootFrame)
 end
 
 local function installLootFrameHook()
+  if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("loot") end
   if type(hooksecurefunc) ~= "function" then return false end
   local rc = getRC()
   local lootFrame = getLootFrameModule(rc)
@@ -2090,6 +1992,7 @@ local function convertCandidateToNormal(votingFrame, candidateName)
 end
 
 local function setDibConvertCell(rowFrame, cellFrame, data, cols, row, realrow, column, fShow, tableArg)
+  if inCombatLockdown() then Dibs.RCLootCouncil.QueueUIRefresh("voting"); return end
   if not fShow or not data or not data[realrow] or type(cellFrame) ~= "table" then return end
   local rc = getRC()
   local votingFrame = getVotingFrameModule(rc)
@@ -2141,6 +2044,7 @@ local function setDibConvertCell(rowFrame, cellFrame, data, cols, row, realrow, 
 end
 
 local function refreshVotingColumns(votingFrame)
+  if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("voting") end
   if type(votingFrame) ~= "table" then return end
   if not votingFrame.frame and type(votingFrame.GetFrame) == "function" then
     pcall(votingFrame.GetFrame, votingFrame)
@@ -2284,6 +2188,7 @@ local function installDibConvertColumn()
 end
 
 local function installVotingFrameColumns()
+  if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("voting") end
   local statusCol = installVotingFrameColumn()
   local convertCol = installDibConvertColumn()
   local votingFrame = getVotingFrameModule(getRC())
@@ -2334,6 +2239,19 @@ local function installVotingFrameColumns()
     votingFrame.__dibsOnUpdateHooked = true
   end
   return statusCol and convertCol
+end
+
+function Dibs.RCLootCouncil.FlushUIProjection()
+  if inCombatLockdown() then return false, "COMBAT_LOCKDOWN" end
+  local pending = projection.pending
+  projection.pending = {}
+  if pending.loot then installLootFrameHook() end
+  if pending.voting then installVotingFrameColumns() end
+  return true
+end
+
+function Dibs.RCLootCouncil.OnCombatEnded()
+  return Dibs.RCLootCouncil.FlushUIProjection()
 end
 
 function Dibs.RCLootCouncil.GetVotingIntegrationStatus()

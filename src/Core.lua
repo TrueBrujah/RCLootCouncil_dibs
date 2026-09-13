@@ -1709,6 +1709,9 @@ local function onRuntimeEvent(event, ...)
   then
     Dibs.Readiness.Invalidate(event)
   end
+  if event == "PLAYER_REGEN_ENABLED" and Dibs.RCLootCouncil and Dibs.RCLootCouncil.OnCombatEnded then
+    Dibs.RCLootCouncil.OnCombatEnded()
+  end
   if Dibs.RaidPrompts and Dibs.RaidPrompts.OnEvent then Dibs.RaidPrompts.OnEvent(event) end
 end
 

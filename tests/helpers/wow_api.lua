@@ -168,6 +168,12 @@ function M.install(opts)
     table.insert(_G.__dibsFrameCreations, frame)
     return frame
   end
+  _G.hooksecurefunc = function(target, method, callback)
+    target.__secureHooks = target.__secureHooks or {}
+    target.__secureHooks[method] = target.__secureHooks[method] or {}
+    table.insert(target.__secureHooks[method], callback)
+    return true
+  end
 
   _G.C_Timer = {
     After = function(_, fn)
@@ -376,7 +382,6 @@ function M.installEncounterJournalContext(opts)
     end
     return nil
   end
-
   if hasCatalogFixture then
     _G.EJ_SelectTier = function(tier) _G.__ejNavigation = { tier = tier } end
     _G.EJ_GetCurrentTier = function() return (_G.__ejNavigation and _G.__ejNavigation.tier) or 1 end
