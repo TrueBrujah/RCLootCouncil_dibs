@@ -379,7 +379,10 @@ describe("Player and officer option visibility", function()
     local pages = { "overview", "disputes", "reconciliation", "seasons", "ranks", "settings", "preDibs", "eligibility", "announcements", "developer", "integration", "debug" }
     for _, page in ipairs(pages) do
       frame.SelectTab(page)
-      assert_true(#(frame.aceTabs.children or {}) > 1, "Officer page has no content: " .. page)
+      assert_equal(page, frame.selectedRoute)
+      assert_equal(page, frame.mountedPage)
+      assert_equal(1, #(frame.contentHost.children or {}), "Officer route must mount one page root: " .. page)
+      assert_true(#(frame.contentHost.children[1].children or {}) > 0, "Officer page has no content: " .. page)
     end
   end)
 end)

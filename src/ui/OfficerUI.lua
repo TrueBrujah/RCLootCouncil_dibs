@@ -62,7 +62,10 @@ local OFFICER_NAV_TREE = {
 -- presenting the same Officer tree as the RCLootCouncil options panel.
 local OFFICER_TAB_ALIASES = {
   dashboard = "overview",
+  requests = "disputes",
   lootTypes = "integration",
+  lootRules = "lootTypes",
+  rclootcouncil = "integration",
   predibs = "preDibs",
   dispute = "disputes",
   review = "disputes",
@@ -97,6 +100,13 @@ end
 
 local function normalizeOfficerTab(tab)
   return OFFICER_TAB_ALIASES[tab] or tab
+end
+
+local function officerRouteVisible(route)
+  for _, entry in ipairs(getOfficerNavigationTree()) do
+    if entry.value == route then return true end
+  end
+  return route == "overview" or route == "reconciliation"
 end
 
 function Dibs.OfficerUI.GetNavigationTree()
@@ -1355,22 +1365,52 @@ local function createAceWindow()
     frame:Refresh()
   end
 
-  local tabs = Dibs.AceGUI.AddTree(shell, buildOfficerTree(getOfficerNavigationTree()), function(value)
-    frame.activeTab, frame.ledgerPage = normalizeOfficerTab(value), 1
+  local navigation = Dibs.AceGUI.AddTree(shell, buildOfficerTree(getOfficerNavigationTree()), function(value)
+    local route = normalizeOfficerTab(value)
+    if not officerRouteVisible(route) then route = "overview" end
+    frame.activeTab, frame.selectedRoute, frame.ledgerPage = route, route, 1
     frame:Refresh()
   end, 190)
-  frame.aceTabs = tabs
+  local contentHost = Dibs.AceGUI.Create(shell, "SimpleGroup", navigation)
+  if contentHost then
+    if contentHost.SetFullWidth then contentHost:SetFullWidth(true) end
+    if contentHost.SetFullHeight then contentHost:SetFullHeight(true) end
+    if contentHost.SetLayout then contentHost:SetLayout("List") end
+  end
+  frame.aceTabs = navigation
+  frame.contentHost = contentHost
   frame.SelectTab = function(tab)
     local normalized = normalizeOfficerTab(tab)
-    if not Dibs.AceGUI.SelectTree(tabs, normalized) then
-      frame.activeTab, frame.ledgerPage = normalized, 1
+    frame.activeTab, frame.selectedRoute, frame.ledgerPage = normalized, normalized, 1
+    if not Dibs.AceGUI.SelectTree(navigation, normalized) then
       frame:Refresh()
     end
   end
 
   frame.Refresh = function(self)
-    Dibs.AceGUI.Clear(tabs)
-    Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Officer controls use the same shared options as RCLootCouncil.")
+    self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
+    self.selectedRoute = self.activeTab
+    if not contentHost then return end
+    Dibs.AceGUI.Clear(contentHost)
+    local pageRoot = Dibs.AceGUI.Create(shell, "SimpleGroup", contentHost) or contentHost
+    if pageRoot ~= contentHost then
+      if pageRoot.SetFullWidth then pageRoot:SetFullWidth(true) end
+      if pageRoot.SetFullHeight then pageRoot:SetFullHeight(true) end
+      if pageRoot.SetLayout then pageRoot:SetLayout("List") end
+    end
+    self.mountedPage = self.activeTab
+    self.mountedPageHost = pageRoot
+    self.primaryPageCount = 1
+    local tabs = pageRoot
+    local routeTitles = {
+      disputes = "Requests", preDibs = "Pre-Dibs", history = "History", reconciliation = "History", seasons = "Seasons",
+      ranks = "Rank Rules", lootTypes = "Loot Rules", announcements = "Announcements",
+      integration = "RCLootCouncil", settings = "Settings", diagnostics = "Diagnostics",
+      eligibility = "Loot Eligibility", developer = "Developer", debug = "Debug",
+    }
+    if self.activeTab ~= "overview" then
+      Dibs.AceGUI.AddHeading(shell, tabs, routeTitles[self.activeTab] or "Officer", "Officer controls and current local projection.")
+    end
     if self.activeTab == "developer" then
       if Dibs.DeveloperUI and Dibs.DeveloperUI.GetProjection then
         local projection = Dibs.DeveloperUI.GetProjection()
@@ -1387,6 +1427,11 @@ local function createAceWindow()
           Dibs.AceGUI.AddLabel(shell, tabs, "Developer Mode required.", true)
         end
       end
+      return
+    end
+    if self.activeTab == "diagnostics" then
+      Dibs.AceGUI.AddHeader(shell, tabs, "Runtime diagnostics", "Bounded diagnostic information for the local Officer session.")
+      Dibs.AceGUI.AddLabel(shell, tabs, Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", true)
       return
     end
     local seasons = getSeasonList()
@@ -1585,7 +1630,6 @@ local function createAceWindow()
       -- keep it inside its own scrollable content area instead of letting the
       -- TreeGroup clip the resolution actions below the fold.
       local tabs = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
-      Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Officer review and correction center.")
       Dibs.AceGUI.AddHeader(shell, tabs, "Officer review requests", "Review player reports with the attached Dibs and RCLootCouncil evidence. Every resolution records an auditable reason.")
       local statusChoices = { [""] = "All statuses" }
       for key, value in pairs(Dibs.Disputes and Dibs.Disputes.GetStatuses and Dibs.Disputes.GetStatuses() or {}) do
@@ -1876,9 +1920,9 @@ local function createAceWindow()
       return
     end
 
-    if self.activeTab == "reconciliation" then
+    if self.activeTab == "history" or self.activeTab == "reconciliation" then
       local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
-      Dibs.AceGUI.AddHeading(shell, scroll, "RCLootCouncil - Dibs options", "Officer-only history reconciliation: Search, Review Candidates, Confirm or Reject, Complete.")
+      Dibs.AceGUI.AddHeader(shell, scroll, "History reconciliation", "Review read-only RCLootCouncil evidence before any protected confirmation.")
       Dibs.AceGUI.AddHeader(shell, scroll, "RCLootCouncil History", "Search read-only award evidence first. Confirmation and rejection use the existing protected reconciliation service.")
       local rcStatus = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
       if not Dibs.RCLootCouncil or type(Dibs.RCLootCouncil.GetHistoryRows) ~= "function" then
@@ -2266,8 +2310,8 @@ local function createAceWindow()
   end
   frame:HookScript("OnShow", function(self) self:Refresh() end)
   _G.DibsOfficerFrame = frame
-  frame:Refresh()
-  Dibs.AceGUI.SelectTree(tabs, frame.activeTab)
+  local selected = Dibs.AceGUI.SelectTree(navigation, frame.activeTab)
+  if not selected then frame:Refresh() end
   return frame
 end
 
