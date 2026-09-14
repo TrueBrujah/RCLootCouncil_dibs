@@ -99,15 +99,15 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 ### Tests for User Story 3
 
-- [ ] T031 [P] [US3] Add player summary visibility, empty-state, readiness, and technical-detail disclosure tests in `tests/integration/b11_player_ui_spec.lua`.
-- [ ] T032 [P] [US3] Add player request/cancellation delegation and privacy-boundary tests in `tests/contract/b11_player_actions_spec.lua`.
+- [x] T031 [P] [US3] Add player summary visibility, empty-state, readiness, and technical-detail disclosure tests in `tests/integration/b11_player_ui_spec.lua`.
+- [x] T032 [P] [US3] Add player request/cancellation delegation and privacy-boundary tests in `tests/contract/b11_player_actions_spec.lua`.
 
 ### Implementation for User Story 3
 
-- [ ] T033 [US3] Redesign My Dibs summary and first-viewport information hierarchy in `src/ui/PlayerUI.lua` for balance, active Pre-Dibs, pending requests, current season, and simple readiness.
-- [ ] T034 [US3] Redesign player Requests and request/cancellation controls in `src/ui/PlayerUI.lua` using existing `src/modules/PreDibs.lua` and eligibility services.
-- [ ] T035 [US3] Redesign player History projection in `src/ui/LogsUI.lua` and `src/ui/PlayerUI.lua` to expose only permitted own-player data with expandable technical details.
-- [ ] T036 [US3] Add player-safe normalized status and unavailable/degraded explanations through `src/integrations/RCLootCouncil.lua` and `src/modules/Readiness.lua` projections without exposing raw internals.
+- [x] T033 [US3] Redesign My Dibs summary and first-viewport information hierarchy in `src/ui/PlayerUI.lua` for balance, active Pre-Dibs, pending requests, current season, and simple readiness.
+- [x] T034 [US3] Redesign player Requests and request/cancellation controls in `src/ui/PlayerUI.lua` using existing `src/modules/PreDibs.lua` and eligibility services.
+- [x] T035 [US3] Redesign player History projection in `src/ui/LogsUI.lua` and `src/ui/PlayerUI.lua` to expose only permitted own-player data with expandable technical details.
+- [x] T036 [US3] Add player-safe normalized status and unavailable/degraded explanations through `src/integrations/RCLootCouncil.lua` and `src/modules/Readiness.lua` projections without exposing raw internals.
 
 **Checkpoint**: User Story 3 is independently functional when a normal player can identify the three primary summaries and complete request/cancellation/history flows without direct UI accounting writes.
 

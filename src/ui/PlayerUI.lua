@@ -86,10 +86,18 @@ local function parseItemInput(raw)
 end
 
 local PLAYER_NAV_TREE = {
-  { text = "Summary", value = "summary" },
+  { text = "My Dibs", value = "my-dibs" },
+  { text = "Requests", value = "requests" },
   { text = "History", value = "history" },
-  { text = "My requests", value = "requests" },
 }
+
+function Dibs.PlayerUI.GetNavigation()
+  local navigation = {}
+  for index, entry in ipairs(PLAYER_NAV_TREE) do
+    navigation[index] = { text = entry.text, value = entry.value }
+  end
+  return navigation
+end
 
 local function submitPublicPreDib(rawItem)
   local itemID = parseItemInput(rawItem)
@@ -144,6 +152,8 @@ local function cancelPlayerPreDib(requestId)
   end
   return Dibs.PreDibs.CancelForPlayer(requestId, Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
 end
+
+Dibs.PlayerUI.CancelPreDib = cancelPlayerPreDib
 
 local function formatDevContextLine(context)
   if type(context) ~= "table" then
@@ -274,6 +284,127 @@ function Dibs.PlayerUI.GetSummary(playerName)
   }
 end
 
+local function hasReason(result, code)
+  if type(result) ~= "table" then return false end
+  if result.reasonCode == code then return true end
+  return type(result.reasonCodes) == "table" and result.reasonCodes[code] == true
+end
+
+function Dibs.PlayerUI.GetStatusPresentation(result)
+  result = type(result) == "table" and result or {}
+  if hasReason(result, "RECOVERY_PENDING") then
+    return {
+      label = "Guild Dibs recovery in progress",
+      explanation = "Guild Dibs is restoring its shared state. Your personal data will return when recovery is complete.",
+      tone = "warning",
+    }
+  end
+  if hasReason(result, "SYNC_BEHIND") then
+    return {
+      label = "Syncing guild data",
+      explanation = "Your guild Dibs data is catching up. You can try again shortly.",
+      tone = "warning",
+    }
+  end
+  if hasReason(result, "COORDINATOR_UNAVAILABLE") then
+    return {
+      label = "Dibs temporarily unavailable",
+      explanation = "Guild Dibs is unavailable right now. Try again later or contact an Officer.",
+      tone = "warning",
+    }
+  end
+  local state = tostring(result.status or "Unavailable")
+  if state == "Ready" then
+    return { label = "Ready", explanation = "Your guild Dibs information is current.", tone = "ready" }
+  end
+  if state == "Degraded" then
+    return {
+      label = "Limited availability",
+      explanation = "Your personal Dibs information is available, but some live loot features are limited.",
+      tone = "warning",
+    }
+  end
+  return {
+    label = "Dibs temporarily unavailable",
+    explanation = "Guild Dibs is unavailable right now. Try again later or contact an Officer.",
+    tone = "warning",
+  }
+end
+
+local function playerRequestHistory(playerName, activeRequests)
+  local history = {}
+  local active = {}
+  for _, request in ipairs(activeRequests or {}) do
+    active[request.requestId] = true
+  end
+  local source = Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}
+  local playerKey = string.lower(tostring(playerName or ""))
+  for _, request in ipairs(source) do
+    if string.lower(tostring(request.playerName or "")) == playerKey then
+      table.insert(history, {
+        requestId = request.requestId,
+        createdAt = request.createdAt or request.updatedAt,
+        item = request.itemName or request.itemLink or ("Item " .. tostring(request.itemID or "?")),
+        status = tostring(request.status or "Pending"),
+        cancelAllowed = active[request.requestId] == true,
+      })
+    end
+  end
+  table.sort(history, function(first, second)
+    return (first.createdAt or 0) > (second.createdAt or 0)
+  end)
+  return history
+end
+
+local function projectHistory(playerName, seasonId)
+  local entries = getPlayerTransactions(playerName, seasonId, "current")
+  local history = {}
+  for _, transaction in ipairs(entries) do
+    local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+    table.insert(history, {
+      date = formatDate(transaction.createdAt or transaction.timestamp),
+      item = transaction.itemName or transaction.itemLink or (transaction.itemID and ("Item " .. tostring(transaction.itemID)) or "Dibs"),
+      action = tostring(transaction.type or transaction.actionType or "Activity"),
+      result = tostring(transaction.reason or "Recorded"),
+      balanceImpact = (amount >= 0 and "+" or "") .. tostring(amount),
+    })
+  end
+  return history
+end
+
+function Dibs.PlayerUI.GetViewModel(playerName)
+  local summary = Dibs.PlayerUI.GetSummary(playerName)
+  local readiness = Dibs.Readiness and Dibs.Readiness.Evaluate and Dibs.Readiness.Evaluate({ allowPlayer = true }) or {}
+  local active = {}
+  for _, request in ipairs(summary.activePreDibs or {}) do
+    table.insert(active, {
+      requestId = request.requestId,
+      date = formatDate(request.createdAt or request.updatedAt),
+      item = request.itemName or request.itemLink or ("Item " .. tostring(request.itemID or "?")),
+      status = tostring(request.status or "Pending"),
+      difficulty = request.difficulty and tostring(request.difficulty) or nil,
+    })
+  end
+  local history = projectHistory(summary.player, summary.season and summary.season.id)
+  local requests = playerRequestHistory(summary.player, summary.activePreDibs)
+  return {
+    navigation = Dibs.PlayerUI.GetNavigation(),
+    player = summary.player,
+    balance = summary.balance,
+    seasonName = summary.season and summary.season.name or "No active season",
+    activePreDibs = active,
+    requests = requests,
+    pendingRequests = #active,
+    history = history,
+    status = Dibs.PlayerUI.GetStatusPresentation(readiness),
+    empty = {
+      activePreDibs = #active == 0 and "No active Pre-Dibs." or nil,
+      requests = #requests == 0 and "No requests yet." or nil,
+      history = #history == 0 and "No history yet." or nil,
+    },
+  }
+end
+
 ---@param itemID integer Item identifier.
 ---@param difficulty DibsDifficulty|nil Difficulty context.
 ---@return DibsVaultAcquisition|nil acquisition
@@ -291,7 +422,7 @@ function Dibs.PlayerUI.GetHistory(playerName)
   return Dibs.Ledger.GetHistory(playerName or Dibs.GetPlayerName())
 end
 
-local function createAceWindow()
+local function createLegacyAceWindow()
   local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Player", 720, 620, { "CENTER", 0, 0 })
   if not shell then return nil end
   local frame = shell.frame
@@ -664,6 +795,165 @@ local function createAceWindow()
       self.devStatusText = Dibs.AceGUI.AddLabel(shell, tabs, self.devStatus or (devEnabled and "Use /dibs testitem <itemID> to inject an item." or "Developer Mode required"), true)
     end
   end
+  frame:HookScript("OnShow", function(self) self:Refresh() end)
+  _G.DibsPlayerFrame = frame
+  frame:Refresh()
+  Dibs.AceGUI.SelectTree(tabs, frame.playerTab)
+  return frame
+end
+
+local function createAceWindow()
+  local shell = Dibs.AceGUI.CreateWindow("Dibs | My Dibs", 720, 620, { "CENTER", 0, 0 })
+  if not shell then return nil end
+  local frame = shell.frame
+  if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
+  frame.dibsAceGUIShell = shell
+  frame.playerTab = "my-dibs"
+  frame.preDibValue = ""
+  frame.preDibStatusText = nil
+
+  local tabs = Dibs.AceGUI.AddTree(shell, Dibs.PlayerUI.GetNavigation(), function(value)
+    frame.playerTab = value
+    frame:Refresh()
+  end, 170)
+  frame.aceTabs = tabs
+  frame.SelectTab = function(tab)
+    frame.playerTab = tab
+    if not Dibs.AceGUI.SelectTree(tabs, tab) then frame:Refresh() end
+  end
+
+  local function submitFromInput()
+    local request, errorText = submitPublicPreDib(getControlText(frame.preDibInput))
+    if request then
+      setControlText(frame.preDibInput, "")
+      frame.preDibValue = ""
+      frame.preDibStatusText = "Request submitted for " .. tostring(request.itemName or request.itemLink or ("Item " .. tostring(request.itemID))) .. "."
+    else
+      frame.preDibStatusText = errorText or "Unable to submit the request."
+    end
+    frame:Refresh()
+  end
+
+  local function addRequestAction(parent, view)
+    Dibs.AceGUI.AddHeader(shell, parent, "Request a Pre-Dib", "Reserve an item before it drops when public Pre-Dibs are enabled.")
+    frame.preDibInput = Dibs.AceGUI.AddEditBox(shell, parent, "Item ID or item link", function(value)
+      frame.preDibValue = value or ""
+    end, 300)
+    setControlText(frame.preDibInput, frame.preDibValue)
+    local submit = Dibs.AceGUI.AddButton(shell, parent, "Submit request", submitFromInput, 150)
+    local publicEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() or false
+    Dibs.AceGUI.SetDisabled(submit, not publicEnabled)
+    Dibs.AceGUI.AddLabel(shell, parent, frame.preDibStatusText or (publicEnabled
+      and "Public Pre-Dibs are enabled."
+      or "Public Pre-Dibs are currently disabled by Officers."), true)
+  end
+
+  frame.Refresh = function(self)
+    Dibs.AceGUI.Clear(tabs)
+    local view = Dibs.PlayerUI.GetViewModel()
+    if self.playerTab == "requests" then
+      Dibs.AceGUI.AddHeading(shell, tabs, "Requests", "Your Pre-Dib requests and their current status.")
+      local requestRows = {}
+      for _, request in ipairs(view.requests or {}) do
+        requestRows[#requestRows + 1] = {
+          request.date or "Unknown", request.item, request.status, request.cancelAllowed and "Cancel" or "",
+          request = request,
+        }
+      end
+      if #requestRows == 0 then requestRows[1] = { "", view.empty.requests, "", "" } end
+      Dibs.AceGUI.AddTable(shell, tabs, {
+        { title = "Date", width = 145 },
+        { title = "Item", width = 260 },
+        { title = "Status", width = 130 },
+        { title = "Action", width = 90 },
+      }, requestRows, 220, function(row)
+        if not row.request or not row.request.cancelAllowed then return nil end
+        return {
+          text = "Cancel",
+          callback = function()
+            local cancelled, reason = Dibs.PlayerUI.CancelPreDib(row.request.requestId)
+            self.preDibStatusText = cancelled and "Request cancelled." or (reason == "NOT_REQUEST_OWNER"
+              and "You can only cancel your own requests." or "Unable to cancel this request.")
+            self:Refresh()
+          end,
+        }
+      end)
+      return
+    end
+    if self.playerTab == "history" then
+      Dibs.AceGUI.AddHeading(shell, tabs, "History", "Your Dibs activity for the current season.")
+      local historyRows = {}
+      for _, entry in ipairs(view.history or {}) do
+        historyRows[#historyRows + 1] = { entry.date, entry.item, entry.action, entry.result, entry.balanceImpact, entry = entry }
+      end
+      if #historyRows == 0 then historyRows[1] = { "", view.empty.history, "", "", "" } end
+      Dibs.AceGUI.AddTable(shell, tabs, {
+        { title = "Date", width = 145 },
+        { title = "Item", width = 220 },
+        { title = "Action", width = 130 },
+        { title = "Result", width = 190 },
+        { title = "Balance", width = 90 },
+      }, historyRows, 300, nil, {
+        contextMenu = function(row)
+          if not row.entry then return nil end
+          return {
+            {
+              text = "View details",
+              callback = function()
+                self.historyDetail = row.entry
+                self:Refresh()
+              end,
+            },
+          }
+        end,
+      })
+      if self.historyDetail then
+        Dibs.AceGUI.AddHeader(shell, tabs, "History details", self.historyDetail.item)
+        Dibs.AceGUI.AddLabel(shell, tabs,
+          "Date: " .. tostring(self.historyDetail.date) .. "\n" ..
+          "Action: " .. tostring(self.historyDetail.action) .. "\n" ..
+          "Result: " .. tostring(self.historyDetail.result) .. "\n" ..
+          "Balance impact: " .. tostring(self.historyDetail.balanceImpact), true)
+      end
+      return
+    end
+
+    Dibs.AceGUI.AddHeading(shell, tabs, "My Dibs", "Your balance, active requests, and current guild status.")
+    Dibs.AceGUI.AddTable(shell, tabs, {
+      { title = "Balance", width = 130 },
+      { title = "Season", width = 230 },
+      { title = "Active Pre-Dibs", width = 150 },
+      { title = "Requests", width = 110 },
+    }, {{ tostring(view.balance), view.seasonName, tostring(#view.activePreDibs), tostring(view.pendingRequests) }}, 90)
+    Dibs.AceGUI.AddHeader(shell, tabs, view.status.label, view.status.explanation)
+    local activeRows = {}
+    for _, request in ipairs(view.activePreDibs or {}) do
+      activeRows[#activeRows + 1] = {
+        request.date, request.item, request.status, request.difficulty or "Any", "Cancel",
+        request = request,
+      }
+    end
+    if #activeRows == 0 then activeRows[1] = { "", view.empty.activePreDibs, "", "", "" } end
+    Dibs.AceGUI.AddTable(shell, tabs, {
+      { title = "Date", width = 145 },
+      { title = "Item", width = 250 },
+      { title = "Status", width = 120 },
+      { title = "Difficulty", width = 100 },
+      { title = "Action", width = 90 },
+    }, activeRows, 170, function(row)
+      if not row.request then return nil end
+      return {
+        text = "Cancel",
+        callback = function()
+          local cancelled = Dibs.PlayerUI.CancelPreDib(row.request.requestId)
+          self.preDibStatusText = cancelled and "Request cancelled." or "Unable to cancel this request."
+          self:Refresh()
+        end,
+      }
+    end)
+    addRequestAction(tabs, view)
+  end
+
   frame:HookScript("OnShow", function(self) self:Refresh() end)
   _G.DibsPlayerFrame = frame
   frame:Refresh()
