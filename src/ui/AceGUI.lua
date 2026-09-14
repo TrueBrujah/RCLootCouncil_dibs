@@ -174,7 +174,7 @@ function Adapter.IsAvailable()
   return gui ~= nil and type(gui.Create) == "function"
 end
 
-function Adapter.CreateWindow(title, width, height, point)
+function Adapter.CreateWindow(title, width, height, point, positionId)
   if Adapter.windowShellEnabled ~= true then return nil end
   local gui = getLibrary()
   if not gui or type(gui.Create) ~= "function" then return nil end
@@ -232,9 +232,6 @@ function Adapter.CreateWindow(title, width, height, point)
   if window.frame and type(window.frame.SetFrameStrata) == "function" then
     window.frame:SetFrameStrata("DIALOG")
   end
-  if window.frame and type(window.frame.SetClampedToScreen) == "function" then
-    window.frame:SetClampedToScreen(true)
-  end
   addAddonLogo(window.frame)
   -- AceGUI Frame widgets are shown by OnAcquire.  PlayerUI and OfficerUI are
   -- created during addon initialization, so leave them hidden until the user
@@ -246,12 +243,13 @@ function Adapter.CreateWindow(title, width, height, point)
     window.frame:SetPoint(unpackValues(point))
   end
   if Dibs.WindowState and Dibs.WindowState.Register then
-    Dibs.WindowState.Register(window.frame, tostring(title or "DibsWindow"))
+    Dibs.WindowState.Register(window.frame, tostring(positionId or title or "DibsWindow"))
   end
   -- Children are owned by their AceGUI container.  Do not mirror every page
   -- widget in the shell: Refresh() releases and recreates those widgets, and
   -- a tracking array would retain the historical numeric slots forever.
-  local shell = { gui = gui, window = window, frame = window.frame, layout = window.layout }
+  local shell = { gui = gui, window = window, frame = window.frame, layout = window.layout, _dibsActive = true }
+  window.frame._dibsWindowShell = shell
   shell._dibsResizeHandlers = {}
   shell._dibsResponsiveScrolls = {}
   function shell:AddResizeHandler(callback)
@@ -259,42 +257,104 @@ function Adapter.CreateWindow(title, width, height, point)
     self._dibsResizeHandlers[#self._dibsResizeHandlers + 1] = callback
     return true
   end
-  if window.frame and type(window.frame.HookScript) == "function" then
-    window.frame:HookScript("OnSizeChanged", function()
-      local height = window.frame.GetHeight and window.frame:GetHeight() or nil
+  if window.frame and type(window.frame.HookScript) == "function" and not window.frame._dibsSizeHookInstalled then
+    window.frame._dibsSizeHookInstalled = true
+    window.frame:HookScript("OnSizeChanged", function(frame)
+      local activeShell = frame._dibsWindowShell
+      if not activeShell or not activeShell._dibsActive then return end
+      local activeWindow = activeShell.window
+      local height = frame.GetHeight and frame:GetHeight() or nil
       if height then
-        for _, scroll in ipairs(shell._dibsResponsiveScrolls) do
+        for _, scroll in ipairs(activeShell._dibsResponsiveScrolls) do
           if scroll and scroll.SetHeight and scroll._dibsResizeOffset then
             scroll:SetHeight(math.max(120, height - scroll._dibsResizeOffset))
           end
           if scroll and scroll.DoLayout then scroll:DoLayout() end
         end
       end
-      if window.DoLayout then window:DoLayout() end
-      for _, callback in ipairs(shell._dibsResizeHandlers) do pcall(callback, shell) end
+      if activeWindow and activeWindow.DoLayout then activeWindow:DoLayout() end
+      for _, callback in ipairs(activeShell._dibsResizeHandlers) do pcall(callback, activeShell) end
     end)
   end
   call(window, "SetCallback", "OnClose", function(widget)
+    if not shell._dibsActive then return end
+    shell._dibsActive = false
+    if type(shell.onRelease) == "function" then shell.onRelease(shell) end
     if shell and shell.frame == widget.frame then
       shell.frame = nil
     end
     if _G.DibsPlayerFrame == widget.frame then _G.DibsPlayerFrame = nil end
     if _G.DibsOfficerFrame == widget.frame then _G.DibsOfficerFrame = nil end
-    gui:Release(widget)
+    if Dibs.WindowState and type(Dibs.WindowState.Unregister) == "function" then
+      Dibs.WindowState.Unregister(widget.frame)
+    end
+    if widget.frame and widget.frame._dibsWindowShell == shell then widget.frame._dibsWindowShell = nil end
+    if type(Adapter.ReleaseOwnedState) == "function" then Adapter.ReleaseOwnedState(widget) end
+    if type(gui.Release) == "function" then gui:Release(widget)
+    elseif type(widget.Hide) == "function" then widget:Hide() end
+    if widget.frame and widget.frame.dibsAceGUIShell == shell then widget.frame.dibsAceGUIShell = nil end
+    shell.gui, shell.window, shell.frame = nil, nil, nil
   end)
 
   return shell
+end
+
+local function disposeUnattachedWidget(shell, widget)
+  if not widget then return end
+  if shell and shell.gui and type(shell.gui.Release) == "function" then
+    pcall(shell.gui.Release, shell.gui, widget)
+  elseif widget.frame then
+    if type(widget.frame.Hide) == "function" then widget.frame:Hide() end
+    if type(widget.frame.SetParent) == "function" then widget.frame:SetParent(nil) end
+  end
+end
+
+local function isAceGUIContainer(value)
+  return type(value) == "table"
+    and type(value.AddChild) == "function"
+    and value.frame ~= nil
+end
+
+local function frameContains(frame, target)
+  local current = frame
+  local visited = {}
+  while current and not visited[current] do
+    if current == target then return true end
+    visited[current] = true
+    current = type(current.GetParent) == "function" and current:GetParent() or nil
+  end
+  return false
+end
+
+local function wouldCreateParentCycle(owner, widget)
+  return owner and widget and owner.frame and widget.frame
+    and frameContains(owner.frame, widget.frame)
 end
 
 function Adapter.Create(shell, kind, parent)
   if not shell or not shell.gui then return nil end
   local ok, widget = pcall(shell.gui.Create, shell.gui, kind)
   if not ok or not widget then return nil end
-  if parent and type(parent.AddChild) == "function" then
-    parent:AddChild(widget)
-  elseif shell.window and type(shell.window.AddChild) == "function" then
-    shell.window:AddChild(widget)
+  local owner = parent or shell.window
+  if not isAceGUIContainer(owner) or owner == widget or owner.frame == widget.frame
+    or wouldCreateParentCycle(owner, widget) then
+    disposeUnattachedWidget(shell, widget)
+    return nil
   end
+  owner:AddChild(widget)
+  return widget
+end
+
+function Adapter.CreateInFrame(shell, kind, parentFrame)
+  if not shell or not shell.gui or type(parentFrame) ~= "table"
+    or type(parentFrame.SetParent) ~= "function" then return nil end
+  local ok, widget = pcall(shell.gui.Create, shell.gui, kind)
+  if not ok or not widget or not widget.frame or widget.frame == parentFrame then
+    disposeUnattachedWidget(shell, widget)
+    return nil
+  end
+  widget.frame:SetParent(parentFrame)
+  widget._dibsRawOwner = parentFrame
   return widget
 end
 
@@ -313,13 +373,22 @@ local function releaseMSAControls(widget, seen)
   local control = widget._dibsMSAControl
   if control then
     if control.Hide then pcall(control.Hide, control) end
+    if control.ClearAllPoints then pcall(control.ClearAllPoints, control) end
     if control.SetParent then pcall(control.SetParent, control, nil) end
     msaDropdownPool[#msaDropdownPool + 1] = control
     widget._dibsMSAControl = nil
   end
   if widget._dibsScrollingTable then
+    if type(widget._dibsScrollingTable.RegisterEvents) == "function" then
+      pcall(widget._dibsScrollingTable.RegisterEvents, widget._dibsScrollingTable, {}, true)
+    end
     if type(widget._dibsScrollingTable.Hide) == "function" then
       pcall(widget._dibsScrollingTable.Hide, widget._dibsScrollingTable)
+    end
+    local tableFrame = widget._dibsScrollingTable.frame
+    if tableFrame then
+      if tableFrame.ClearAllPoints then pcall(tableFrame.ClearAllPoints, tableFrame) end
+      if tableFrame.SetParent then pcall(tableFrame.SetParent, tableFrame, nil) end
     end
     widget._dibsScrollingTable = nil
   end
@@ -335,7 +404,12 @@ local function releaseMSAControls(widget, seen)
   for _, child in ipairs(widget.children or {}) do
     releaseMSAControls(child, seen)
   end
+  for key in pairs(widget) do
+    if type(key) == "string" and key:find("^_dibs") then widget[key] = nil end
+  end
 end
+
+Adapter.ReleaseOwnedState = releaseMSAControls
 
 function Adapter.Clear(container)
   -- Releasing children changes frame parents and sizes.  Pause the container
@@ -457,6 +531,25 @@ end
 local function safeContextText(value)
   return tostring(value or "")
 end
+
+local function showTableCellTooltip(cellFrame, value)
+  if type(value) ~= "string" or not _G.GameTooltip
+    or type(_G.GameTooltip.SetOwner) ~= "function" then return false end
+  local isItemLink = value:find("|Hitem:", 1, true) ~= nil
+  if isItemLink and type(_G.GameTooltip.SetHyperlink) == "function" then
+    _G.GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
+    _G.GameTooltip:SetHyperlink(value)
+  elseif type(_G.GameTooltip.SetText) == "function" then
+    _G.GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
+    _G.GameTooltip:SetText(value, 1, 1, 1, 1, true)
+  else
+    return false
+  end
+  if type(_G.GameTooltip.Show) == "function" then _G.GameTooltip:Show() end
+  return true
+end
+
+Adapter.ShowTableCellTooltip = showTableCellTooltip
 
 function Adapter.ShowContextMenu(entries)
   if type(_G.MSA_DropDownMenu_Create) ~= "function"
@@ -720,18 +813,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     OnEnter = function(rowFrame, cellFrame, data, cols, row, realrow, column, table)
       local cell = realrow and table:GetCell(realrow, column)
       local value = type(cell) == "table" and cell.value or cell
-      if type(value) == "string" and _G.GameTooltip
-        and type(_G.GameTooltip.SetOwner) == "function"
-        and ((value:find("|Hitem:", 1, true) and type(_G.GameTooltip.SetHyperlink) == "function")
-          or type(_G.GameTooltip.SetText) == "function") then
-        _G.GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
-        if value:find("|Hitem:", 1, true) and type(_G.GameTooltip.SetHyperlink) == "function" then
-          _G.GameTooltip:SetHyperlink(value)
-        else
-          _G.GameTooltip:SetText(value, 1, 1, 1, true)
-        end
-        _G.GameTooltip:Show()
-      end
+      showTableCellTooltip(cellFrame, value)
       return false
     end,
     OnLeave = function()
@@ -979,6 +1061,14 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
     return tostring(labelValue or value or "")
   end
 
+  local function canonicalValue(value)
+    if values and values[value] ~= nil then return value end
+    for key, text in pairs(values or {}) do
+      if tostring(key) == tostring(value) or tostring(text) == tostring(value) then return key end
+    end
+    return nil
+  end
+
   function wrapper:SetText(text)
     self.text = tostring(text or "")
     _G.MSA_DropDownMenu_SetText(control, self.text)
@@ -993,7 +1083,7 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
   end
 
   function wrapper:SetValue(value)
-    self.value = value
+    self.value = canonicalValue(value) or value
     if _G.MSA_DropDownMenu_SetSelectedValue then
       _G.MSA_DropDownMenu_SetSelectedValue(control, value, true)
     end
@@ -1011,7 +1101,11 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
 
   function wrapper:SetDisabled(disabled)
     self.disabled = disabled == true
-    local button = control.Button
+    local button
+    if control and type(control.GetName) == "function" then
+      local name = control:GetName()
+      if name then button = _G[name .. "Button"] end
+    end
     if button then
       if self.disabled and button.Disable then button:Disable()
       elseif not self.disabled and button.Enable then button:Enable() end
@@ -1031,8 +1125,9 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
       info.value = key
       info.checked = wrapper.value ~= nil and tostring(wrapper.value) == tostring(key)
       info.func = function()
-        wrapper:SetValue(key)
-        if callback then callback(key) end
+        local canonical = canonicalValue(key) or key
+        wrapper:SetValue(canonical)
+        if callback then callback(canonical) end
       end
       _G.MSA_DropDownMenu_AddButton(info, level)
     end
@@ -1051,7 +1146,15 @@ function Adapter.AddDropdown(shell, parent, label, values, callback, width, useM
   call(dropdown, "SetList", values or {})
   call(dropdown, "SetWidth", width or 360)
   call(dropdown, "SetCallback", "OnValueChanged", function(_, _, value)
-    if callback then callback(value) end
+    local canonical
+    if values and values[value] ~= nil then
+      canonical = value
+    else
+      for key, text in pairs(values or {}) do
+        if tostring(key) == tostring(value) or tostring(text) == tostring(value) then canonical = key break end
+      end
+    end
+    if callback then callback(canonical or value) end
   end)
   return dropdown
 end
@@ -1083,8 +1186,8 @@ end
 
 function Adapter.AddTabs(shell, tabs, onSelect)
   if not shell or not shell.gui then return nil end
-  local ok, group = pcall(shell.gui.Create, shell.gui, "TabGroup")
-  if not ok or not group then return nil end
+  local group = Adapter.Create(shell, "TabGroup", shell.window)
+  if not group then return nil end
   call(group, "SetFullWidth", true)
   call(group, "SetFullHeight", true)
   call(group, "SetLayout", "Flow")
@@ -1092,7 +1195,6 @@ function Adapter.AddTabs(shell, tabs, onSelect)
   call(group, "SetCallback", "OnGroupSelected", function(_, _, value)
     if onSelect then onSelect(value) end
   end)
-  call(shell.window, "AddChild", group)
   return group
 end
 
@@ -1111,8 +1213,8 @@ end
 -- the same shell without coupling their page content.
 function Adapter.AddTree(shell, tree, onSelect, treeWidth)
   if not shell or not shell.gui then return nil end
-  local ok, group = pcall(shell.gui.Create, shell.gui, "TreeGroup")
-  if not ok or not group then return nil end
+  local group = Adapter.Create(shell, "TreeGroup", shell.window)
+  if not group then return nil end
   call(group, "SetFullWidth", true)
   call(group, "SetFullHeight", true)
   -- TreeGroup owns a separate content frame for the selected page.  Its
@@ -1126,13 +1228,16 @@ function Adapter.AddTree(shell, tree, onSelect, treeWidth)
   call(group, "SetCallback", "OnGroupSelected", function(_, _, value)
     if onSelect then onSelect(value) end
   end)
-  call(shell.window, "AddChild", group)
   return group
 end
 
 function Adapter.SelectTree(tree, value)
   if tree and type(tree.Select) == "function" then
-    return pcall(tree.Select, tree, value)
+    local ok, reason = pcall(tree.Select, tree, value)
+    if not ok and Dibs.Message then
+      Dibs.Message("[ui debug] Tree selection failed: " .. tostring(reason))
+    end
+    return ok, reason
   end
   return false
 end
@@ -1314,7 +1419,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   end
 
   local groupTitle = evaluate(group.name)
-  if groupTitle and tostring(groupTitle) ~= "" then
+  if groupTitle and tostring(groupTitle) ~= "" and context.renderGroupTitle ~= false then
     Adapter.AddHeading(shell, page, tostring(groupTitle))
   end
 
@@ -1355,8 +1460,8 @@ end
 
 function Adapter.AddSearch(shell, onChanged)
   if not shell or not shell.gui then return nil end
-  local ok, search = pcall(shell.gui.Create, shell.gui, "EditBox")
-  if not ok or not search then return nil end
+  local search = Adapter.Create(shell, "EditBox", shell.window)
+  if not search then return nil end
   call(search, "SetLabel", "Search")
   call(search, "SetCallback", "OnTextChanged", function(_, _, value)
     if onChanged then onChanged(value) end
@@ -1368,8 +1473,8 @@ function Adapter.AddPagination(shell, onPrevious, onNext)
   if not shell or not shell.gui then return nil end
   local controls = {}
   for _, definition in ipairs({ { "Previous", onPrevious }, { "Next", onNext } }) do
-    local ok, button = pcall(shell.gui.Create, shell.gui, "Button")
-    if ok and button then
+    local button = Adapter.Create(shell, "Button", shell.window)
+    if button then
       call(button, "SetText", definition[1])
       call(button, "SetCallback", "OnClick", function()
         if definition[2] then definition[2]() end

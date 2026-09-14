@@ -29,10 +29,14 @@ function M.installLibraries(previous)
     end,
   }
   local window = {}
-  window.RegisterConfig = function(frame, config, names) window.last = { frame = frame, config = config, names = names } end
-  window.RestorePosition = function(frame) window.restored = frame end
+  window.RegisterConfig = function(frame, config, names)
+    window.last = { frame = frame, config = config, names = names }
+    window.registrations = window.registrations or {}
+    window.registrations[#window.registrations + 1] = window.last
+  end
+  window.RestorePosition = function(frame) window.restored = frame; window.restoreCount = (window.restoreCount or 0) + 1 end
   window.MakeDraggable = function(frame) window.draggable = frame end
-  window.SavePosition = function(frame) window.saved = frame end
+  window.SavePosition = function(frame) window.saved = frame; window.saveCount = (window.saveCount or 0) + 1 end
   _G.LibStub = function(name, silent)
     if name == "LibSharedMedia-3.0" then return media end
     if name == "LibWindow-1.1" then return window end

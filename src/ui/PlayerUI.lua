@@ -500,6 +500,7 @@ local function createLegacyAceWindow()
   local frame = shell.frame
   if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
   frame.dibsAceGUIShell = shell
+  frame._dibsUiShell = shell
   frame.historyMode = "current"
   frame.historyPage = 1
   frame.playerTab = "summary"
@@ -894,7 +895,7 @@ local function createLegacyAceWindow()
 end
 
 local function createAceWindow()
-  local shell = Dibs.AceGUI.CreateWindow("Dibs | My Dibs", 720, 620, { "CENTER", 0, 0 })
+  local shell = Dibs.AceGUI.CreateWindow("Dibs | My Dibs", 720, 620, { "CENTER", 0, 0 }, "PlayerWindowPosition")
   if not shell then return nil end
   local frame = shell.frame
   if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
@@ -1045,7 +1046,22 @@ local function createAceWindow()
     addRequestAction(tabs, view)
   end
 
-  frame:HookScript("OnShow", function(self) self:Refresh() end)
+  shell.onRelease = function()
+    for _, key in ipairs({
+      "aceTabs", "preDibInput", "preDibButton", "preDibStatus", "preDibStatusText", "preDibValue", "devItemText",
+      "devRequestButton", "devStatusText", "devStatus", "playerTab", "historyDetail", "historyMode", "historyPage",
+      "historyQuery", "eligibilityCharacter", "eligibilityStatus", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
+    }) do
+      frame[key] = nil
+    end
+  end
+  if not frame._dibsOnShowHookInstalled then
+    frame._dibsOnShowHookInstalled = true
+    frame:HookScript("OnShow", function(self)
+      local activeShell = self._dibsUiShell
+      if activeShell and activeShell._dibsActive then self:Refresh() end
+    end)
+  end
   _G.DibsPlayerFrame = frame
   frame:Refresh()
   Dibs.AceGUI.SelectTree(tabs, frame.playerTab)

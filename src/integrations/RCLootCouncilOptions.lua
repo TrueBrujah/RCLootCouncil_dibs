@@ -31,6 +31,15 @@ local PRE_DIB_CHANNEL_VALUES = {
   SAY = "Say",
   YELL = "Yell",
 }
+local PRE_DIB_MODE_VALUES = { WILD_OPEN = "Wild Open", ENCOUNTER = "Encounter" }
+
+local function canonicalOptionValue(values, value)
+  if values and values[value] ~= nil then return value end
+  for key, label in pairs(values or {}) do
+    if tostring(key) == tostring(value) or tostring(label) == tostring(value) then return key end
+  end
+  return nil
+end
 
 local setStatus
 
@@ -1060,14 +1069,26 @@ local optionsTable = {
               order = 2,
               type = "select",
               name = "Active season request mode",
-              values = { WILD_OPEN = "Wild Open", ENCOUNTER = "Encounter" },
+              values = PRE_DIB_MODE_VALUES,
               get = function()
                 local policy = Dibs.PreDibs and Dibs.PreDibs.GetModePolicy and Dibs.PreDibs.GetModePolicy(getSelectedSeasonId()) or {}
                 return policy.mode or "WILD_OPEN"
               end,
               set = function(_, value)
+                local displayLabel = PRE_DIB_MODE_VALUES[value] or tostring(value or "")
+                local normalizedValue = canonicalOptionValue(PRE_DIB_MODE_VALUES, value)
+                if Dibs.DebugLogs and type(Dibs.DebugLogs.Add) == "function" then
+                  Dibs.DebugLogs.Add("ui", 4, "PREDIB_DISPLAY_LABEL=" .. displayLabel
+                    .. " PREDIB_DROPDOWN_VALUE=" .. tostring(value)
+                    .. " PREDIB_NORMALIZED_VALUE=" .. tostring(normalizedValue or "nil")
+                    .. " PREDIB_SERVICE_VALUE=" .. tostring(normalizedValue or "nil"))
+                end
+                if not normalizedValue then
+                  setStatus("Unable to change Pre-Dib mode: INVALID_PREDIB_MODE")
+                  return
+                end
                 local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute and Dibs.ProtectedActions.Execute("predib.mode.set", nil, {
-                  seasonId = getSelectedSeasonId(), mode = value, source = "ace-config",
+                  seasonId = getSelectedSeasonId(), mode = normalizedValue, source = "ace-config",
                 }) or { ok = false, diagnostic = "Protected actions unavailable." }
                 setStatus(result.ok and "Pre-Dib mode updated." or (result.diagnostic or "Mode update denied."))
               end,

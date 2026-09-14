@@ -52,7 +52,17 @@ local function makeFrame()
     IsShown = function(self) return self._shown == true end,
     RegisterEvent = function(self, event) self._events = self._events or {}; self._events[event] = true end,
     SetScript = function(_, name, fn) scripts[name] = fn end,
-    HookScript = function(_, name, fn) scripts[name] = fn end,
+    HookScript = function(_, name, fn)
+      local previous = scripts[name]
+      if previous then
+        scripts[name] = function(self, ...)
+          previous(self, ...)
+          fn(self, ...)
+        end
+      else
+        scripts[name] = fn
+      end
+    end,
     CreateTexture = function()
       return {
         SetTexture = function(self, value) self._texture = value end,

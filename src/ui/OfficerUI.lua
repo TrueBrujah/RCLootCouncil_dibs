@@ -41,6 +41,18 @@ local ANNOUNCEMENT_CHANNEL_VALUES = {
 local DEFAULT_PREDIB_TEMPLATE = "[Dibs] %player requested %item (%difficulty) - %date %time"
 local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]"
 
+local function uiDebug(message)
+  if Dibs.DebugLogs and type(Dibs.DebugLogs.Add) == "function" then
+    Dibs.DebugLogs.Add("ui", 4, tostring(message))
+  elseif type(Dibs.Message) == "function" then
+    Dibs.Message("[ui debug] " .. tostring(message))
+  end
+end
+
+local function widgetIdentity(widget)
+  return widget and tostring(widget) or "nil"
+end
+
 local OFFICER_NAV_TREE = {
   { section = "OVERVIEW", text = "Dashboard", value = "overview" },
   { section = "DIBS", text = "Requests", value = "disputes" },
@@ -205,6 +217,20 @@ local function buildOfficerRequestRow(request)
       note = boundedPresentationText(request and request.note, 240),
       source = boundedPresentationText(evidence.source, 80),
     },
+  }
+end
+
+local function requestEvidencePresentation(request, evidence)
+  evidence = evidence or {}
+  local unavailable = type(evidence.unavailableFields) == "table" and #evidence.unavailableFields > 0
+  local hasItem = trimText(evidence.item or evidence.itemID) ~= ""
+  local hasSource = trimText(evidence.source) ~= ""
+  return {
+    player = boundedPresentationText(request and request.player and request.player.name, 80),
+    item = boundedPresentationText(evidence.item or evidence.itemID, 180),
+    issue = boundedPresentationText(request and (request.categoryLabel or request.category), 80),
+    note = boundedPresentationText(request and request.note, 240),
+    evidence = (unavailable or not hasItem or not hasSource) and "Evidence incomplete" or "Evidence available",
   }
 end
 
@@ -1257,11 +1283,12 @@ local function splitPipeLine(line, expected)
 end
 
 local function createAceWindow()
-  local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Officer", 980, 760, { "CENTER", 280, 0 })
+  local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Officer", 980, 760, { "CENTER", 280, 0 }, "OfficerWindowPosition")
   if not shell then return nil end
   local frame = shell.frame
   if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
   frame.dibsAceGUIShell = shell
+  frame._dibsUiShell = shell
   frame.activeTab = "overview"
   frame.ledgerPage = 1
   frame.rankRows = {}
@@ -1458,9 +1485,6 @@ local function createAceWindow()
       integration = "RCLootCouncil", settings = "Settings", diagnostics = "Diagnostics",
       eligibility = "Loot Eligibility", developer = "Developer", debug = "Debug",
     }
-    if self.activeTab ~= "overview" then
-      Dibs.AceGUI.AddHeading(shell, tabs, routeTitles[self.activeTab] or "Officer", "Officer controls and current local projection.")
-    end
     if self.activeTab == "developer" then
       if Dibs.DeveloperUI and Dibs.DeveloperUI.GetProjection then
         local projection = Dibs.DeveloperUI.GetProjection()
@@ -1521,8 +1545,11 @@ local function createAceWindow()
           -- Review Requests is a custom OfficerUI page.  The options table
           -- also exposes a small entry point with the same key, but rendering
           -- that AceConfig group here hides the actual queue and its actions.
-          or (self.activeTab ~= "disputes" and self.activeTab ~= "reconciliation" and self.activeTab ~= "eligibility" and groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
+          or (self.activeTab ~= "disputes" and self.activeTab ~= "reconciliation" and self.activeTab ~= "eligibility" and self.activeTab ~= "debug" and groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
       end
+    end
+    if not optionGroup and self.activeTab ~= "overview" then
+      Dibs.AceGUI.AddHeading(shell, tabs, routeTitles[self.activeTab] or "Officer", "Officer controls and current local projection.")
     end
     if optionGroup and Dibs.AceGUI.RenderOptionsGroup then
       self.lootTypeControls = self.activeTab == "integration" and {} or nil
@@ -1535,6 +1562,7 @@ local function createAceWindow()
       Dibs.AceGUI.RenderOptionsGroup(shell, tabs, optionGroup, {
         controlMap = controlMap,
         scroll = self.activeTab ~= "overview",
+        renderGroupTitle = true,
         onRendered = function(target) renderedTarget = target end,
         onChanged = function()
           self:Refresh()
@@ -1689,6 +1717,23 @@ local function createAceWindow()
       -- The queue can contain evidence, controls and a full audit timeline;
       -- keep it inside its own scrollable content area instead of letting the
       -- TreeGroup clip the resolution actions below the fold.
+      local requestPageRoot = tabs
+      local requestChildrenBefore = #(requestPageRoot.children or {})
+      local requestRenderComplete = false
+      local function finishRequestRender(requestCount)
+        if requestRenderComplete then return end
+        requestRenderComplete = true
+        uiDebug("ROUTE=requests RENDER_END PAGE_ROOT=" .. widgetIdentity(requestPageRoot)
+          .. " CONTENT_HOST=" .. widgetIdentity(contentHost)
+          .. " REQUEST_COUNT=" .. tostring(tonumber(requestCount) or 0)
+          .. " SELECTED_REQUEST=" .. tostring(self.disputeSelectedId or "nil")
+          .. " CHILD_COUNT_BEFORE=" .. tostring(requestChildrenBefore)
+          .. " CHILD_COUNT_AFTER=" .. tostring(#(requestPageRoot.children or {})))
+      end
+      uiDebug("ROUTE=requests RENDER_BEGIN PAGE_ROOT=" .. widgetIdentity(requestPageRoot)
+        .. " CONTENT_HOST=" .. widgetIdentity(contentHost)
+        .. " REQUEST_COUNT=pending SELECTED_REQUEST=" .. tostring(self.disputeSelectedId or "nil")
+        .. " CHILD_COUNT_BEFORE=" .. tostring(requestChildrenBefore))
       local tabs = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
       Dibs.AceGUI.AddHeader(shell, tabs, "Officer review requests", "Review player reports with the attached Dibs and RCLootCouncil evidence. Every resolution records an auditable reason.")
       local statusChoices = { [""] = "All statuses" }
@@ -1724,8 +1769,10 @@ local function createAceWindow()
       end
       if queueReason then
         Dibs.AceGUI.AddLabel(shell, tabs, "Officer access required: " .. tostring(queueReason), true)
+        finishRequestRender(0)
         return
       end
+      uiDebug("ROUTE=requests REQUEST_COUNT=" .. tostring(#(requests or {})))
       local pageSize = 10
       local totalPages = math.max(1, math.ceil(#(requests or {}) / pageSize))
       self.disputePage = math.min(math.max(1, self.disputePage or 1), totalPages)
@@ -1738,32 +1785,25 @@ local function createAceWindow()
         requestRows[#requestRows + 1] = {
           formatHistoryDate(request.createdAt or request.updatedAt),
           presentation.details.player,
-          presentation.status.label,
           presentation.details.item,
-          presentation.explanation,
-          "",
+          presentation.status.label,
           request = request,
         }
       end
-      if #requestRows == 0 then requestRows[1] = { "", "No requests", "", "", "", "", "" } end
+      if #requestRows == 0 then requestRows[1] = { "", "No requests", "", "" } end
       Dibs.AceGUI.AddTable(shell, tabs, {
         { title = "Date", width = 145, tooltip = "When the player submitted the request." },
         { title = "Player", width = 125, tooltip = "Character that submitted the request." },
+        { title = "Item / Request", width = 220, tooltip = "Item or request being reviewed." },
         { title = "Status", width = 135, tooltip = "Current review status." },
-        { title = "Item", width = 170, tooltip = "Attached item when available." },
-        { title = "Note", width = 210, tooltip = "Player note." },
-        { title = "Action", width = 75, tooltip = "Open request details." },
-      }, requestRows, 270, function(row)
-        if not row.request then return nil end
-        return {
-          text = "Open",
-          callback = function()
+      }, requestRows, 270, nil, {
+        allowTableSort = false,
+        onRowClick = function(row)
+          if row and row.request then
             self.disputeSelectedId = row.request.requestId
             self:Refresh()
-          end,
-        }
-      end, {
-        allowTableSort = false,
+          end
+        end,
         contextMenu = function(row)
           if not row.request then return nil end
           return {
@@ -1799,29 +1839,43 @@ local function createAceWindow()
         local selected = Dibs.Disputes.GetRequest(self.disputeSelectedId, nil)
         if selected then
           local evidence = selected.evidence and selected.evidence[1] or {}
-          local detailSection = Dibs.AceGUI.AddSection(shell, tabs, "Selected request", disputeStatusText(selected))
-          local unavailable = evidence.unavailableFields and table.concat(evidence.unavailableFields, ", ") or "none"
+          local summary = requestEvidencePresentation(selected, evidence)
+          local detailSection = Dibs.AceGUI.AddSection(shell, tabs, "Request", "Review the request in plain language before opening advanced officer tools.")
           Dibs.AceGUI.AddPropertyTable(shell, detailSection, {
-            { "Player", tostring(selected.player and selected.player.name or "Unknown") },
-            { "Category", tostring(selected.categoryLabel or selected.category) },
-            { "Status", tostring(selected.status) },
-            { "Note", tostring(selected.note or "") },
-            { "Evidence source", tostring(evidence.source or "unknown") },
-            { "Integration", tostring(evidence.integrationStatus or "standalone/unavailable") .. " (" .. tostring(evidence.integrationReason or "") .. ")" },
-            { "Item", tostring(evidence.item or "Unavailable") },
-            { "Transaction", tostring(evidence.transactionRef or "Unavailable") },
-            { "Award/history reference", tostring(evidence.awardRef or evidence.historyRef or "Unavailable") },
-            { "Unavailable fields", unavailable },
+            { "Player", summary.player ~= "" and summary.player or "Missing player information" },
+            { "Item / request", summary.item ~= "" and summary.item or "Missing item information" },
+            { "Status", tostring(selected.status or "Open") },
+            { "Issue", summary.issue ~= "" and summary.issue or "Other" },
+            { "Note", summary.note ~= "" and summary.note or "No note provided" },
+            { "Evidence", summary.evidence },
           }, 260)
+          self.disputeTechnicalExpanded = self.disputeTechnicalExpanded == true
+          Dibs.AceGUI.AddButton(shell, tabs, self.disputeTechnicalExpanded and "Hide technical details" or "Show technical details", function()
+            self.disputeTechnicalExpanded = not self.disputeTechnicalExpanded
+            self:Refresh()
+          end, 190)
+          if self.disputeTechnicalExpanded then
+            local technicalSection = Dibs.AceGUI.AddSection(shell, tabs, "Technical details", "Diagnostic evidence is available when an Officer needs to investigate the request.")
+            local unavailable = evidence.unavailableFields and table.concat(evidence.unavailableFields, ", ") or "none"
+            Dibs.AceGUI.AddPropertyTable(shell, technicalSection, {
+              { "Evidence source", tostring(evidence.source or "Unavailable") },
+              { "Integration", tostring(evidence.integrationStatus or "Unavailable") },
+              { "Integration reason", tostring(evidence.integrationReason or "Unavailable") },
+              { "Transaction", tostring(evidence.transactionRef or "Unavailable") },
+              { "Award/history reference", tostring(evidence.awardRef or evidence.historyRef or "Unavailable") },
+              { "Unavailable fields", unavailable },
+            }, 260)
+          end
 
-          local resolutionSection = Dibs.AceGUI.AddSection(shell, tabs, "Resolution", "Every decision requires a clear reason. Ledger-changing actions also require explicit confirmation.")
+          local resolutionSection = Dibs.AceGUI.AddSection(shell, tabs, "Review actions", "Choose the normal next step. Advanced officer tools are separate.")
           self.disputeReason = self.disputeReason or ""
-          local reason = Dibs.AceGUI.AddEditBox(shell, resolutionSection, "Reason or question", function(value) self.disputeReason = value or "" end, 540)
+          local dangerousButtons = {}
+          local updateDangerousButtons
+          local reason = Dibs.AceGUI.AddEditBox(shell, resolutionSection, "Reason or question", function(value)
+            self.disputeReason = value or ""
+            if updateDangerousButtons then updateDangerousButtons() end
+          end, 540)
           setControlText(reason, self.disputeReason)
-          local amount = Dibs.AceGUI.AddEditBox(shell, resolutionSection, "Balance change (optional)", function(value) self.disputeAmount = value or "" end, 180)
-          setControlText(amount, self.disputeAmount or "")
-          self.disputeConfirmed = self.disputeConfirmed == true
-          local confirmation = Dibs.AceGUI.AddCheckBox(shell, resolutionSection, "Confirm ledger or target correction", self.disputeConfirmed, function(value) self.disputeConfirmed = value == true end, 300)
 
           local function resolve(action, options)
             options = options or {}
@@ -1840,9 +1894,67 @@ local function createAceWindow()
             self:Refresh()
           end
 
+          local function protectedActionDecision(actionId)
+            if not Dibs.Permissions or type(Dibs.Permissions.Evaluate) ~= "function" then return nil end
+            local ok, decision = pcall(Dibs.Permissions.Evaluate, actionId, nil)
+            return ok and decision or nil
+          end
+          local function protectedActionAllowed(actionId)
+            local decision = protectedActionDecision(actionId)
+            return decision and decision.allowed == true
+          end
+          local terminal = selected.status == "Resolved" or selected.status == "Rejected"
+          updateDangerousButtons = function()
+            local authorized = trimText(self.disputeReason) ~= "" and self.disputeConfirmed == true and not terminal
+            local adjustmentDecision = protectedActionDecision("ledger.adjust")
+            local allowed = {
+              authorized and protectedActionAllowed("ledger.adjust"),
+              authorized and protectedActionAllowed("ledger.refund"),
+              authorized and protectedActionAllowed("ledger.adjust"),
+              authorized and protectedActionAllowed("ledger.adjust"),
+              authorized and adjustmentDecision and adjustmentDecision.allowed and adjustmentDecision.role == "gm",
+              authorized,
+            }
+            for index, control in ipairs(dangerousButtons) do
+              Dibs.AceGUI.SetDisabled(control, not allowed[index])
+            end
+          end
+          local actionGroup = Dibs.AceGUI.AddInlineGroup(shell, resolutionSection)
+          local reviewButton = Dibs.AceGUI.AddButton(shell, actionGroup, "Start review", function() resolve("under_review") end, 110)
+          local questionButton = Dibs.AceGUI.AddButton(shell, actionGroup, "Ask for information", function() resolve("ask_information", { question = self.disputeReason }) end, 150)
+          local noCorrection = Dibs.AceGUI.AddButton(shell, actionGroup, "Resolve: no correction", function() resolve("no_correction") end, 155)
+          local duplicate = Dibs.AceGUI.AddButton(shell, actionGroup, "Mark duplicate", function() resolve("duplicate", { duplicateOf = self.disputeDuplicateId }) end, 110)
+          local reject = Dibs.AceGUI.AddButton(shell, actionGroup, "Reject", function() resolve("reject") end, 80)
+          local reopen = Dibs.AceGUI.AddButton(shell, actionGroup, "Reopen", function() resolve("reopen") end, 80)
+          Dibs.AceGUI.SetDisabled(reviewButton, terminal)
+          Dibs.AceGUI.SetDisabled(questionButton, terminal)
+          Dibs.AceGUI.SetDisabled(noCorrection, terminal or trimText(self.disputeReason) == "")
+          Dibs.AceGUI.SetDisabled(duplicate, terminal)
+          Dibs.AceGUI.SetDisabled(reject, terminal or trimText(self.disputeReason) == "")
+          Dibs.AceGUI.SetDisabled(reopen, not terminal)
+          Dibs.AceGUI.AddLabel(shell, resolutionSection, self.disputeStatusMessage or "Choose an action. Advanced officer tools require authorization, a reason, and explicit confirmation.", true)
+
+          self.disputeAdvancedExpanded = self.disputeAdvancedExpanded == true
+          Dibs.AceGUI.AddButton(shell, tabs, self.disputeAdvancedExpanded and "Hide advanced officer tools" or "Show advanced officer tools", function()
+            self.disputeAdvancedExpanded = not self.disputeAdvancedExpanded
+            self:Refresh()
+          end, 230)
+
           local targetButton
-          if selected.category == "wrong_item_player" then
-            local targetSection = Dibs.AceGUI.AddSection(shell, tabs, "Correct item or player", "Use this for a wrong-item or wrong-player report. Leave a field blank to keep its current value. A linked ledger entry is moved to the corrected player with two auditable entries.")
+          local correction, refund, revoke, import, adjustment
+          if self.disputeAdvancedExpanded then
+            local advancedSection = Dibs.AceGUI.AddSection(shell, tabs, "Advanced officer tools", "Administrative corrections are separate from the normal review workflow.")
+            self.disputeAmount = self.disputeAmount or ""
+            local amount = Dibs.AceGUI.AddEditBox(shell, advancedSection, "Balance change", function(value) self.disputeAmount = value or "" end, 180)
+            setControlText(amount, self.disputeAmount)
+            self.disputeConfirmed = self.disputeConfirmed == true
+            Dibs.AceGUI.AddCheckBox(shell, advancedSection, "I understand this changes recorded Dibs data", self.disputeConfirmed, function(value)
+              self.disputeConfirmed = value == true
+              if updateDangerousButtons then updateDangerousButtons() end
+            end, 360)
+
+            if selected.category == "wrong_item_player" then
+              local targetSection = Dibs.AceGUI.AddSection(shell, advancedSection, "Correct item or player", "Use this only when the request target is wrong. The existing correction service keeps original evidence immutable.")
             Dibs.AceGUI.AddPropertyTable(shell, targetSection, {
               { "Current player", tostring(evidence.winner or selected.player and selected.player.name or "Unavailable") },
               { "Current item", tostring(evidence.item or evidence.itemID or "Unavailable") },
@@ -1926,74 +2038,71 @@ local function createAceWindow()
                 itemLink = trimText(self.disputeCorrectItem),
               })
             end, 180)
-          end
+            end
 
-          local actionGroup = Dibs.AceGUI.AddInlineGroup(shell, resolutionSection)
-          local reviewButton = Dibs.AceGUI.AddButton(shell, actionGroup, "Start review", function() resolve("under_review") end, 110)
-          local questionButton = Dibs.AceGUI.AddButton(shell, actionGroup, "Ask for information", function() resolve("ask_information", { question = self.disputeReason }) end, 150)
-          local noCorrection = Dibs.AceGUI.AddButton(shell, actionGroup, "Resolve: no correction", function() resolve("no_correction") end, 155)
-          local duplicate = Dibs.AceGUI.AddButton(shell, actionGroup, "Mark duplicate", function() resolve("duplicate", { duplicateOf = self.disputeDuplicateId }) end, 110)
-          local reject = Dibs.AceGUI.AddButton(shell, actionGroup, "Reject", function() resolve("reject") end, 80)
-          local correction = Dibs.AceGUI.AddButton(shell, actionGroup, "Correct balance", function()
-            local options = { confirmed = self.disputeConfirmed }
-            local parsed = tonumber(trimText(self.disputeAmount))
-            if parsed then options.amount = parsed end
-            resolve("correct_balance", options)
-          end, 120)
-          local refund = Dibs.AceGUI.AddButton(shell, actionGroup, "Refund Dib", function()
-            local options = { confirmed = self.disputeConfirmed }
-            local parsed = tonumber(trimText(self.disputeAmount))
-            if parsed then options.amount = parsed end
-            resolve("refund", options)
-          end, 95)
-          local revoke = Dibs.AceGUI.AddButton(shell, actionGroup, "Revoke Dib", function()
-            local options = { confirmed = self.disputeConfirmed }
-            local parsed = tonumber(trimText(self.disputeAmount))
-            if parsed then options.amount = parsed end
-            resolve("revoke", options)
-          end, 95)
-          local import = Dibs.AceGUI.AddButton(shell, actionGroup, "Import historical", function()
-            local options = { confirmed = self.disputeConfirmed }
-            local parsed = tonumber(trimText(self.disputeAmount))
-            if parsed then options.amount = parsed end
-            resolve("historical_import", options)
-          end, 125)
-          local adjustment = Dibs.AceGUI.AddButton(shell, actionGroup, "Admin adjustment", function()
-            local options = { confirmed = self.disputeConfirmed }
-            local parsed = tonumber(trimText(self.disputeAmount))
-            if parsed then options.amount = parsed end
-            resolve("adjustment", options)
-          end, 120)
-          local reopen = Dibs.AceGUI.AddButton(shell, actionGroup, "Reopen", function() resolve("reopen") end, 80)
-          local terminal = selected.status == "Resolved" or selected.status == "Rejected"
-          Dibs.AceGUI.SetDisabled(reviewButton, terminal)
-          Dibs.AceGUI.SetDisabled(questionButton, terminal)
-          Dibs.AceGUI.SetDisabled(noCorrection, terminal)
-          Dibs.AceGUI.SetDisabled(duplicate, terminal)
-          Dibs.AceGUI.SetDisabled(reject, terminal)
-          Dibs.AceGUI.SetDisabled(correction, terminal)
-          Dibs.AceGUI.SetDisabled(refund, terminal)
-          Dibs.AceGUI.SetDisabled(revoke, terminal)
-          Dibs.AceGUI.SetDisabled(import, terminal)
-          Dibs.AceGUI.SetDisabled(adjustment, terminal)
-          Dibs.AceGUI.SetDisabled(targetButton, terminal)
-          Dibs.AceGUI.SetDisabled(reopen, not terminal)
-          Dibs.AceGUI.AddLabel(shell, resolutionSection, self.disputeStatusMessage or "Choose an action. Ledger-changing corrections require a reason and explicit confirmation.", true)
+            local administrativeGroup = Dibs.AceGUI.AddSection(shell, advancedSection, "Administrative correction", "These actions write auditable corrections through the existing request service.")
+            local adjustmentDecision = protectedActionDecision("ledger.adjust")
+            correction = Dibs.AceGUI.AddButton(shell, administrativeGroup, "Correct balance", function()
+              local options = { confirmed = self.disputeConfirmed }
+              local parsed = tonumber(trimText(self.disputeAmount))
+              if parsed then options.amount = parsed end
+              resolve("correct_balance", options)
+            end, 120)
+            import = Dibs.AceGUI.AddButton(shell, administrativeGroup, "Import historical", function()
+              local options = { confirmed = self.disputeConfirmed }
+              local parsed = tonumber(trimText(self.disputeAmount))
+              if parsed then options.amount = parsed end
+              resolve("historical_import", options)
+            end, 125)
+            if adjustmentDecision and adjustmentDecision.allowed and adjustmentDecision.role == "gm" then
+              adjustment = Dibs.AceGUI.AddButton(shell, administrativeGroup, "Admin adjustment", function()
+                local options = { confirmed = self.disputeConfirmed }
+                local parsed = tonumber(trimText(self.disputeAmount))
+                if parsed then options.amount = parsed end
+                resolve("adjustment", options)
+              end, 120)
+            end
+
+            local dibAccountingGroup = Dibs.AceGUI.AddSection(shell, advancedSection, "Dib accounting", "Use only when the evidence supports a balance correction.")
+            refund = Dibs.AceGUI.AddButton(shell, dibAccountingGroup, "Refund Dib", function()
+              local options = { confirmed = self.disputeConfirmed }
+              local parsed = tonumber(trimText(self.disputeAmount))
+              if parsed then options.amount = parsed end
+              resolve("refund", options)
+            end, 95)
+            revoke = Dibs.AceGUI.AddButton(shell, dibAccountingGroup, "Revoke Dib", function()
+              local options = { confirmed = self.disputeConfirmed }
+              local parsed = tonumber(trimText(self.disputeAmount))
+              if parsed then options.amount = parsed end
+              resolve("revoke", options)
+            end, 95)
+
+            dangerousButtons = { correction, refund, revoke, import, adjustment, targetButton }
+            updateDangerousButtons()
+          end
 
           local timelineRows = {}
           for _, event in ipairs(Dibs.Disputes.GetTimeline(self.disputeSelectedId, nil) or {}) do
             timelineRows[#timelineRows + 1] = { tostring(event.timestamp or ""), tostring(event.action or ""), tostring(event.actorName or ""), tostring(event.reason or "") }
           end
           if #timelineRows > 0 then
-            Dibs.AceGUI.AddTable(shell, tabs, {
-              { title = "Time", width = 130, tooltip = "Audit event time." },
-              { title = "Action", width = 150, tooltip = "Recorded action." },
-              { title = "Actor", width = 140, tooltip = "Actor identity is officer-only." },
-              { title = "Reason", width = 300, tooltip = "Recorded justification." },
-            }, timelineRows, 190)
+            self.disputeHistoryExpanded = self.disputeHistoryExpanded == true
+            Dibs.AceGUI.AddButton(shell, tabs, self.disputeHistoryExpanded and "Hide history (" .. tostring(#timelineRows) .. " events)" or "Show history (" .. tostring(#timelineRows) .. " events)", function()
+              self.disputeHistoryExpanded = not self.disputeHistoryExpanded
+              self:Refresh()
+            end, 190)
+            if self.disputeHistoryExpanded then
+              Dibs.AceGUI.AddTable(shell, tabs, {
+                { title = "Date", width = 130, tooltip = "Audit event time." },
+                { title = "Actor", width = 140, tooltip = "Actor identity is officer-only." },
+                { title = "Action", width = 150, tooltip = "Recorded action." },
+                { title = "Reason", width = 300, tooltip = "Recorded justification." },
+              }, timelineRows, 190)
+            end
           end
         end
       end
+      finishRequestRender(#(requests or {}))
       return
     end
 
@@ -2252,17 +2361,32 @@ local function createAceWindow()
       return
     end
     if self.activeTab == "debug" then
-      Dibs.AceGUI.AddHeader(shell, tabs, "Debug report", "Diagnostic visibility and runtime state.")
-      Dibs.AceGUI.AddLabel(shell, tabs, Dibs.BuildDebugReport(), true)
+      self.debugControls = {}
+      Dibs.AceGUI.AddHeading(shell, tabs, "Debug", "Adjust module verbosity and open diagnostic logs.")
+      local verbosity = Dibs.AceGUI.AddSection(shell, tabs, "Module verbosity", "0 disables diagnostics, 1 is normal, and 5 is maximum diagnostics.")
       for _, entry in ipairs({ { "All", "all" }, { "Announcements", "announce" }, { "Sync", "sync" }, { "UI", "ui" }, { "Adventure Guide", "encounter_journal" } }) do
         local key, label = entry[2], entry[1]
         local debugLevel = tonumber(Dibs.GetDebugLevels()[key]) or tonumber(Dibs.GetDebugLevels().all) or 1
-        local control = Dibs.AceGUI.AddDropdown(shell, tabs, label .. " level", { [0]="0 - hidden", [1]="1 - normal", [2]="2", [3]="3", [4]="4", [5]="5 - maximum" }, function(value)
+        local control = Dibs.AceGUI.AddDropdown(shell, verbosity, label .. " level", { [0]="0 - disabled", [1]="1 - normal", [2]="2", [3]="3", [4]="4", [5]="5 - maximum" }, function(value)
           Dibs.SetDebugLevel(key, tonumber(value) or 0); self:Refresh()
         end, 220)
         Dibs.AceGUI.SetValue(control, debugLevel)
+        self.debugControls[key] = control
       end
-      Dibs.AceGUI.AddButton(shell, tabs, "Copy report to chat", function() Dibs.Message(Dibs.BuildDebugReport()) end, 180)
+      local logs = Dibs.AceGUI.AddSection(shell, tabs, "Logs", "Open the separate diagnostic log window when detailed events are needed.")
+      self.debugLogsButton = Dibs.AceGUI.AddButton(shell, logs, "Open debug logs", function()
+        if Dibs.DebugLogs and Dibs.DebugLogs.Open then Dibs.DebugLogs.Open() end
+      end, 160)
+      self.debugReportExpanded = self.debugReportExpanded == true
+      self.debugReportButton = Dibs.AceGUI.AddButton(shell, tabs, self.debugReportExpanded and "Hide debug report" or "Show debug report", function()
+        self.debugReportExpanded = not self.debugReportExpanded
+        self:Refresh()
+      end, 170)
+      if self.debugReportExpanded then
+        local report = Dibs.AceGUI.AddSection(shell, tabs, "Diagnostic report", "Technical runtime details are available on demand.")
+        Dibs.AceGUI.AddLabel(shell, report, Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", true)
+        Dibs.AceGUI.AddButton(shell, report, "Copy report to chat", function() Dibs.Message(Dibs.BuildDebugReport()) end, 180)
+      end
       return
     end
 
@@ -2412,7 +2536,28 @@ local function createAceWindow()
       setControlsVisible({ previous, self.pageText, nextButton }, false)
     end
   end
-  frame:HookScript("OnShow", function(self) self:Refresh() end)
+  shell.onRelease = function()
+    for _, key in ipairs({
+      "aceTabs", "contentHost", "mountedPage", "mountedPageHost", "developerSandboxButton", "lootTypeControls",
+      "enableLootTypes", "defaultLootTypes", "eligibilityAdvanced", "eligibilityFamily", "eligibilitySearchBox",
+      "disputeStatusFilter", "disputeQuery", "disputeSearchBox", "disputeSelectedId", "disputeReason",
+      "disputeStatusMessage", "disputeTechnicalExpanded", "disputeAdvancedExpanded", "disputeHistoryExpanded",
+      "disputeAmount", "disputeConfirmed", "disputeTargetRequestId", "disputeCorrectPlayer", "disputeCorrectItem",
+      "disputeCorrectPlayerQuery", "disputeCorrectItemQuery", "disputeCorrectItemKey", "disputeItemCatalogByKey",
+      "rankRows", "rankDrafts", "rankRowCount", "selectedSeasonId", "inputBoundSeasonId", "ledgerPage", "ledgerQuery",
+      "ledgerTitle", "ledgerText", "aceLedgerScroll", "pageText", "summaryText", "statusText", "activeTab",
+      "selectedRoute", "Refresh", "SelectTab", "SetStatus", "CloseHistoryTransfer", "dibsAceGUIShell", "_dibsUiShell",
+    }) do
+      frame[key] = nil
+    end
+  end
+  if not frame._dibsOnShowHookInstalled then
+    frame._dibsOnShowHookInstalled = true
+    frame:HookScript("OnShow", function(self)
+      local activeShell = self._dibsUiShell
+      if activeShell and activeShell._dibsActive then self:Refresh() end
+    end)
+  end
   _G.DibsOfficerFrame = frame
   local selected = Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(frame.activeTab))
   if not selected then frame:Refresh() end
