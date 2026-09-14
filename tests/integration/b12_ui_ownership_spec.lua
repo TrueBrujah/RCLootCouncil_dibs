@@ -68,6 +68,19 @@ describe("B12a shared UI ownership", function()
     assert_nil(dropdown.host._dibsMSALabel)
   end)
 
+  it("compacts a pooled container before adding the next widget", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
+    local parent = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    dibs.AceGUI.AddLabel(shell, parent, "First", true)
+    dibs.AceGUI.AddLabel(shell, parent, "Second", true)
+    parent.children[1] = nil
+    local ok, heading = pcall(dibs.AceGUI.AddHeading, shell, parent, "Next", "After a pooled release.")
+    assert_true(ok)
+    assert_not_nil(heading)
+    for index = 1, #parent.children do assert_not_nil(parent.children[index]) end
+  end)
+
   it("coalesces refreshes and flushes them after combat", function()
     local _, dibs = loader.load({ withAce3 = true, wow = { inCombat = true } })
     local calls = 0

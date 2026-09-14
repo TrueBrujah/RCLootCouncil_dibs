@@ -331,6 +331,25 @@ local function wouldCreateParentCycle(owner, widget)
     and frameContains(owner.frame, widget.frame)
 end
 
+local function normalizeChildren(container)
+  local children = container and container.children
+  if type(children) ~= "table" then return end
+  local ordered = {}
+  local maxIndex = 0
+  for index, child in pairs(children) do
+    if type(index) == "number" then
+      maxIndex = math.max(maxIndex, index)
+      if child then
+        ordered[#ordered + 1] = { index = index, child = child }
+      end
+    end
+  end
+  if maxIndex == #ordered then return end
+  table.sort(ordered, function(left, right) return left.index < right.index end)
+  for index = 1, #ordered do children[index] = ordered[index].child end
+  for index = #ordered + 1, #children do children[index] = nil end
+end
+
 function Adapter.Create(shell, kind, parent)
   if not shell or not shell.gui then return nil end
   local ok, widget = pcall(shell.gui.Create, shell.gui, kind)
@@ -341,6 +360,7 @@ function Adapter.Create(shell, kind, parent)
     disposeUnattachedWidget(shell, widget)
     return nil
   end
+  normalizeChildren(owner)
   owner:AddChild(widget)
   if Dibs.Midnight and type(Dibs.Midnight.ApplyToWidget) == "function" then
     Dibs.Midnight.ApplyToWidget(widget, Adapter.GetPresentationTokens())
@@ -450,6 +470,7 @@ function Adapter.Clear(container)
   if paused then container:PauseLayout() end
   Adapter.HideContextMenu()
   releaseMSAControls(container)
+  normalizeChildren(container)
   local childArray = container and container.children
   local hasChildArray = type(childArray) == "table"
   local children = {}
@@ -502,6 +523,7 @@ function Adapter.Clear(container)
   elseif container and type(container.ReleaseChildren) == "function" then
     pcall(container.ReleaseChildren, container)
   end
+  normalizeChildren(container)
   if paused then container:ResumeLayout() end
 end
 
