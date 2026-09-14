@@ -42,6 +42,33 @@ one selected-category detail, and protected policy saves carrying the existing
 `completionThreshold` fields. No business authority or protected action
 semantics were changed.
 
+## Requests initial-mount remediation
+
+The Retail blocker was isolated to route activation ownership. The addon
+initializer creates a hidden default Officer frame on startup. The previous
+opening path then relied on TreeGroup selection callbacks to mount the requested
+page; that left a valid Requests selection capable of showing an empty content
+surface when the selected value was already held by TreeGroup or when a control
+initialization callback caused a refresh during the first render.
+
+The initialization order is now explicit:
+
+1. Create the AceGUI TreeGroup.
+2. Assign grouped tree data and register `OnGroupSelected`.
+3. Create `contentHost` and the routed page root.
+4. Define the single `ActivateRoute(route, syncTree)` dispatcher.
+5. Programmatically synchronize the TreeGroup selection with a recursion guard.
+6. Clear and mount the requested page root directly.
+7. Record `selectedRoute`, `mountedPage`, and the synchronized tree route.
+
+Initial construction, public `CreateWindow(initialRoute)`, `SelectTab`, TreeGroup
+clicks, and refreshes all use that dispatcher. The first render no longer relies
+on an AceGUI callback side effect. Tree selection is synchronized only when the
+route changes, and refresh requests emitted while controls initialize are
+ignored until the page render completes. No delayed timers, artificial route
+switches, second refreshes, layout workarounds, or business-logic changes were
+introduced.
+
 ## Officer Pre-Dibs follow-up
 
 The Officer `Pre-Dibs` route now renders the canonical `groups.preDibs` AceConfig
@@ -59,7 +86,7 @@ receives canonical `ENCOUNTER`.
 Focused B12a suites:
 
 ```text
-52 passed, 0 failed (5 files)
+62 passed, 0 failed (5 files)
 ```
 
 B11 UI ownership, navigation, Midnight, and lifecycle regressions:
@@ -69,8 +96,19 @@ B11 UI ownership, navigation, Midnight, and lifecycle regressions:
 ```
 
 The latest combined route, ownership, options, and eligibility validation is
-green at `52 passed, 0 failed (5 files)`. The final focused lifecycle slice
+green at `62 passed, 0 failed (5 files)`. The final focused lifecycle slice
 after the scroll ownership adjustment is `22 passed, 0 failed (3 files)`.
+
+Requests initial-mount regression file:
+
+```text
+19 passed, 0 failed (1 file)
+```
+
+It covers direct Dashboard, Requests, and Pre-Dibs opens; selected-route and
+mounted-page alignment; no second navigation requirement; Requests/Pre-Dibs
+round trips; close/reopen; fresh-load Requests; duplicate-dispatch prevention;
+and nonblank valid route roots.
 
 Full explicit Fengari suite (all `tests/**/*_spec.lua` files):
 
@@ -93,3 +131,5 @@ The B12a suites and B11 UI regression slice are green. The plain `npx --yes feng
 Automated mocks cannot establish zero live Retail BugSack errors. Manual Retail validation remains required for ten open-close cycles, every exposed Player/Officer route, grouped navigation callbacks, drag and reopen behavior, context-menu replacement/close, tooltip variants, combat deferral, and confirmation that no stale page content remains.
 
 `B12a automated validation complete; manual Retail validation required.`
+
+`B12a REQUEST INITIAL MOUNT FIX READY FOR RETAIL RE-VALIDATION`

@@ -84,6 +84,8 @@ local OFFICER_TAB_ALIASES = {
   rcHistory = "reconciliation",
 }
 
+local canViewOfficerData
+
 local function getOfficerNavigationTree()
   local role = Dibs.OfficerUI.GetPresentationRole()
   if role ~= "gm" and role ~= "officer" then return {} end
@@ -129,6 +131,10 @@ local function officerTreeSelectionValue(route)
 end
 
 local function officerRouteVisible(route)
+  if (route == "developer" or route == "debug") and Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled then
+    if Dibs.DeveloperMode.IsEnabled() == true then return true end
+    if canViewOfficerData() then return true end
+  end
   for _, entry in ipairs(getOfficerNavigationTree()) do
     if entry.value == route then return true end
   end
@@ -157,7 +163,7 @@ end
 -- Officer views contain the guild-wide ledger, Pre-Dibs history and rank
 -- diagnostics.  Keep the authorization check at the read boundary so a
 -- normal player cannot bypass the UI by calling these Lua functions directly.
-local function canViewOfficerData()
+canViewOfficerData = function()
   local role = Dibs.OfficerUI.GetPresentationRole()
   return role == "gm" or role == "officer"
 end
@@ -1155,6 +1161,11 @@ end
 
 local function renderDashboard(shell, parent, frame)
   local dashboard = Dibs.OfficerUI.GetDashboardProjection()
+  if dashboard.hidden then
+    Dibs.AceGUI.AddHeading(shell, parent, "Officer dashboard")
+    Dibs.AceGUI.AddLabel(shell, parent, "Officer access required.", true)
+    return
+  end
   local function addStatus(key, value)
     local tone = value and value.label == "Ready" and "ready" or (value and value.label == "Operational" and "success" or "info")
     if value and (value.label == "Unavailable" or value.label == "Degraded" or value.label == "Recovery in progress" or value.label == "Behind / Synchronizing") then
@@ -1164,7 +1175,7 @@ local function renderDashboard(shell, parent, frame)
     Dibs.AceGUI.AddLabel(shell, parent, tostring(value and value.explanation or "Unavailable."), true)
   end
   Dibs.AceGUI.AddHeading(shell, parent, "Officer dashboard", "Guild-wide operational summary for authorized Officers and GM.")
-  Dibs.AceGUI.AddLabel(shell, parent, "Season: " .. tostring(dashboard.season.name), true)
+  Dibs.AceGUI.AddLabel(shell, parent, "Season: " .. tostring(dashboard.season and dashboard.season.name or "No active season"), true)
   Dibs.AceGUI.AddLabel(shell, parent, "Requests pending: " .. tostring(dashboard.metrics.pendingRequests)
     .. " | Active Pre-Dibs: " .. tostring(dashboard.metrics.activePreDibs)
     .. " | Active players: " .. tostring(dashboard.metrics.activePlayers), true)
@@ -1282,14 +1293,16 @@ local function splitPipeLine(line, expected)
   return cells
 end
 
-local function createAceWindow()
+local function createAceWindow(initialRoute)
   local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Officer", 980, 760, { "CENTER", 280, 0 }, "OfficerWindowPosition")
   if not shell then return nil end
   local frame = shell.frame
   if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
   frame.dibsAceGUIShell = shell
   frame._dibsUiShell = shell
-  frame.activeTab = "overview"
+  frame.activeTab = normalizeOfficerTab(initialRoute or "overview")
+  frame.selectedRoute = frame.activeTab
+  frame.routeDispatchCount = 0
   frame.ledgerPage = 1
   frame.rankRows = {}
   frame.rankDrafts = {}
@@ -1557,11 +1570,10 @@ local function createAceWindow()
     end, 90)
   end
 
+  local activateRoute
   local navigation = Dibs.AceGUI.AddTree(shell, buildOfficerTree(getOfficerNavigationTree()), function(value)
-    local route = normalizeOfficerTab(value)
-    if not officerRouteVisible(route) then route = "overview" end
-    frame.activeTab, frame.selectedRoute, frame.ledgerPage = route, route, 1
-    frame:Refresh()
+    if frame._dibsRouteSyncing then return end
+    if activateRoute then activateRoute(value, false) end
   end, 190)
   local contentHost = Dibs.AceGUI.Create(shell, "SimpleGroup", navigation)
   if contentHost then
@@ -1572,14 +1584,10 @@ local function createAceWindow()
   frame.aceTabs = navigation
   frame.contentHost = contentHost
   frame.SelectTab = function(tab)
-    local normalized = normalizeOfficerTab(tab)
-    frame.activeTab, frame.selectedRoute, frame.ledgerPage = normalized, normalized, 1
-    if not Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(normalized)) then
-      frame:Refresh()
-    end
+    if activateRoute then activateRoute(tab, true) end
   end
 
-  frame.Refresh = function(self)
+  local function renderRoute(self)
     self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
     self.selectedRoute = self.activeTab
     if self.activeTab ~= "history" and self.activeTab ~= "reconciliation" and closeHistoryTransfer then
@@ -2652,6 +2660,30 @@ local function createAceWindow()
       setControlsVisible({ previous, self.pageText, nextButton }, false)
     end
   end
+  activateRoute = function(route, syncTree)
+    local normalized = normalizeOfficerTab(route or frame.activeTab or "overview")
+    if not officerRouteVisible(normalized) then normalized = "overview" end
+    frame.activeTab, frame.selectedRoute, frame.ledgerPage = normalized, normalized, 1
+    frame.routeDispatchCount = (frame.routeDispatchCount or 0) + 1
+    if syncTree ~= false and navigation and frame._dibsTreeRoute ~= normalized then
+      frame._dibsRouteSyncing = true
+      Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(normalized))
+      frame._dibsRouteSyncing = false
+    end
+    frame._dibsTreeRoute = normalized
+    frame._dibsRenderingRoute = true
+    local ok, reason = pcall(renderRoute, frame)
+    frame._dibsRenderingRoute = false
+    if not ok then error(reason, 0) end
+  end
+  frame.ActivateRoute = function(self, route)
+    activateRoute(route, true)
+  end
+  frame.Refresh = function(self)
+    if self._dibsRenderingRoute then return end
+    activateRoute(self.activeTab, true)
+  end
+
   shell.onRelease = function()
     for _, key in ipairs({
       "aceTabs", "contentHost", "mountedPage", "mountedPageHost", "developerSandboxButton", "lootTypeControls",
@@ -2662,7 +2694,7 @@ local function createAceWindow()
       "disputeCorrectPlayerQuery", "disputeCorrectItemQuery", "disputeCorrectItemKey", "disputeItemCatalogByKey",
       "rankRows", "rankDrafts", "rankRowCount", "selectedSeasonId", "inputBoundSeasonId", "ledgerPage", "ledgerQuery",
       "ledgerTitle", "ledgerText", "aceLedgerScroll", "pageText", "summaryText", "statusText", "activeTab",
-      "selectedRoute", "Refresh", "SelectTab", "SetStatus", "CloseHistoryTransfer", "dibsAceGUIShell", "_dibsUiShell",
+      "selectedRoute", "Refresh", "SelectTab", "ActivateRoute", "routeDispatchCount", "_dibsRouteSyncing", "_dibsTreeRoute", "_dibsRenderingRoute", "SetStatus", "CloseHistoryTransfer", "dibsAceGUIShell", "_dibsUiShell",
     }) do
       frame[key] = nil
     end
@@ -2675,12 +2707,11 @@ local function createAceWindow()
     end)
   end
   _G.DibsOfficerFrame = frame
-  local selected = Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(frame.activeTab))
-  if not selected then frame:Refresh() end
+  activateRoute(frame.activeTab, true)
   return frame
 end
 
-function Dibs.OfficerUI.CreateWindow()
+function Dibs.OfficerUI.CreateWindow(initialRoute)
   if _G.DibsOfficerFrame then
     local existingShell = _G.DibsOfficerFrame.dibsAceGUIShell
     if existingShell and existingShell.window then
@@ -2689,11 +2720,14 @@ function Dibs.OfficerUI.CreateWindow()
     else
       _G.DibsOfficerFrame:SetSize(980, 760)
     end
+    if initialRoute and _G.DibsOfficerFrame.ActivateRoute then
+      _G.DibsOfficerFrame:ActivateRoute(initialRoute)
+    end
     return _G.DibsOfficerFrame
   end
 
   if Dibs.AceGUI and Dibs.AceGUI.IsAvailable and Dibs.AceGUI.IsAvailable() then
-    return createAceWindow()
+    return createAceWindow(initialRoute)
   end
 
   local aceShell = nil
