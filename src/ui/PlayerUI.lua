@@ -472,6 +472,28 @@ function Dibs.PlayerUI.GetHistory(playerName)
   return Dibs.Ledger.GetHistory(playerName or Dibs.GetPlayerName())
 end
 
+---@param filter table|nil Local player history filters.
+---@return table view Player-safe confirmed-history projection.
+function Dibs.PlayerUI.BuildHistoryView(filter)
+  filter = type(filter) == "table" and filter or {}
+  local summary = Dibs.PlayerUI.GetSummary(filter.playerName)
+  local entries = projectHistory(summary.player, summary.season and summary.season.id)
+  local limit = math.max(1, math.min(50, tonumber(filter.limit) or 25))
+  local bounded = {}
+  for index, entry in ipairs(entries) do
+    if index > limit then break end
+    bounded[#bounded + 1] = {
+      date = entry.date, item = tostring(entry.item or "Dibs"):sub(1, 180),
+      action = entry.action, result = tostring(entry.result or "Recorded"):sub(1, 240),
+      balanceImpact = entry.balanceImpact,
+    }
+  end
+  return {
+    scope = "player", player = summary.player, seasonName = summary.season and summary.season.name or "No active season",
+    entries = bounded, emptyState = #bounded == 0 and "No confirmed Dibs history yet." or nil,
+  }
+end
+
 local function createLegacyAceWindow()
   local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Player", 720, 620, { "CENTER", 0, 0 })
   if not shell then return nil end

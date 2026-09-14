@@ -164,15 +164,15 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 ### Tests for User Story 6
 
-- [ ] T048 [P] [US6] Add guided reconciliation stage, counts, candidate detail, ambiguous-state, and stale-review tests in `tests/integration/b11_reconciliation_ui_spec.lua`.
-- [ ] T049 [P] [US6] Add confirmation/rejection delegation, Officer authority, no-RC-write, and immutable-evidence contract tests in `tests/contract/b11_reconciliation_actions_spec.lua`.
+- [x] T048 [P] [US6] Add guided reconciliation stage, counts, candidate detail, ambiguous-state, and stale-review tests in `tests/integration/b11_reconciliation_ui_spec.lua`.
+- [x] T049 [P] [US6] Add confirmation/rejection delegation, Officer authority, no-RC-write, and immutable-evidence contract tests in `tests/contract/b11_reconciliation_actions_spec.lua`.
 
 ### Implementation for User Story 6
 
-- [ ] T050 [US6] Implement Search, Review Candidates, Confirm/Reject, and Complete workflow state in `src/ui/LogsUI.lua` and `src/ui/OfficerUI.lua`.
-- [ ] T051 [US6] Project bounded scan counts, candidate summaries, item/winner/date/response fields, and expandable technical evidence from `src/integrations/RCLootCouncil.lua`.
-- [ ] T052 [US6] Delegate confirm/reject actions through existing `ProtectedActions.history.confirm` and rejection paths, with stale candidate and duplicate handling in `src/ui/LogsUI.lua`.
-- [ ] T053 [US6] Preserve player-safe confirmed-history projections and Officer-only evidence details in `src/ui/PlayerUI.lua` and `src/ui/OfficerUI.lua`.
+- [x] T050 [US6] Implement Search, Review Candidates, Confirm/Reject, and Complete workflow state in `src/ui/LogsUI.lua` and `src/ui/OfficerUI.lua`.
+- [x] T051 [US6] Project bounded scan counts, candidate summaries, item/winner/date/response fields, and expandable technical evidence from `src/integrations/RCLootCouncil.lua`.
+- [x] T052 [US6] Delegate confirm/reject actions through existing `ProtectedActions.history.confirm` and rejection paths, with stale candidate and duplicate handling in `src/ui/LogsUI.lua`.
+- [x] T053 [US6] Preserve player-safe confirmed-history projections and Officer-only evidence details in `src/ui/PlayerUI.lua` and `src/ui/OfficerUI.lua`.
 
 **Checkpoint**: User Story 6 is independently functional when reconciliation remains read-only until protected confirmation/rejection, ambiguous rows cannot appear confirmed, and B09 evidence remains immutable.
 
