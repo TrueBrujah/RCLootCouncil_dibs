@@ -24,6 +24,29 @@ describe("Retail Officer navigation lifecycle", function()
     end
   end)
 
+  it("routes the real AceGUI TreeGroup unique value to the selected renderer", function()
+    local dibs = setup()
+    dibs.DeveloperMode.SetEnabled(true)
+    local frame = dibs.OfficerUI.CreateWindow()
+    local callback = frame.aceTabs.callbacks.OnGroupSelected
+    local sections = {}
+    for _, entry in ipairs(dibs.OfficerUI.GetNavigationTree()) do sections[entry.value] = entry.section end
+    local routes = { "overview", "disputes", "preDibs", "history", "seasons", "ranks", "lootTypes", "announcements", "integration", "settings", "diagnostics", "eligibility", "developer", "debug" }
+
+    for _ = 1, 2 do
+      for _, route in ipairs(routes) do
+        local section = "section_" .. string.lower((sections[route] or ""):gsub("%s+", "_"))
+        callback(frame.aceTabs, "OnGroupSelected", section .. string.char(1) .. route)
+
+        assert_equal(route, frame.selectedRoute)
+        assert_equal(route, frame.mountedPage)
+        assert_equal(1, frame.primaryPageCount)
+        assert_true(#(frame.contentHost.children[1].children or {}) > 0)
+        assert_true(not tostring(frame.contentHost.children[1].children[1].text or ""):find("Dashboard", 1, true), route)
+      end
+    end
+  end)
+
   it("does not duplicate page roots across repeated route transitions or reopen", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow()

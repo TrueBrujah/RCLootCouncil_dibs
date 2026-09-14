@@ -63,7 +63,6 @@ local OFFICER_NAV_TREE = {
 local OFFICER_TAB_ALIASES = {
   dashboard = "overview",
   requests = "disputes",
-  lootTypes = "integration",
   lootRules = "lootTypes",
   rclootcouncil = "integration",
   predibs = "preDibs",
@@ -99,7 +98,22 @@ local function buildOfficerTree(entries)
 end
 
 local function normalizeOfficerTab(tab)
-  return OFFICER_TAB_ALIASES[tab] or tab
+  local route = tab
+  if type(tab) == "string" then
+    local separator = string.char(1)
+    for segment in tab:gmatch("[^" .. separator .. "]+") do route = segment end
+  end
+  return OFFICER_TAB_ALIASES[route] or route
+end
+
+local function officerTreeSelectionValue(route)
+  for _, entry in ipairs(getOfficerNavigationTree()) do
+    if entry.value == route then
+      local section = "section_" .. string.lower((entry.section or ""):gsub("%s+", "_"))
+      return section .. string.char(1) .. entry.value
+    end
+  end
+  return route
 end
 
 local function officerRouteVisible(route)
@@ -1382,7 +1396,7 @@ local function createAceWindow()
   frame.SelectTab = function(tab)
     local normalized = normalizeOfficerTab(tab)
     frame.activeTab, frame.selectedRoute, frame.ledgerPage = normalized, normalized, 1
-    if not Dibs.AceGUI.SelectTree(navigation, normalized) then
+    if not Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(normalized)) then
       frame:Refresh()
     end
   end
@@ -2310,7 +2324,7 @@ local function createAceWindow()
   end
   frame:HookScript("OnShow", function(self) self:Refresh() end)
   _G.DibsOfficerFrame = frame
-  local selected = Dibs.AceGUI.SelectTree(navigation, frame.activeTab)
+  local selected = Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(frame.activeTab))
   if not selected then frame:Refresh() end
   return frame
 end
