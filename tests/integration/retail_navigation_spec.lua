@@ -17,6 +17,16 @@ local function containsText(widget, text)
   return false
 end
 
+local function findText(widget, text)
+  if type(widget) ~= "table" then return nil end
+  if tostring(widget.text or "") == text then return widget end
+  for _, child in ipairs(widget.children or {}) do
+    local found = findText(child, text)
+    if found then return found end
+  end
+  return nil
+end
+
 describe("Retail Officer navigation lifecycle", function()
   it("keeps the selected route, mounted page, and single content host in sync", function()
     local dibs = setup()
@@ -85,6 +95,36 @@ describe("Retail Officer navigation lifecycle", function()
     assert_false(containsText(frame.contentHost, "History reconciliation"))
     assert_false(previousPage.frame._shown)
     assert_equal(1, #(frame.contentHost.children or {}))
+  end)
+
+  it("keeps History-owned content out of Settings, Eligibility, and Debug", function()
+    local dibs = setup()
+    dibs.DeveloperMode.SetEnabled(true)
+    local frame = dibs.OfficerUI.CreateWindow()
+    frame.SelectTab("history")
+    assert_true(containsText(frame.contentHost, "History reconciliation"))
+    for _, route in ipairs({ "settings", "eligibility", "debug" }) do
+      frame.SelectTab(route)
+      assert_false(containsText(frame.contentHost, "History reconciliation"), route)
+      assert_false(containsText(frame.contentHost, "Historical DIB transfer"), route)
+    end
+  end)
+
+  it("activates the sandbox through the Developer page button without granting a role", function()
+    local dibs = setup()
+    dibs.DeveloperMode.SetEnabled(true)
+    local frame = dibs.OfficerUI.CreateWindow()
+    frame.SelectTab("developer")
+    local button = findText(frame.contentHost, "Open developer sandbox")
+    assert_true(button ~= nil)
+    button.callbacks.OnClick(button, "OnClick")
+    local status = dibs.DeveloperSandbox.GetStatus()
+    assert_true(status.active)
+    assert_equal("sandbox", status.provider)
+    assert_equal(nil, status.role)
+    assert_true(containsText(frame.contentHost, "DEVELOPER SANDBOX ACTIVE"))
+    assert_true(containsText(frame.contentHost, "Simulated authority: none"))
+    dibs.DeveloperSandbox.ExitSandbox()
   end)
 
   it("keeps Officer routes unavailable to a production player", function()

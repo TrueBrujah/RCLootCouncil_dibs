@@ -198,7 +198,7 @@ describe("RCLootCouncil history reconciliation", function()
     local search = findWidget(tree, "Button", "Search history (preview)")
     assert_not_nil(search)
     search.callbacks.OnClick()
-    local transfer = findWidget(tree, "Button", "Transfer")
+    local transfer = findWidget(tree, "Button", "Review")
     assert_not_nil(transfer)
     transfer.callbacks.OnClick()
     local transferWindow

@@ -1408,7 +1408,7 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
     progression = execute(2, "Curio + Tier Set", function() applyDibSemanticTemplate("progression") end),
     broad = execute(3, "Standard loot", function() applyDibSemanticTemplate("broad") end),
   } },
-  readiness = { type = "group", name = "Raid Readiness & Dry-Run", order = 3.5, inline = true, args = {
+  readiness = { type = "group", name = "Raid Readiness", order = 3.5, inline = true, args = {
     intro = description(1, "Run a read-only readiness check before raid. The dry-run uses local validation only and never calls RCMLAwardSuccess, FinalizeAward, loot controls, chat traffic, or ledger accounting."),
     status = description(2, function()
       if Dibs.Readiness and Dibs.Readiness.GetStatusText then
@@ -1430,19 +1430,24 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
       setStatus(shell and "Safe readiness report opened." or (report and "Safe readiness report opened in chat fallback." or ("Report unavailable: " .. tostring(reason))))
     end),
     dryRunItem = { type = "input", name = "Dry-run item ID or link", order = 5,
+      hidden = function() return not Dibs.DeveloperMode.IsEnabled() end,
       get = function() return getState().dryRunItem or "19019" end,
       set = function(_, value) getState().dryRunItem = trimText(value) end },
     dryRunWinner = { type = "input", name = "Dry-run winner", order = 6,
+      hidden = function() return not Dibs.DeveloperMode.IsEnabled() end,
       get = function() return getState().dryRunWinner or (Dibs.GetPlayerName and Dibs.GetPlayerName() or "") end,
       set = function(_, value) getState().dryRunWinner = trimText(value) end },
     dryRunResponse = { type = "input", name = "Dry-run response", order = 7,
+      hidden = function() return not Dibs.DeveloperMode.IsEnabled() end,
       get = function() return getState().dryRunResponse or "DIB" end,
       set = function(_, value) getState().dryRunResponse = trimText(value) end },
     dryRunStatus = { type = "select", name = "Dry-run finalization status", order = 8,
+      hidden = function() return not Dibs.DeveloperMode.IsEnabled() end,
       values = { finalized = "Finalized", awarded = "Awarded", pending = "Pending", test_mode = "Test mode" },
       get = function() return getState().dryRunStatus or "finalized" end,
       set = function(_, value) getState().dryRunStatus = value end },
     dryRunSession = { type = "input", name = "Dry-run session identity", order = 9,
+      hidden = function() return not Dibs.DeveloperMode.IsEnabled() end,
       get = function() return getState().dryRunSession or "dry-run-session" end,
       set = function(_, value) getState().dryRunSession = trimText(value) end },
     runDryRun = execute(10, "Run local dry-run", function()
@@ -1474,6 +1479,8 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
   enable = execute(4, "Enable all loot types", function() applyDibTypePreset(true) end),
   disable = execute(5, "Default loot type only", function() applyDibTypePreset(false) end),
 } }
+groups.integration.args.readiness.args.runDryRun.hidden = function() return not Dibs.DeveloperMode.IsEnabled() end
+groups.integration.args.readiness.args.dryRunResult.hidden = function() return not Dibs.DeveloperMode.IsEnabled() end
 groups.debug = { type = "group", name = "Debug", order = 11, args = {
   intro = description(1, "Levels: 0 hides a module, 1 normal, 5 maximum diagnostics. Changes apply immediately."),
   all = { type = "range", name = "All modules", min = 0, max = 5, step = 1, order = 2,

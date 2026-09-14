@@ -230,7 +230,7 @@ function Midnight.AddSandboxBanner(shell, parent, projection)
   if not section then return nil end
   if active then
     Midnight.AddStatusBadge(shell, section, "warning", "DEVELOPER SANDBOX ACTIVE")
-    gui.AddLabel(shell, section, "Simulated authority: " .. tostring(projection.role or "Player"), true)
+    gui.AddLabel(shell, section, "Simulated authority: " .. tostring(projection.role or "none"), true)
     gui.AddLabel(shell, section, "Production database is NOT being modified.", true)
   else
     Midnight.AddStatusBadge(shell, section, "info", "Developer Mode enabled; sandbox inactive")

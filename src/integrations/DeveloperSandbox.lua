@@ -69,7 +69,7 @@ function Sandbox.EnterSandbox(options)
     payload = store.GetPayload()
   end
   if type(payload) ~= "table" then return false, "INVALID_SANDBOX_PAYLOAD" end
-  active = { provider = "sandbox", role = "player", coordinatorState = "INACTIVE",
+  active = { provider = "sandbox", role = nil, coordinatorState = "INACTIVE",
     authorityOrigin = "simulated_sandbox", payload = payload }
   if options.role then
     local ok, reason = Sandbox.SetRole(options.role)

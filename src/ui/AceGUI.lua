@@ -45,6 +45,18 @@ local contextMenuSerial = 0
 local contextMenuFrame
 local refreshState = { queued = false, dirty = false, callbacks = {} }
 
+function Adapter.HideContextMenu()
+  if type(_G.MSA_CloseDropDownMenus) == "function" then
+    pcall(_G.MSA_CloseDropDownMenus)
+  end
+  if contextMenuFrame and type(contextMenuFrame.Hide) == "function" then
+    pcall(contextMenuFrame.Hide, contextMenuFrame)
+  end
+  if _G.GameTooltip and type(_G.GameTooltip.Hide) == "function" then
+    pcall(_G.GameTooltip.Hide, _G.GameTooltip)
+  end
+end
+
 local function runRefreshes(reason)
   refreshState.queued = false
   if type(InCombatLockdown) == "function" and InCombatLockdown() then return false end
@@ -332,6 +344,7 @@ function Adapter.Clear(container)
   -- in ElvUI's AceGUI implementation).
   local paused = container and type(container.PauseLayout) == "function"
   if paused then container:PauseLayout() end
+  Adapter.HideContextMenu()
   releaseMSAControls(container)
   local childArray = container and container.children
   local hasChildArray = type(childArray) == "table"
@@ -451,6 +464,7 @@ function Adapter.ShowContextMenu(entries)
     or type(_G.MSA_DropDownMenu_CreateInfo) ~= "function"
     or type(_G.MSA_DropDownMenu_AddButton) ~= "function"
     or type(_G.MSA_ToggleDropDownMenu) ~= "function" then return false end
+  Adapter.HideContextMenu()
   if not contextMenuFrame then
     contextMenuSerial = contextMenuSerial + 1
     contextMenuFrame = _G.MSA_DropDownMenu_Create("DibsContextMenu" .. tostring(contextMenuSerial), _G.UIParent)
@@ -478,6 +492,7 @@ local function showTableContextMenu(st, rowRecord, columns, options)
     or type(_G.MSA_DropDownMenu_Initialize) ~= "function" then
     return false
   end
+  Adapter.HideContextMenu()
   if not contextMenuFrame then
     contextMenuSerial = contextMenuSerial + 1
     contextMenuFrame = _G.MSA_DropDownMenu_Create("DibsTableContext" .. tostring(contextMenuSerial), _G.UIParent)
@@ -503,12 +518,13 @@ local function showTableContextMenu(st, rowRecord, columns, options)
         end
       end
     end
-    if #menuRows > 0 then
+    if #menuRows > 0 and (not options or options.allowTableSort ~= false) then
       menuRows[#menuRows + 1] = { isTitle = true, text = "Sort table" }
     end
   end
-  for index, column in ipairs(columns or {}) do
-    if not column.action then
+  if not options or options.allowTableSort ~= false then
+    for index, column in ipairs(columns or {}) do
+      if not column.action then
       local name = safeContextText(column.title or column.name or ("Column " .. tostring(index)))
       addMenu(name .. " (A-Z)", function()
         for i, definition in ipairs(st.cols or {}) do definition.sort = nil end
@@ -522,6 +538,7 @@ local function showTableContextMenu(st, rowRecord, columns, options)
         st:SortData()
         if st._dibsUpdateHeaders then st._dibsUpdateHeaders() end
       end)
+      end
     end
   end
   if #menuRows == 0 then return false end
@@ -1215,8 +1232,11 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
       local description = evaluate(option.desc)
 
       if kind == "group" then
-        if label ~= "" then Adapter.AddHeader(shell, target, label, description) end
-        render(option.args, target)
+        local groupTarget = target
+        if label ~= "" then
+          groupTarget = Adapter.AddSection(shell, target, label, description)
+        end
+        render(option.args, groupTarget)
       elseif kind == "description" or kind == "header" then
         local control = Adapter.AddLabel(shell, target, label, true)
         Adapter.AddTooltip(control, label, description)

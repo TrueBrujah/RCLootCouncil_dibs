@@ -1271,6 +1271,7 @@ local function createAceWindow()
 
   local historyTransferShell
   local historyTransferRoot
+  local closeHistoryTransfer
 
   local function historyTransferDetails(candidate)
     return {
@@ -1308,6 +1309,13 @@ local function createAceWindow()
     return historyTransferShell
   end
 
+  closeHistoryTransfer = function()
+    if historyTransferRoot then Dibs.AceGUI.Clear(historyTransferRoot) end
+    if historyTransferShell and historyTransferShell.window then historyTransferShell.window:Hide() end
+    frame.transferTechnicalExpanded = false
+    frame.historyTransferOpen = false
+  end
+
   local function openHistoryTransfer(session, candidate)
     if not session or not candidate then return false end
     local transferShell = createHistoryTransferShell()
@@ -1315,11 +1323,30 @@ local function createAceWindow()
     Dibs.AceGUI.Clear(historyTransferRoot)
     frame.reconSelectedCandidate = candidate.candidateId
     frame.reconReason = ""
+    frame.historyTransferOpen = true
 
     local page = Dibs.AceGUI.AddScrollableList(transferShell, historyTransferRoot, 540) or historyTransferRoot
     Dibs.AceGUI.AddHeading(transferShell, page, "Historical DIB transfer")
     Dibs.AceGUI.AddHeader(transferShell, page, "Review before recording", "The values below come from read-only RCLootCouncil evidence. Technical details stay in this secondary review window.")
-    Dibs.AceGUI.AddPropertyTable(transferShell, page, historyTransferDetails(candidate), 270)
+    local summary = Dibs.AceGUI.AddSection(transferShell, page, "Award summary", "Human-readable evidence for the normal review path.")
+    for _, entry in ipairs({
+      { "Item", candidate.itemLink or candidate.itemID or "Unavailable" },
+      { "Winner", candidate.playerName or "Unavailable" },
+      { "Difficulty", candidate.difficultyText or candidate.difficulty or "Unavailable" },
+      { "Encounter", (candidate.instanceName or "Unavailable") .. " - " .. (candidate.encounterName or "Unavailable") },
+      { "Award date", formatHistoryDate(candidate.originalAwardTime, candidate.originalAwardTimeText) },
+      { "Evidence", historyReviewLabel(candidate) },
+    }) do
+      Dibs.AceGUI.AddLabel(transferShell, summary, entry[1] .. ": " .. tostring(entry[2]), true)
+    end
+    Dibs.AceGUI.AddButton(transferShell, page, frame.transferTechnicalExpanded and "Hide technical evidence" or "Show technical evidence", function()
+      frame.transferTechnicalExpanded = not frame.transferTechnicalExpanded
+      openHistoryTransfer(session, candidate)
+    end, 210)
+    if frame.transferTechnicalExpanded then
+      Dibs.AceGUI.AddHeader(transferShell, page, "Technical evidence", "Raw field/value evidence is available when needed for an audit review.")
+      Dibs.AceGUI.AddPropertyTable(transferShell, page, historyTransferDetails(candidate), 250)
+    end
     if Dibs.EncounterJournal and type(Dibs.EncounterJournal.OpenLootItem) == "function" then
       Dibs.AceGUI.AddButton(transferShell, page, "Open in Adventure Guide", function()
         Dibs.EncounterJournal.OpenLootItem(candidate)
@@ -1345,6 +1372,7 @@ local function createAceWindow()
       frame.reconStatus = outcome.ok and (result and result.duplicate and "Already accounted; no second debit was appended." or "Historical Dibs recorded.")
         or ("Unable to confirm: " .. tostring(outcome.reasonCode or decision and decision.reasonCode or result and result.reasonCode or "unknown"))
       if historyTransferShell and historyTransferShell.window then historyTransferShell.window:Hide() end
+      frame.historyTransferOpen = false
       frame:Refresh()
     end, 170)
     local reject = Dibs.AceGUI.AddButton(transferShell, actions, "Reject row", function()
@@ -1352,6 +1380,7 @@ local function createAceWindow()
         or { ok = false, reasonCode = "PROTECTED_ACTION_UNAVAILABLE" }
       frame.reconStatus = outcome.ok and "History row rejected; no ledger change was made." or ("Unable to reject history row: " .. tostring(outcome.reasonCode or "unknown"))
       if historyTransferShell and historyTransferShell.window then historyTransferShell.window:Hide() end
+      frame.historyTransferOpen = false
       frame:Refresh()
     end, 120)
     Dibs.AceGUI.SetDisabled(confirm, candidate.classification ~= "eligible" or trimText(frame.reconReason) == "")
@@ -1364,6 +1393,10 @@ local function createAceWindow()
   frame.SetStatus = function(self, message)
     self.statusMessage = tostring(message or "")
     Dibs.Message(self.statusMessage)
+  end
+
+  frame.CloseHistoryTransfer = function()
+    if closeHistoryTransfer then closeHistoryTransfer() end
   end
 
   local function selectSeason(offset)
@@ -1404,6 +1437,9 @@ local function createAceWindow()
   frame.Refresh = function(self)
     self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
     self.selectedRoute = self.activeTab
+    if self.activeTab ~= "history" and self.activeTab ~= "reconciliation" and closeHistoryTransfer then
+      closeHistoryTransfer()
+    end
     if not contentHost then return end
     Dibs.AceGUI.Clear(contentHost)
     local pageRoot = Dibs.AceGUI.Create(shell, "SimpleGroup", contentHost) or contentHost
@@ -1429,13 +1465,23 @@ local function createAceWindow()
       if Dibs.DeveloperUI and Dibs.DeveloperUI.GetProjection then
         local projection = Dibs.DeveloperUI.GetProjection()
         if projection.visible then
-          Dibs.AceGUI.AddButton(shell, tabs, "Open developer sandbox", function()
-            if Dibs.DeveloperUI.Open then Dibs.DeveloperUI.Open() end
-          end, 190)
+          self.developerSandboxButton = Dibs.AceGUI.AddButton(shell, tabs, projection.active and "Refresh developer sandbox" or "Open developer sandbox", function()
+            local sandbox = Dibs.DeveloperSandbox
+            local ok, reason = true, nil
+            if sandbox and not sandbox.IsActive() then
+              ok, reason = sandbox.EnterSandbox({ clone = true })
+            elseif sandbox and sandbox.RefreshSandbox then
+              ok, reason = sandbox.RefreshSandbox()
+            end
+            if not ok then
+              self:SetStatus("Unable to activate developer sandbox: " .. tostring(reason or "unknown error"))
+            end
+            self:Refresh()
+          end, 210)
           if Dibs.Midnight and Dibs.Midnight.AddSandboxBanner then
             Dibs.Midnight.AddSandboxBanner(shell, tabs, projection)
           end
-          Dibs.AceGUI.AddLabel(shell, tabs, "Provider: " .. tostring(projection.provider) .. " | Role: " .. tostring(projection.role)
+          Dibs.AceGUI.AddLabel(shell, tabs, "Provider: " .. tostring(projection.provider) .. " | Role: " .. tostring(projection.role or "none")
             .. " | Coordinator: " .. tostring(projection.coordinatorState), true)
         else
           Dibs.AceGUI.AddLabel(shell, tabs, "Developer Mode required.", true)
@@ -1691,7 +1737,6 @@ local function createAceWindow()
         local presentation = buildOfficerRequestRow(request)
         requestRows[#requestRows + 1] = {
           formatHistoryDate(request.createdAt or request.updatedAt),
-          tostring(request.requestId),
           presentation.details.player,
           presentation.status.label,
           presentation.details.item,
@@ -1703,7 +1748,6 @@ local function createAceWindow()
       if #requestRows == 0 then requestRows[1] = { "", "No requests", "", "", "", "", "" } end
       Dibs.AceGUI.AddTable(shell, tabs, {
         { title = "Date", width = 145, tooltip = "When the player submitted the request." },
-        { title = "Request", width = 125, tooltip = "Player review request identifier." },
         { title = "Player", width = 125, tooltip = "Character that submitted the request." },
         { title = "Status", width = 135, tooltip = "Current review status." },
         { title = "Item", width = 170, tooltip = "Attached item when available." },
@@ -1718,7 +1762,23 @@ local function createAceWindow()
             self:Refresh()
           end,
         }
-      end)
+      end, {
+        allowTableSort = false,
+        contextMenu = function(row)
+          if not row.request then return nil end
+          return {
+            { text = "Open request details", callback = function()
+              self.disputeSelectedId = row.request.requestId
+              self:Refresh()
+            end },
+            { text = "Clear selected request", callback = function()
+              self.disputeSelectedId = nil
+              self.disputeReason = ""
+              self:Refresh()
+            end, disabled = self.disputeSelectedId == nil },
+          }
+        end,
+      })
       local previousPage = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function()
         self.disputePage = math.max(1, self.disputePage - 1)
         self:Refresh()
@@ -1731,6 +1791,9 @@ local function createAceWindow()
       Dibs.AceGUI.SetDisabled(previousPage, self.disputePage <= 1)
       Dibs.AceGUI.SetDisabled(nextPage, self.disputePage >= totalPages)
       Dibs.AceGUI.AddTooltip(pageLabel, "Page", "Current review queue page.")
+      if totalPages == 1 then
+        setControlsVisible({ previousPage, pageLabel, nextPage }, false)
+      end
 
       if self.disputeSelectedId then
         local selected = Dibs.Disputes.GetRequest(self.disputeSelectedId, nil)
@@ -2050,11 +2113,32 @@ local function createAceWindow()
         { title = "Review", width = 90, tooltip = "Open candidate details." },
       }, candidateRows, 250, function(row)
         if not row.candidate then return nil end
-        return { text = "Transfer", callback = function()
+        return { text = "Review", callback = function()
           self.reconSelectedCandidate = row.candidate.candidateId
+          self.transferTechnicalExpanded = false
           openHistoryTransfer(session, row.candidate)
         end }
-      end, { disableContextMenu = true })
+      end, {
+        allowTableSort = false,
+        contextMenu = function(row)
+          if not row or not row.candidate then return nil end
+          local candidate = row.candidate
+          local entries = {
+            { text = "Review transfer", callback = function()
+              self.transferTechnicalExpanded = false
+              openHistoryTransfer(session, candidate)
+            end },
+            { text = "Show technical evidence", callback = function()
+              self.transferTechnicalExpanded = true
+              openHistoryTransfer(session, candidate)
+            end },
+          }
+          if Dibs.EncounterJournal and type(Dibs.EncounterJournal.OpenLootItem) == "function" then
+            entries[#entries + 1] = { text = "Open Adventure Guide", callback = function() Dibs.EncounterJournal.OpenLootItem(candidate) end }
+          end
+          return entries
+        end,
+      })
       local pageControls = Dibs.AceGUI.AddInlineGroup(shell, scroll)
       local previousPage = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function()
         self.reconPage = math.max(1, self.reconPage - 1)
@@ -2068,6 +2152,9 @@ local function createAceWindow()
       end, 70)
       Dibs.AceGUI.SetDisabled(previousPage, self.reconPage <= 1)
       Dibs.AceGUI.SetDisabled(nextPage, self.reconPage >= pageCount)
+      if pageCount == 1 then
+        setControlsVisible({ previousPage, pageLabel, nextPage }, false)
+      end
       return
     end
 
@@ -2321,6 +2408,9 @@ local function createAceWindow()
     Dibs.AceGUI.SetDisabled(previous, view.page <= 1)
     Dibs.AceGUI.SetDisabled(nextButton, view.page >= view.totalPages)
     Dibs.AceGUI.AddTooltip(self.pageText, "Page", "Current page and total number of pages.")
+    if view.totalPages == 1 then
+      setControlsVisible({ previous, self.pageText, nextButton }, false)
+    end
   end
   frame:HookScript("OnShow", function(self) self:Refresh() end)
   _G.DibsOfficerFrame = frame

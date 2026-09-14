@@ -247,6 +247,18 @@ describe("Dibs options compatibility", function()
     assert_false(policy.get(nil, "default"))
   end)
 
+  it("keeps RCLootCouncil dry-run controls in Developer Mode", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    dibs.RCOptions.EnsureRegistered(1)
+    local readiness = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.integration.args.readiness.args
+    assert_true(readiness.dryRunItem.hidden())
+    assert_true(readiness.runDryRun.hidden())
+    dibs.DeveloperMode.SetEnabled(true)
+    assert_false(readiness.dryRunItem.hidden())
+    assert_false(readiness.runDryRun.hidden())
+  end)
+
   it("resolves Curio and Tier Set metadata inside the Catalyst Items group", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
