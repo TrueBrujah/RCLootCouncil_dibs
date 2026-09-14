@@ -263,6 +263,56 @@ local function disputeStatusLabel(request)
   return tostring(request.status or "Open") .. " | " .. tostring(request.categoryLabel or request.category or "Other")
 end
 
+local function playerRequestStatus(status, unavailable)
+  if unavailable == "SYNC_BEHIND" then
+    return { label = "Syncing guild data", nextAction = "Try again shortly", explanation = "Your request data is catching up. Try again shortly.", tone = "warning" }
+  end
+  if unavailable == "RECOVERY_PENDING" then
+    return { label = "Recovery in progress", nextAction = "Try again later", explanation = "Guild Dibs is restoring your request data.", tone = "warning" }
+  end
+  if unavailable then
+    return { label = "Unavailable", nextAction = "Try again later", explanation = "Your request details are unavailable right now.", tone = "warning" }
+  end
+  local values = {
+    ["Open"] = { label = "Open", nextAction = "Wait for Officer review", explanation = "Your request is waiting for Officer review." },
+    ["Under review"] = { label = "Under review", nextAction = "Wait for the decision", explanation = "An Officer is reviewing your request." },
+    ["Need information"] = { label = "Need information", nextAction = "Reply to Officer", explanation = "An Officer requested more information before deciding." },
+    Resolved = { label = "Resolved", nextAction = "View resolution", explanation = "The Officer completed the review." },
+    Rejected = { label = "Rejected", nextAction = "View resolution", explanation = "The Officer rejected the request with an audit reason." },
+  }
+  local value = values[status] or { label = tostring(status or "Unavailable"), nextAction = "View request", explanation = "Your request status is available." }
+  return { label = value.label, nextAction = value.nextAction, explanation = value.explanation, tone = "normal" }
+end
+
+---@param filter table|nil Player-scoped request options.
+---@return table rows Bounded, safe request rows for the local player.
+function Dibs.PlayerUI.BuildRequestView(filter)
+  filter = type(filter) == "table" and filter or {}
+  if filter.unavailable then
+    local status = playerRequestStatus(nil, filter.unavailable)
+    return { { status = status, nextAction = status.nextAction, explanation = status.explanation, details = {} } }
+  end
+  local source = Dibs.Disputes and Dibs.Disputes.ListForPlayer and Dibs.Disputes.ListForPlayer(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, filter) or {}
+  local rows, limit = {}, math.max(1, math.min(50, tonumber(filter.limit) or 25))
+  for _, request in ipairs(source or {}) do
+    if #rows >= limit then break end
+    local status = playerRequestStatus(request.status)
+    local evidence = request.evidence and request.evidence[1] or {}
+    table.insert(rows, {
+      requestId = request.requestId,
+      status = status,
+      nextAction = status.nextAction,
+      explanation = status.explanation,
+      details = {
+        category = tostring(request.categoryLabel or request.category or "Other"),
+        item = tostring(evidence.item or evidence.itemID or "Unavailable"),
+        note = tostring(request.note or ""):sub(1, 240),
+      },
+    })
+  end
+  return rows
+end
+
 ---@param playerName string|nil Player identity; defaults to local player.
 ---@return table summary Player-scoped balance and request summary.
 function Dibs.PlayerUI.GetSummary(playerName)
@@ -528,17 +578,29 @@ local function createLegacyAceWindow()
       Dibs.AceGUI.SetDisabled(submit, not (Dibs.Disputes and Dibs.Disputes.CreateReport))
       Dibs.AceGUI.AddLabel(shell, tabs, self.disputeStatusText or "Requests are visible only to you and guild Officers.", true)
 
-      local requests = Dibs.Disputes and Dibs.Disputes.ListForPlayer and Dibs.Disputes.ListForPlayer(summary.player) or {}
+      local requests, requestReason = {}, nil
+      if Dibs.Disputes and Dibs.Disputes.ListForPlayer then
+        requests, requestReason = Dibs.Disputes.ListForPlayer(summary.player)
+      end
+      local requestProjection = Dibs.PlayerUI.BuildRequestView({ limit = 50 })
+      if requestReason then
+        requestProjection = Dibs.PlayerUI.BuildRequestView({ unavailable = requestReason })
+      end
+      local projectedById = {}
+      for _, projected in ipairs(requestProjection) do projectedById[projected.requestId] = projected end
       local requestRows = {}
-      if #requests == 0 then
+      if #requestProjection == 0 then
         requestRows[1] = { "", "No requests yet.", "", "", "" }
       else
         for _, request in ipairs(requests) do
+          local projected = projectedById[request.requestId] or {
+            status = { label = "Unavailable" }, explanation = "Request details are unavailable right now.", details = {},
+          }
           requestRows[#requestRows + 1] = {
             formatDate(request.createdAt or request.updatedAt),
             tostring(request.requestId),
-            disputeStatusLabel(request),
-            tostring(request.note or ""),
+            projected.status.label,
+            projected.explanation,
             "",
             request = request,
           }
@@ -548,7 +610,7 @@ local function createLegacyAceWindow()
         { title = "Date", width = 145, tooltip = "When you submitted the request." },
         { title = "Request", width = 160, tooltip = "Your request identifier." },
         { title = "Status", width = 180, tooltip = "Current Officer review status." },
-        { title = "Note", width = 220, tooltip = "Your bounded request note." },
+        { title = "Next step", width = 220, tooltip = "What you can do next." },
         { title = "Action", width = 80, tooltip = "Open details." },
       }, requestRows, 230, function(row)
         if not row.request then return nil end

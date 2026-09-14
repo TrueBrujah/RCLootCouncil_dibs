@@ -143,14 +143,14 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 ### Tests for User Story 5
 
-- [ ] T043 [P] [US5] Add progressive-disclosure, Recommended preset, Catalyst block, and advanced-policy visibility tests in `tests/integration/b11_request_eligibility_ui_spec.lua`.
-- [ ] T044 [P] [US5] Add request/eligibility mutation delegation and unsaved-policy-change tests in `tests/contract/b11_request_eligibility_actions_spec.lua`.
+- [x] T043 [P] [US5] Add progressive-disclosure, Recommended preset, Catalyst block, and advanced-policy visibility tests in `tests/integration/b11_request_eligibility_ui_spec.lua`.
+- [x] T044 [P] [US5] Add request/eligibility mutation delegation and unsaved-policy-change tests in `tests/contract/b11_request_eligibility_actions_spec.lua`.
 
 ### Implementation for User Story 5
 
-- [ ] T045 [US5] Redesign request review and Pre-Dib presentation in `src/ui/OfficerUI.lua` and `src/ui/PlayerUI.lua` with status, next action, safe explanations, and bounded private data.
-- [ ] T046 [US5] Add Recommended and Customize eligibility projections in `src/ui/OfficerUI.lua` using semantic categories from `src/modules/CharacterEligibility.lua` and existing loot policy services.
-- [ ] T047 [US5] Add expandable semantic category, reason, current-state, and authorized-save controls without direct policy writes in `src/ui/OfficerUI.lua` and `src/modules/ProtectedActions.lua`.
+- [x] T045 [US5] Redesign request review and Pre-Dib presentation in `src/ui/OfficerUI.lua` and `src/ui/PlayerUI.lua` with status, next action, safe explanations, and bounded private data.
+- [x] T046 [US5] Add Recommended and Customize eligibility projections in `src/ui/OfficerUI.lua` using semantic categories from `src/modules/CharacterEligibility.lua` and existing loot policy services.
+- [x] T047 [US5] Add expandable semantic category, reason, current-state, and authorized-save controls without direct policy writes in `src/ui/OfficerUI.lua` and `src/modules/ProtectedActions.lua`.
 
 **Checkpoint**: User Story 5 is independently functional when common choices are visible first, Catalyst remains blocked, and advanced changes use existing authorized policy paths only.
 

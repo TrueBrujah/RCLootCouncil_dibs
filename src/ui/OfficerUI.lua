@@ -126,6 +126,172 @@ local function canViewOfficerData()
   return role == "gm" or role == "officer"
 end
 
+local function trimText(value)
+  return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
+local REQUEST_STATUS_PRESENTATIONS = {
+  ["Open"] = { label = "Open", nextAction = "Review request", explanation = "An Officer can review the request and its attached evidence." },
+  ["Under review"] = { label = "Under review", nextAction = "Continue review", explanation = "An Officer is reviewing the request." },
+  ["Need information"] = { label = "Need information", nextAction = "Reply to Officer", explanation = "The Officer requested more information before deciding." },
+  pending = { label = "Pending", nextAction = "Wait for Officer confirmation", explanation = "The request is waiting for confirmation." },
+  confirmed = { label = "Confirmed", nextAction = "Review before encounter", explanation = "The Pre-Dib is confirmed for the recorded item and difficulty." },
+  fulfilled = { label = "Fulfilled", nextAction = "View history", explanation = "The request was fulfilled and remains available in history." },
+  cancelled = { label = "Cancelled", nextAction = "View history", explanation = "The request was cancelled and cannot be reused." },
+  invalidated = { label = "Unavailable", nextAction = "Contact an Officer", explanation = "This request is no longer available for the current workflow." },
+  Resolved = { label = "Resolved", nextAction = "View resolution", explanation = "The Officer completed the review." },
+  Rejected = { label = "Rejected", nextAction = "View resolution", explanation = "The Officer rejected the request with an audit reason." },
+}
+
+local function boundedPresentationText(value, limit)
+  local text = trimText(value)
+  local maximum = tonumber(limit) or 240
+  if #text > maximum then return text:sub(1, maximum) end
+  return text
+end
+
+local function requestStatusPresentation(status, unavailable)
+  if unavailable == "SYNC_BEHIND" then
+    return { label = "Syncing guild data", nextAction = "Try again shortly", explanation = "The request data is catching up. Try again shortly.", tone = "warning" }
+  end
+  if unavailable == "RECOVERY_PENDING" then
+    return { label = "Recovery in progress", nextAction = "Try again later", explanation = "Guild Dibs is restoring shared request data.", tone = "warning" }
+  end
+  if unavailable then
+    return { label = "Unavailable", nextAction = "Contact an Officer", explanation = "Request details are unavailable right now.", tone = "warning" }
+  end
+  local presentation = REQUEST_STATUS_PRESENTATIONS[status] or {
+    label = tostring(status or "Unavailable"), nextAction = "Review status", explanation = "The request status is available for review.",
+  }
+  return { label = presentation.label, nextAction = presentation.nextAction, explanation = presentation.explanation, tone = "normal" }
+end
+
+local function buildOfficerRequestRow(request)
+  local evidence = request and request.evidence and request.evidence[1] or {}
+  local status = requestStatusPresentation(request and request.status)
+  return {
+    requestId = request and request.requestId,
+    status = status,
+    nextAction = status.nextAction,
+    explanation = status.explanation,
+    details = {
+      player = boundedPresentationText(request and request.player and request.player.name, 80),
+      category = boundedPresentationText(request and (request.categoryLabel or request.category), 80),
+      item = boundedPresentationText(evidence.item or evidence.itemID, 180),
+      note = boundedPresentationText(request and request.note, 240),
+      source = boundedPresentationText(evidence.source, 80),
+    },
+  }
+end
+
+local function buildPreDibRow(request)
+  local status = requestStatusPresentation(request and request.status)
+  return {
+    requestId = request and request.requestId,
+    status = status,
+    nextAction = status.nextAction,
+    explanation = status.explanation,
+    details = {
+      player = boundedPresentationText(request and request.playerName, 80),
+      item = boundedPresentationText(request and (request.itemName or request.itemLink or request.itemID), 180),
+      difficulty = boundedPresentationText(request and request.difficulty, 32),
+      mode = boundedPresentationText(request and request.modeAtCreation, 32),
+      delivery = boundedPresentationText(request and request.delivery and request.delivery.state, 32),
+    },
+  }
+end
+
+---@param scope string "officer" or "player".
+---@param filter table|nil Permission-filtered request options.
+---@return table rows Bounded request rows for the requested scope.
+function Dibs.OfficerUI.BuildRequestView(scope, filter)
+  filter = type(filter) == "table" and filter or {}
+  if scope == "player" then
+    return {}
+  end
+  if not canViewOfficerData() then
+    return {}
+  end
+  local source, reason
+  if filter.kind == "predibs" then
+    source = Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}
+  elseif Dibs.Disputes and Dibs.Disputes.ListForOfficer then
+    source, reason = Dibs.Disputes.ListForOfficer(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, filter)
+  else
+    source = {}
+  end
+  if reason then return {} end
+  local rows, limit = {}, math.max(1, math.min(50, tonumber(filter.limit) or 25))
+  for _, request in ipairs(source or {}) do
+    if #rows >= limit then break end
+    if filter.kind == "predibs" then
+      table.insert(rows, buildPreDibRow(request))
+    else
+      table.insert(rows, buildOfficerRequestRow(request))
+    end
+  end
+  return rows
+end
+
+local ELIGIBILITY_CATEGORY_DEFINITIONS = {
+  { key = "curio", label = "Curio", family = "TOKEN", recommended = "allow", reasonCode = "CURIO_POLICY", reason = "Curio progress follows the active protected-loot policy." },
+  { key = "tier_set", label = "Tier Set", family = "TOKEN_SET", recommended = "allow", reasonCode = "TIER_SET_POLICY", reason = "Tier Set progress follows the class-token policy." },
+  { key = "token", label = "Token", family = "TOKEN", recommended = "allow", reasonCode = "TOKEN_POLICY", reason = "Recognized progression tokens are eligible for the current round." },
+  { key = "mount", label = "Mount", family = "MOUNTS", recommended = "block", reasonCode = "NON_PROGRESSION_FAMILY", reason = "Mounts are not a protected progression family in the Recommended preset." },
+  { key = "pet", label = "Pet", family = "PETS", recommended = "block", reasonCode = "NON_PROGRESSION_FAMILY", reason = "Pets are not a protected progression family in the Recommended preset." },
+  { key = "cosmetic", label = "Cosmetic", family = "COSMETIC", recommended = "block", reasonCode = "COSMETIC_PERSONAL", reason = "Cosmetic items do not use Dibs eligibility." },
+  { key = "catalyst", label = "Catalyst", family = "CATALYST", recommended = "block", reasonCode = "CATALYST_PERSONAL", reason = "Catalyst progress is personal and cannot use Dibs." },
+}
+
+local function copyProjection(value)
+  if Dibs.DeepCopy then return Dibs.DeepCopy(value) end
+  if type(value) ~= "table" then return value end
+  local result = {}
+  for key, item in pairs(value) do result[key] = copyProjection(item) end
+  return result
+end
+
+---@param seasonId string|number|nil Season scope.
+---@param options table|nil Expansion and unsaved draft options.
+---@return table projection Recommended-first eligibility presentation.
+function Dibs.OfficerUI.GetEligibilityProjection(seasonId, options)
+  options = type(options) == "table" and options or {}
+  if not canViewOfficerData() then return { hidden = true, categories = {}, byFamily = {} } end
+  local projection = {
+    preset = { key = "recommended", label = "Recommended", description = "Common progression loot first; personal and collection items stay blocked." },
+    customize = { visible = true, label = "Customize" },
+    advanced = { expanded = options.expanded == true },
+    seasonId = seasonId,
+    categories = {},
+    byFamily = {},
+    unsaved = type(options.draft) == "table" and next(options.draft) ~= nil or false,
+  }
+  for _, definition in ipairs(ELIGIBILITY_CATEGORY_DEFINITIONS) do
+    local category = {
+      key = definition.key, label = definition.label, semanticFamily = definition.family,
+      state = definition.recommended, reasonCode = definition.reasonCode, reason = definition.reason,
+      editable = definition.family == "TOKEN" or definition.family == "TOKEN_SET",
+      customizable = definition.family ~= "CATALYST",
+      currentState = { enabled = definition.recommended == "allow", source = "recommended" },
+    }
+    if (definition.family == "TOKEN" or definition.family == "TOKEN_SET") and Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPolicy then
+      local policy = Dibs.CharacterEligibility.GetPolicy(seasonId, definition.family)
+      category.currentState = copyProjection(policy or category.currentState)
+      local draft = options.draft and options.draft[definition.family]
+      if type(draft) == "table" then
+        for key, value in pairs(draft) do category.currentState[key] = copyProjection(value) end
+      end
+      if category.currentState.enabled == false then category.state = "block" end
+      projection.byFamily[definition.family] = category
+    end
+    if projection.advanced.expanded then
+      category.advanced = { semanticCategory = definition.label, reason = definition.reason, currentState = copyProjection(category.currentState) }
+    end
+    table.insert(projection.categories, category)
+  end
+  return projection
+end
+
 local function emptyOfficerPage(view, query)
   local selectedView = view == "actions" and "actions" or (view == "predibs" and "predibs" or "players")
   local title = selectedView == "actions" and "Actions"
@@ -145,10 +311,6 @@ local HAS_DROPDOWN = type(_G.UIDropDownMenu_Initialize) == "function"
   and type(_G.UIDropDownMenu_CreateInfo) == "function"
   and type(_G.UIDropDownMenu_AddButton) == "function"
   and type(_G.UIDropDownMenu_SetText) == "function"
-
-local function trimText(value)
-  return tostring(value or ""):match("^%s*(.-)%s*$")
-end
 
 local function sortedLabels(values)
   local entries = {}
@@ -988,6 +1150,14 @@ function Dibs.OfficerUI.SetPreDibMode(seasonId, mode)
   return Dibs.ProtectedActions.Execute("predib.mode.set", nil, { seasonId = seasonId, mode = mode, source = "officer-ui" })
 end
 
+function Dibs.OfficerUI.SavePreDibMode(seasonId, mode)
+  return Dibs.ProtectedActions.Execute("predib.mode.set", nil, { seasonId = seasonId, mode = mode, source = "officer-ui" })
+end
+
+function Dibs.OfficerUI.SaveEligibilityPolicy(payload)
+  return Dibs.ProtectedActions.Execute("eligibility.policy.set", nil, payload or {})
+end
+
 function Dibs.OfficerUI.GetRankChangeDiagnostics()
   if not canViewOfficerData() then
     return { playersWithRankTransitions = 0, totalPlayersInLedger = 0, hidden = true }
@@ -1277,8 +1447,33 @@ local function createAceWindow()
 
     if self.activeTab == "eligibility" then
       local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 700) or tabs
-      Dibs.AceGUI.AddHeading(shell, scroll, "Protected loot eligibility", "Configure Curio and Tier Set fairness without changing the Dibs ledger.")
       local seasonId = currentId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
+      self.eligibilityAdvanced = self.eligibilityAdvanced == true
+      local eligibilityProjection = Dibs.OfficerUI.GetEligibilityProjection(seasonId, { expanded = self.eligibilityAdvanced })
+      Dibs.AceGUI.AddHeading(shell, scroll, "Protected loot eligibility", "Start with the Recommended preset. Customize advanced policy only when needed.")
+      Dibs.AceGUI.AddLabel(shell, scroll, eligibilityProjection.preset.label .. ": " .. eligibilityProjection.preset.description, true)
+      local categoryRows = {}
+      for _, category in ipairs(eligibilityProjection.categories or {}) do
+        categoryRows[#categoryRows + 1] = {
+          category.label,
+          category.state == "allow" and "Allowed" or "Blocked",
+          category.reason,
+          category = category,
+        }
+      end
+      Dibs.AceGUI.AddTable(shell, scroll, {
+        { title = "Category", width = 150, tooltip = "Semantic loot category." },
+        { title = "Recommended", width = 100, tooltip = "Recommended presentation state." },
+        { title = "Reason", width = 420, tooltip = "Safe explanation for the current state." },
+      }, categoryRows, 220)
+      Dibs.AceGUI.AddButton(shell, scroll, self.eligibilityAdvanced and "Hide Customize" or "Customize", function()
+        self.eligibilityAdvanced = not self.eligibilityAdvanced
+        self:Refresh()
+      end, 140)
+      if not self.eligibilityAdvanced then
+        return
+      end
+      Dibs.AceGUI.AddHeader(shell, scroll, "Advanced policy", "These controls are a draft until Save policy is confirmed through the protected action boundary.")
       self.eligibilityFamily = self.eligibilityFamily or "TOKEN"
       local policy = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPolicy
         and Dibs.CharacterEligibility.GetPolicy(seasonId, self.eligibilityFamily) or nil
@@ -1304,7 +1499,7 @@ local function createAceWindow()
           enforcementOutcome = (outcome and outcome.GetValue and outcome:GetValue()) or (policy and policy.enforcementOutcome) or "block",
         }
         if threshold then payload.completionThreshold = tonumber(getControlText(threshold)) or 4 end
-        local result = Dibs.ProtectedActions.Execute("eligibility.policy.set", nil, payload)
+        local result = Dibs.OfficerUI.SaveEligibilityPolicy(payload)
         self:SetStatus(result.ok and "Protected-loot policy saved." or (result.diagnostic or "Unable to save protected-loot policy."))
         self:Refresh()
       end, 150)
@@ -1345,7 +1540,7 @@ local function createAceWindow()
         end }
       end)
       local mainChanges = Dibs.CharacterEligibility and Dibs.CharacterEligibility.ListMainChanges
-        and Dibs.CharacterEligibility.ListMainChanges(nil, seasonId) or {}
+      local result = Dibs.OfficerUI.SaveEligibilityPolicy(payload)
       local mainChangeRows = {}
       for _, change in ipairs(mainChanges or {}) do
         mainChangeRows[#mainChangeRows + 1] = {
@@ -1423,14 +1618,14 @@ local function createAceWindow()
       local requestRows = {}
       for index = firstRequest, lastRequest do
         local request = requests[index]
-        local evidence = request.evidence and request.evidence[1] or {}
+        local presentation = buildOfficerRequestRow(request)
         requestRows[#requestRows + 1] = {
           formatHistoryDate(request.createdAt or request.updatedAt),
           tostring(request.requestId),
-          tostring(request.player and request.player.name or "Unknown"),
-          disputeStatusText(request),
-          tostring(evidence.item or "Unavailable"),
-          tostring(request.note or ""),
+          presentation.details.player,
+          presentation.status.label,
+          presentation.details.item,
+          presentation.explanation,
           "",
           request = request,
         }
@@ -1999,7 +2194,21 @@ local function createAceWindow()
     end
     local expectedColumns = self.activeTab == "history" and 5 or (self.activeTab == "predibs" and 7 or 3)
     local tableRows = {}
-    for _, line in ipairs(view.lines) do table.insert(tableRows, splitPipeLine(line, expectedColumns)) end
+    if self.activeTab == "predibs" then
+      local preDibRows = Dibs.OfficerUI.BuildRequestView("officer", { kind = "predibs", limit = 50 })
+      for index, row in ipairs(preDibRows) do
+        local line = view.lines[index] or ""
+        local values = splitPipeLine(line, expectedColumns)
+        values[3] = row.status.label
+        values[4] = row.details.item ~= "" and row.details.item or values[4]
+        values[5] = row.details.difficulty ~= "" and row.details.difficulty or values[5]
+        values[6] = row.details.mode ~= "" and row.details.mode or values[6]
+        values[7] = row.details.delivery ~= "" and row.details.delivery or row.explanation
+        table.insert(tableRows, values)
+      end
+    else
+      for _, line in ipairs(view.lines) do table.insert(tableRows, splitPipeLine(line, expectedColumns)) end
+    end
     local columns = {}
     if expectedColumns == 5 then
       columns = {
