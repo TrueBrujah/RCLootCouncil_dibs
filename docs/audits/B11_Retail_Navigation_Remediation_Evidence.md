@@ -2,7 +2,7 @@
 
 - `Finding: B11-RETAIL-UI-001`
 - `RETAIL_NAV_START_COMMIT=5b71516d8116963f185866b170e0a3a344611671`
-- `RETAIL_NAV_FIX_COMMIT=4eb000a`
+- `RETAIL_NAV_FIX_COMMIT=8153af054633bd02b2e87c8c8dc27fa31e0387b0`
 - Scope: Officer UI navigation lifecycle only. No ledger, permission, sandbox authority, SyncV2, request, policy, or RCLootCouncil business logic changes.
 
 ## Root Cause
