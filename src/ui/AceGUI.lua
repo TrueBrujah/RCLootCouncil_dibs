@@ -74,6 +74,43 @@ local function call(widget, method, ...)
   return false
 end
 
+function Adapter.GetLayoutMetrics()
+  if Dibs.Midnight and type(Dibs.Midnight.GetLayoutMetrics) == "function" then
+    return Dibs.Midnight.GetLayoutMetrics()
+  end
+  return { minWidth = 520, minHeight = 360, maxWidth = 1400, maxHeight = 1100, actionMinWidth = 88, rowHeight = 24 }
+end
+
+function Adapter.FitColumnWidths(columns, availableWidth)
+  local definitions = columns or {}
+  local widths, minimums, priorities = {}, {}, {}
+  local total = 0
+  for index, column in ipairs(definitions) do
+    local width = math.max(48, tonumber(column.width) or 100)
+    local minimum = math.max(48, tonumber(column.minWidth) or (column.action and Adapter.GetLayoutMetrics().actionMinWidth or 48))
+    widths[index], minimums[index] = math.max(width, minimum), minimum
+    priorities[index] = tonumber(column.priority) or (column.action and 100 or 1)
+    total = total + widths[index]
+  end
+  local available = tonumber(availableWidth) or total
+  if total <= available then return widths, false end
+
+  local order = {}
+  for index = 1, #definitions do order[#order + 1] = index end
+  table.sort(order, function(left, right) return priorities[left] < priorities[right] end)
+  local deficit = total - available
+  for _, index in ipairs(order) do
+    if deficit <= 0 then break end
+    local reducible = widths[index] - minimums[index]
+    if reducible > 0 then
+      local reduction = math.min(reducible, deficit)
+      widths[index] = widths[index] - reduction
+      deficit = deficit - reduction
+    end
+  end
+  return widths, deficit > 0
+end
+
 local function applyRCLootCouncilTheme(frame)
   if not frame then return end
   if type(frame.SetBackdropColor) == "function" then
@@ -133,17 +170,27 @@ function Adapter.CreateWindow(title, width, height, point)
   local ok, window = pcall(gui.Create, gui, "Frame")
   if not ok or type(window) ~= "table" or not window.frame then return nil end
 
+  local metrics = Adapter.GetLayoutMetrics()
+  local requestedWidth = tonumber(width) or metrics.minWidth
+  local requestedHeight = tonumber(height) or metrics.minHeight
+  local windowWidth = math.max(metrics.minWidth, math.min(metrics.maxWidth, requestedWidth))
+  local windowHeight = math.max(metrics.minHeight, math.min(metrics.maxHeight, requestedHeight))
   call(window, "SetTitle", title)
-  call(window, "SetWidth", width)
-  call(window, "SetHeight", height)
+  call(window, "SetWidth", windowWidth)
+  call(window, "SetHeight", windowHeight)
+  window.layout = {
+    width = windowWidth, height = windowHeight,
+    minWidth = metrics.minWidth, minHeight = metrics.minHeight,
+    maxWidth = metrics.maxWidth, maxHeight = metrics.maxHeight,
+  }
   -- AceGUI Frame widgets expose the native frame; keep resizing optional for
   -- older clients while enabling it on current Retail clients.
   if window.frame and type(window.frame.SetResizable) == "function" then
     window.frame:SetResizable(true)
     if type(window.frame.SetResizeBounds) == "function" then
-      window.frame:SetResizeBounds(420, 320, 1400, 1100)
+      window.frame:SetResizeBounds(metrics.minWidth, metrics.minHeight, metrics.maxWidth, metrics.maxHeight)
     elseif type(window.frame.SetMinResize) == "function" then
-      window.frame:SetMinResize(420, 320)
+      window.frame:SetMinResize(metrics.minWidth, metrics.minHeight)
     end
     if type(window.frame.CreateTexture) == "function" and type(window.frame.CreateFontString) == "function" then
       local grip = window.frame:CreateTexture(nil, "OVERLAY")
@@ -159,6 +206,11 @@ function Adapter.CreateWindow(title, width, height, point)
     end
   end
   call(window, "SetLayout", "Fill")
+  window.layout = {
+    width = windowWidth, height = windowHeight,
+    minWidth = metrics.minWidth, minHeight = metrics.minHeight,
+    maxWidth = metrics.maxWidth, maxHeight = metrics.maxHeight,
+  }
   local tokens = Adapter.GetPresentationTokens()
   if Dibs.Midnight and tokens then Dibs.Midnight.ApplyToFrame(window.frame, tokens) else applyRCLootCouncilTheme(window.frame) end
   -- AceGUI's stock Window uses FULLSCREEN_DIALOG, which makes an Officer or
@@ -167,6 +219,9 @@ function Adapter.CreateWindow(title, width, height, point)
   -- to remain accessible beside them.
   if window.frame and type(window.frame.SetFrameStrata) == "function" then
     window.frame:SetFrameStrata("DIALOG")
+  end
+  if window.frame and type(window.frame.SetClampedToScreen) == "function" then
+    window.frame:SetClampedToScreen(true)
   end
   addAddonLogo(window.frame)
   -- AceGUI Frame widgets are shown by OnAcquire.  PlayerUI and OfficerUI are
@@ -184,7 +239,7 @@ function Adapter.CreateWindow(title, width, height, point)
   -- Children are owned by their AceGUI container.  Do not mirror every page
   -- widget in the shell: Refresh() releases and recreates those widgets, and
   -- a tracking array would retain the historical numeric slots forever.
-  local shell = { gui = gui, window = window, frame = window.frame }
+  local shell = { gui = gui, window = window, frame = window.frame, layout = window.layout }
   shell._dibsResizeHandlers = {}
   shell._dibsResponsiveScrolls = {}
   function shell:AddResizeHandler(callback)
@@ -367,6 +422,20 @@ function Adapter.AddLabel(shell, parent, text, fullWidth)
   return label
 end
 
+function Adapter.AddTruncatedLabel(shell, parent, value, maximum, description)
+  local full = tostring(value or "")
+  local visible, truncated = full, false
+  if Dibs.Midnight and type(Dibs.Midnight.Truncate) == "function" then
+    visible, truncated = Dibs.Midnight.Truncate(full, maximum)
+  end
+  local label = Adapter.AddLabel(shell, parent, visible, false)
+  if label then
+    label._dibsFullText = full
+    if truncated then Adapter.AddTooltip(label, full, description or "Hover to see the complete value.") end
+  end
+  return label
+end
+
 local function safeContextText(value)
   return tostring(value or "")
 end
@@ -517,16 +586,25 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   local tableColumns = {}
   for index, column in ipairs(definitions) do
     local width = math.max(48, tonumber(column.width) or 100)
+    local action = column.action == true or (index == #definitions and rowActions ~= nil)
+    local title = string.lower(tostring(column.title or column.name or ""))
+    local defaultMinimum = action and Adapter.GetLayoutMetrics().actionMinWidth or 48
+    local defaultPriority = action and 100 or 1
+    if not action and title:find("player", 1, true) then defaultMinimum, defaultPriority = 120, 5 end
+    if not action and title:find("item", 1, true) then defaultMinimum, defaultPriority = 140, 5 end
+    if not action and title:find("status", 1, true) then defaultMinimum, defaultPriority = 88, 5 end
     desiredWidth = desiredWidth + width
     tableColumns[index] = {
       name = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
       baseName = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
       width = width,
       baseWidth = width,
+      minWidth = tonumber(column.minWidth) or defaultMinimum,
+      priority = tonumber(column.priority) or defaultPriority,
       align = column.align or "LEFT",
       tooltip = column.tooltip,
       defaultsort = column.defaultsort,
-      action = column.action == true or (index == #definitions and rowActions ~= nil),
+      action = action,
     }
   end
 
@@ -536,13 +614,8 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   end
   if availableWidth > 0 then availableWidth = availableWidth - 12 end
   if availableWidth > 0 and desiredWidth > availableWidth then
-    local scale = availableWidth / desiredWidth
-    local used = 0
-    for index, column in ipairs(tableColumns) do
-      column.width = math.floor(column.width * scale)
-      if index == #tableColumns then column.width = math.max(48, availableWidth - used) end
-      used = used + column.width
-    end
+    local fitted = Adapter.FitColumnWidths(tableColumns, availableWidth)
+    for index, column in ipairs(tableColumns) do column.width = fitted[index] end
   end
 
   local rowData = {}
@@ -591,13 +664,11 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     local available = tonumber(width)
     if not available or available <= 20 then return end
     available = math.max(240, available - 12)
-    local scale = desiredWidth > available and (available / desiredWidth) or 1
+    local fitted = Adapter.FitColumnWidths(tableColumns, available)
     local used = 0
     for index, column in ipairs(tableColumns) do
-      local nextWidth = math.floor((column.baseWidth or column.width) * scale)
-      if index == #tableColumns then nextWidth = math.max(48, available - used) end
-      column.width = nextWidth
-      used = used + nextWidth
+      column.width = fitted[index]
+      used = used + column.width
     end
     st._dibsUpdateHeaders()
     if st.frame and st.frame.SetWidth then st.frame:SetWidth(used) end
@@ -627,10 +698,16 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     OnEnter = function(rowFrame, cellFrame, data, cols, row, realrow, column, table)
       local cell = realrow and table:GetCell(realrow, column)
       local value = type(cell) == "table" and cell.value or cell
-      if type(value) == "string" and value:find("|Hitem:", 1, true) and _G.GameTooltip
-        and type(_G.GameTooltip.SetOwner) == "function" and type(_G.GameTooltip.SetHyperlink) == "function" then
+      if type(value) == "string" and _G.GameTooltip
+        and type(_G.GameTooltip.SetOwner) == "function"
+        and ((value:find("|Hitem:", 1, true) and type(_G.GameTooltip.SetHyperlink) == "function")
+          or type(_G.GameTooltip.SetText) == "function") then
         _G.GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
-        _G.GameTooltip:SetHyperlink(value)
+        if value:find("|Hitem:", 1, true) and type(_G.GameTooltip.SetHyperlink) == "function" then
+          _G.GameTooltip:SetHyperlink(value)
+        else
+          _G.GameTooltip:SetText(value, 1, 1, 1, true)
+        end
         _G.GameTooltip:Show()
       end
       return false
@@ -698,15 +775,24 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
   if frameWidth <= 0 and parent and parent.frame and parent.frame.GetWidth then frameWidth = parent.frame:GetWidth() or 0 end
   if frameWidth <= 0 and shell and shell.frame and shell.frame.GetWidth then frameWidth = (shell.frame:GetWidth() or 760) - 220 end
   frameWidth = math.max(360, frameWidth > 0 and frameWidth - 8 or math.min(desiredWidth, 760))
-  local scale = desiredWidth > frameWidth and (frameWidth / desiredWidth) or 1
-  local widths = {}
-  local actualWidth = 0
+  local fitDefinitions = {}
   for index, column in ipairs(definitions) do
-    local width = math.floor((tonumber(column.width) or 100) * scale)
-    if index == #definitions then width = math.max(48, frameWidth - actualWidth) end
-    widths[index] = width
-    actualWidth = actualWidth + width
+    local title = string.lower(tostring(column.title or column.name or ""))
+    local action = rowActions and index == #definitions
+    local minimum = column.minWidth
+    local priority = column.priority
+    if not minimum and title:find("player", 1, true) then minimum = 120 end
+    if not minimum and title:find("item", 1, true) then minimum = 140 end
+    if not minimum and title:find("status", 1, true) then minimum = 88 end
+    if action then minimum, priority = minimum or Adapter.GetLayoutMetrics().actionMinWidth, priority or 100 end
+    fitDefinitions[index] = {
+      width = column.width, minWidth = minimum,
+      priority = priority, action = action,
+    }
   end
+  local widths = Adapter.FitColumnWidths(fitDefinitions, frameWidth)
+  local actualWidth = 0
+  for index in ipairs(definitions) do actualWidth = actualWidth + widths[index] end
 
   local function cellText(value, width)
     local result = tostring(value or "")
@@ -714,7 +800,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     -- escape sequence makes the visible cell look like raw `[Hitem:...]` text.
     if result:find("|Hitem:", 1, true) then return result end
     local characters = math.max(8, math.floor((width or 100) / 7))
-    if #result > characters then result = result:sub(1, math.max(1, characters - 3)) .. "..." end
+    if Dibs.Midnight and Dibs.Midnight.Truncate then result = Dibs.Midnight.Truncate(result, characters) end
     return result
   end
 
@@ -764,6 +850,7 @@ function Adapter.AddButton(shell, parent, text, callback, width)
   if not button then return nil end
   Adapter.SetText(button, text)
   call(button, "SetAutoWidth", true)
+  call(button, "SetHeight", Adapter.GetLayoutMetrics().buttonHeight)
   if width and button.frame and type(button.frame.GetWidth) == "function" then
     local autoWidth = button.frame:GetWidth() or 0
     call(button, "SetWidth", math.max(width, autoWidth))
@@ -1224,12 +1311,13 @@ function Adapter.AddScrollableList(shell, parent, height)
     scroll = Adapter.Create(shell, "SimpleGroup", parent)
   end
   if not scroll then return nil end
-  call(scroll, "SetHeight", height or 260)
+  local metrics = Adapter.GetLayoutMetrics()
+  local requestedHeight = tonumber(height) or metrics.defaultScrollHeight or 260
+  call(scroll, "SetHeight", requestedHeight)
   call(scroll, "SetFullWidth", true)
   call(scroll, "SetLayout", "List")
   -- Long pages should follow a resizable Dibs window. Keep compact embedded
   -- lists (for example multiselect checkboxes) at their requested height.
-  local requestedHeight = tonumber(height) or 260
   local frameHeight = shell and shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or nil
   if shell and requestedHeight >= 380 and frameHeight and frameHeight > requestedHeight then
     scroll._dibsShell = shell

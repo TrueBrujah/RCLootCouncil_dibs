@@ -28,7 +28,9 @@ function DeveloperUI.Open()
     Dibs.AceGUI.Clear(page)
     local projection = DeveloperUI.GetProjection()
     Dibs.AceGUI.AddHeading(shell, page, "Developer Sandbox", "Local simulation only; production data and authority are untouched.")
-    Dibs.AceGUI.AddLabel(shell, page, "Warning: " .. tostring(projection.warning), true)
+    if Dibs.Midnight and Dibs.Midnight.AddSandboxBanner then
+      Dibs.Midnight.AddSandboxBanner(shell, page, projection)
+    end
     Dibs.AceGUI.AddLabel(shell, page, "Provider: " .. tostring(projection.provider) .. " | Role: " .. tostring(projection.role)
       .. " | Coordinator: " .. tostring(projection.coordinatorState), true)
     Dibs.AceGUI.AddLabel(shell, page, "Authority origin: " .. tostring(projection.authorityOrigin)

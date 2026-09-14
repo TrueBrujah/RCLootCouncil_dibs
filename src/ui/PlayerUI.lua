@@ -762,13 +762,20 @@ local function createLegacyAceWindow()
     Dibs.AceGUI.AddHeader(shell, tabs, "Season summary", "Your current season balance and Pre-Dib status.")
     local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
     if integration then
-      Dibs.AceGUI.AddLabel(shell, tabs, "RCLootCouncil: " .. tostring(integration.status or integration.availability or "absent") ..
-        " (" .. tostring(integration.reasonCode or "UNKNOWN") .. ")\n" .. tostring(integration.diagnostic or ""), true)
+      local integrationState = integration.availability == "operational" or integration.status == "Ready" and { status = "Ready" }
+        or integration.availability == "degraded" and { status = "Degraded" }
+        or { status = "Unavailable" }
+      local integrationView = Dibs.PlayerUI.GetStatusPresentation(integrationState)
+      local integrationBadge = Dibs.Midnight.AddStatusBadge(shell, tabs, integrationView.tone, "RCLootCouncil: " .. integrationView.label)
+      Dibs.AceGUI.AddLabel(shell, tabs, integrationView.explanation, true)
+      Dibs.AceGUI.AddTooltip(integrationBadge, "RCLootCouncil status", tostring(integration.reasonCode or "No additional diagnostic detail."))
     end
     if Dibs.Readiness and type(Dibs.Readiness.Evaluate) == "function" then
       local readiness = Dibs.Readiness.Evaluate({ allowPlayer = true })
-      Dibs.AceGUI.AddLabel(shell, tabs, "Raid readiness (safe summary): " .. tostring(readiness and readiness.status or "Unavailable") ..
-        " | Live Dibs consumption: " .. (readiness and readiness.liveConsumptionAllowed and "allowed after revalidation" or "blocked or unavailable"), true)
+      local readinessView = Dibs.PlayerUI.GetStatusPresentation(readiness)
+      Dibs.Midnight.AddStatusBadge(shell, tabs, readinessView.tone, "Raid readiness: " .. readinessView.label)
+      Dibs.AceGUI.AddLabel(shell, tabs, readinessView.explanation ..
+        " Live Dibs consumption: " .. (readiness and readiness.liveConsumptionAllowed and "allowed after revalidation" or "blocked or unavailable"), true)
     end
     Dibs.AceGUI.AddTable(shell, tabs, {
       { title = "Metric", width = 180, tooltip = "Summary field." },

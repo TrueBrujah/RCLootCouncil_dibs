@@ -186,15 +186,15 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 ### Tests for User Story 7
 
-- [ ] T054 [P] [US7] Add supported-size, minimum-column, long-text, tooltip, modal, and scroll-owner tests in `tests/integration/b11_responsive_ui_spec.lua`.
-- [ ] T055 [P] [US7] Add semantic-state, high-contrast, text-scaling, and non-color state-distinction tests in `tests/unit/b11_accessibility_spec.lua`.
-- [ ] T056 [P] [US7] Add rapid-invalidation/coalesced-refresh and combat-lockdown lifecycle tests in `tests/contract/b11_refresh_combat_spec.lua`.
+- [X] T054 [P] [US7] Add supported-size, minimum-column, long-text, tooltip, modal, and scroll-owner tests in `tests/integration/b11_responsive_ui_spec.lua`.
+- [X] T055 [P] [US7] Add semantic-state, high-contrast, text-scaling, and non-color state-distinction tests in `tests/unit/b11_accessibility_spec.lua`.
+- [X] T056 [P] [US7] Add rapid-invalidation/coalesced-refresh and combat-lockdown lifecycle tests in `tests/contract/b11_refresh_combat_spec.lua`.
 
 ### Implementation for User Story 7
 
-- [ ] T057 [US7] Define and apply supported minimum dimensions, row/column sizing, modal sizing, spacing, and scroll ownership across `src/ui/AceGUI.lua`, `src/ui/PlayerUI.lua`, `src/ui/OfficerUI.lua`, and `src/ui/LogsUI.lua`.
-- [ ] T058 [US7] Add long-value truncation, tooltip/expansion, semantic status labels, selected-state treatment, and high-contrast Midnight adjustments in `src/ui/Midnight.lua` and shared UI components.
-- [ ] T059 [US7] Tune coalesced invalidation, deferred creation/movement/refresh, and post-combat retry behavior in `src/ui/AceGUI.lua` and `src/Core.lua`.
+- [X] T057 [US7] Define and apply supported minimum dimensions, row/column sizing, modal sizing, spacing, and scroll ownership across `src/ui/AceGUI.lua`, `src/ui/PlayerUI.lua`, `src/ui/OfficerUI.lua`, and `src/ui/LogsUI.lua`.
+- [X] T058 [US7] Add long-value truncation, tooltip/expansion, semantic status labels, selected-state treatment, and high-contrast Midnight adjustments in `src/ui/Midnight.lua` and shared UI components.
+- [X] T059 [US7] Tune coalesced invalidation, deferred creation/movement/refresh, and post-combat retry behavior in `src/ui/AceGUI.lua` and `src/Core.lua`.
 
 **Checkpoint**: User Story 7 is independently functional when the layout corpus has no overlap or clipped primary actions, state remains distinguishable without color, refreshes are coalesced, and B08 combat safety passes.
 

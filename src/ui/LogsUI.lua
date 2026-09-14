@@ -16,6 +16,12 @@ Related docs: docs/officer/auditing.md, docs/player/README.md.
 local Dibs = _G.Dibs
 Dibs.LogsUI = Dibs.LogsUI or {}
 
+local function windowSize(width, height)
+  local metrics = Dibs.Midnight and Dibs.Midnight.GetLayoutMetrics and Dibs.Midnight.GetLayoutMetrics() or {}
+  return math.max(metrics.minWidth or 520, math.min(metrics.maxWidth or 1400, tonumber(width) or 760)),
+    math.max(metrics.minHeight or 360, math.min(metrics.maxHeight or 1100, tonumber(height) or 560))
+end
+
 local function canViewOfficerLogs()
   if type(Dibs.Permissions) ~= "table" or type(Dibs.Permissions.GetGuildRole) ~= "function" then
     return false
@@ -259,22 +265,24 @@ end
 
 local function openTable(title, columns, rows, width, height)
   if not Dibs.AceGUI or not Dibs.AceGUI.CreateWindow then return false end
-  local shell = Dibs.AceGUI.CreateWindow(title or "Dibs Logs", width or 900, height or 620, { "CENTER", 0, 0 })
+  local windowWidth, windowHeight = windowSize(width or 900, height or 620)
+  local shell = Dibs.AceGUI.CreateWindow(title or "Dibs Logs", windowWidth, windowHeight, { "CENTER", 0, 0 })
   if not shell then return false end
-  local page = Dibs.AceGUI.AddScrollableList(shell, shell.window, (height or 620) - 110)
+  local page = Dibs.AceGUI.AddScrollableList(shell, shell.window, windowHeight - 110)
   Dibs.AceGUI.AddHeading(shell, page, title or "Dibs Logs", "Click a column header to sort. Right-click a row or header for more choices.")
-  Dibs.AceGUI.AddTable(shell, page, columns, rows, (height or 620) - 170)
+  Dibs.AceGUI.AddTable(shell, page, columns, rows, windowHeight - 170)
   shell.window:Show()
   return true
 end
 
 function Dibs.LogsUI.Open(title, lines)
   if not Dibs.AceGUI or not Dibs.AceGUI.CreateWindow then return false end
-  local shell = Dibs.AceGUI.CreateWindow(title or "Dibs Logs", 760, 560, { "CENTER", 0, 0 })
+  local windowWidth, windowHeight = windowSize(760, 560)
+  local shell = Dibs.AceGUI.CreateWindow(title or "Dibs Logs", windowWidth, windowHeight, { "CENTER", 0, 0 })
   if not shell then return false end
-  local scroll = Dibs.AceGUI.AddScrollableList(shell, shell.window, 460)
+  local scroll = Dibs.AceGUI.AddScrollableList(shell, shell.window, windowHeight - 100)
   Dibs.AceGUI.AddHeading(shell, scroll, title or "Dibs Logs", "Select the text with Ctrl+A, then copy with Ctrl+C.")
-  Dibs.AceGUI.AddSelectableText(shell, scroll, "", table.concat(lines or { "No log entries." }, "\n"), 700, 420)
+  Dibs.AceGUI.AddSelectableText(shell, scroll, "", table.concat(lines or { "No log entries." }, "\n"), windowWidth - 60, windowHeight - 140)
   shell.window:Show()
   return true
 end
@@ -320,7 +328,8 @@ end
 function Dibs.LogsUI.OpenOfficer(view, seasonId, query)
   if not canViewOfficerLogs() then return false, "GUILD_ADMIN_REQUIRED" end
   if not Dibs.AceGUI or not Dibs.AceGUI.CreateWindow then return false end
-  local shell = Dibs.AceGUI.CreateWindow("Officer Logs", 1020, 700, { "CENTER", 0, 0 })
+  local windowWidth, windowHeight = windowSize(1020, 700)
+  local shell = Dibs.AceGUI.CreateWindow("Officer Logs", windowWidth, windowHeight, { "CENTER", 0, 0 })
   if not shell then return false end
   local selectedView, search, pageNumber = view or "players", query or "", 1
   local refresh
@@ -368,7 +377,7 @@ function Dibs.LogsUI.OpenOfficer(view, seasonId, query)
     end
     local rows = {}
     for _, line in ipairs(page.lines or {}) do rows[#rows + 1] = splitLine(line, expected) end
-    Dibs.AceGUI.AddTable(shell, tabs, columns, rows, 500)
+    Dibs.AceGUI.AddTable(shell, tabs, columns, rows, windowHeight - 190)
     local previous = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function() pageNumber = math.max(1, pageNumber - 1); refresh() end, 95)
     Dibs.AceGUI.AddLabel(shell, tabs, "Page " .. tostring(page.page) .. "/" .. tostring(page.totalPages))
     local nextButton = Dibs.AceGUI.AddButton(shell, tabs, "Next", function() pageNumber = math.min(page.totalPages, pageNumber + 1); refresh() end, 75)

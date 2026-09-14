@@ -1,0 +1,31 @@
+local loader = require("helpers.load_addon")
+local wow = require("helpers.wow_api")
+
+describe("B11g refresh and combat lifecycle", function()
+  it("coalesces a burst into one scheduled refresh and keeps all callbacks", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local calls = 0
+    assert_true(dibs.AceGUI.RequestRefresh("first", function() calls = calls + 1 end))
+    assert_true(dibs.AceGUI.RequestRefresh("second", function() calls = calls + 1 end))
+    assert_equal(0, calls)
+    dibs.AceGUI.FlushRefreshes()
+    assert_equal(2, calls)
+  end)
+
+  it("defers refresh work during combat and flushes it after combat ends", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { inCombat = true } })
+    local calls = 0
+    assert_false(dibs.AceGUI.RequestRefresh("combat", function() calls = calls + 1 end))
+    assert_equal(0, calls)
+    wow.setCombat(false)
+    assert_true(dibs.AceGUI.FlushRefreshes())
+    assert_equal(1, calls)
+  end)
+
+  it("does not create an update polling loop for Dibs refresh scheduling", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    assert_true(type(dibs.AceGUI.RequestRefresh) == "function")
+    assert_true(type(dibs.AceGUI.FlushRefreshes) == "function")
+    assert_nil(dibs.AceGUI.OnUpdate)
+  end)
+end)

@@ -30,7 +30,11 @@ local defaults = {
   },
   typography = { font = FALLBACK_FONT, body = 13, heading = 16, title = 20, lineHeight = 1.15 },
   spacing = { xs = 4, sm = 8, md = 12, lg = 16, xl = 24, row = 24 },
-  sizing = { minWidth = 520, minHeight = 360, buttonHeight = 24, modalWidth = 560 },
+  sizing = {
+    minWidth = 520, minHeight = 360, maxWidth = 1400, maxHeight = 1100,
+    buttonHeight = 24, modalWidth = 560, modalHeight = 320,
+    defaultScrollHeight = 420, actionMinWidth = 88,
+  },
   surfaces = { statusbar = FALLBACK_STATUSBAR, borderThickness = 1, backgroundAlpha = 0.97 },
   density = "comfortable",
   scale = 1,
@@ -74,6 +78,23 @@ local function safeMedia(kind, name, fallback)
   return fetchedOK and type(value) == "string" and value ~= "" and value or fallback
 end
 
+local STATUS_PRESENTATIONS = {
+  ready = { label = "Ready", marker = "[OK]", explanation = "Ready for the next action.", tone = "ready" },
+  success = { label = "Complete", marker = "[OK]", explanation = "The requested operation completed.", tone = "success" },
+  warning = { label = "Warning", marker = "[!]", explanation = "Review this state before continuing.", tone = "warning" },
+  danger = { label = "Action required", marker = "[X]", explanation = "An action is required before continuing.", tone = "danger" },
+  info = { label = "Information", marker = "[i]", explanation = "Additional information is available.", tone = "info" },
+  normal = { label = "Status", marker = "[ ]", explanation = "Current state is available for review.", tone = "normal" },
+}
+
+local STATE_PRESENTATIONS = {
+  SYNC_BEHIND = { status = "warning", label = "Syncing guild data", explanation = "Guild data is catching up. Try again shortly." },
+  RECOVERY_PENDING = { status = "warning", label = "Recovery in progress", explanation = "Guild Dibs is restoring shared state. Try again later." },
+  COORDINATOR_UNAVAILABLE = { status = "warning", label = "Coordinator unavailable", explanation = "The coordinator is unavailable. Read-only views remain available where possible." },
+  RC_MASTER_LOOTER_UNVERIFIABLE = { status = "warning", label = "RCLootCouncil evidence needs review", explanation = "The current award owner cannot be verified safely." },
+  RCLOOTCOUNCIL_UNAVAILABLE = { status = "warning", label = "RCLootCouncil unavailable", explanation = "RCLootCouncil is unavailable. Dibs remains available where supported." },
+}
+
 function Midnight.GetDefaults()
   return copy(defaults)
 end
@@ -93,6 +114,52 @@ function Midnight.GetTokens()
     tokens.colors.BORDER = { 0.60, 0.70, 0.80, 1 }
   end
   return tokens
+end
+
+function Midnight.GetLayoutMetrics()
+  local tokens = Midnight.GetTokens()
+  local sizing = tokens.sizing or {}
+  local spacing = tokens.spacing or {}
+  return {
+    minWidth = math.max(420, tonumber(sizing.minWidth) or 520),
+    minHeight = math.max(320, tonumber(sizing.minHeight) or 360),
+    maxWidth = math.max(900, tonumber(sizing.maxWidth) or 1400),
+    maxHeight = math.max(700, tonumber(sizing.maxHeight) or 1100),
+    buttonHeight = math.max(22, tonumber(sizing.buttonHeight) or 24),
+    modalWidth = math.max(420, tonumber(sizing.modalWidth) or 560),
+    modalHeight = math.max(260, tonumber(sizing.modalHeight) or 320),
+    defaultScrollHeight = math.max(260, tonumber(sizing.defaultScrollHeight) or 420),
+    actionMinWidth = math.max(72, tonumber(sizing.actionMinWidth) or 88),
+    rowHeight = math.max(20, tonumber(spacing.row) or 24),
+  }
+end
+
+function Midnight.Truncate(value, maximum)
+  local full = tostring(value or "")
+  local limit = math.max(4, tonumber(maximum) or 80)
+  if full:find("|Hitem:", 1, true) or #full <= limit then return full, false, full end
+  local visible = full:sub(1, math.max(1, limit - 3)) .. "..."
+  return visible, true, full
+end
+
+function Midnight.GetStatusPresentation(status)
+  local key = string.lower(tostring(status or "normal"))
+  local presentation = STATUS_PRESENTATIONS[key] or STATUS_PRESENTATIONS.normal
+  return {
+    label = presentation.label, marker = presentation.marker,
+    explanation = presentation.explanation, tone = presentation.tone,
+  }
+end
+
+function Midnight.GetStatePresentation(code)
+  local key = string.upper(tostring(code or ""))
+  local state = STATE_PRESENTATIONS[key]
+  if not state then
+    local fallback = Midnight.GetStatusPresentation("warning")
+    return { label = fallback.label, marker = fallback.marker, explanation = fallback.explanation, tone = fallback.tone, technical = code }
+  end
+  local status = Midnight.GetStatusPresentation(state.status)
+  return { label = state.label, marker = status.marker, explanation = state.explanation, tone = status.tone, technical = code }
 end
 
 function Midnight.GetProfile()
@@ -136,9 +203,13 @@ end
 function Midnight.AddStatusBadge(shell, parent, status, label)
   local gui = Dibs.AceGUI
   if not gui or type(gui.AddLabel) ~= "function" then return nil end
-  local text = tostring(label or status or "")
-  local badge = gui.AddLabel(shell, parent, text, false)
-  if badge then badge.dibsMidnightStatus = tostring(status or "INFO") end
+  local presentation = Midnight.GetStatusPresentation(status)
+  local text = presentation.marker .. " " .. tostring(label or presentation.label)
+  local badge = gui.AddLabel(shell, parent, text, true)
+  if badge then
+    badge.dibsMidnightStatus = presentation.tone
+    gui.AddTooltip(badge, presentation.label, presentation.explanation)
+  end
   return badge
 end
 
@@ -151,10 +222,28 @@ function Midnight.AddEmptyState(shell, parent, title, description)
   return group
 end
 
+function Midnight.AddSandboxBanner(shell, parent, projection)
+  local gui = Dibs.AceGUI
+  if not gui then return nil end
+  local active = type(projection) == "table" and projection.active == true
+  local section = Midnight.CreatePanel(shell, parent)
+  if not section then return nil end
+  if active then
+    Midnight.AddStatusBadge(shell, section, "warning", "DEVELOPER SANDBOX ACTIVE")
+    gui.AddLabel(shell, section, "Simulated authority: " .. tostring(projection.role or "Player"), true)
+    gui.AddLabel(shell, section, "Production database is NOT being modified.", true)
+  else
+    Midnight.AddStatusBadge(shell, section, "info", "Developer Mode enabled; sandbox inactive")
+    gui.AddLabel(shell, section, "Production data and authority are active until you explicitly enter the sandbox.", true)
+  end
+  return section
+end
+
 function Midnight.AddModal(shell, title, width, height)
   local gui = Dibs.AceGUI
   if not gui or type(gui.CreateWindow) ~= "function" then return nil end
-  return gui.CreateWindow(title, width or defaults.sizing.modalWidth, height or 320)
+  local metrics = Midnight.GetLayoutMetrics()
+  return gui.CreateWindow(title, width or metrics.modalWidth, height or metrics.modalHeight)
 end
 
 return Midnight

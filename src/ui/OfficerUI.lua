@@ -1105,15 +1105,23 @@ end
 
 local function renderDashboard(shell, parent, frame)
   local dashboard = Dibs.OfficerUI.GetDashboardProjection()
+  local function addStatus(key, value)
+    local tone = value and value.label == "Ready" and "ready" or (value and value.label == "Operational" and "success" or "info")
+    if value and (value.label == "Unavailable" or value.label == "Degraded" or value.label == "Recovery in progress" or value.label == "Behind / Synchronizing") then
+      tone = "warning"
+    end
+    Dibs.Midnight.AddStatusBadge(shell, parent, tone, key .. ": " .. tostring(value and value.label or "Unavailable"))
+    Dibs.AceGUI.AddLabel(shell, parent, tostring(value and value.explanation or "Unavailable."), true)
+  end
   Dibs.AceGUI.AddHeading(shell, parent, "Officer dashboard", "Guild-wide operational summary for authorized Officers and GM.")
   Dibs.AceGUI.AddLabel(shell, parent, "Season: " .. tostring(dashboard.season.name), true)
   Dibs.AceGUI.AddLabel(shell, parent, "Requests pending: " .. tostring(dashboard.metrics.pendingRequests)
     .. " | Active Pre-Dibs: " .. tostring(dashboard.metrics.activePreDibs)
     .. " | Active players: " .. tostring(dashboard.metrics.activePlayers), true)
-  Dibs.AceGUI.AddLabel(shell, parent, "Ledger: " .. dashboard.status.ledger.label .. " - " .. dashboard.status.ledger.explanation, true)
-  Dibs.AceGUI.AddLabel(shell, parent, "Sync: " .. dashboard.status.sync.label .. " - " .. dashboard.status.sync.explanation, true)
-  Dibs.AceGUI.AddLabel(shell, parent, "Coordinator: " .. dashboard.status.coordinator.label .. " - " .. dashboard.status.coordinator.explanation, true)
-  Dibs.AceGUI.AddLabel(shell, parent, "RCLootCouncil: " .. dashboard.status.rclootcouncil.label .. " - " .. dashboard.status.rclootcouncil.explanation, true)
+  addStatus("Ledger", dashboard.status.ledger)
+  addStatus("Sync", dashboard.status.sync)
+  addStatus("Coordinator", dashboard.status.coordinator)
+  addStatus("RCLootCouncil", dashboard.status.rclootcouncil)
   local recentText = #dashboard.recentActivity > 0 and table.concat(dashboard.recentActivity, "\n") or dashboard.empty.recentActivity
   Dibs.AceGUI.AddHeader(shell, parent, "Recent activity", "Latest bounded Officer-visible activity.")
   Dibs.AceGUI.AddLabel(shell, parent, recentText, true)
@@ -1370,7 +1378,9 @@ local function createAceWindow()
           Dibs.AceGUI.AddButton(shell, tabs, "Open developer sandbox", function()
             if Dibs.DeveloperUI.Open then Dibs.DeveloperUI.Open() end
           end, 190)
-          Dibs.AceGUI.AddLabel(shell, tabs, "Warning: " .. tostring(projection.warning), true)
+          if Dibs.Midnight and Dibs.Midnight.AddSandboxBanner then
+            Dibs.Midnight.AddSandboxBanner(shell, tabs, projection)
+          end
           Dibs.AceGUI.AddLabel(shell, tabs, "Provider: " .. tostring(projection.provider) .. " | Role: " .. tostring(projection.role)
             .. " | Coordinator: " .. tostring(projection.coordinatorState), true)
         else
