@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased B12 design gate - 2026-09-14
+
+- Document the intentionally simple Midnight layout, contextual secondary-action
+  model, shared context-menu requirements, authorization visibility, and confirmation
+  gates for dangerous actions in `docs/developer/b12-ui-design-rules.md`.
+
 ## Unreleased B10 release gate - 2026-09-13
 
 - Align release and operator documentation with the implemented V2 cutover,
