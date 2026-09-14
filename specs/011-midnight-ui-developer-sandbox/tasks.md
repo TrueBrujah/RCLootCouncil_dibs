@@ -121,15 +121,15 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] Add player/Officer/GM navigation visibility and GM-versus-Officer action tests in `tests/contract/b11_officer_navigation_spec.lua`.
-- [ ] T038 [P] [US4] Add dashboard summary, degraded-status, and expandable-diagnostics tests in `tests/integration/b11_officer_dashboard_spec.lua`.
+- [x] T037 [P] [US4] Add player/Officer/GM navigation visibility and GM-versus-Officer action tests in `tests/contract/b11_officer_navigation_spec.lua`.
+- [x] T038 [P] [US4] Add dashboard summary, degraded-status, and expandable-diagnostics tests in `tests/integration/b11_officer_dashboard_spec.lua`.
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Implement grouped Officer navigation for Dashboard, Requests, Pre-Dibs, History, Seasons, Rank Rules, Loot Rules, Announcements, RCLootCouncil, Settings, and Diagnostics in `src/ui/OfficerUI.lua`.
-- [ ] T040 [US4] Implement the Officer/GM dashboard projection and human-readable operational status cards in `src/ui/OfficerUI.lua` using normalized services only.
-- [ ] T041 [US4] Apply role-scoped visibility and existing protected-action delegation to Officer dashboard context menus and administrative controls in `src/ui/OfficerUI.lua`.
-- [ ] T042 [US4] Hide Developer and Debug groups unless Developer Mode is enabled, and show sandbox warning/provider status only in the developer-aware surface in `src/ui/OfficerUI.lua` and `src/ui/DeveloperUI.lua`.
+- [x] T039 [US4] Implement grouped Officer navigation for Dashboard, Requests, Pre-Dibs, History, Seasons, Rank Rules, Loot Rules, Announcements, RCLootCouncil, Settings, and Diagnostics in `src/ui/OfficerUI.lua`.
+- [x] T040 [US4] Implement the Officer/GM dashboard projection and human-readable operational status cards in `src/ui/OfficerUI.lua` using normalized services only.
+- [x] T041 [US4] Apply role-scoped visibility and existing protected-action delegation to Officer dashboard context menus and administrative controls in `src/ui/OfficerUI.lua`.
+- [x] T042 [US4] Hide Developer and Debug groups unless Developer Mode is enabled, and show sandbox warning/provider status only in the developer-aware surface in `src/ui/OfficerUI.lua` and `src/ui/DeveloperUI.lua`.
 
 **Checkpoint**: User Story 4 is independently functional when player privacy, Officer/GM visibility, grouped navigation, dashboard summaries, and protected administrative actions pass focused tests.
 

@@ -3,7 +3,7 @@ local Dibs = _G.Dibs
 Dibs.DeveloperSandbox = Dibs.DeveloperSandbox or {}
 local Sandbox = Dibs.DeveloperSandbox
 
-local ROLE_NAMES = { player = true, officer = true, guild_master = true, coordinator = true, recovery = true }
+local ROLE_NAMES = { player = true, officer = true, guild_master = true, gm = true, coordinator = true, recovery = true }
 local active
 
 local function copy(value)
@@ -82,6 +82,7 @@ function Sandbox.SetRole(role)
   role = string.lower(tostring(role or ""))
   if not active then return false, "SANDBOX_INACTIVE" end
   if not ROLE_NAMES[role] then return false, "INVALID_SIMULATED_ROLE" end
+  if role == "gm" then role = "guild_master" end
   active.role = role
   if role == "coordinator" then active.coordinatorState = "ACTIVE"
   elseif role == "recovery" then active.coordinatorState = "RECOVERY_PENDING"

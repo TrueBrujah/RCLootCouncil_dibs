@@ -42,18 +42,20 @@ local DEFAULT_PREDIB_TEMPLATE = "[Dibs] %player requested %item (%difficulty) - 
 local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]"
 
 local OFFICER_NAV_TREE = {
-  { text = "Overview", value = "overview" },
-  { text = "Review Requests", value = "disputes" },
-  { text = "RC History", value = "reconciliation" },
-  { text = "Seasons", value = "seasons" },
-  { text = "Rank Rules", value = "ranks" },
-  { text = "Settings", value = "settings" },
-  { text = "Pre-Dibs", value = "preDibs" },
-  { text = "Loot Eligibility", value = "eligibility" },
-  { text = "Announcements", value = "announcements" },
-  { text = "Developer", value = "developer" },
-  { text = "RCLootCouncil", value = "integration" },
-  { text = "Debug", value = "debug" },
+  { section = "OVERVIEW", text = "Dashboard", value = "overview" },
+  { section = "DIBS", text = "Requests", value = "disputes" },
+  { section = "DIBS", text = "Pre-Dibs", value = "preDibs" },
+  { section = "DIBS", text = "History", value = "history" },
+  { section = "GUILD RULES", text = "Seasons", value = "seasons" },
+  { section = "GUILD RULES", text = "Rank Rules", value = "ranks" },
+  { section = "GUILD RULES", text = "Loot Rules", value = "lootTypes" },
+  { section = "GUILD RULES", text = "Announcements", value = "announcements" },
+  { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration" },
+  { section = "SYSTEM", text = "Settings", value = "settings" },
+  { section = "SYSTEM", text = "Diagnostics", value = "diagnostics" },
+  { section = "SYSTEM", text = "Loot Eligibility", value = "eligibility" },
+  { section = "DEVELOPER", text = "Developer", value = "developer" },
+  { section = "DEVELOPER", text = "Debug", value = "debug" },
 }
 
 -- Keep the old programmatic names working for macros and existing tests while
@@ -69,14 +71,28 @@ local OFFICER_TAB_ALIASES = {
 }
 
 local function getOfficerNavigationTree()
+  local role = Dibs.OfficerUI.GetPresentationRole()
+  if role ~= "gm" and role ~= "officer" then return {} end
   local developerEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() == true
   local tree = {}
   for _, entry in ipairs(OFFICER_NAV_TREE) do
     if (entry.value ~= "developer" and entry.value ~= "debug") or developerEnabled then
-      table.insert(tree, { text = entry.text, value = entry.value })
+      table.insert(tree, { section = entry.section, text = entry.text, value = entry.value })
     end
   end
   return tree
+end
+
+local function buildOfficerTree(entries)
+  local sections, order = {}, {}
+  for _, entry in ipairs(entries or {}) do
+    if not sections[entry.section] then
+      sections[entry.section] = { text = entry.section, value = "section_" .. string.lower((entry.section or ""):gsub("%s+", "_")), children = {} }
+      table.insert(order, sections[entry.section])
+    end
+    table.insert(sections[entry.section].children, { text = entry.text, value = entry.value })
+  end
+  return order
 end
 
 local function normalizeOfficerTab(tab)
@@ -87,15 +103,27 @@ function Dibs.OfficerUI.GetNavigationTree()
   return getOfficerNavigationTree()
 end
 
+function Dibs.OfficerUI.GetPresentationRole()
+  if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive()
+    and Dibs.DeveloperSandbox.GetStatus then
+    local status = Dibs.DeveloperSandbox.GetStatus()
+    if status.role == "guild_master" then return "gm" end
+    if status.role == "officer" then return "officer" end
+    return "player"
+  end
+  if Dibs.Permissions and type(Dibs.Permissions.GetGuildRole) == "function" then
+    local ok, role = pcall(Dibs.Permissions.GetGuildRole, nil)
+    if ok then return role end
+  end
+  return "player"
+end
+
 -- Officer views contain the guild-wide ledger, Pre-Dibs history and rank
 -- diagnostics.  Keep the authorization check at the read boundary so a
 -- normal player cannot bypass the UI by calling these Lua functions directly.
 local function canViewOfficerData()
-  if type(Dibs.Permissions) ~= "table" or type(Dibs.Permissions.GetGuildRole) ~= "function" then
-    return false
-  end
-  local ok, role = pcall(Dibs.Permissions.GetGuildRole, nil)
-  return ok and (role == "gm" or role == "officer")
+  local role = Dibs.OfficerUI.GetPresentationRole()
+  return role == "gm" or role == "officer"
 end
 
 local function emptyOfficerPage(view, query)
@@ -824,6 +852,121 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId)
   }
 end
 
+local function dashboardStatus(label, explanation, technical)
+  return { label = label, explanation = explanation, technical = technical }
+end
+
+local function syncDashboardStatus(status)
+  status = status or {}
+  local state = status.state or status.status
+  if state == "SYNC_BEHIND" then return dashboardStatus("Behind / Synchronizing", "The guild ledger is catching up.", status) end
+  if state == "SYNC_UNAVAILABLE" then return dashboardStatus("Unavailable", "Synchronization is unavailable.", status) end
+  return dashboardStatus("Ready", "Synchronization is ready.", status)
+end
+
+local function coordinatorDashboardStatus(authority)
+  authority = authority or {}
+  local state = authority.state or "LEGACY_LOCAL"
+  if state == "RECOVERY_PENDING" then return dashboardStatus("Recovery in progress", "Coordinator recovery is in progress.", authority) end
+  if state == "COORDINATOR_UNAVAILABLE" then return dashboardStatus("Unavailable", "The coordinator is unavailable.", authority) end
+  if state == "ACTIVE" then return dashboardStatus("Active", "Coordinator authority is active.", authority) end
+  return dashboardStatus("Local only", "No distributed coordinator is active.", authority)
+end
+
+local function rclootCouncilDashboardStatus(status)
+  status = status or {}
+  local availability = status.availability or status.status
+  if availability == "degraded" then return dashboardStatus("Degraded", "RCLootCouncil is available with limitations.", status) end
+  if availability == "operational" or availability == "ready" then return dashboardStatus("Operational", "RCLootCouncil is operational.", status) end
+  return dashboardStatus("Unavailable", "RCLootCouncil is unavailable.", status)
+end
+
+function Dibs.OfficerUI.GetDashboardProjection()
+  if not canViewOfficerData() then
+    return { hidden = true, role = Dibs.OfficerUI.GetPresentationRole(), provider = "production" }
+  end
+
+  local role = Dibs.OfficerUI.GetPresentationRole()
+  local sandboxStatus = Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.GetStatus and Dibs.DeveloperSandbox.GetStatus() or {}
+  local provider = sandboxStatus.active and "sandbox" or "production"
+  local season = Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent() or nil
+  local seasonId = season and season.id or nil
+  local statistics = Dibs.OfficerUI.BuildSeasonStatistics(seasonId)
+  local predibs = Dibs.OfficerUI.BuildPreDibDetails(seasonId)
+  local pendingRequests = 0
+  for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}) do
+    if request.seasonId == seasonId and request.status == "pending" then pendingRequests = pendingRequests + 1 end
+  end
+  local sync = Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or {}
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or {}
+  local rc = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
+  local recent = {}
+  local ledgerPage = Dibs.OfficerUI.GetPagedView("actions", seasonId, 1, 5)
+  local preDibPage = Dibs.OfficerUI.GetPagedView("predibs", seasonId, 1, 5)
+  for _, line in ipairs(ledgerPage.lines or {}) do
+    if #recent < 5 and line ~= "No history for this season." then table.insert(recent, line) end
+  end
+  for _, line in ipairs(preDibPage.lines or {}) do
+    if #recent < 5 and line ~= "No pre-Dibs for this season." then table.insert(recent, line) end
+  end
+  local ledgerStatus = season and dashboardStatus("Healthy", "The active season ledger is available.", { state = "HEALTHY", seasonId = seasonId })
+    or dashboardStatus("Unavailable", "No active season is configured.", { state = "NO_ACTIVE_SEASON" })
+
+  return {
+    role = role,
+    provider = provider,
+    authorityOrigin = sandboxStatus.authorityOrigin or "production",
+    season = { id = seasonId, name = season and season.name or "No active season" },
+    metrics = {
+      activePlayers = statistics.players,
+      pendingRequests = pendingRequests,
+      activePreDibs = predibs.activeRequestCount,
+      transactions = statistics.transactions,
+      awards = statistics.awards,
+    },
+    status = {
+      ledger = ledgerStatus,
+      sync = syncDashboardStatus(sync),
+      coordinator = coordinatorDashboardStatus(authority),
+      rclootcouncil = rclootCouncilDashboardStatus(rc),
+    },
+    recentActivity = recent,
+    empty = {
+      pendingRequests = predibs.activeRequestCount == 0 and "No pending requests." or nil,
+      activePreDibs = predibs.activeRequestCount == 0 and "No active Pre-Dibs." or nil,
+      recentActivity = #recent == 0 and "No recent activity." or nil,
+    },
+    technical = { sync = sync, coordinator = authority, rclootcouncil = rc },
+    capabilities = { governance = role == "gm", manageDibs = true, reviewRequests = true },
+  }
+end
+
+local function renderDashboard(shell, parent, frame)
+  local dashboard = Dibs.OfficerUI.GetDashboardProjection()
+  Dibs.AceGUI.AddHeading(shell, parent, "Officer dashboard", "Guild-wide operational summary for authorized Officers and GM.")
+  Dibs.AceGUI.AddLabel(shell, parent, "Season: " .. tostring(dashboard.season.name), true)
+  Dibs.AceGUI.AddLabel(shell, parent, "Requests pending: " .. tostring(dashboard.metrics.pendingRequests)
+    .. " | Active Pre-Dibs: " .. tostring(dashboard.metrics.activePreDibs)
+    .. " | Active players: " .. tostring(dashboard.metrics.activePlayers), true)
+  Dibs.AceGUI.AddLabel(shell, parent, "Ledger: " .. dashboard.status.ledger.label .. " - " .. dashboard.status.ledger.explanation, true)
+  Dibs.AceGUI.AddLabel(shell, parent, "Sync: " .. dashboard.status.sync.label .. " - " .. dashboard.status.sync.explanation, true)
+  Dibs.AceGUI.AddLabel(shell, parent, "Coordinator: " .. dashboard.status.coordinator.label .. " - " .. dashboard.status.coordinator.explanation, true)
+  Dibs.AceGUI.AddLabel(shell, parent, "RCLootCouncil: " .. dashboard.status.rclootcouncil.label .. " - " .. dashboard.status.rclootcouncil.explanation, true)
+  local recentText = #dashboard.recentActivity > 0 and table.concat(dashboard.recentActivity, "\n") or dashboard.empty.recentActivity
+  Dibs.AceGUI.AddHeader(shell, parent, "Recent activity", "Latest bounded Officer-visible activity.")
+  Dibs.AceGUI.AddLabel(shell, parent, recentText, true)
+  Dibs.AceGUI.AddButton(shell, parent, frame.showDashboardTechnical and "Hide technical details" or "Show technical details", function()
+    frame.showDashboardTechnical = not frame.showDashboardTechnical
+    frame:Refresh()
+  end, 190)
+  if frame.showDashboardTechnical then
+    Dibs.AceGUI.AddHeader(shell, parent, "Technical details", "Normalized service state and diagnostic reason codes.")
+    Dibs.AceGUI.AddLabel(shell, parent, "Sync state: " .. tostring(dashboard.technical.sync.state or "unknown"), true)
+    Dibs.AceGUI.AddLabel(shell, parent, "Coordinator state: " .. tostring(dashboard.technical.coordinator.state or "unknown"), true)
+    Dibs.AceGUI.AddLabel(shell, parent, "RCLootCouncil reason: " .. tostring(dashboard.technical.rclootcouncil.reasonCode or "none"), true)
+  end
+end
+
 function Dibs.OfficerUI.BuildDashboardDetails(season)
   if not canViewOfficerData() then
     return { "Officer access required." }
@@ -1032,7 +1175,7 @@ local function createAceWindow()
     frame:Refresh()
   end
 
-  local tabs = Dibs.AceGUI.AddTree(shell, getOfficerNavigationTree(), function(value)
+  local tabs = Dibs.AceGUI.AddTree(shell, buildOfficerTree(getOfficerNavigationTree()), function(value)
     frame.activeTab, frame.ledgerPage = normalizeOfficerTab(value), 1
     frame:Refresh()
   end, 190)
@@ -1071,6 +1214,11 @@ local function createAceWindow()
       self.selectedSeasonId = current.id
     end
     local currentId = current and current.id or nil
+
+    if self.activeTab == "overview" then
+      renderDashboard(shell, tabs, self)
+      return
+    end
 
     -- Render the canonical Officer options directly from the shared
     -- AceConfig table.  This keeps Seasons, Rank Rules, Settings, Pre-Dibs,
