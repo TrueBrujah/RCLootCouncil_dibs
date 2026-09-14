@@ -342,6 +342,9 @@ function Adapter.Create(shell, kind, parent)
     return nil
   end
   owner:AddChild(widget)
+  if Dibs.Midnight and type(Dibs.Midnight.ApplyToWidget) == "function" then
+    Dibs.Midnight.ApplyToWidget(widget, Adapter.GetPresentationTokens())
+  end
   return widget
 end
 
@@ -424,22 +427,42 @@ function Adapter.Clear(container)
   local hasChildArray = type(childArray) == "table"
   local children = {}
   for _, child in ipairs(childArray or {}) do children[#children + 1] = child end
-  if hasChildArray then container.children = {} end
   local gui = getLibrary()
-  for _, child in ipairs(children) do
-    if child and not child.isQueuedForRelease then
-      local released = false
-      if gui and type(gui.Release) == "function" then
-        released = pcall(gui.Release, gui, child)
-      elseif type(child.Release) == "function" then
-        released = pcall(child.Release, child)
+  local releasedByContainer = false
+  if hasChildArray and gui and type(gui.Release) == "function"
+    and type(container.ReleaseChildren) == "function" then
+    -- AceGUI's implementation releases the live children array recursively.
+    -- Keeping this path intact is important for pooled ScrollFrame and TreeGroup
+    -- widgets whose native child frames are not represented by children[].
+    releasedByContainer = pcall(container.ReleaseChildren, container)
+  end
+  if not releasedByContainer then
+    for index, child in ipairs(children) do
+      if child and not child.isQueuedForRelease then
+        local released = false
+        if gui and type(gui.Release) == "function" then
+          released = pcall(gui.Release, gui, child)
+        elseif type(child.Release) == "function" then
+          released = pcall(child.Release, child)
+        end
+        if not released and child.frame and type(child.frame.Hide) == "function" then
+          pcall(child.frame.Hide, child.frame)
+        end
       end
-      if not released and child.frame and type(child.frame.Hide) == "function" then
-        pcall(child.frame.Hide, child.frame)
+      if hasChildArray then childArray[index] = nil end
+    end
+  end
+  for _, child in ipairs(children) do
+    if child then
+      releaseMSAControls(child)
+      if child.frame then
+        if type(child.frame.Hide) == "function" then pcall(child.frame.Hide, child.frame) end
       end
     end
   end
-  if not hasChildArray and container and type(container.ReleaseChildren) == "function" then
+  if hasChildArray then
+    for index = #childArray, 1, -1 do childArray[index] = nil end
+  elseif container and type(container.ReleaseChildren) == "function" then
     pcall(container.ReleaseChildren, container)
   end
   if paused then container:ResumeLayout() end
@@ -870,7 +893,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
   options = options or {}
   local scrolling = Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
   if scrolling then return scrolling end
-  local scroll = Adapter.AddScrollableList(shell, parent, height)
+  local scroll = parent and parent.type == "ScrollFrame" and parent or Adapter.AddScrollableList(shell, parent, height)
   if not scroll then return nil end
   local definitions = columns or {}
   local desiredWidth = 0
@@ -1190,7 +1213,7 @@ function Adapter.AddTabs(shell, tabs, onSelect)
   if not group then return nil end
   call(group, "SetFullWidth", true)
   call(group, "SetFullHeight", true)
-  call(group, "SetLayout", "Flow")
+  call(group, "SetLayout", "List")
   call(group, "SetTabs", tabs)
   call(group, "SetCallback", "OnGroupSelected", function(_, _, value)
     if onSelect then onSelect(value) end
@@ -1339,7 +1362,11 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
       if kind == "group" then
         local groupTarget = target
         if label ~= "" then
-          groupTarget = Adapter.AddSection(shell, target, label, description)
+          if option.inline == true or context.flattenInlineGroups == true then
+            Adapter.AddHeader(shell, target, label, description)
+          else
+            groupTarget = Adapter.AddSection(shell, target, label, description)
+          end
         end
         render(option.args, groupTarget)
       elseif kind == "description" or kind == "header" then
@@ -1436,6 +1463,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
 end
 
 function Adapter.AddScrollableList(shell, parent, height)
+  if parent and parent.type == "ScrollFrame" then return parent end
   local scroll = Adapter.Create(shell, "ScrollFrame", parent)
   if not scroll then
     scroll = Adapter.Create(shell, "SimpleGroup", parent)
@@ -1443,12 +1471,15 @@ function Adapter.AddScrollableList(shell, parent, height)
   if not scroll then return nil end
   local metrics = Adapter.GetLayoutMetrics()
   local requestedHeight = tonumber(height) or metrics.defaultScrollHeight or 260
+  local frameHeight = shell and shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or nil
+  if frameHeight and frameHeight > 0 then
+    requestedHeight = math.min(requestedHeight, math.max(240, frameHeight - 180))
+  end
   call(scroll, "SetHeight", requestedHeight)
   call(scroll, "SetFullWidth", true)
   call(scroll, "SetLayout", "List")
   -- Long pages should follow a resizable Dibs window. Keep compact embedded
   -- lists (for example multiselect checkboxes) at their requested height.
-  local frameHeight = shell and shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or nil
   if shell and requestedHeight >= 380 and frameHeight and frameHeight > requestedHeight then
     scroll._dibsShell = shell
     scroll._dibsResizeOffset = frameHeight - requestedHeight

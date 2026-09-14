@@ -17,6 +17,31 @@
 - T012: reusable context-menu replacement/close, tooltip argument ordering and item-link handling, raw-frame rejection, lib-st ownership/release, and combat refresh deferral.
 - T013-T018: existing B11 V3 implementation verified by the focused regressions for permanent content ownership, recursive cleanup, window state, enum normalization, safe tooltip/table ownership, and callback/shell cleanup.
 
+## Guild Rules / Seasons orphaned UI remediation
+
+The manual blocker was reproduced by repeatedly switching through Seasons and
+other Guild Rules routes, then reopening the Officer window. The stale content
+was caused by routed page widgets and native lib-st/MSA controls outliving the
+previous route during pooled AceGUI cleanup; the visible symptom was Seasons
+content remaining after the route changed or reappeared after reopen.
+
+The remediation keeps one permanent navigation TreeGroup, one content host, and
+one tagged routed page root. `Adapter.Clear()` now uses native recursive
+`ReleaseChildren()` ownership where available, explicitly releases native table
+and dropdown state, and preserves pooled AceGUI frame ownership instead of
+detaching arbitrary child frames. Fallback table rendering reuses an existing
+page ScrollFrame, preventing nested page scrolling. The route regression now
+repeats the full route sequence and asserts that the Seasons-owned page is
+fully released outside Seasons; the ownership regression asserts exactly one
+current routed header.
+
+The Seasons Officer projection is a compact selectable list/detail workflow.
+Loot Eligibility Customize now follows the same pattern: one category list,
+one selected-category detail, and protected policy saves carrying the existing
+`seasonId`, `family`, `difficultyScope`, `enforcementOutcome`, and
+`completionThreshold` fields. No business authority or protected action
+semantics were changed.
+
 ## Officer Pre-Dibs follow-up
 
 The Officer `Pre-Dibs` route now renders the canonical `groups.preDibs` AceConfig
@@ -34,19 +59,23 @@ receives canonical `ENCOUNTER`.
 Focused B12a suites:
 
 ```text
-10 passed, 0 failed (4 files)
+52 passed, 0 failed (5 files)
 ```
 
 B11 UI ownership, navigation, Midnight, and lifecycle regressions:
 
 ```text
-26 passed, 0 failed (5 files)
+22 passed, 0 failed (3 files)
 ```
+
+The latest combined route, ownership, options, and eligibility validation is
+green at `52 passed, 0 failed (5 files)`. The final focused lifecycle slice
+after the scroll ownership adjustment is `22 passed, 0 failed (3 files)`.
 
 Full explicit Fengari suite (all `tests/**/*_spec.lua` files):
 
 ```text
-396 passed, 1 failed (90 files)
+398 passed, 1 failed (90 files)
 ```
 
 The sole full-suite failure is the known unrelated baseline:

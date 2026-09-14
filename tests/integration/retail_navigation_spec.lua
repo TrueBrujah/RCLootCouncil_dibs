@@ -110,6 +110,29 @@ describe("Retail Officer navigation lifecycle", function()
     end
   end)
 
+  it("fully releases Seasons-owned content across the Retail route sequence", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow()
+    local sequence = { "overview", "preDibs", "seasons", "ranks", "lootTypes", "settings", "eligibility", "overview" }
+    for cycle = 1, 10 do
+      for _, route in ipairs(sequence) do
+        frame.SelectTab(route)
+        assert_equal(1, #(frame.contentHost.children or {}), route)
+        local pageRoot = frame.contentHost.children[1]
+        assert_equal(route, pageRoot._dibsRoute, route)
+        assert_equal(route, frame.mountedPage, route)
+        assert_equal(pageRoot, frame.contentHost._dibsCurrentPageRoot)
+        for _, child in ipairs(frame.contentHost.children or {}) do
+          assert_equal(route, child._dibsRoute, "unexpected routed page survived: " .. route)
+        end
+        if route ~= "seasons" then
+          assert_false(containsText(frame.contentHost, "New season name"), route)
+          assert_false(containsText(frame.contentHost, "Rename selected to"), route)
+        end
+      end
+    end
+  end)
+
   it("activates the sandbox through the Developer page button without granting a role", function()
     local dibs = setup()
     dibs.DeveloperMode.SetEnabled(true)

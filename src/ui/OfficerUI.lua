@@ -1439,6 +1439,124 @@ local function createAceWindow()
     frame:Refresh()
   end
 
+  local function renderSeasonsPage(shell, parent)
+    local allSeasons = Dibs.Seasons and Dibs.Seasons.List and Dibs.Seasons.List(true) or {}
+    local activeSeasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
+    local selected = frame.selectedSeasonId and findSeasonById(frame.selectedSeasonId) or nil
+    if not selected then
+      selected = getSelectedSeason(frame) or allSeasons[#allSeasons]
+      frame.selectedSeasonId = selected and selected.id or nil
+    end
+
+    Dibs.AceGUI.AddHeading(shell, parent, "Seasons", "Select a season to view details. Secondary actions are available from the row context menu.")
+    local rows = {}
+    for _, season in ipairs(allSeasons) do
+      rows[#rows + 1] = {
+        tostring(season.name or season.id),
+        season.id == activeSeasonId and "ACTIVE" or (season.isArchived and "Archived" or "Available"),
+        season.createdAt and date("%b %Y", season.createdAt) or "Unknown",
+        season = season,
+      }
+    end
+    if #rows == 0 then rows[1] = { "No seasons", "", "" } end
+
+    local function selectRow(row)
+      if row and row.season then
+        frame.selectedSeasonId = row.season.id
+        frame.seasonEditId = nil
+        frame.seasonArchivePendingId = nil
+        frame:Refresh()
+      end
+    end
+    local function executeSeason(action, seasonId, payload)
+      local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+        and Dibs.ProtectedActions.Execute(action, nil, payload or { seasonId = seasonId })
+        or { ok = false, diagnostic = "Protected actions unavailable." }
+      frame:SetStatus(result.ok and (action == "season.set" and "Active season updated." or "Season updated.")
+        or (result.diagnostic or "Season action failed."))
+      frame:Refresh()
+    end
+    local tableOptions = {
+      onRowClick = function(row) selectRow(row) end,
+      contextMenu = function(row)
+        local season = row and row.season
+        if not season then return {} end
+        frame.selectedSeasonId = season.id
+        local menu = {
+          { text = "View details", callback = function() frame.seasonEditId = nil; frame:Refresh() end },
+        }
+        if not season.isArchived and season.id ~= activeSeasonId then
+          menu[#menu + 1] = { text = "Set active", callback = function() executeSeason("season.set", season.id) end }
+        end
+        if not season.isArchived then
+          menu[#menu + 1] = { text = "Rename", callback = function() frame.seasonEditId = season.id; frame:Refresh() end }
+          if #allSeasons > 1 then
+            menu[#menu + 1] = { text = "Archive", callback = function() frame.seasonArchivePendingId = season.id; frame:Refresh() end }
+          end
+        end
+        return menu
+      end,
+    }
+    Dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Season", width = 250, tooltip = "Season name." },
+      { title = "State", width = 110, tooltip = "Active, available or archived." },
+      { title = "Created", width = 120, tooltip = "Season creation month." },
+    }, rows, 190, nil, tableOptions)
+
+    if selected then
+      Dibs.AceGUI.AddHeader(shell, parent, "Selected season", "Details and primary actions for the selected season.")
+      Dibs.AceGUI.AddLabel(shell, parent, tostring(selected.name or selected.id) .. "  |  "
+        .. (selected.id == activeSeasonId and "ACTIVE" or (selected.isArchived and "Archived" or "Available")), true)
+      Dibs.AceGUI.AddLabel(shell, parent, (selected.createdAt and date("%b %Y", selected.createdAt) or "Unknown")
+        .. " - " .. (selected.isArchived and "Archived" or "Current"), true)
+      local actions = Dibs.AceGUI.AddInlineGroup(shell, parent)
+      if not selected.isArchived and selected.id ~= activeSeasonId then
+        Dibs.AceGUI.AddButton(shell, actions, "Set active", function() executeSeason("season.set", selected.id) end, 120)
+      end
+      if frame.seasonArchivePendingId == selected.id then
+        Dibs.AceGUI.AddLabel(shell, actions, "Archive this season?", false)
+        Dibs.AceGUI.AddButton(shell, actions, "Confirm archive", function()
+          executeSeason("season.archive", selected.id)
+          frame.seasonArchivePendingId = nil
+        end, 130)
+        Dibs.AceGUI.AddButton(shell, actions, "Cancel", function()
+          frame.seasonArchivePendingId = nil
+          frame:Refresh()
+        end, 80)
+      end
+      if frame.seasonEditId == selected.id then
+        local rename = Dibs.AceGUI.AddEditBox(shell, parent, "Rename season", function(value)
+          frame.seasonRenameName = value or ""
+        end, 300)
+        setControlText(rename, frame.seasonRenameName or selected.name or "")
+        Dibs.AceGUI.AddButton(shell, parent, "Save name", function()
+          local name = trimText(frame.seasonRenameName or "")
+          if name == "" then return end
+          executeSeason("season.rename", selected.id, { seasonId = selected.id, name = name })
+          frame.seasonEditId = nil
+        end, 120)
+      end
+    end
+
+    local createActions = Dibs.AceGUI.AddInlineGroup(shell, parent)
+    local createInput = Dibs.AceGUI.AddEditBox(shell, createActions, "New season", function(value)
+      frame.newSeasonName = value or ""
+    end, 260)
+    setControlText(createInput, frame.newSeasonName or "")
+    Dibs.AceGUI.AddButton(shell, createActions, "Create", function()
+      local name = trimText(frame.newSeasonName or "")
+      local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+        and Dibs.ProtectedActions.Execute("season.create", nil, { name = name ~= "" and name or nil })
+        or { ok = false, diagnostic = "Protected actions unavailable." }
+      if result.ok and result.value then
+        frame.selectedSeasonId = result.value.id
+        frame.newSeasonName = ""
+      end
+      frame:SetStatus(result.ok and "Season created." or (result.diagnostic or "Unable to create season."))
+      frame:Refresh()
+    end, 90)
+  end
+
   local navigation = Dibs.AceGUI.AddTree(shell, buildOfficerTree(getOfficerNavigationTree()), function(value)
     local route = normalizeOfficerTab(value)
     if not officerRouteVisible(route) then route = "overview" end
@@ -1478,6 +1596,9 @@ local function createAceWindow()
     self.mountedPage = self.activeTab
     self.mountedPageHost = pageRoot
     self.primaryPageCount = 1
+    pageRoot._dibsRoute = self.activeTab
+    pageRoot._dibsOwner = self
+    contentHost._dibsCurrentPageRoot = pageRoot
     local tabs = pageRoot
     local routeTitles = {
       disputes = "Requests", preDibs = "Pre-Dibs", history = "History", reconciliation = "History", seasons = "Seasons",
@@ -1531,6 +1652,11 @@ local function createAceWindow()
       return
     end
 
+    if self.activeTab == "seasons" then
+      renderSeasonsPage(shell, tabs)
+      return
+    end
+
     -- Render the canonical Officer options directly from the shared
     -- AceConfig table.  This keeps Seasons, Rank Rules, Settings, Pre-Dibs,
     -- Announcements, Developer, RCLootCouncil and Debug in lockstep with the
@@ -1564,6 +1690,7 @@ local function createAceWindow()
         controlMap = controlMap,
         scroll = self.activeTab ~= "overview",
         renderGroupTitle = true,
+        flattenInlineGroups = true,
         onRendered = function(target) renderedTarget = target end,
         onChanged = function()
           self:Refresh()
@@ -1619,98 +1746,82 @@ local function createAceWindow()
       if not self.eligibilityAdvanced then
         return
       end
-      Dibs.AceGUI.AddHeader(shell, scroll, "Advanced policy", "These controls are a draft until Save policy is confirmed through the protected action boundary.")
-      self.eligibilityFamily = self.eligibilityFamily or "TOKEN"
-      local policy = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPolicy
-        and Dibs.CharacterEligibility.GetPolicy(seasonId, self.eligibilityFamily) or nil
-      local policySection = Dibs.AceGUI.AddSection(shell, scroll, "Season policy", "Changes apply to future eligibility decisions and are recorded in the audit history.")
-      local family = Dibs.AceGUI.AddDropdown(shell, policySection, "Loot family", { TOKEN = "Curio (TOKEN)", TOKEN_SET = "Tier Set (TOKEN_SET)" }, function(value)
-        self.eligibilityFamily = value or "TOKEN"
-        self:Refresh()
-      end, 220)
-      Dibs.AceGUI.SetValue(family, self.eligibilityFamily)
-      local scope = Dibs.AceGUI.AddDropdown(shell, policySection, "Difficulty scope", { ALL = "All difficulties", SAME = "Same difficulty" }, nil, 220)
-      Dibs.AceGUI.SetValue(scope, policy and policy.difficultyScope or "ALL")
-      local outcome = Dibs.AceGUI.AddDropdown(shell, policySection, "Duplicate outcome", { block = "Block", downgrade = "Downgrade", review = "Officer review", warn = "Warn", allow = "Allow" }, nil, 220)
-      Dibs.AceGUI.SetValue(outcome, policy and policy.enforcementOutcome or "block")
-      local threshold
-      if self.eligibilityFamily == "TOKEN" then
-        threshold = Dibs.AceGUI.AddEditBox(shell, policySection, "Curio completion slots", nil, 120)
-        setControlText(threshold, tostring(policy and policy.completionThreshold or 4))
-      end
-      local save = Dibs.AceGUI.AddButton(shell, policySection, "Save policy", function()
-        local payload = {
-          seasonId = seasonId, family = self.eligibilityFamily,
-          difficultyScope = (scope and scope.GetValue and scope:GetValue()) or (policy and policy.difficultyScope) or "ALL",
-          enforcementOutcome = (outcome and outcome.GetValue and outcome:GetValue()) or (policy and policy.enforcementOutcome) or "block",
-        }
-        if threshold then payload.completionThreshold = tonumber(getControlText(threshold)) or 4 end
-        local result = Dibs.OfficerUI.SaveEligibilityPolicy(payload)
-        self:SetStatus(result.ok and "Protected-loot policy saved." or (result.diagnostic or "Unable to save protected-loot policy."))
-        self:Refresh()
-      end, 150)
-      Dibs.AceGUI.AddTooltip(save, "Save policy", "Only a verified GM or Officer can change the active season policy.")
-      if policy then
-        Dibs.AceGUI.AddPropertyTable(shell, scroll, {
-          { "Family", tostring(policy.family) },
-          { "Difficulty scope", tostring(policy.difficultyScope) },
-          { "Matching scope", tostring(policy.matchingScope) },
-          { "Enforcement", tostring(policy.enforcementOutcome) },
-          { "Unknown data", tostring(policy.unknownDataBehavior) },
-          { "Curio threshold", tostring(policy.completionThreshold or "n/a") },
-        }, 190)
-      end
-      local relationships = Dibs.CharacterEligibility and Dibs.CharacterEligibility.ListRelationships
-        and Dibs.CharacterEligibility.ListRelationships(nil, seasonId) or {}
-      local relationshipRows = {}
-      for _, relationship in ipairs(relationships or {}) do
-        relationshipRows[#relationshipRows + 1] = {
-          formatHistoryDate(relationship.declaredAt), tostring(relationship.mainCharacterName or relationship.mainCharacterId),
-          tostring(relationship.altCharacterName or relationship.altCharacterId), tostring(relationship.status), "", relationship = relationship,
+      local customRows = {}
+      for _, category in ipairs(eligibilityProjection.categories or {}) do
+        local enabled = category.currentState and category.currentState.enabled
+        customRows[#customRows + 1] = {
+          category.label,
+          enabled == false and "Blocked" or "Allowed",
+          category = category,
         }
       end
-      if #relationshipRows == 0 then relationshipRows[1] = { "", "No declarations", "", "", "" } end
-      Dibs.AceGUI.AddHeader(shell, scroll, "Main / alt declarations", "Unapproved declarations never affect protected-loot enforcement.")
+      self.eligibilityCategoryKey = self.eligibilityCategoryKey or (eligibilityProjection.categories[1] and eligibilityProjection.categories[1].key)
+      local selectedCategory
+      for _, category in ipairs(eligibilityProjection.categories or {}) do
+        if category.key == self.eligibilityCategoryKey then selectedCategory = category break end
+      end
+      Dibs.AceGUI.AddHeading(shell, scroll, "Loot Eligibility - Custom", "Select a category for details. Use the row context menu for secondary state changes.")
       Dibs.AceGUI.AddTable(shell, scroll, {
-        { title = "Date", width = 145, tooltip = "Declaration date." },
-        { title = "Main", width = 150, tooltip = "Declared main character." },
-        { title = "Alt", width = 150, tooltip = "Declared alt character." },
-        { title = "Status", width = 100, tooltip = "Pending or approved." },
-        { title = "Action", width = 100, tooltip = "Review this declaration." },
-      }, relationshipRows, 220, function(row)
-        if not row.relationship or row.relationship.status ~= "pending" then return nil end
-        return { text = "Approve", callback = function()
-          local result = Dibs.ProtectedActions.Execute("eligibility.relationship.review", nil, { relationshipId = row.relationship.relationshipId, status = "approved" })
-          self:SetStatus(result.ok and "Character relationship approved." or (result.diagnostic or "Unable to approve relationship."))
-          self:Refresh()
-        end }
-      end)
-      local mainChanges = Dibs.CharacterEligibility and Dibs.CharacterEligibility.ListMainChanges
-      local result = Dibs.OfficerUI.SaveEligibilityPolicy(payload)
-      local mainChangeRows = {}
-      for _, change in ipairs(mainChanges or {}) do
-        mainChangeRows[#mainChangeRows + 1] = {
-          formatHistoryDate(change.requestedAt), tostring(change.oldMainName or change.oldMainId or ""), tostring(change.newMainName or change.newMainId or ""),
-          tostring(change.status), change.probationEndsAt and formatHistoryDate(change.probationEndsAt) or "", change = change,
-        }
+        { title = "Category", width = 220, tooltip = "Semantic loot category." },
+        { title = "State", width = 110, tooltip = "Current policy state." },
+      }, customRows, 190, nil, {
+        onRowClick = function(row)
+          if row and row.category then self.eligibilityCategoryKey = row.category.key; self:Refresh() end
+        end,
+        contextMenu = function(row)
+          local category = row and row.category
+          if not category then return {} end
+          self.eligibilityCategoryKey = category.key
+          if not category.editable then return { { text = "View reason", callback = function() self:Refresh() end } } end
+          return {
+            { text = "Allow", callback = function() self.eligibilityDraftState = "allow"; self:Refresh() end },
+            { text = "Block", callback = function() self.eligibilityDraftState = "block"; self:Refresh() end },
+            { text = "Reset to recommended", callback = function() self.eligibilityDraftState = nil; self:Refresh() end },
+            { text = "View reason", callback = function() self:Refresh() end },
+          }
+        end,
+      })
+      if selectedCategory then
+        local family = selectedCategory.semanticFamily
+        local policy = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPolicy
+          and Dibs.CharacterEligibility.GetPolicy(seasonId, family) or nil
+        local enabled = self.eligibilityDraftState == "allow"
+          or (self.eligibilityDraftState ~= "block" and selectedCategory.currentState.enabled ~= false)
+        Dibs.AceGUI.AddHeader(shell, scroll, "Selected category", "The explanation remains visible without expanding the whole policy matrix.")
+        Dibs.AceGUI.AddLabel(shell, scroll, tostring(selectedCategory.label) .. "  |  " .. (enabled and "Allowed" or "Blocked"), true)
+        Dibs.AceGUI.AddLabel(shell, scroll, tostring(selectedCategory.reason or "No additional reason available."), true)
+        if selectedCategory.editable then
+          local detail = Dibs.AceGUI.AddInlineGroup(shell, scroll)
+          local scope = Dibs.AceGUI.AddDropdown(shell, detail, "Difficulty scope", { ALL = "All difficulties", SAME = "Same difficulty" }, nil, 220)
+          Dibs.AceGUI.SetValue(scope, policy and policy.difficultyScope or "ALL")
+          local outcome = Dibs.AceGUI.AddDropdown(shell, detail, "Duplicate outcome", { block = "Block", downgrade = "Downgrade", review = "Officer review", warn = "Warn", allow = "Allow" }, nil, 220)
+          Dibs.AceGUI.SetValue(outcome, policy and policy.enforcementOutcome or "block")
+          local threshold
+          if family == "TOKEN" then
+            threshold = Dibs.AceGUI.AddEditBox(shell, detail, "Curio completion slots", nil, 120)
+            setControlText(threshold, tostring(policy and policy.completionThreshold or 4))
+          end
+          Dibs.AceGUI.AddButton(shell, detail, "Save", function()
+            local payload = {
+              seasonId = seasonId, family = family, enabled = enabled,
+              difficultyScope = policy and policy.difficultyScope or "ALL",
+              enforcementOutcome = policy and policy.enforcementOutcome or "BLOCK",
+            }
+            if scope and scope.GetValue then payload.difficultyScope = scope:GetValue() end
+            if outcome and outcome.GetValue then payload.enforcementOutcome = outcome:GetValue() end
+            if threshold then payload.completionThreshold = tonumber(getControlText(threshold)) or 4 end
+            local result = Dibs.OfficerUI.SaveEligibilityPolicy(payload)
+            self.eligibilityDraftState = nil
+            self:SetStatus(result.ok and "Protected-loot policy saved." or (result.diagnostic or "Unable to save protected-loot policy."))
+            self:Refresh()
+          end, 90)
+          Dibs.AceGUI.AddButton(shell, detail, "Cancel", function()
+            self.eligibilityDraftState = nil
+            self.eligibilityAdvanced = false
+            self:Refresh()
+          end, 90)
+        end
       end
-      if #mainChangeRows == 0 then mainChangeRows[1] = { "", "No main-change requests", "", "", "" } end
-      Dibs.AceGUI.AddHeader(shell, scroll, "Main-change requests", "An approved change starts the configured probation period before main-spec protected loot is allowed.")
-      Dibs.AceGUI.AddTable(shell, scroll, {
-        { title = "Requested", width = 145, tooltip = "Request date." },
-        { title = "Old main", width = 150, tooltip = "Current main character." },
-        { title = "New main", width = 150, tooltip = "Requested main character." },
-        { title = "Status", width = 100, tooltip = "Pending or approved." },
-        { title = "Probation ends", width = 145, tooltip = "End of the protected-loot probation." },
-        { title = "Action", width = 100, tooltip = "Approve this request." },
-      }, mainChangeRows, 220, function(row)
-        if not row.change or row.change.status ~= "pending" then return nil end
-        return { text = "Approve", callback = function()
-          local result = Dibs.ProtectedActions.Execute("eligibility.main.review", nil, { changeId = row.change.changeId, reason = "Approved by Officer" })
-          self:SetStatus(result.ok and "Main-change request approved." or (result.diagnostic or "Unable to approve main change."))
-          self:Refresh()
-        end }
-      end)
       return
     end
 
@@ -1820,12 +1931,13 @@ local function createAceWindow()
           }
         end,
       })
-      local previousPage = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function()
+      local pageControls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+      local previousPage = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function()
         self.disputePage = math.max(1, self.disputePage - 1)
         self:Refresh()
       end, 90)
-      local pageLabel = Dibs.AceGUI.AddLabel(shell, tabs, "Page " .. tostring(self.disputePage) .. "/" .. tostring(totalPages))
-      local nextPage = Dibs.AceGUI.AddButton(shell, tabs, "Next", function()
+      local pageLabel = Dibs.AceGUI.AddLabel(shell, pageControls, "Page " .. tostring(self.disputePage) .. "/" .. tostring(totalPages))
+      local nextPage = Dibs.AceGUI.AddButton(shell, pageControls, "Next", function()
         self.disputePage = math.min(totalPages, self.disputePage + 1)
         self:Refresh()
       end, 70)
@@ -2109,7 +2221,6 @@ local function createAceWindow()
 
     if self.activeTab == "history" or self.activeTab == "reconciliation" then
       local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
-      Dibs.AceGUI.AddHeader(shell, scroll, "History reconciliation", "Review read-only RCLootCouncil evidence before any protected confirmation.")
       Dibs.AceGUI.AddHeader(shell, scroll, "RCLootCouncil History", "Search read-only award evidence first. Confirmation and rejection use the existing protected reconciliation service.")
       local rcStatus = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
       if not Dibs.RCLootCouncil or type(Dibs.RCLootCouncil.GetHistoryRows) ~= "function" then
@@ -2376,7 +2487,10 @@ local function createAceWindow()
       end
       local logs = Dibs.AceGUI.AddSection(shell, tabs, "Logs", "Open the separate diagnostic log window when detailed events are needed.")
       self.debugLogsButton = Dibs.AceGUI.AddButton(shell, logs, "Open debug logs", function()
-        if Dibs.DebugLogs and Dibs.DebugLogs.Open then Dibs.DebugLogs.Open() end
+        if Dibs.DebugLogs and Dibs.DebugLogs.Open then
+          local opened, reason = Dibs.DebugLogs.Open(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
+          if not opened then self:SetStatus("Unable to open debug logs: " .. tostring(reason or "UI_UNAVAILABLE")) end
+        end
       end, 160)
       self.debugReportExpanded = self.debugReportExpanded == true
       self.debugReportButton = Dibs.AceGUI.AddButton(shell, tabs, self.debugReportExpanded and "Hide debug report" or "Show debug report", function()
@@ -2385,7 +2499,7 @@ local function createAceWindow()
       end, 170)
       if self.debugReportExpanded then
         local report = Dibs.AceGUI.AddSection(shell, tabs, "Diagnostic report", "Technical runtime details are available on demand.")
-        Dibs.AceGUI.AddLabel(shell, report, Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", true)
+        Dibs.AceGUI.AddSelectableText(shell, report, "Report", Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", 820, 220)
         Dibs.AceGUI.AddButton(shell, report, "Copy report to chat", function() Dibs.Message(Dibs.BuildDebugReport()) end, 180)
       end
       return
@@ -2527,9 +2641,10 @@ local function createAceWindow()
       }
     end
     self.aceLedgerScroll = Dibs.AceGUI.AddTable(shell, tabs, columns, tableRows, 430)
-    local previous = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function() self.ledgerPage = math.max(1, self.ledgerPage - 1); self:Refresh() end, 80)
-    self.pageText = Dibs.AceGUI.AddLabel(shell, tabs, "Page " .. view.page .. "/" .. view.totalPages)
-    local nextButton = Dibs.AceGUI.AddButton(shell, tabs, "Next", function() self.ledgerPage = math.min(view.totalPages, self.ledgerPage + 1); self:Refresh() end, 60)
+    local pageControls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+    local previous = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function() self.ledgerPage = math.max(1, self.ledgerPage - 1); self:Refresh() end, 80)
+    self.pageText = Dibs.AceGUI.AddLabel(shell, pageControls, "Page " .. view.page .. "/" .. view.totalPages)
+    local nextButton = Dibs.AceGUI.AddButton(shell, pageControls, "Next", function() self.ledgerPage = math.min(view.totalPages, self.ledgerPage + 1); self:Refresh() end, 60)
     Dibs.AceGUI.SetDisabled(previous, view.page <= 1)
     Dibs.AceGUI.SetDisabled(nextButton, view.page >= view.totalPages)
     Dibs.AceGUI.AddTooltip(self.pageText, "Page", "Current page and total number of pages.")
