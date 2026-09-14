@@ -381,6 +381,13 @@ local function releaseMSAControls(widget, seen)
     msaDropdownPool[#msaDropdownPool + 1] = control
     widget._dibsMSAControl = nil
   end
+  local label = widget._dibsMSALabel
+  if label then
+    if label.Hide then pcall(label.Hide, label) end
+    if label.ClearAllPoints then pcall(label.ClearAllPoints, label) end
+    if label.SetParent then pcall(label.SetParent, label, nil) end
+    widget._dibsMSALabel = nil
+  end
   if widget._dibsScrollingTable then
     if type(widget._dibsScrollingTable.RegisterEvents) == "function" then
       pcall(widget._dibsScrollingTable.RegisterEvents, widget._dibsScrollingTable, {}, true)
@@ -1085,6 +1092,7 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
   end
 
   local wrapper = { frame = control, host = host, values = values or {}, value = nil }
+  host._dibsMSALabel = labelText
   host._dibsMSAControl = control
   host._dibsMSAWrapper = wrapper
 

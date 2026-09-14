@@ -57,6 +57,17 @@ describe("B12a shared UI ownership", function()
     assert_nil(host._dibsScrollingTable)
   end)
 
+  it("releases native MSA dropdown labels with their pooled host", function()
+    mocks.installMSA()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
+    local dropdown = dibs.AceGUI.AddDropdown(shell, shell.window, "Officer pre-dib announce channel", { OFFICER = "Officer" }, function() end)
+    assert_not_nil(dropdown)
+    assert_not_nil(dropdown.host._dibsMSALabel)
+    dibs.AceGUI.Clear(shell.window)
+    assert_nil(dropdown.host._dibsMSALabel)
+  end)
+
   it("coalesces refreshes and flushes them after combat", function()
     local _, dibs = loader.load({ withAce3 = true, wow = { inCombat = true } })
     local calls = 0
