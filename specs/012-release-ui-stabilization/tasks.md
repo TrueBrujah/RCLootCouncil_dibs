@@ -45,19 +45,19 @@ description: "Task list for B12 Release UI Stabilization"
 
 ### Tests for User Story 1
 
-- [ ] T009 [P] [US1] Add repeated Player/Officer open-close, alternating-window isolation, one-page-root, stale-header, blank-page, and History-to-Debug assertions in `tests/integration/b12_release_ui_stabilization_spec.lua`.
-- [ ] T010 [P] [US1] Add grouped TreeGroup callback normalization, route alias, programmatic-selection, and canonical display/domain-value assertions in `tests/contract/b12_release_ui_contract_spec.lua`.
-- [ ] T011 [P] [US1] Add separate position-record, one-time restore, valid-position preservation, off-screen recovery, drag-save, and route-refresh isolation assertions in `tests/integration/b12_window_state_spec.lua`.
-- [ ] T012 [P] [US1] Add shared dropdown, tooltip, scrolling-table, context-menu replacement/close, pooled-widget release, and combat-refresh assertions in `tests/integration/b12_ui_ownership_spec.lua`.
+- [X] T009 [P] [US1] Add repeated Player/Officer open-close, alternating-window isolation, one-page-root, stale-header, blank-page, and History-to-Debug assertions in `tests/integration/b12_release_ui_stabilization_spec.lua`.
+- [X] T010 [P] [US1] Add grouped TreeGroup callback normalization, route alias, programmatic-selection, and canonical display/domain-value assertions in `tests/contract/b12_release_ui_contract_spec.lua`.
+- [X] T011 [P] [US1] Add separate position-record, one-time restore, valid-position preservation, off-screen recovery, drag-save, and route-refresh isolation assertions in `tests/integration/b12_window_state_spec.lua`.
+- [X] T012 [P] [US1] Add shared dropdown, tooltip, scrolling-table, context-menu replacement/close, pooled-widget release, and combat-refresh assertions in `tests/integration/b12_ui_ownership_spec.lua`.
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Preserve one permanent `contentHost`, one mounted `pageRoot`, route-boundary normalization, legacy route aliases, and exclusive route rendering in `src/ui/OfficerUI.lua` and `src/ui/PlayerUI.lua`.
-- [ ] T014 [US1] Preserve recursive page-root release, nested widget cleanup, dropdown/tooltip/table detachment, context-menu close behavior, and coalesced refresh behavior in `src/ui/AceGUI.lua`.
-- [ ] T015 [US1] Preserve separate Player/Officer position records, one-time restoration, valid on-screen coordinates, off-screen recovery, and Dibs-owned drag/save boundaries in `src/ui/WindowState.lua`.
-- [ ] T016 [US1] Preserve canonical enum normalization and fail-closed invalid-value handling at the visible control boundary in `src/ui/AceGUI.lua`, `src/ui/OfficerUI.lua`, and `src/integrations/RCLootCouncilOptions.lua`.
-- [ ] T017 [US1] Preserve safe table tooltip argument ordering, item-link handling, lib-st ownership, and raw-frame parent rejection in `src/ui/AceGUI.lua`.
-- [ ] T018 [US1] Preserve Player/Officer callback cleanup and shell deactivation on close in `src/ui/PlayerUI.lua` and `src/ui/OfficerUI.lua`.
+- [X] T013 [US1] Preserve one permanent `contentHost`, one mounted `pageRoot`, route-boundary normalization, legacy route aliases, and exclusive route rendering in `src/ui/OfficerUI.lua` and `src/ui/PlayerUI.lua`.
+- [X] T014 [US1] Preserve recursive page-root release, nested widget cleanup, dropdown/tooltip/table detachment, context-menu close behavior, and coalesced refresh behavior in `src/ui/AceGUI.lua`.
+- [X] T015 [US1] Preserve separate Player/Officer position records, one-time restoration, valid on-screen coordinates, off-screen recovery, and Dibs-owned drag/save boundaries in `src/ui/WindowState.lua`.
+- [X] T016 [US1] Preserve canonical enum normalization and fail-closed invalid-value handling at the visible control boundary in `src/ui/AceGUI.lua`, `src/ui/OfficerUI.lua`, and `src/integrations/RCLootCouncilOptions.lua`.
+- [X] T017 [US1] Preserve safe table tooltip argument ordering, item-link handling, lib-st ownership, and raw-frame parent rejection in `src/ui/AceGUI.lua`.
+- [X] T018 [US1] Preserve Player/Officer callback cleanup and shell deactivation on close in `src/ui/PlayerUI.lua` and `src/ui/OfficerUI.lua`.
 
 **Checkpoint**: User Story 1 is independently functional when the focused lifecycle tests pass, existing UI-004 regressions remain green, and no source path writes authoritative state directly.
 
