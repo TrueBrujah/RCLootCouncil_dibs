@@ -10,7 +10,7 @@ end
 
 local function containsText(widget, text)
   if type(widget) ~= "table" then return false end
-  if tostring(widget.text or ""):find(text, 1, true) then return true end
+  if tostring(widget.text or widget.label or ""):find(text, 1, true) then return true end
   for _, child in ipairs(widget.children or {}) do
     if containsText(child, text) then return true end
   end
@@ -79,6 +79,15 @@ describe("Retail Officer navigation lifecycle", function()
     assert_equal("disputes", frame.mountedPage)
     assert_true(containsText(frame.contentHost, "Officer review requests"))
     assert_equal(before + 3, frame.routeDispatchCount)
+  end)
+
+  it("does not leave Pre-Dibs announcement controls in Requests", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow("preDibs")
+    assert_true(containsText(frame.contentHost, "Officer pre-dib announce channel"))
+    frame.SelectTab("requests")
+    assert_true(containsText(frame.contentHost, "Officer review requests"))
+    assert_false(containsText(frame.contentHost, "Officer pre-dib announce channel"))
   end)
 
   it("reopens directly on Requests without a blank page", function()

@@ -426,7 +426,16 @@ function Adapter.Clear(container)
   local childArray = container and container.children
   local hasChildArray = type(childArray) == "table"
   local children = {}
+  local releasedWidgets = {}
+  local seenWidgets = {}
+  local function collectWidgets(widget)
+    if type(widget) ~= "table" or seenWidgets[widget] then return end
+    seenWidgets[widget] = true
+    releasedWidgets[#releasedWidgets + 1] = widget
+    for _, nested in ipairs(widget.children or {}) do collectWidgets(nested) end
+  end
   for _, child in ipairs(childArray or {}) do children[#children + 1] = child end
+  for _, child in ipairs(children) do collectWidgets(child) end
   local gui = getLibrary()
   local releasedByContainer = false
   if hasChildArray and gui and type(gui.Release) == "function"
@@ -452,11 +461,12 @@ function Adapter.Clear(container)
       if hasChildArray then childArray[index] = nil end
     end
   end
-  for _, child in ipairs(children) do
+  for _, child in ipairs(releasedWidgets) do
     if child then
       releaseMSAControls(child)
       if child.frame then
         if type(child.frame.Hide) == "function" then pcall(child.frame.Hide, child.frame) end
+        if type(child.frame.SetParent) == "function" then pcall(child.frame.SetParent, child.frame, nil) end
       end
     end
   end

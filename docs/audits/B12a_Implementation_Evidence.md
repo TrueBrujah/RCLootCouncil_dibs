@@ -42,6 +42,15 @@ one selected-category detail, and protected policy saves carrying the existing
 `completionThreshold` fields. No business authority or protected action
 semantics were changed.
 
+The manual screenshot also showed the `Officer pre-dib announce channel`
+control at the bottom of the Requests page after leaving Pre-Dibs. Requests
+does not render the Pre-Dibs option group; the symptom was a native AceGUI
+descendant frame remaining visible after the old page had been removed from the
+widget tree. Cleanup now snapshots the full descendant widget set before
+recursive release, then hides and detaches every owned native frame afterward.
+The navigation regression explicitly verifies that the Pre-Dibs announcement
+label is absent after switching to Requests.
+
 ## Requests initial-mount remediation
 
 The Retail blocker was isolated to route activation ownership. The addon
@@ -86,7 +95,7 @@ receives canonical `ENCOUNTER`.
 Focused B12a suites:
 
 ```text
-62 passed, 0 failed (5 files)
+63 passed, 0 failed (5 files)
 ```
 
 B11 UI ownership, navigation, Midnight, and lifecycle regressions:
@@ -96,7 +105,7 @@ B11 UI ownership, navigation, Midnight, and lifecycle regressions:
 ```
 
 The latest combined route, ownership, options, and eligibility validation is
-green at `62 passed, 0 failed (5 files)`. The final focused lifecycle slice
+green at `63 passed, 0 failed (5 files)`. The final focused lifecycle slice
 after the scroll ownership adjustment is `22 passed, 0 failed (3 files)`.
 
 Requests initial-mount regression file:
