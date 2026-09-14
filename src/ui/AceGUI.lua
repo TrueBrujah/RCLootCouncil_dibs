@@ -414,7 +414,7 @@ local function releaseMSAControls(widget, seen)
     if label.SetParent then pcall(label.SetParent, label, nil) end
     widget._dibsMSALabel = nil
   end
-  if widget.frame and type(widget.frame.GetRegions) == "function" then
+  if widget.type == "SimpleGroup" and widget.frame and type(widget.frame.GetRegions) == "function" then
     local ok, regions = pcall(function() return { widget.frame:GetRegions() } end)
     if ok then
       for _, region in ipairs(regions) do
@@ -451,6 +451,7 @@ local function releaseMSAControls(widget, seen)
   end
   widget._dibsTableWidthHandler = nil
   widget._dibsBaseOnWidthSet = nil
+  normalizeChildren(widget)
   for _, child in ipairs(widget.children or {}) do
     releaseMSAControls(child, seen)
   end
