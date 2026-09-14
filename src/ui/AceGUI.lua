@@ -333,22 +333,27 @@ function Adapter.Clear(container)
   local paused = container and type(container.PauseLayout) == "function"
   if paused then container:PauseLayout() end
   releaseMSAControls(container)
-  local children = container and container.children
-  -- Clear the live array before releasing each child.  Retail AceGUI can
-  -- synchronously resize a parent while a child is detached; leaving the
-  -- half-cleared array visible lets List observe a nil slot during that
-  -- callback.  The reduced test adapter has no child:Release method, so keep
-  -- its native ReleaseChildren fallback.
-  if type(children) == "table" and type(children[1]) == "table"
-    and type(children[1].Release) == "function" then
-    container.children = {}
-    for _, child in ipairs(children) do
-      if child and not child.isQueuedForRelease then child:Release() end
+  local childArray = container and container.children
+  local hasChildArray = type(childArray) == "table"
+  local children = {}
+  for _, child in ipairs(childArray or {}) do children[#children + 1] = child end
+  if hasChildArray then container.children = {} end
+  local gui = getLibrary()
+  for _, child in ipairs(children) do
+    if child and not child.isQueuedForRelease then
+      local released = false
+      if gui and type(gui.Release) == "function" then
+        released = pcall(gui.Release, gui, child)
+      elseif type(child.Release) == "function" then
+        released = pcall(child.Release, child)
+      end
+      if not released and child.frame and type(child.frame.Hide) == "function" then
+        pcall(child.frame.Hide, child.frame)
+      end
     end
-  elseif container and type(container.ReleaseChildren) == "function" then
-    container:ReleaseChildren()
-  elseif container and type(container.children) == "table" then
-    container.children = {}
+  end
+  if not hasChildArray and container and type(container.ReleaseChildren) == "function" then
+    pcall(container.ReleaseChildren, container)
   end
   if paused then container:ResumeLayout() end
 end

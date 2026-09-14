@@ -8,6 +8,15 @@ local function setup(options)
   return dibs
 end
 
+local function containsText(widget, text)
+  if type(widget) ~= "table" then return false end
+  if tostring(widget.text or ""):find(text, 1, true) then return true end
+  for _, child in ipairs(widget.children or {}) do
+    if containsText(child, text) then return true end
+  end
+  return false
+end
+
 describe("Retail Officer navigation lifecycle", function()
   it("keeps the selected route, mounted page, and single content host in sync", function()
     local dibs = setup()
@@ -64,6 +73,18 @@ describe("Retail Officer navigation lifecycle", function()
     assert_equal("overview", reopened.selectedRoute)
     assert_equal("overview", reopened.mountedPage)
     assert_equal(1, #(reopened.contentHost.children or {}))
+  end)
+
+  it("releases the previous page before mounting the next page", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow()
+    frame.SelectTab("history")
+    assert_true(containsText(frame.contentHost, "History reconciliation"))
+    local previousPage = frame.contentHost.children[1]
+    frame.SelectTab("debug")
+    assert_false(containsText(frame.contentHost, "History reconciliation"))
+    assert_false(previousPage.frame._shown)
+    assert_equal(1, #(frame.contentHost.children or {}))
   end)
 
   it("keeps Officer routes unavailable to a production player", function()
