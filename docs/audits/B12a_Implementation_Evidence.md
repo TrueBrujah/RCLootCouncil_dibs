@@ -95,7 +95,7 @@ receives canonical `ENCOUNTER`.
 Focused B12a suites:
 
 ```text
-63 passed, 0 failed (5 files)
+64 passed, 0 failed (5 files)
 ```
 
 B11 UI ownership, navigation, Midnight, and lifecycle regressions:
@@ -105,7 +105,7 @@ B11 UI ownership, navigation, Midnight, and lifecycle regressions:
 ```
 
 The latest combined route, ownership, options, and eligibility validation is
-green at `63 passed, 0 failed (5 files)`. The final focused lifecycle slice
+green at `64 passed, 0 failed (5 files)`. The final focused lifecycle slice
 after the scroll ownership adjustment is `22 passed, 0 failed (3 files)`.
 
 Requests initial-mount regression file:

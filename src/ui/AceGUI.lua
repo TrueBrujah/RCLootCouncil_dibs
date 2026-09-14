@@ -375,6 +375,12 @@ local function releaseMSAControls(widget, seen)
   end
   local control = widget._dibsMSAControl
   if control then
+    if type(_G.MSA_DropDownMenu_ClearAll) == "function" then
+      pcall(_G.MSA_DropDownMenu_ClearAll, control)
+    end
+    if type(_G.MSA_DropDownMenu_SetText) == "function" then
+      pcall(_G.MSA_DropDownMenu_SetText, control, "")
+    end
     if control.Hide then pcall(control.Hide, control) end
     if control.ClearAllPoints then pcall(control.ClearAllPoints, control) end
     if control.SetParent then pcall(control.SetParent, control, nil) end
@@ -387,6 +393,20 @@ local function releaseMSAControls(widget, seen)
     if label.ClearAllPoints then pcall(label.ClearAllPoints, label) end
     if label.SetParent then pcall(label.SetParent, label, nil) end
     widget._dibsMSALabel = nil
+  end
+  if widget.frame and type(widget.frame.GetRegions) == "function" then
+    local ok, regions = pcall(function() return { widget.frame:GetRegions() } end)
+    if ok then
+      for _, region in ipairs(regions) do
+        local regionType = type(region.GetObjectType) == "function" and region:GetObjectType() or nil
+        if regionType == "FontString" then
+          if region.Hide then pcall(region.Hide, region) end
+          if region.SetText then pcall(region.SetText, region, "") end
+          if region.ClearAllPoints then pcall(region.ClearAllPoints, region) end
+          if region.SetParent then pcall(region.SetParent, region, nil) end
+        end
+      end
+    end
   end
   if widget._dibsScrollingTable then
     if type(widget._dibsScrollingTable.RegisterEvents) == "function" then
