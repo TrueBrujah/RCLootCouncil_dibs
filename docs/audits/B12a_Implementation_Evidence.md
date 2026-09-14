@@ -17,6 +17,18 @@
 - T012: reusable context-menu replacement/close, tooltip argument ordering and item-link handling, raw-frame rejection, lib-st ownership/release, and combat refresh deferral.
 - T013-T018: existing B11 V3 implementation verified by the focused regressions for permanent content ownership, recursive cleanup, window state, enum normalization, safe tooltip/table ownership, and callback/shell cleanup.
 
+## Officer Pre-Dibs follow-up
+
+The Officer `Pre-Dibs` route now renders the canonical `groups.preDibs` AceConfig
+group instead of falling through to the read-only history table. The shared
+AceGUI options renderer also now invokes setters with the standard AceConfig
+`(info, value)` signature; previously the extra key argument caused Officer
+controls to receive `nil` and silently leave options unchanged.
+
+The contract regression opens Officer > Pre-Dibs, finds `Active season request
+mode`, selects `Encounter`, and verifies the protected `predib.mode.set` action
+receives canonical `ENCOUNTER`.
+
 ## Automated validation
 
 Focused B12a suites:
@@ -34,7 +46,7 @@ B11 UI ownership, navigation, Midnight, and lifecycle regressions:
 Full explicit Fengari suite (all `tests/**/*_spec.lua` files):
 
 ```text
-395 passed, 1 failed (90 files)
+396 passed, 1 failed (90 files)
 ```
 
 The sole full-suite failure is the known unrelated baseline:

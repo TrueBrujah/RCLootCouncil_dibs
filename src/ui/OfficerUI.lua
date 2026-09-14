@@ -1542,6 +1542,7 @@ local function createAceWindow()
       local groups = optionsTable and optionsTable.args and optionsTable.args.dibsSettings and optionsTable.args.dibsSettings.args
       if groups then
         optionGroup = self.activeTab == "overview" and groups.overview
+          or (self.activeTab == "preDibs" and groups.preDibs)
           -- Review Requests is a custom OfficerUI page.  The options table
           -- also exposes a small entry point with the same key, but rendering
           -- that AceConfig group here hides the actual queue and its actions.

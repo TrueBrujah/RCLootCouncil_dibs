@@ -1293,7 +1293,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
 
   local function setValue(option, key, value)
     if type(option and option.set) ~= "function" then return false end
-    local ok = pcall(option.set, nil, key, value)
+    local ok = pcall(option.set, nil, value)
     return ok
   end
 
