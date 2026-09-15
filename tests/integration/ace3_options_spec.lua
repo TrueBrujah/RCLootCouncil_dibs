@@ -319,15 +319,18 @@ describe("Dibs options compatibility", function()
     _G.RCTokenTable = originalTokenTable
   end)
 
-  it("keeps Cosmetic Items blocked even when Other is enabled", function()
+  it("uses Loot Rules to allow or block Cosmetic Items", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = loader.makeRCLootCouncil(), withAce3 = true })
     local originalGetItemInfoInstant = _G.C_Item.GetItemInfoInstant
     _G.C_Item.GetItemInfoInstant = function()
       return 190002, "Cosmetic", "Cosmetic", "INVTYPE_NON_EQUIP_IGNORE", nil, 5, 0
     end
 
-    dibs.RCLootCouncil.SetDibEnabledForType("OTHER", true)
-    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS"))
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS", { strictWhitelist = true }))
+    dibs.RCLootCouncil.SetDibEnabledForType("COSMETIC", true)
+    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS", { strictWhitelist = true }))
+    dibs.RCLootCouncil.SetDibEnabledForType("COSMETIC", false)
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS", { strictWhitelist = true }))
 
     _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
   end)
@@ -342,6 +345,7 @@ describe("Officer loot type controls", function()
     local frame = dibs.OfficerUI.CreateWindow()
     frame.SelectTab("lootTypes")
     local policy = dibs.RCOptions.GetLootTypeOptions().types
+    assert_true(policy.values().COSMETIC ~= nil)
     assert_equal(false, frame.lootTypeControls.INVTYPE_FINGER.value)
     frame.lootTypeControls.INVTYPE_FINGER.callbacks.OnValueChanged(nil, nil, true)
     assert_equal(true, policy.get(nil, "INVTYPE_FINGER"))

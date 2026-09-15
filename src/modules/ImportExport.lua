@@ -24,7 +24,7 @@ M.PACKAGE_PREFIX = "DIBS-PKG-1|"
 M.PACKAGE_VERSION = 1
 M.SCHEMA_VERSION = 1
 M.MAX_PACKAGE_SIZE = 250000
-M.MAX_BACKUP_SIZE = 2000000
+M.MAX_BACKUP_SIZE = 32 * 1024 * 1024
 M.MAX_DEPTH = 24
 M.MAX_NODES = 50000
 
@@ -197,8 +197,51 @@ function M.GetPayload(scope)
   scope = scope or "local"; local db = Dibs.GetDB(); local realm, character = context()
   if scope == "local" then return { presentation = pick(db.settings or {}, PRESENTATION_KEYS), profile = clone(db.profiles and db.profiles["local"] and db.profiles["local"][characterKey()] or {}) }, realm, character end
   if scope == "guild" then return { settings = pick(db.settings or {}, POLICY_KEYS), rankRules = clone(db.rankRules or {}), seasons = clone(db.seasons or {}), profiles = clone(db.profiles and db.profiles.guild or {}) }, realm, character end
-  if scope == "full" then local payload = clone(db); payload.backups, payload.pendingImports, payload.auditLog = nil, nil, nil; return payload, realm, character end
+  if scope == "full" then local payload = clone(db); payload.backups, payload.pendingImports, payload.pendingRestores, payload.auditLog = nil, nil, nil, nil; return payload, realm, character end
   return nil, nil, nil, "INVALID_SCOPE"
+end
+
+function M.FormatSize(value)
+  local size = tonumber(value) or 0
+  if size >= 1024 * 1024 then return string.format("%.2f MB", size / (1024 * 1024)) end
+  if size >= 1024 then return string.format("%.1f KB", size / 1024) end
+  return tostring(math.floor(size)) .. " B"
+end
+
+function M.GetSizeDiagnostics()
+  local db = Dibs.GetDB()
+  local diagnostics = {
+    databaseBytes = 0,
+    fullPayloadBytes = 0,
+    fullPackageBytes = 0,
+    backupLimitBytes = M.MAX_BACKUP_SIZE,
+    portableLimitBytes = M.MAX_PACKAGE_SIZE,
+    largestSections = {},
+  }
+  local databaseText, databaseReason = encodeValue(db)
+  if databaseText then diagnostics.databaseBytes = #databaseText else diagnostics.databaseReason = databaseReason end
+  local payload, realm, character, payloadReason = M.GetPayload("full")
+  if not payload then diagnostics.payloadReason = payloadReason; return diagnostics end
+  local payloadText, payloadEncodeReason = encodeValue(payload)
+  if payloadText then diagnostics.fullPayloadBytes = #payloadText else diagnostics.payloadReason = payloadEncodeReason end
+  for key, value in pairs(payload) do
+    local sectionText = encodeValue(value)
+    if sectionText then table.insert(diagnostics.largestSections, { name = tostring(key), bytes = #sectionText }) end
+  end
+  table.sort(diagnostics.largestSections, function(a, b) return a.bytes > b.bytes end)
+  local package = {
+    packageVersion = M.PACKAGE_VERSION, scope = "full", sourceGuild = Dibs.currentGuildKey,
+    sourceCharacter = character, addonVersion = Dibs.VERSION, schemaVersion = M.SCHEMA_VERSION,
+    createdAt = time(), sensitivity = "sensitive", payload = payload,
+    recoveryClass = "LEGACY_DIAGNOSTIC_ONLY",
+  }
+  local body = encodeValue(package)
+  if body then
+    package.checksum = checksum(body)
+    body = encodeValue(package)
+    if body then diagnostics.fullPackageBytes = #body + #M.PACKAGE_PREFIX end
+  end
+  return diagnostics
 end
 
 ---@param scope "local"|"guild"|"full"|nil Export scope; defaults to local.

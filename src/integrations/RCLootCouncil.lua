@@ -116,7 +116,7 @@ local function isCosmeticNonDibType(value)
 end
 
 local function isPersonalOrCosmeticNonDibType(value)
-  return isPersonalNonDibType(value) or isCosmeticNonDibType(value)
+  return isPersonalNonDibType(value)
 end
 
 local function isNonDibPolicyType(value)
@@ -144,13 +144,14 @@ end
 function Dibs.RCLootCouncil.IsDibEnabledForType(responseType)
   -- Catalyst currency is personal to the player. It can never be a Dibs
   -- response, consume a ledger entry, or be enabled by a saved policy.
-  if isNonDibPolicyType(responseType) then
+  if isPersonalNonDibType(responseType) then
     return false
   end
   local key = canonicalPolicyKey(responseType)
   local rules = getDibTypeSettings()
   local value = rules[key]
   if value == nil then
+    if key == "COSMETIC" then return false end
     return true
   end
   return value == true
@@ -525,7 +526,10 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
   local cacheKey = tostring(itemID or "0") .. "|" .. tostring(responseType or "default") .. "|" .. tostring(strictWhitelist) .. "|" .. tostring(typePolicyRevision)
   local now = nowSeconds()
   local cached = typeAllowanceCache[cacheKey]
-  if cached and (now - (cached.at or 0)) <= TYPE_ALLOWANCE_CACHE_TTL then
+  -- Strict projection is consumed by searchable UI surfaces. Re-evaluate it
+  -- every time so a Loot Rules change or a refreshed module state cannot leave
+  -- stale candidates visible.
+  if not strictWhitelist and cached and (now - (cached.at or 0)) <= TYPE_ALLOWANCE_CACHE_TTL then
     return cached.value == true
   end
 
@@ -543,10 +547,6 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
     -- button group. Keep that path available only when stable item metadata
     -- already classified the item as a Curio or Tier Set token; a personal
     -- Catalyst item never receives either progression candidate.
-    if isCosmeticNonDibType(candidate) then
-      typeAllowanceCache[cacheKey] = { value = false, at = now }
-      return false
-    end
     if isPersonalNonDibType(candidate) and not hasProgressionToken then
       typeAllowanceCache[cacheKey] = { value = false, at = now }
       return false
@@ -562,6 +562,21 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
   end
   local rules = getDibTypeSettings()
   local policyConfigured = hasConfiguredTypePolicy(rules)
+  local hasCosmeticCandidate = false
+  for _, candidate in ipairs(candidates) do
+    if isCosmeticNonDibType(candidate) then hasCosmeticCandidate = true break end
+  end
+  if hasCosmeticCandidate then
+    local cosmeticRule = readRuleValueCaseInsensitive(rules, "COSMETIC")
+    if cosmeticRule ~= nil then
+      typeAllowanceCache[cacheKey] = { value = cosmeticRule == true, at = now }
+      return cosmeticRule == true
+    end
+    if strictWhitelist then
+      typeAllowanceCache[cacheKey] = { value = false, at = now }
+      return false
+    end
+  end
 
   local priorityDecision, hasPriorityRule = resolvePriorityCategoryRule(rules, candidates)
   if hasPriorityRule then
@@ -570,6 +585,10 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
   end
 
   if strictWhitelist and not policyConfigured then
+    if hasCosmeticCandidate then
+      typeAllowanceCache[cacheKey] = { value = false, at = now }
+      return false
+    end
     typeAllowanceCache[cacheKey] = { value = true, at = now }
     return true
   end
@@ -1388,6 +1407,10 @@ end
 ---@return table|nil normalized Validated award context.
 function Dibs.RCLootCouncil.ValidateAwardInput(payload)
   payload = type(payload) == "table" and payload or {}
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled
+    and Dibs.OperationalPolicy.IsModuleEnabled("rclootcouncil") ~= true then
+    return { ok = false, reasonCode = "MODULE_DISABLED_RCLOOTCOUNCIL" }
+  end
   local itemID = tonumber(payload.itemID) or parseItemID(payload.itemLink or payload.item)
   if not itemID then return { ok = false, reasonCode = "AWARD_INVALID_ITEM" } end
   if payload.winner == nil or tostring(payload.winner) == "" then
@@ -3383,6 +3406,10 @@ end
 -- Side effects: Persists a preview session; it does not consume Dibs.
 function Dibs.RCLootCouncil.CreateReconciliationSession(options, actor)
   options = type(options) == "table" and options or {}
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled then
+    local enabled = Dibs.OperationalPolicy.IsModuleEnabled("historicalReconciliation")
+    if enabled ~= true then return nil, "MODULE_DISABLED_HISTORICAL_RECONCILIATION" end
+  end
   local seasonId = options.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
   if not seasonId or not Dibs.Seasons or not Dibs.Seasons.GetById or not Dibs.Seasons.GetById(seasonId) then return nil, "HISTORY_NO_SEASON" end
   if not Dibs.Permissions or not Dibs.Permissions.Can or not Dibs.Permissions.Can("history.confirm", actor) then return nil, "GUILD_ADMIN_REQUIRED" end

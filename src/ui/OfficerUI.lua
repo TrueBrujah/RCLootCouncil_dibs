@@ -49,23 +49,28 @@ local function uiDebug(message)
   end
 end
 
+local function moduleUiDebug(message)
+  if Dibs.DebugEnabled and Dibs.DebugEnabled("ui", 4) then uiDebug(message) end
+end
+
 local function widgetIdentity(widget)
   return widget and tostring(widget) or "nil"
 end
 
 local OFFICER_NAV_TREE = {
   { section = "OVERVIEW", text = "Dashboard", value = "overview" },
-  { section = "DIBS", text = "Requests", value = "disputes" },
-  { section = "DIBS", text = "Pre-Dibs", value = "preDibs" },
+  { section = "DIBS", text = "Requests", value = "disputes", module = "requests" },
+  { section = "DIBS", text = "Pre-Dibs", value = "preDibs", module = "preDibs" },
   { section = "DIBS", text = "History", value = "history" },
   { section = "GUILD RULES", text = "Seasons", value = "seasons" },
   { section = "GUILD RULES", text = "Rank Rules", value = "ranks" },
   { section = "GUILD RULES", text = "Loot Rules", value = "lootTypes" },
-  { section = "GUILD RULES", text = "Announcements", value = "announcements" },
-  { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration" },
+  { section = "GUILD RULES", text = "Announcements", value = "announcements", module = "announcements" },
+  { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration", module = "rclootcouncil" },
   { section = "SYSTEM", text = "Settings", value = "settings" },
+  { section = "SYSTEM", text = "Modules", value = "modules" },
   { section = "SYSTEM", text = "Diagnostics", value = "diagnostics" },
-  { section = "SYSTEM", text = "Loot Eligibility", value = "eligibility" },
+  { section = "SYSTEM", text = "Loot Eligibility", value = "eligibility", module = "lootEligibility" },
   { section = "DEVELOPER", text = "Developer", value = "developer" },
   { section = "DEVELOPER", text = "Debug", value = "debug" },
 }
@@ -86,13 +91,18 @@ local OFFICER_TAB_ALIASES = {
 
 local canViewOfficerData
 
+local function moduleEnabled(moduleKey)
+  return not moduleKey or not Dibs.OperationalPolicy or not Dibs.OperationalPolicy.GetModuleStatus
+    or Dibs.OperationalPolicy.GetModuleStatus(moduleKey).enabled == true
+end
+
 local function getOfficerNavigationTree()
   local role = Dibs.OfficerUI.GetPresentationRole()
   if role ~= "gm" and role ~= "officer" then return {} end
   local developerEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() == true
   local tree = {}
   for _, entry in ipairs(OFFICER_NAV_TREE) do
-    if (entry.value ~= "developer" and entry.value ~= "debug") or developerEnabled then
+    if ((entry.value ~= "developer" and entry.value ~= "debug") or developerEnabled) and moduleEnabled(entry.module) then
       table.insert(tree, { section = entry.section, text = entry.text, value = entry.value })
     end
   end
@@ -135,6 +145,11 @@ local function officerRouteVisible(route)
     if Dibs.DeveloperMode.IsEnabled() == true then return true end
     if canViewOfficerData() then return true end
   end
+  local routeModules = {
+    disputes = "requests", preDibs = "preDibs", announcements = "announcements",
+    integration = "rclootcouncil", eligibility = "lootEligibility",
+  }
+  if routeModules[route] and not moduleEnabled(routeModules[route]) then return false end
   for _, entry in ipairs(getOfficerNavigationTree()) do
     if entry.value == route then return true end
   end
@@ -570,7 +585,7 @@ local function buildGuildMemberChoices(query, selectedName)
   end
 
   local needle = string.lower(trimText(query))
-  local values = { [""] = "Select a guild player..." }
+  local values = {}
   local count = 0
   for name in pairs(unique) do
     local matches = needle == "" or string.find(string.lower(name), needle, 1, true) ~= nil
@@ -582,21 +597,169 @@ local function buildGuildMemberChoices(query, selectedName)
   return sortedLabels(values), count
 end
 
-local function buildAdventureGuideItemChoices(catalog, query, selectedKey, maxResults)
-  local needle = string.lower(trimText(query))
-  local resultLimit = math.max(1, tonumber(maxResults) or 200)
-  local values = { [""] = "Select an Adventure Guide item..." }
-  local count = 0
+local function normalizeCandidateText(value)
+  return string.lower(trimText(value))
+end
+
+local function itemCandidateContext(request, evidence)
+  local attached = request and request.attachedContext or {}
+  local current = Dibs.EncounterJournal and Dibs.EncounterJournal.GetCurrentLootContext
+    and Dibs.EncounterJournal.GetCurrentLootContext() or {}
+  return {
+    explicitInstanceID = tonumber(attached.instanceID or attached.raidID or attached.dungeonID or evidence and evidence.instanceID),
+    expansionID = attached.expansionID or evidence and evidence.expansionID,
+    seasonID = attached.seasonID or evidence and evidence.seasonID,
+    instanceID = tonumber(attached.instanceID or attached.raidID or attached.dungeonID or evidence and evidence.instanceID),
+    instanceName = attached.instanceName or attached.raidName or attached.dungeonName or evidence and evidence.instanceName
+      or nil,
+    encounterID = tonumber(attached.encounterID or evidence and evidence.encounterID or current.encounterID),
+    encounterName = attached.encounterName or attached.bossName or evidence and evidence.encounterName
+      or current.encounterName,
+  }
+end
+
+local function getCurrentExpansionID()
+  if type(_G.GetExpansionLevel) == "function" then
+    local ok, level = pcall(_G.GetExpansionLevel)
+    if ok and tonumber(level) then return tonumber(level) end
+  end
+  return nil
+end
+
+local function expansionLabel(expansionID)
+  local key = tonumber(expansionID)
+  local label = key and _G["EXPANSION_NAME" .. tostring(key)] or nil
+  return type(label) == "string" and label ~= "" and label or (key and ("Expansion " .. tostring(key)) or "Unknown expansion")
+end
+
+local function filterValue(value)
+  local text = trimText(value)
+  return text ~= "" and text or nil
+end
+
+local function addFilterChoice(values, key, label)
+  if key ~= nil and tostring(key) ~= "" then values[tostring(key)] = tostring(label or key) end
+end
+
+local function buildAdventureGuideFilterChoices(catalog, state)
+  local expansions, seasons, raids, bosses = { [""] = "All expansions" }, { [""] = "All seasons" }, { [""] = "All raids" }, { [""] = "All bosses" }
+  local expansionSet, seasonSet, raidSet, bossSet = {}, {}, {}, {}
   for _, item in ipairs(catalog or {}) do
-    local matches = needle == "" or string.find(string.lower(tostring(item.searchText or "")), needle, 1, true) ~= nil
-    local isSelected = selectedKey and tostring(item.key) == tostring(selectedKey)
-    if (matches and count < resultLimit) or isSelected then
-      local label = string.format("%s [%s] — %s / %s (%s)", tostring(item.itemName or ("Item " .. tostring(item.itemID))), tostring(item.itemID or "?"), tostring(item.instanceName or "Adventure Guide"), tostring(item.bossName or "Unknown boss"), tostring(item.typeLabel or item.type or "UNKNOWN"))
-      values[tostring(item.key)] = label
-      count = count + 1
+    local expansionID = item.expansionID and tostring(item.expansionID) or nil
+    if expansionID and not expansionSet[expansionID] then
+      expansionSet[expansionID] = true
+      addFilterChoice(expansions, expansionID, expansionLabel(expansionID))
     end
   end
-  return sortedLabels(values), count
+  local selectedExpansion = filterValue(state and state.expansionID)
+  local selectedSeason = filterValue(state and state.seasonID)
+  for _, item in ipairs(catalog or {}) do
+    if not selectedExpansion or tostring(item.expansionID) == selectedExpansion then
+      local seasonID = item.seasonID and tostring(item.seasonID) or nil
+      if seasonID and not seasonSet[seasonID] then
+        seasonSet[seasonID] = true
+        addFilterChoice(seasons, seasonID, item.seasonName or seasonID)
+      end
+    end
+  end
+  for _, item in ipairs(catalog or {}) do
+    local inExpansion = not selectedExpansion or tostring(item.expansionID) == selectedExpansion
+    local inSeason = not selectedSeason or tostring(item.seasonID) == selectedSeason
+    if inExpansion and inSeason then
+      local raidID = item.instanceID and tostring(item.instanceID) or nil
+      if raidID and not raidSet[raidID] then
+        raidSet[raidID] = true
+        addFilterChoice(raids, raidID, item.instanceName)
+      end
+    end
+  end
+  local selectedRaid = filterValue(state and state.raidID)
+  for _, item in ipairs(catalog or {}) do
+    local inExpansion = not selectedExpansion or tostring(item.expansionID) == selectedExpansion
+    local inSeason = not selectedSeason or tostring(item.seasonID) == selectedSeason
+    local inRaid = not selectedRaid or tostring(item.instanceID) == selectedRaid
+    if inExpansion and inSeason and inRaid then
+      local bossID = item.encounterID and tostring(item.encounterID) or nil
+      if bossID and not bossSet[bossID] then
+        bossSet[bossID] = true
+        addFilterChoice(bosses, bossID, item.bossName .. " (" .. bossID .. ")")
+      end
+    end
+  end
+  return sortedLabels(expansions), sortedLabels(seasons), sortedLabels(raids), sortedLabels(bosses), {
+    hasSeasonMetadata = next(seasonSet) ~= nil,
+    hasExpansionMetadata = next(expansionSet) ~= nil,
+  }
+end
+
+local function isSafeDibsCandidate(item)
+  local rclc = Dibs.RCLootCouncil
+  if type(rclc) ~= "table" or type(rclc.GetItemSemanticFamily) ~= "function"
+    or type(rclc.IsItemDibTypeAllowed) ~= "function" then
+    return false
+  end
+  local family = rclc.GetItemSemanticFamily(tonumber(item.itemID), item.responseType)
+  if not family or tostring(family) == "" or tostring(family) == "UNKNOWN" then return false end
+  local ok, allowed = pcall(rclc.IsItemDibTypeAllowed, tonumber(item.itemID), item.responseType, { strictWhitelist = true })
+  return ok and allowed == true
+end
+
+local function itemMatchesScope(item, context)
+  if context.expansionID and tostring(item.expansionID) ~= tostring(context.expansionID) then return false end
+  if context.seasonID and tostring(item.seasonID) ~= tostring(context.seasonID) then return false end
+  if context.raidID and tostring(item.instanceID) ~= tostring(context.raidID) then return false end
+  if context.bossID and tostring(item.encounterID) ~= tostring(context.bossID) then return false end
+  if context.instanceID and tostring(item.instanceID) ~= tostring(context.instanceID) then return false end
+  if not context.instanceID and trimText(context.instanceName) ~= ""
+    and normalizeCandidateText(item.instanceName) ~= normalizeCandidateText(context.instanceName) then return false end
+  return true
+end
+
+local function buildAdventureGuideItemChoices(catalog, query, selectedKey, maxResults, context)
+  local needle = string.lower(trimText(query))
+  local resultLimit = math.max(1, tonumber(maxResults) or 200)
+  local values = {}
+  local ranked = {}
+  local count = 0
+  local matchingCatalogItems = 0
+  for _, item in ipairs(catalog or {}) do
+    if itemMatchesScope(item, context or {}) then
+      local searchable = string.lower(table.concat({ tostring(item.itemName or ""), tostring(item.itemID or ""), tostring(item.bossName or ""), tostring(item.encounterID or ""), tostring(item.instanceName or ""), tostring(item.expansionName or "") }, " "))
+      local matches = needle == "" or string.find(searchable, needle, 1, true) ~= nil
+      if matches then
+        matchingCatalogItems = matchingCatalogItems + 1
+        local selected = selectedKey and tostring(item.key) == tostring(selectedKey)
+        if isSafeDibsCandidate(item) or selected then
+          local rank = context and context.encounterID and tonumber(item.encounterID) == context.encounterID and 0 or 1
+          table.insert(ranked, { item = item, rank = rank })
+        end
+      end
+    end
+  end
+  table.sort(ranked, function(left, right)
+    local leftItem, rightItem = left.item, right.item
+    if left.rank ~= right.rank then return left.rank < right.rank end
+    local leftName = string.lower(tostring(leftItem.itemName or ""))
+    local rightName = string.lower(tostring(rightItem.itemName or ""))
+    if leftName ~= rightName then return leftName < rightName end
+    return tostring(leftItem.itemID or "") < tostring(rightItem.itemID or "")
+  end)
+  for _, entry in ipairs(ranked) do
+    if count >= resultLimit and not (selectedKey and tostring(entry.item.key) == tostring(selectedKey)) then break end
+    local item = entry.item
+    local contextParts = {}
+    if trimText(item.expansionName) ~= "" then table.insert(contextParts, tostring(item.expansionName)) end
+    if trimText(item.seasonName) ~= "" then table.insert(contextParts, tostring(item.seasonName)) end
+    if trimText(item.instanceName) ~= "" then table.insert(contextParts, tostring(item.instanceName)) end
+    if trimText(item.bossName) ~= "" and item.bossName ~= "Unknown boss" then
+      table.insert(contextParts, tostring(item.bossName) .. " (" .. tostring(item.encounterID or "?") .. ")")
+    end
+    table.insert(contextParts, tostring(item.itemName or ("Item " .. tostring(item.itemID))) .. " (" .. tostring(item.itemID or "?") .. ")")
+    local label = table.concat(contextParts, " | ")
+    values[tostring(item.key)] = label
+    count = count + 1
+  end
+  return sortedLabels(values), count, matchingCatalogItems > 0 and count == 0
 end
 
 local function getRankName(rankIndex)
@@ -1275,11 +1438,14 @@ function Dibs.OfficerUI.BuildStatusText(selectedSeason)
   for _ in pairs(permissions.activeStandaloneAdmins or {}) do
     adminCount = adminCount + 1
   end
+  local size = Dibs.ImportExport and Dibs.ImportExport.GetSizeDiagnostics and Dibs.ImportExport.GetSizeDiagnostics() or {}
+  local formatSize = Dibs.ImportExport and Dibs.ImportExport.FormatSize or tostring
 
   return "Season selected: " .. tostring(season and season.name or "None") .. "\n" ..
     "Seasons: " .. tostring(#seasons) .. " | Ledger transactions (all seasons): " .. tostring(overview.count) .. "\n" ..
     "Rank transitions: " .. tostring(rankDiagnostics.playersWithRankTransitions) .. "/" .. tostring(rankDiagnostics.totalPlayersInLedger) .. " players\n" ..
     "Standalone admins: " .. tostring(adminCount) .. " (events: " .. tostring(#(permissions.adminEvents or {})) .. ")\n" ..
+    "Dibs database: " .. formatSize(size.databaseBytes) .. " | Full backup package: " .. formatSize(size.fullPackageBytes) .. " / " .. formatSize(size.backupLimitBytes) .. "\n" ..
     "Role: " .. tostring(Dibs.Permissions and Dibs.Permissions.GetRole() or "player") .. "\n" ..
     "RCLootCouncil: " .. tostring(Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetAvailability and Dibs.RCLootCouncil.GetAvailability() or "absent")
 end
@@ -1438,6 +1604,658 @@ local function createAceWindow(initialRoute)
   frame.CloseHistoryTransfer = function()
     if closeHistoryTransfer then closeHistoryTransfer() end
   end
+
+  local requestDetailShell
+  local requestDetailRoot
+  local requestChildDialog
+  local openRequestDetail
+
+  local function closeRequestChildren()
+    if Dibs.AceGUI and Dibs.AceGUI.HideContextMenu then Dibs.AceGUI.HideContextMenu() end
+    if requestChildDialog and requestChildDialog.window then requestChildDialog.window:Hide() end
+    requestChildDialog = nil
+  end
+
+  local function closeRequestDetail()
+    closeRequestChildren()
+    if requestDetailRoot then Dibs.AceGUI.Clear(requestDetailRoot) end
+    if requestDetailShell and requestDetailShell.window then requestDetailShell.window:Hide() end
+    frame.disputeDetailOpen = false
+  end
+
+  local function openDibsAccountingWorkflow(request)
+    closeRequestChildren()
+    local playerDisplayName = request.player and request.player.name or request.playerName or ""
+    local playerName = playerDisplayName
+    if Dibs.Identity and type(Dibs.Identity.ResolveRosterMember) == "function" and playerName ~= "" then
+      local ok, resolved = pcall(Dibs.Identity.ResolveRosterMember, playerName)
+      if ok and type(resolved) == "table" and resolved.status == "RESOLVED" then playerName = resolved.displayName or playerName end
+    end
+    local draft = frame.requestAccountingDraft
+    if type(draft) ~= "table" or draft.requestID ~= request.requestId then
+      draft = { requestID = request.requestId, playerIdentity = playerName, playerDisplayName = playerDisplayName, action = "add", amount = "", reason = "", acknowledged = false }
+      frame.requestAccountingDraft = draft
+    end
+    local function traceAccounting(event, details)
+      local developerEnabled = Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsEnabled) == "function"
+        and Dibs.DeveloperMode.IsEnabled()
+      local debugLogger = _G.Dibs and _G.Dibs.Debug
+      if developerEnabled and type(debugLogger) == "function" then
+        debugLogger("AdjustDibs " .. tostring(event), details)
+      end
+    end
+    local isReview = frame.requestAccountingReview == true
+    requestChildDialog = Dibs.AceGUI.CreateWindow("Dibs | Adjust Dibs", 540, 460, { "CENTER", 0, 0 }, "DibsAccountingWorkflow")
+    if not requestChildDialog then return false end
+    local host = Dibs.AceGUI.Create(requestChildDialog, "SimpleGroup", requestChildDialog.window)
+    if not host then requestChildDialog.window:Hide(); requestChildDialog = nil; return false end
+    host:SetFullWidth(true); host:SetFullHeight(true); host:SetLayout("List")
+    local body = Dibs.AceGUI.Create(requestChildDialog, "SimpleGroup", host)
+    local footer = Dibs.AceGUI.Create(requestChildDialog, "SimpleGroup", host)
+    if not body or not footer then requestChildDialog.window:Hide(); requestChildDialog = nil; return false end
+    body:SetFullWidth(true); body:SetHeight(408); body:SetLayout("List")
+    footer:SetFullWidth(true); footer:SetHeight(42); footer:SetLayout("Flow")
+    local panel = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestChildDialog, body, "Dibs | Adjust Dibs") or body
+    local actionLabels = { add = "Add / Bonus", refund = "Refund", revoke = "Revoke", manual = "Manual correction" }
+    local actionValues = { add = "Add / Bonus", refund = "Refund", revoke = "Revoke", manual = "Manual correction" }
+    local balanceState = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(playerName) or nil
+    local before = balanceState and tonumber(balanceState.balance or balanceState.currentBalance)
+    local limit = balanceState and tonumber(balanceState.limit or balanceState.maxBalance)
+    local reviewBefore = isReview and tonumber(draft.reviewBefore) or before
+    if isReview then before = reviewBefore end
+    local magnitude = tonumber(draft.amount)
+    local delta = magnitude and math.abs(magnitude) or 0
+    if draft.action == "revoke" then delta = -delta elseif draft.action == "manual" then delta = magnitude or 0 end
+    local after = before and before + delta or nil
+    local message
+    local function setMessage(text) if message then message:SetText(text or "") end end
+    local function validate()
+      local currentMagnitude = tonumber(draft.amount)
+      local currentDelta = currentMagnitude and math.abs(currentMagnitude) or 0
+      if draft.action == "revoke" then currentDelta = -currentDelta elseif draft.action == "manual" then currentDelta = currentMagnitude or 0 end
+      local currentAfter = before and before + currentDelta or nil
+      if trimText(draft.playerIdentity) == "" then return false, "Player identity could not be resolved." end
+      if not currentMagnitude or currentMagnitude == 0 then return false, "Amount must be greater than zero." end
+      if draft.action == "manual" and currentMagnitude == 0 then return false, "Enter a signed amount." end
+      if trimText(draft.reason) == "" then return false, "Reason is required." end
+      if draft.acknowledged ~= true then return false, "Acknowledge the recorded Dibs change first." end
+      if not before then return false, "Canonical Dibs state is unavailable." end
+      if limit and currentAfter and currentAfter > limit then return false, "The resulting balance exceeds the current policy limit." end
+      return true
+    end
+    if isReview then
+      Dibs.AceGUI.AddHeading(requestChildDialog, panel, "Adjust Dibs", "Review the append-only accounting change before confirmation.")
+      for _, row in ipairs({
+        { "Player", draft.playerIdentity }, { "Action", actionLabels[draft.action] or actionLabels.add },
+        { "Before", before and tostring(before) or "Unavailable" }, { "Change", (delta >= 0 and "+" or "") .. tostring(delta) },
+        { "After", after and tostring(after) or "Unavailable" }, { "Reason", draft.reason },
+      }) do Dibs.AceGUI.AddLabel(requestChildDialog, panel, row[1] .. "\n" .. tostring(row[2] or "Unavailable"), true) end
+      Dibs.AceGUI.AddLabel(requestChildDialog, panel, "This correction will be permanently logged. Original history will not be deleted.", true)
+    else
+      Dibs.AceGUI.AddHeading(requestChildDialog, panel, "Adjust Dibs", "Use one accounting workflow for bonuses, refunds, revokes, and manual corrections.")
+      Dibs.AceGUI.AddSummaryRow(requestChildDialog, panel, "Player", playerName, 30)
+      local dropdown = Dibs.AceGUI.AddFormRow(requestChildDialog, panel, "Action", function(row)
+        return Dibs.AceGUI.AddDropdown(requestChildDialog, row, "", actionValues, function(value)
+          draft.action = value or "add"
+          openDibsAccountingWorkflow(request)
+        end, 300)
+      end, 56)
+      Dibs.AceGUI.SetValue(dropdown, draft.action)
+      Dibs.AceGUI.AddSummaryRow(requestChildDialog, panel, "Current balance", (before and tostring(before) or "Unavailable") .. (limit and (" / " .. tostring(limit)) or ""), 28)
+      local changeLabel
+      local resultLabel
+      local function refreshPreview(value)
+        draft.amount = value or ""
+        local currentMagnitude = tonumber(draft.amount)
+        local currentDelta = currentMagnitude and math.abs(currentMagnitude) or 0
+        if draft.action == "revoke" then currentDelta = -currentDelta elseif draft.action == "manual" then currentDelta = currentMagnitude or 0 end
+        local currentAfter = before and before + currentDelta or nil
+        if changeLabel and changeLabel.SetText then changeLabel:SetText((currentDelta >= 0 and "+" or "") .. tostring(currentDelta)) end
+        if resultLabel and resultLabel.SetText then resultLabel:SetText((currentAfter and tostring(currentAfter) or "Unavailable") .. (limit and (" / " .. tostring(limit)) or "")) end
+      end
+      local amount = Dibs.AceGUI.AddFormRow(requestChildDialog, panel, "Amount", function(row)
+        return Dibs.AceGUI.AddEditBox(requestChildDialog, row, "", refreshPreview, 160)
+      end, 54)
+      setControlText(amount, draft.amount)
+      changeLabel = Dibs.AceGUI.AddSummaryRow(requestChildDialog, panel, "Change", (delta >= 0 and "+" or "") .. tostring(delta), 28)
+      resultLabel = Dibs.AceGUI.AddSummaryRow(requestChildDialog, panel, "Result", (after and tostring(after) or "Unavailable") .. (limit and (" / " .. tostring(limit)) or ""), 28)
+      local reason = Dibs.AceGUI.AddFormRow(requestChildDialog, panel, "Reason", function(row)
+        local edit = Dibs.AceGUI.AddMultilineEditBox(requestChildDialog, row, "", function(value) draft.reason = value or "" end, 460, 76)
+        setControlText(edit, draft.reason)
+        return edit
+      end, 106)
+      Dibs.AceGUI.AddFormRow(requestChildDialog, panel, "", function(row)
+        return Dibs.AceGUI.AddCheckBox(requestChildDialog, row, "I understand this changes recorded Dibs data", draft.acknowledged, function(value) draft.acknowledged = value == true end, 460)
+      end, 34)
+      message = Dibs.AceGUI.AddLabel(requestChildDialog, panel, "", true)
+      if before and magnitude and limit and after > limit then setMessage("The resulting balance exceeds the current policy limit.") end
+    end
+    Dibs.AceGUI.AddButton(requestChildDialog, footer, isReview and "Back" or "Cancel", function()
+      if isReview then frame.requestAccountingReview = false; openDibsAccountingWorkflow(request) else closeRequestChildren() end
+    end, 100)
+    local primary = Dibs.AceGUI.AddButton(requestChildDialog, footer, isReview and "Confirm action" or "Review", function()
+      traceAccounting("Confirm clicked", {
+        requestID = draft.requestID, player = draft.playerIdentity, action = draft.action,
+        amount = draft.amount, reason = draft.reason, acknowledged = draft.acknowledged,
+      })
+      if isReview and draft.committing == true then
+        setMessage("Adjustment is already being applied.")
+        return
+      end
+      if not isReview then
+        local valid, reason = validate()
+        if not valid then
+          traceAccounting("Review rejected", reason)
+          setMessage(reason)
+          return
+        end
+        draft.reviewBefore = before
+        frame.requestAccountingReview = true
+        openDibsAccountingWorkflow(request)
+        return
+      end
+      local valid, reason = validate()
+      if not valid then setMessage(reason); return end
+      local currentState = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(playerName) or nil
+      local currentBefore = currentState and tonumber(currentState.balance or currentState.currentBalance)
+      if not currentBefore then setMessage("Canonical Dibs state is unavailable."); return end
+      if currentBefore ~= reviewBefore then setMessage("Balance changed since Review. Please review again."); return end
+      local actionPermission = draft.action == "refund" and "ledger.refund" or "ledger.adjust"
+      local permissionDecision = Dibs.Permissions and Dibs.Permissions.Evaluate and Dibs.Permissions.Evaluate(actionPermission, nil)
+      if not permissionDecision or permissionDecision.allowed ~= true then
+        traceAccounting("Permission rejected", permissionDecision)
+        setMessage(permissionDecision and permissionDecision.diagnostic or "You do not have permission.")
+        return
+      end
+      local action = draft.action == "refund" and "refund" or draft.action == "revoke" and "revoke" or "adjustment"
+      local options = { amount = draft.action == "manual" and tonumber(draft.amount) or math.abs(tonumber(draft.amount)), reason = draft.reason, confirmed = true }
+      draft.committing = true
+      local callOK, result, reasonCode = pcall(Dibs.Disputes.Resolve, request.requestId, action, options, Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
+      if not callOK then
+        draft.committing = false
+        traceAccounting("Resolve error", result)
+        setMessage("Unable to apply Dibs adjustment: " .. tostring(result))
+        return
+      end
+      traceAccounting("Resolve returned", { ok = result and result.ok, reasonCode = reasonCode, transaction = result and result.transaction and result.transaction.transactionId })
+      if not result or result.ok == false then
+        draft.committing = false
+        setMessage("Unable to apply Dibs adjustment: " .. tostring(reasonCode or result and (result.reasonCode or result.diagnostic) or "unknown error"))
+        return
+      end
+      local refreshed = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(playerName) or nil
+      local canonicalAfter = refreshed and tonumber(refreshed.balance or refreshed.currentBalance)
+      if not canonicalAfter or canonicalAfter ~= reviewBefore + delta then
+        draft.committing = false
+        traceAccounting("Canonical verification failed", { expected = reviewBefore + delta, actual = canonicalAfter })
+        setMessage("The canonical balance could not be verified after the adjustment.")
+        return
+      end
+      local reference = result.transaction and result.transaction.transactionId or result.value and result.value.transactionId or result.correctionTransactionId
+      frame.requestAccountingSuccess = { requestID = request.requestId, player = playerName, before = reviewBefore, delta = delta, after = canonicalAfter, reference = reference, reason = draft.reason }
+      frame.requestAccountingReview = false
+      closeRequestChildren()
+      frame:Refresh()
+      local updated = Dibs.Disputes.GetRequest(request.requestId, nil)
+      if updated then openRequestDetail(updated) end
+    end, 150)
+    if not isReview and before and magnitude and limit and after > limit then Dibs.AceGUI.SetDisabled(primary, true) end
+    requestChildDialog.window:Show()
+    return true
+  end
+
+  local function openRequestActionDialog(request, action, title)
+    if action == "correct_balance" or action == "refund" or action == "revoke" or action == "adjustment" then
+      return openDibsAccountingWorkflow(request)
+    end
+    closeRequestChildren()
+    if action == "historical_import" and not frame.requestHistoricalCandidate then
+      local candidate = request.reconciliationCandidate or request.historicalCandidate or request.candidate
+      if type(candidate) == "table" and candidate.candidateId then frame.requestHistoricalCandidate = candidate end
+    end
+    requestChildDialog = Dibs.AceGUI.CreateWindow("Dibs | " .. title, 540, 460, { "CENTER", 0, 0 })
+    if not requestChildDialog then return false end
+    local root = Dibs.AceGUI.Create(requestChildDialog, "SimpleGroup", requestChildDialog.window)
+    if not root then requestChildDialog.window:Hide(); requestChildDialog = nil; return false end
+    root:SetFullWidth(true); root:SetFullHeight(true); root:SetLayout("List")
+    local body = Dibs.AceGUI.Create(requestChildDialog, "SimpleGroup", root)
+    local footer = Dibs.AceGUI.Create(requestChildDialog, "SimpleGroup", root)
+    if not body or not footer then requestChildDialog.window:Hide(); requestChildDialog = nil; return false end
+    body:SetFullWidth(true); body:SetHeight(408); body:SetLayout("List")
+    footer:SetFullWidth(true); footer:SetHeight(42); footer:SetLayout("Flow")
+    local workflowPanel = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestChildDialog, body, title) or body
+    if workflowPanel and workflowPanel ~= root then root = workflowPanel end
+    local isReview = frame.requestActionReview == action
+    local applyCorrection
+    local function updateCorrectionButton()
+      if applyCorrection then
+        Dibs.AceGUI.SetDisabled(applyCorrection, trimText(frame.disputeCorrectPlayer) == ""
+          and (frame.disputeCorrectItemKey == nil or trimText(frame.disputeCorrectItem) == ""))
+      end
+    end
+    Dibs.AceGUI.AddHeading(requestChildDialog, root, title, "This action records through the existing protected request service.")
+
+    local actionPermission = {
+      correct_balance = "ledger.adjust", refund = "ledger.refund", revoke = "ledger.adjust",
+      historical_import = "history.confirm",
+    }
+    local function permissionDecision()
+      local actionId = actionPermission[action]
+      if not actionId or not Dibs.Permissions or type(Dibs.Permissions.Evaluate) ~= "function" then return true, nil end
+      local ok, decision = pcall(Dibs.Permissions.Evaluate, actionId, nil)
+      if not ok or not decision or decision.allowed ~= true then
+        return false, decision and (decision.diagnostic or decision.reasonCode) or "Required permission is unavailable."
+      end
+      return true, nil
+    end
+    local function errorText(reasonCode)
+      local messages = {
+        QUESTION_REQUIRED = "A question is required.", REASON_REQUIRED = "A reason is required.",
+        AMOUNT_REQUIRED = "Enter a non-zero numeric amount.", CONFIRMATION_REQUIRED = "Explicit confirmation is required.",
+        GUILD_ADMIN_REQUIRED = "Officer permission is required for this action.",
+        PROTECTED_ACTION_UNAVAILABLE = "The protected action service is unavailable.",
+        CORRECTION_TARGET_REQUIRED = "Select a replacement player or item first.",
+        HISTORY_CANDIDATE_REQUIRED = "Select a valid historical candidate first.",
+      }
+      return messages[tostring(reasonCode)] or ("Action failed: " .. tostring(reasonCode or "unknown error"))
+    end
+    local function addMultiline(label, stateKey, height)
+      return Dibs.AceGUI.AddFormRow(requestChildDialog, root, label, function(row)
+        local edit = Dibs.AceGUI.AddMultilineEditBox(requestChildDialog, row, "", function(value) frame[stateKey] = value or "" end, 460, height or 64)
+        setControlText(edit, frame[stateKey] or "")
+        return edit
+      end, (height or 64) + 36)
+    end
+    local function executeRequestAction(options, validate, successText, service)
+      local allowed, permissionReason = permissionDecision()
+      if not allowed then return false, permissionReason end
+      if validate then
+        local valid, validationReason = validate(options)
+        if not valid then return false, validationReason end
+      end
+      local result, reasonCode
+      if service then result, reasonCode = service(options) else result, reasonCode = Dibs.Disputes.Resolve(request.requestId, action, options, nil) end
+      if not result or result.ok == false then return false, reasonCode or result and (result.reasonCode or result.diagnostic) or "SERVICE_FAILED" end
+      frame.disputeStatusMessage = successText
+      frame.requestActionReview = nil
+      frame.requestSuccess = {
+        requestId = request.requestId, action = successText,
+        transaction = result.transaction or result.value, reference = result.transaction and result.transaction.transactionId or result.value and result.value.transactionId,
+      }
+      if requestChildDialog and requestChildDialog.window then requestChildDialog.window:Hide() end
+      requestChildDialog = nil
+      frame:Refresh()
+      local updated = Dibs.Disputes.GetRequest(request.requestId, nil)
+      if updated then openRequestDetail(updated) end
+      return true
+    end
+
+    if action ~= "correct_target" then
+      local stateKey = action == "ask_information" and "requestQuestion"
+        or action == "no_correction" and "requestResolutionNote"
+        or action == "reject" and "requestRejectReason"
+        or "requestActionReason"
+      local label = action == "ask_information" and "Message / question"
+        or action == "no_correction" and "Resolution note"
+        or action == "reject" and "Reason" or "Reason / note"
+      local playerName = request.player and request.player.name or request.playerName or "Unavailable"
+      if action == "correct_balance" or action == "refund" or action == "revoke" then
+        Dibs.AceGUI.AddSummaryRow(requestChildDialog, root, "Player", playerName, 30)
+        local balance = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(playerName) or {}
+        if action == "correct_balance" then
+          Dibs.AceGUI.AddLabel(requestChildDialog, root, "Adjust Dibs for " .. tostring(request.categoryLabel or request.category or "this request"), true)
+          Dibs.AceGUI.AddSummaryRow(requestChildDialog, root, "Current balance", balance.balance or "Unavailable", 28)
+          Dibs.AceGUI.AddLabel(requestChildDialog, root, "The request category determines whether the adjustment adds or refunds Dibs.", true)
+        elseif action == "refund" then
+          Dibs.AceGUI.AddLabel(requestChildDialog, root, "Refund the recorded Dib for this request.", true)
+        else
+          Dibs.AceGUI.AddLabel(requestChildDialog, root, "Revoke a Dib by appending a negative ledger adjustment.", true)
+        end
+        if not isReview then
+          frame.requestActionAmount = frame.requestActionAmount or ""
+          Dibs.AceGUI.AddFormRow(requestChildDialog, root, action == "correct_balance" and "Dib adjustment amount" or "Dib amount", function(row)
+            return Dibs.AceGUI.AddEditBox(requestChildDialog, row, "", function(value) frame.requestActionAmount = value or "" end, 180)
+          end, 54)
+          local amount = Dibs.AceGUI.AddLabel(requestChildDialog, root, "Enter a positive integer amount; the service applies the authoritative sign.", true)
+          Dibs.AceGUI.AddTooltip(amount, "Amount", "This value is sent to the existing ledger correction service.")
+          addMultiline("Reason", stateKey, 54)
+          if frame.requestActionConfirmed == nil then frame.requestActionConfirmed = false end
+          Dibs.AceGUI.AddFormRow(requestChildDialog, root, "", function(row)
+            return Dibs.AceGUI.AddCheckBox(requestChildDialog, row, "I understand this changes recorded Dibs data", frame.requestActionConfirmed, function(value) frame.requestActionConfirmed = value == true end, 460)
+          end, 34)
+        end
+      elseif action == "historical_import" then
+        local candidate = frame.requestHistoricalCandidate
+        if candidate then
+          for _, entry in ipairs({ { "Item", candidate.itemLink or candidate.itemID }, { "Winner", candidate.playerName }, { "Encounter", tostring(candidate.instanceName or "Unavailable") .. " / " .. tostring(candidate.encounterName or "Unavailable") }, { "Difficulty", candidate.difficultyText or candidate.difficulty }, { "Award date", candidate.originalAwardTimeText or candidate.originalAwardTime }, { "Evidence", candidate.classification } }) do
+            Dibs.AceGUI.AddLabel(requestChildDialog, root, entry[1] .. ": " .. tostring(entry[2] or "Unavailable"), true)
+          end
+        else
+          Dibs.AceGUI.AddLabel(requestChildDialog, root, "No valid historical candidate is selected.", true)
+        end
+        if not isReview then addMultiline("Reason / note", stateKey, 54) end
+      else
+        if not isReview then addMultiline(label, stateKey, 64) end
+      end
+      if isReview then
+        Dibs.AceGUI.AddHeading(requestChildDialog, root, "Review", "Confirm the exact action below. Original history is preserved.")
+        Dibs.AceGUI.AddSummaryRow(requestChildDialog, root, "Request", request.requestId or "Unavailable", 28)
+        Dibs.AceGUI.AddSummaryRow(requestChildDialog, root, "Action", title, 28)
+        if action == "refund" or action == "revoke" or action == "correct_balance" or action == "adjustment" then
+          Dibs.AceGUI.AddSummaryRow(requestChildDialog, root, "Amount", frame.requestActionAmount or "Unavailable", 28)
+        end
+        Dibs.AceGUI.AddSummaryRow(requestChildDialog, root, "Reason", frame[stateKey] or "Unavailable", 34)
+        Dibs.AceGUI.AddLabel(requestChildDialog, root, "This correction will be permanently logged. Original history will not be deleted.", true)
+      end
+      local message = Dibs.AceGUI.AddLabel(requestChildDialog, root, "", true)
+      local cancel = Dibs.AceGUI.AddButton(requestChildDialog, footer, isReview and "Back" or "Cancel", function()
+        if isReview then frame.requestActionReview = nil; openRequestActionDialog(request, action, title) else closeRequestChildren() end
+      end, 90)
+      local actionText = isReview and (action == "ask_information" and "Confirm question" or action == "no_correction" and "Confirm resolve" or action == "reject" and "Confirm reject" or action == "refund" and "Confirm refund" or action == "revoke" and "Confirm revoke" or action == "historical_import" and "Confirm import" or action == "adjustment" and "Confirm adjustment" or "Confirm action") or "Review"
+      local confirm = Dibs.AceGUI.AddButton(requestChildDialog, footer, actionText, function()
+        if not isReview then frame.requestActionReview = action; openRequestActionDialog(request, action, title); return end
+        local options = { reason = frame[stateKey] or "", question = frame[stateKey] or "" }
+        local amount = tonumber(frame.requestActionAmount)
+        if action == "correct_balance" or action == "refund" or action == "revoke" then options.amount = amount; options.confirmed = frame.requestActionConfirmed == true end
+        local candidate = frame.requestHistoricalCandidate
+        if action == "historical_import" then
+          if not candidate then message:SetText(errorText("HISTORY_CANDIDATE_REQUIRED")); return end
+          options = { reason = frame[stateKey] or "", mode = "manual", confirmation = true, manualAcknowledgement = true, candidate = candidate }
+        end
+        local ok, failure = executeRequestAction(options, function(payload)
+          if action == "historical_import" then
+            return frame.requestHistoricalCandidate and frame.requestHistoricalCandidate.candidateId ~= nil, "HISTORY_CANDIDATE_REQUIRED"
+          end
+          if action == "ask_information" and trimText(payload.question) == "" then return false, "QUESTION_REQUIRED" end
+          if action ~= "under_review" and action ~= "reopen" and trimText(payload.reason) == "" then return false, "REASON_REQUIRED" end
+          if action == "correct_balance" or action == "refund" or action == "revoke" then
+            if payload.amount == nil or payload.amount == 0 then return false, "AMOUNT_REQUIRED" end
+            if payload.confirmed ~= true then return false, "CONFIRMATION_REQUIRED" end
+          end
+          return true
+        end, action == "ask_information" and "Information requested." or action == "no_correction" and "Request resolved." or action == "reject" and "Request rejected." or action == "historical_import" and "Historical record imported." or "Request updated.", function(payload)
+          local candidate = payload.candidate
+          return Dibs.RCLootCouncil.ConfirmReconciliationCandidate(candidate.reconciliationSessionId or candidate.sessionId, candidate.candidateId, payload, nil)
+        end)
+        if not ok then message:SetText(errorText(failure)) end
+      end, 150)
+      local allowed, permissionReason = permissionDecision()
+      if not allowed then Dibs.AceGUI.SetDisabled(confirm, true); message:SetText(errorText(permissionReason)) end
+      requestChildDialog.window:Show()
+      return true
+    end
+
+    if action == "correct_target" then
+      if not isReview then
+        local evidence = request.evidence and request.evidence[1] or {}
+      Dibs.AceGUI.AddLabel(requestChildDialog, root, "Reassign loot: select the replacement player, item, or both from authoritative guild and Adventure Guide data.", true)
+      if frame.disputeTargetRequestId ~= request.requestId then
+        frame.disputeTargetRequestId = request.requestId
+        frame.disputeCorrectPlayer, frame.disputeCorrectItem = nil, nil
+        frame.disputeCorrectItemKey = nil
+      end
+      local playerChoices = buildGuildMemberChoices("", frame.disputeCorrectPlayer)
+      local playerDropdown = Dibs.AceGUI.AddDropdown(requestChildDialog, root, "Correct player", playerChoices, function(value)
+        frame.disputeCorrectPlayer = value and tostring(value) ~= "" and tostring(value) or nil
+        frame.disputeTargetRequestId = request.requestId
+        updateCorrectionButton()
+      end, 320)
+      if playerDropdown then
+        if frame.disputeCorrectPlayer then Dibs.AceGUI.SetValue(playerDropdown, frame.disputeCorrectPlayer)
+        else Dibs.AceGUI.SetText(playerDropdown, "Select a guild player...") end
+      end
+      local itemCatalog = {}
+      if Dibs.EncounterJournal and type(Dibs.EncounterJournal.GetLootCatalog) == "function" then
+        itemCatalog = Dibs.EncounterJournal.GetLootCatalog("", { limit = 3500 }) or {}
+      end
+      frame.disputeCorrectPlayer = frame.disputeCorrectPlayer
+      frame.disputeCorrectItemQuery = frame.disputeCorrectItemQuery or ""
+      frame.disputeItemCatalogByKey = {}
+      for _, candidate in ipairs(itemCatalog) do frame.disputeItemCatalogByKey[tostring(candidate.key)] = candidate end
+      local itemChoices, itemMeta = {}, {}
+      local function openLootRules()
+        closeRequestChildren()
+        frame:SelectTab("lootTypes")
+      end
+      local function showItemSearchState(filteredByRules)
+        if filteredByRules then
+          Dibs.AceGUI.AddLabel(requestChildDialog, root, "No eligible items match the current Loot Rules.", true)
+          Dibs.AceGUI.AddButton(requestChildDialog, root, "Open Loot Rules", openLootRules, 150)
+        elseif next(itemChoices or {}) == nil then
+          Dibs.AceGUI.AddLabel(requestChildDialog, root, "No eligible raid items found.", true)
+        end
+      end
+      local itemDropdown
+      local search = Dibs.AceGUI.AddEditBox(requestChildDialog, root, "Search Adventure Guide", function(value)
+        frame.disputeCorrectItemQuery = value or ""
+        local context = itemCandidateContext(request, evidence)
+        context.expansionID, context.seasonID = frame.disputeCorrectExpansionID, frame.disputeCorrectSeasonID
+        context.raidID, context.bossID = frame.disputeCorrectRaidID, frame.disputeCorrectBossID
+        local choices, _, filteredByRules = buildAdventureGuideItemChoices(itemCatalog, frame.disputeCorrectItemQuery, frame.disputeCorrectItemKey, 200, context)
+        if itemDropdown and itemDropdown.SetList then itemDropdown:SetList(choices) end
+        itemChoices = choices or {}
+        showItemSearchState(filteredByRules)
+      end, 360)
+      setControlText(search, frame.disputeCorrectItemQuery)
+      local function refreshCorrectionItems()
+        local context = itemCandidateContext(request, evidence)
+        context.expansionID, context.seasonID = frame.disputeCorrectExpansionID, frame.disputeCorrectSeasonID
+        context.raidID, context.bossID = frame.disputeCorrectRaidID, frame.disputeCorrectBossID
+        local filteredByRules
+        itemChoices, _, filteredByRules = buildAdventureGuideItemChoices(itemCatalog, frame.disputeCorrectItemQuery, frame.disputeCorrectItemKey, 200, context)
+        if itemDropdown and itemDropdown.SetList then itemDropdown:SetList(itemChoices) end
+        showItemSearchState(filteredByRules)
+      end
+      refreshCorrectionItems()
+      itemDropdown = Dibs.AceGUI.AddDropdown(requestChildDialog, root, "Correct item", itemChoices, function(value)
+        local item = itemCatalog and frame.disputeItemCatalogByKey and frame.disputeItemCatalogByKey[tostring(value)]
+        if not item then
+          for _, candidate in ipairs(itemCatalog or {}) do if tostring(candidate.key) == tostring(value) then item = candidate break end end
+        end
+        frame.disputeCorrectItemKey = item and tostring(item.key) or nil
+        frame.disputeCorrectItem = item and (item.itemLink or ("item:" .. tostring(item.itemID))) or nil
+        frame.disputeTargetRequestId = request.requestId
+        updateCorrectionButton()
+      end, 360)
+      if itemDropdown then
+        if frame.disputeCorrectItemKey and itemChoices[frame.disputeCorrectItemKey] then Dibs.AceGUI.SetValue(itemDropdown, frame.disputeCorrectItemKey)
+        else Dibs.AceGUI.SetText(itemDropdown, "Select an Adventure Guide item...") end
+      end
+      local filterState = {
+        expansionID = frame.disputeCorrectExpansionID,
+        seasonID = frame.disputeCorrectSeasonID,
+        raidID = frame.disputeCorrectRaidID,
+        bossID = frame.disputeCorrectBossID,
+      }
+      if not filterState.expansionID then filterState.expansionID = getCurrentExpansionID() and tostring(getCurrentExpansionID()) or nil end
+      if not filterState.seasonID and filterState.expansionID and Dibs.EncounterJournal and Dibs.EncounterJournal.GetCurrentGameSeason then
+        local currentSeason = select(1, Dibs.EncounterJournal.GetCurrentGameSeason())
+        filterState.seasonID = currentSeason and tostring(currentSeason) or nil
+      end
+      frame.disputeCorrectExpansionID, frame.disputeCorrectSeasonID = filterState.expansionID, filterState.seasonID
+      local expansionChoices, seasonChoices, raidChoices, bossChoices = buildAdventureGuideFilterChoices(itemCatalog, filterState)
+      local expansionDropdown, seasonDropdown, raidDropdown, bossDropdown
+      local function filterChanged(field, value)
+        local previous = frame[field]
+        frame[field] = filterValue(value)
+        if field == "disputeCorrectExpansionID" and previous ~= frame[field] then
+          frame.disputeCorrectSeasonID, frame.disputeCorrectRaidID, frame.disputeCorrectBossID = nil, nil, nil
+        elseif field == "disputeCorrectSeasonID" and previous ~= frame[field] then
+          frame.disputeCorrectRaidID, frame.disputeCorrectBossID = nil, nil
+        elseif field == "disputeCorrectRaidID" and previous ~= frame[field] then
+          frame.disputeCorrectBossID = nil
+        end
+        if previous ~= frame[field] then
+          frame.disputeCorrectItemKey, frame.disputeCorrectItem = nil, nil
+        end
+        refreshCorrectionItems()
+        local state = {
+          expansionID = frame.disputeCorrectExpansionID,
+          seasonID = frame.disputeCorrectSeasonID,
+          raidID = frame.disputeCorrectRaidID,
+          bossID = frame.disputeCorrectBossID,
+        }
+        local nextExpansion, nextSeason, nextRaid, nextBoss = buildAdventureGuideFilterChoices(itemCatalog, state)
+        if expansionDropdown then expansionDropdown:SetList(nextExpansion) end
+        if seasonDropdown then seasonDropdown:SetList(nextSeason) end
+        if raidDropdown then raidDropdown:SetList(nextRaid) end
+        if bossDropdown then bossDropdown:SetList(nextBoss) end
+      end
+      expansionDropdown = Dibs.AceGUI.AddDropdown(requestChildDialog, root, "Expansion", expansionChoices, function(value) filterChanged("disputeCorrectExpansionID", value) end, 180)
+      seasonDropdown = Dibs.AceGUI.AddDropdown(requestChildDialog, root, "Season", seasonChoices, function(value) filterChanged("disputeCorrectSeasonID", value) end, 180)
+      raidDropdown = Dibs.AceGUI.AddDropdown(requestChildDialog, root, "Raid", raidChoices, function(value) filterChanged("disputeCorrectRaidID", value) end, 180)
+      bossDropdown = Dibs.AceGUI.AddDropdown(requestChildDialog, root, "Boss", bossChoices, function(value) filterChanged("disputeCorrectBossID", value) end, 180)
+        frame.disputeCorrectPlayer = frame.disputeCorrectPlayer
+      end
+    end
+    local actionMessage = Dibs.AceGUI.AddLabel(requestChildDialog, root, "", true)
+    if not isReview then
+      local reason = Dibs.AceGUI.AddFormRow(requestChildDialog, root, "Reason", function(row)
+        return Dibs.AceGUI.AddEditBox(requestChildDialog, row, "", function(value) frame.requestDetailReason = value or "" end, 360)
+      end, 54)
+      setControlText(reason, frame.requestDetailReason or "")
+      if frame.requestActionConfirmed == nil then frame.requestActionConfirmed = false end
+      Dibs.AceGUI.AddFormRow(requestChildDialog, root, "", function(row)
+        return Dibs.AceGUI.AddCheckBox(requestChildDialog, row, "I understand this changes recorded Dibs data", frame.requestActionConfirmed, function(value)
+          frame.requestActionConfirmed = value == true
+        end, 360)
+      end, 34)
+    end
+    local actions = Dibs.AceGUI.AddInlineGroup(requestChildDialog, footer)
+    Dibs.AceGUI.AddButton(requestChildDialog, actions, isReview and "Back" or "Cancel", function()
+      if isReview then frame.requestActionReview = nil; openRequestActionDialog(request, action, title) else requestChildDialog.window:Hide(); requestChildDialog = nil end
+    end, 90)
+    if isReview then
+      Dibs.AceGUI.AddHeading(requestChildDialog, root, "Review", "Confirm the exact target correction. Original evidence remains immutable.")
+      Dibs.AceGUI.AddLabel(requestChildDialog, root, "Player: " .. tostring(frame.disputeCorrectPlayer or "Unchanged"), true)
+      Dibs.AceGUI.AddLabel(requestChildDialog, root, "Item: " .. tostring(frame.disputeCorrectItem or "Unchanged"), true)
+      Dibs.AceGUI.AddLabel(requestChildDialog, root, "Reason: " .. tostring(frame.requestDetailReason or "Unavailable"), true)
+      Dibs.AceGUI.AddLabel(requestChildDialog, root, "This correction creates an append-only audited record.", true)
+    end
+    applyCorrection = Dibs.AceGUI.AddButton(requestChildDialog, actions, isReview and "Confirm reassign" or "Review", function()
+      if not isReview then frame.requestActionReview = action; openRequestActionDialog(request, action, title); return end
+      if action == "correct_target" and trimText(frame.disputeCorrectPlayer) == ""
+        and (frame.disputeCorrectItemKey == nil or trimText(frame.disputeCorrectItem) == "") then return end
+      local options = { reason = frame.requestDetailReason or "", confirmed = frame.requestActionConfirmed == true }
+      if action == "correct_target" then
+        options.playerName = frame.disputeCorrectPlayer
+        options.itemLink = frame.disputeCorrectItem
+        local item = frame.disputeItemCatalogByKey and frame.disputeItemCatalogByKey[frame.disputeCorrectItemKey]
+        options.itemID = item and item.itemID or nil
+      end
+      local result, reasonCode = Dibs.Disputes.Resolve(request.requestId, action, options, nil)
+      frame.disputeStatusMessage = result and "Request updated." or ("Unable to update request: " .. tostring(reasonCode or "unknown"))
+      if not result then actionMessage:SetText(errorText(reasonCode)); return end
+      frame.requestActionReview = nil
+      frame.requestSuccess = { requestId = request.requestId, action = "Reassign loot applied", reference = result.correctionTransactionId or result.transaction and result.transaction.transactionId }
+      if requestChildDialog and requestChildDialog.window then requestChildDialog.window:Hide() end
+      requestChildDialog = nil
+      closeRequestDetail(); frame:Refresh()
+    end, 150)
+    if action == "correct_target" then Dibs.AceGUI.SetDisabled(applyCorrection, true) end
+    updateCorrectionButton()
+    requestChildDialog.window:Show()
+    return true
+  end
+
+  openRequestDetail = function(request)
+    if not request then return false end
+    if not requestDetailShell or not requestDetailShell.window then
+      requestDetailShell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Request", 600, 430, { "CENTER", 0, 0 }, "OfficerRequestDetail")
+      if not requestDetailShell then return false end
+      frame.requestDetailShell = requestDetailShell
+      requestDetailRoot = Dibs.AceGUI.Create(requestDetailShell, "SimpleGroup", requestDetailShell.window)
+    end
+    if not requestDetailRoot then return false end
+    frame.requestDetailRoot = requestDetailRoot
+    Dibs.AceGUI.Clear(requestDetailRoot)
+    requestDetailRoot:SetFullWidth(true); requestDetailRoot:SetFullHeight(true); requestDetailRoot:SetLayout("List")
+    frame.disputeDetailOpen = true
+    frame.disputeSelectedId = request.requestId
+    local evidence = request.evidence and request.evidence[1] or {}
+    local summary = requestEvidencePresentation(request, evidence)
+    Dibs.AceGUI.AddHeading(requestDetailShell, requestDetailRoot, "Request #" .. tostring(request.requestId or "Unavailable"), "Review this request and choose a normal support action.")
+    if frame.requestAccountingSuccess and frame.requestAccountingSuccess.requestID == request.requestId then
+      local success = frame.requestAccountingSuccess
+      local successSection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Dibs adjustment applied") or requestDetailRoot
+      for _, row in ipairs({
+        { "Player", success.player }, { "Before", success.before },
+        { "Change", (tonumber(success.delta) or 0) >= 0 and "+" .. tostring(success.delta) or tostring(success.delta) },
+        { "After", success.after }, { "Reference", success.reference or "audit event recorded" }, { "Reason", success.reason },
+      }) do Dibs.AceGUI.AddLabel(requestDetailShell, successSection, row[1] .. "\n" .. tostring(row[2] or "Unavailable"), true) end
+      Dibs.AceGUI.AddButton(requestDetailShell, successSection, "Back to Request", function()
+        frame.requestAccountingSuccess = nil
+        frame.requestAccountingDraft = nil
+        openRequestDetail(request)
+      end, 150)
+    end
+    if frame.requestSuccess and frame.requestSuccess.requestId == request.requestId then
+      local successSection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Action applied") or requestDetailRoot
+      Dibs.AceGUI.AddHeading(requestDetailShell, successSection, tostring(frame.requestSuccess.action or "Correction applied"), "The canonical service accepted the action.")
+      Dibs.AceGUI.AddLabel(requestDetailShell, successSection, "Player: " .. tostring(request.player and request.player.name or request.playerName or "Unavailable"), true)
+      Dibs.AceGUI.AddLabel(requestDetailShell, successSection, "Reference: " .. tostring(frame.requestSuccess.reference or "audit event recorded"), true)
+      Dibs.AceGUI.AddLabel(requestDetailShell, successSection, "Original history was preserved; the change was appended to the audit trail.", true)
+      Dibs.AceGUI.AddButton(requestDetailShell, successSection, "Back to Request", function() frame.requestSuccess = nil; openRequestDetail(request) end, 150)
+    end
+    local summarySection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Request summary") or requestDetailRoot
+    local function addRequestField(label, value)
+      Dibs.AceGUI.AddLabel(requestDetailShell, summarySection, label, true)
+      Dibs.AceGUI.AddLabel(requestDetailShell, summarySection, tostring(value or "Unavailable"), true)
+    end
+    addRequestField("Player", summary.player ~= "" and summary.player or "Unavailable")
+    addRequestField("Issue", summary.issue ~= "" and summary.issue or "Other")
+    addRequestField("Item", summary.item ~= "" and summary.item or "Unavailable")
+    addRequestField("Status", tostring(request.status or "Open"))
+    addRequestField("Description", summary.note ~= "" and summary.note or "No note provided")
+    addRequestField("Evidence", summary.evidence)
+    Dibs.AceGUI.AddButton(requestDetailShell, summarySection, frame.disputeTechnicalExpanded and "Hide technical details" or "Show technical details", function()
+      frame.disputeTechnicalExpanded = not frame.disputeTechnicalExpanded
+      openRequestDetail(request)
+    end, 180)
+    if frame.disputeTechnicalExpanded then
+      local technicalSection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Technical details") or requestDetailRoot
+      for _, field in ipairs({
+        { "Evidence source", evidence.source }, { "Integration", evidence.integrationStatus },
+        { "Transaction", evidence.transactionRef }, { "Award/history reference", evidence.awardRef or evidence.historyRef },
+      }) do
+        Dibs.AceGUI.AddLabel(requestDetailShell, technicalSection, field[1] .. ": " .. tostring(field[2] or "Unavailable"), true)
+      end
+    end
+    local actionSection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Officer actions") or requestDetailRoot
+    local actions = Dibs.AceGUI.AddInlineGroup(requestDetailShell, actionSection)
+    local terminal = request.status == "Resolved" or request.status == "Rejected"
+    if request.status == "Open" or request.status == "Pending" then
+      Dibs.AceGUI.AddButton(requestDetailShell, actions, "Start review", function() openRequestActionDialog(request, "under_review", "Start review") end, 110)
+    end
+    if not terminal then
+      Dibs.AceGUI.AddButton(requestDetailShell, actions, "Ask for information", function() openRequestActionDialog(request, "ask_information", "Ask for information") end, 155)
+      Dibs.AceGUI.AddButton(requestDetailShell, actions, "Resolve", function() openRequestActionDialog(request, "no_correction", "Resolve") end, 90)
+      Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reject", function() openRequestActionDialog(request, "reject", "Reject") end, 90)
+    else
+      Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reopen", function() openRequestActionDialog(request, "reopen", "Reopen") end, 90)
+    end
+    local advanced = Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, frame.disputeAdvancedExpanded and "Hide advanced officer tools" or "Advanced Officer Tools", function()
+      frame.disputeAdvancedExpanded = not frame.disputeAdvancedExpanded
+      openRequestDetail(request)
+    end, 190)
+    if frame.disputeAdvancedExpanded then
+      local advancedSection = Dibs.AceGUI.AddSection(requestDetailShell, requestDetailRoot, "Advanced Officer Tools", "Secondary accounting and correction workflows.")
+      Dibs.AceGUI.AddButton(requestDetailShell, advancedSection, "Correct player / item", function() openRequestActionDialog(request, "correct_target", "Correct player / item") end, 180)
+      Dibs.AceGUI.AddButton(requestDetailShell, advancedSection, "Adjust Dibs", function() openDibsAccountingWorkflow(request) end, 150)
+      Dibs.AceGUI.AddButton(requestDetailShell, advancedSection, "Import historical", function() openRequestActionDialog(request, "historical_import", "Import historical") end, 150)
+      local adminDecision = Dibs.Permissions and Dibs.Permissions.Evaluate and Dibs.Permissions.Evaluate("ledger.adjust", nil)
+      if adminDecision and adminDecision.allowed == true and adminDecision.role == "gm" then
+        Dibs.AceGUI.AddButton(requestDetailShell, advancedSection, "Admin adjustment", function() openRequestActionDialog(request, "adjustment", "Admin adjustment") end, 150)
+      end
+    end
+    Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, "Close", closeRequestDetail, 90)
+    requestDetailShell.window:Show()
+    if requestDetailShell.window.DoLayout then requestDetailShell.window:DoLayout() end
+    return true
+  end
+
+  frame.CloseRequestDetail = closeRequestDetail
+  frame.OpenRequestDetail = openRequestDetail
 
   local function selectSeason(offset)
     local seasons = getSeasonList()
@@ -1608,11 +2426,22 @@ local function createAceWindow(initialRoute)
     pageRoot._dibsOwner = self
     contentHost._dibsCurrentPageRoot = pageRoot
     local tabs = pageRoot
+    local routeModules = {
+      disputes = "requests", preDibs = "preDibs", announcements = "announcements",
+      integration = "rclootcouncil", eligibility = "lootEligibility",
+    }
+    local disabledModule = routeModules[self.activeTab]
+    if disabledModule and not moduleEnabled(disabledModule) then
+      local status = Dibs.OperationalPolicy.GetModuleStatus(disabledModule)
+      Dibs.AceGUI.AddHeader(shell, tabs, status.label or disabledModule, "Feature unavailable")
+      Dibs.AceGUI.AddLabel(shell, tabs, (status.label or disabledModule) .. " is disabled by the Guild Master.", true)
+      return
+    end
     local routeTitles = {
       disputes = "Requests", preDibs = "Pre-Dibs", history = "History", reconciliation = "History", seasons = "Seasons",
       ranks = "Rank Rules", lootTypes = "Loot Rules", announcements = "Announcements",
       integration = "RCLootCouncil", settings = "Settings", diagnostics = "Diagnostics",
-      eligibility = "Loot Eligibility", developer = "Developer", debug = "Debug",
+      eligibility = "Loot Eligibility", modules = "Modules", developer = "Developer", debug = "Debug",
     }
     if self.activeTab == "developer" then
       if Dibs.DeveloperUI and Dibs.DeveloperUI.GetProjection then
@@ -1645,6 +2474,21 @@ local function createAceWindow(initialRoute)
     if self.activeTab == "diagnostics" then
       Dibs.AceGUI.AddHeader(shell, tabs, "Runtime diagnostics", "Bounded diagnostic information for the local Officer session.")
       Dibs.AceGUI.AddLabel(shell, tabs, Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", true)
+      local moduleDiagnostics = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleManagementDiagnostics
+        and Dibs.OperationalPolicy.GetModuleManagementDiagnostics(nil)
+      if moduleDiagnostics then
+        Dibs.AceGUI.AddHeader(shell, tabs, "Module management", "Bounded governance and authorization state.")
+        Dibs.AceGUI.AddLabel(shell, tabs,
+          "Governance initialized: " .. (moduleDiagnostics.governanceInitialized and "yes" or "no") .. "\n" ..
+          "Governance active: " .. (moduleDiagnostics.governanceActive and "yes" or "no") .. "\n" ..
+          "Governance revision: " .. tostring(moduleDiagnostics.governanceRevision) .. "\n" ..
+          "Canonical player: " .. tostring(moduleDiagnostics.canonicalPlayer or "unavailable") .. "\n" ..
+          "Governance GM: " .. tostring(moduleDiagnostics.governanceGM or "unavailable") .. "\n" ..
+          "GM identity match: " .. (moduleDiagnostics.gmIdentityMatch and "yes" or "no") .. "\n" ..
+          "Operational policy ready: " .. (moduleDiagnostics.operationalPolicyReady and "yes" or "no") .. "\n" ..
+          "canManageModules: " .. (moduleDiagnostics.canManageModules and "yes" or "no") .. "\n" ..
+          "Blocking reason: " .. tostring(moduleDiagnostics.blockingReason or "none"), true)
+      end
       return
     end
     local seasons = getSeasonList()
@@ -1662,6 +2506,147 @@ local function createAceWindow(initialRoute)
 
     if self.activeTab == "seasons" then
       renderSeasonsPage(shell, tabs)
+      return
+    end
+
+    if self.activeTab == "modules" then
+      local policy = Dibs.OperationalPolicy
+      local coreDefinitions = policy and policy.GetCoreModuleDefinitions and policy.GetCoreModuleDefinitions() or {}
+      local definitions = policy and policy.GetModuleDefinitions and policy.GetModuleDefinitions() or {}
+      local canonicalModules = policy and policy.GetModuleValues and policy.GetModuleValues() or {}
+      local copyModules = function(value)
+        return Dibs.DeepCopy and Dibs.DeepCopy(value or {}) or value or {}
+      end
+      if not self.moduleAuthoritativeModules then self.moduleAuthoritativeModules = copyModules(canonicalModules) end
+      if not self.moduleDraft then self.moduleDraft = copyModules(self.moduleAuthoritativeModules) end
+      local draft = self.moduleDraft
+      local authoritativeModules = self.moduleAuthoritativeModules
+      for _, definition in ipairs(definitions) do
+        if draft[definition.key] == nil then draft[definition.key] = canonicalModules[definition.key] == true end
+      end
+      local dirty = false
+      for _, definition in ipairs(definitions) do
+        if draft[definition.key] ~= authoritativeModules[definition.key] then dirty = true; break end
+      end
+      local moduleDiagnostics = policy and policy.GetModuleManagementDiagnostics and policy.GetModuleManagementDiagnostics(nil) or {
+        canManageModules = false, blockingReason = "POLICY_UNAVAILABLE", blockingMessage = "Module management unavailable.",
+      }
+      local canWrite = moduleDiagnostics.canManageModules == true
+      if dirty then
+        moduleUiDebug("MODULE_UI_DIRTY dirty=true")
+      end
+      local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+      local governanceReady = governanceState.status == "GOVERNANCE_ADOPTED"
+      Dibs.AceGUI.AddHeader(shell, tabs, "Module Policy", "GM authority: " .. (canWrite and "Ready" or "Read-only")
+        .. " | Governance: " .. (governanceReady and "Active" or "Not initialized")
+        .. " | Revision: " .. tostring(policy and policy.GetState and policy.GetState().policyRevision or 0))
+      if not governanceReady then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Module management unavailable", true)
+        Dibs.AceGUI.AddLabel(shell, tabs, "Guild governance must be initialized first.", true)
+        local canInitialize = Dibs.Governance and Dibs.Governance.CanAdoptInitial and Dibs.Governance.CanAdoptInitial(nil) == true
+        if canInitialize then
+          Dibs.AceGUI.AddLabel(shell, tabs, "Only the verified Guild Master can initialize module governance.", true)
+          if self.governanceBootstrapPending then
+            Dibs.AceGUI.AddHeader(shell, tabs, "Initialize Guild Governance", "Review this canonical guild bootstrap before confirming.")
+            local guildName = type(GetGuildInfo) == "function" and GetGuildInfo("player") or "Unavailable"
+            Dibs.AceGUI.AddLabel(shell, tabs, "Guild\n" .. tostring(guildName or "Unavailable")
+              .. "\n\nGuild Master\n" .. tostring(Dibs.GetPlayerName and Dibs.GetPlayerName() or "Unavailable")
+              .. "\n\nThis will initialize canonical Dibs governance for this guild.\nIt does not delete or modify existing Dibs history.", true)
+            Dibs.AceGUI.AddButton(shell, tabs, "Cancel", function()
+              self.governanceBootstrapPending = nil
+              self:Refresh()
+            end, 90)
+            Dibs.AceGUI.AddButton(shell, tabs, "Initialize", function()
+              local authorized, authorizationReason = Dibs.Governance.CanAdoptInitial(nil)
+              if not authorized then
+                self.governanceBootstrapError = authorizationReason or "GUILD_MASTER_REQUIRED"
+                self.governanceBootstrapPending = nil
+                self:Refresh()
+                return
+              end
+              local ok, reason = Dibs.Governance.AdoptInitial(nil, {
+                reason = "MODULE_MANAGEMENT_BOOTSTRAP",
+                officerAuthorityRule = { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 },
+                policyWriterRule = { kind = "GOVERNANCE_ONLY" },
+              })
+              if not ok then
+                self.governanceBootstrapError = reason or "GOVERNANCE_BOOTSTRAP_FAILED"
+              else
+                self.governanceBootstrapError = nil
+              end
+              self.governanceBootstrapPending = nil
+              self:Refresh()
+            end, 100)
+          else
+            Dibs.AceGUI.AddButton(shell, tabs, "Initialize Guild Governance", function()
+              self.governanceBootstrapPending = true
+              self.governanceBootstrapError = nil
+              self:Refresh()
+            end, 210)
+          end
+        else
+          Dibs.AceGUI.AddLabel(shell, tabs, "Only the Guild Master can initialize it.", true)
+        end
+        if self.governanceBootstrapError then
+          Dibs.AceGUI.AddLabel(shell, tabs, "Initialization failed: " .. tostring(self.governanceBootstrapError), true)
+        end
+      elseif not canWrite then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Module management unavailable", true)
+        Dibs.AceGUI.AddLabel(shell, tabs, moduleDiagnostics.blockingMessage or tostring(moduleDiagnostics.blockingReason or "Authorization could not be verified."), true)
+      end
+      Dibs.AceGUI.AddHeader(shell, tabs, "Core Services", "These services are always enabled and cannot be changed.")
+      for _, definition in ipairs(coreDefinitions) do
+        Dibs.AceGUI.AddLabel(shell, tabs, definition.label .. " - Always enabled", true)
+      end
+      Dibs.AceGUI.AddHeader(shell, tabs, "Optional Features", "Guild-wide activation is stored in the operational policy.")
+      for _, definition in ipairs(definitions) do
+        local dependencyBlocked = definition.requires and draft[definition.requires] ~= true
+        local control = Dibs.AceGUI.AddCheckBox(shell, tabs, definition.label, draft[definition.key], function(value)
+          local oldDraft = self.moduleDraft[definition.key]
+          self.moduleDraft[definition.key] = value == true
+          if definition.key == "rclootcouncil" and value ~= true and self.moduleDraft.historicalReconciliation ~= false then
+            self.moduleDraft.historicalReconciliation = false
+          end
+          moduleUiDebug("MODULE_UI_CLICK module=" .. tostring(definition.key)
+            .. " oldDraft=" .. tostring(oldDraft)
+            .. " newDraft=" .. tostring(self.moduleDraft[definition.key])
+            .. " canManageModules=" .. tostring(canWrite))
+          local refresh = function()
+            if self.activeTab == "modules" then self:Refresh() end
+          end
+          if Dibs.AceGUI.RequestRefresh then
+            Dibs.AceGUI.RequestRefresh("MODULE_UI_CLICK", refresh)
+          else
+            refresh()
+          end
+        end, 260)
+        Dibs.AceGUI.SetValue(control, draft[definition.key])
+        Dibs.AceGUI.SetDisabled(control, not canWrite or dependencyBlocked)
+        if definition.requires then
+          Dibs.AceGUI.AddLabel(shell, tabs, dependencyBlocked and ("Requires " .. tostring(definition.requires) .. ".") or "", true)
+        end
+      end
+      if dirty then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Modules - Unsaved changes", true)
+        Dibs.AceGUI.AddButton(shell, tabs, "Reset", function()
+          self.moduleDraft = copyModules(self.moduleAuthoritativeModules)
+          self:Refresh()
+        end, 80)
+      end
+      if dirty then
+        local save = Dibs.AceGUI.AddButton(shell, tabs, "Save changes", function()
+        local authorized, authorizationReason = policy.CanChangeModules(nil)
+        if not authorized then self:SetStatus("Unable to save module settings: " .. tostring(authorizationReason or "authorization required")); return end
+        local ok, reason = policy.ChangeModules(self.moduleDraft, nil, "MODULE_ENABLEMENT")
+        self:SetStatus(ok and "Module settings saved." or (reason == "MODULE_DEPENDENCY_RCLootCouncil" and "Historical Reconciliation requires RCLootCouncil." or "Unable to save module settings: " .. tostring(reason or "unknown error")))
+        if ok then
+          self.moduleAuthoritativeModules = copyModules(policy.GetModuleValues and policy.GetModuleValues() or self.moduleDraft)
+          self.moduleDraft = copyModules(self.moduleAuthoritativeModules)
+        end
+        self:Refresh()
+        end, 140)
+        Dibs.AceGUI.SetDisabled(save, not canWrite)
+      end
       return
     end
 
@@ -1920,22 +2905,25 @@ local function createAceWindow(initialRoute)
         allowTableSort = false,
         onRowClick = function(row)
           if row and row.request then
-            self.disputeSelectedId = row.request.requestId
-            self:Refresh()
+            openRequestDetail(row.request)
           end
         end,
         contextMenu = function(row)
           if not row.request then return nil end
           return {
-            { text = "Open request details", callback = function()
-              self.disputeSelectedId = row.request.requestId
-              self:Refresh()
+            { text = "Open request", callback = function() openRequestDetail(row.request) end },
+            { text = "View player Dibs", callback = function()
+              if Dibs.PlayerUI and Dibs.PlayerUI.Show then Dibs.PlayerUI.Show(row.request.playerName) end
             end },
-            { text = "Clear selected request", callback = function()
-              self.disputeSelectedId = nil
-              self.disputeReason = ""
-              self:Refresh()
-            end, disabled = self.disputeSelectedId == nil },
+            { text = "View player history", callback = function()
+              if Dibs.Message then Dibs.Message("Player history: " .. tostring(row.request.playerName or "Unavailable")) end
+            end },
+            { text = "Copy Name-Realm", callback = function()
+              if Dibs.Message then Dibs.Message("Name-Realm: " .. tostring(row.request.playerName or "Unavailable")) end
+            end },
+            { text = "Copy item link", callback = function()
+              if Dibs.Message then Dibs.Message("Item: " .. tostring(row.request.itemName or row.request.itemID or "Unavailable")) end
+            end },
           }
         end,
       })
@@ -1956,7 +2944,9 @@ local function createAceWindow(initialRoute)
         setControlsVisible({ previousPage, pageLabel, nextPage }, false)
       end
 
-      if self.disputeSelectedId then
+      finishRequestRender(#(requests or {}))
+
+      if false and self.disputeSelectedId then
         local selected = Dibs.Disputes.GetRequest(self.disputeSelectedId, nil)
         if selected then
           local evidence = selected.evidence and selected.evidence[1] or {}
@@ -2006,9 +2996,10 @@ local function createAceWindow(initialRoute)
               or ("Unable to update request: " .. tostring(resolveReason or "unknown error"))
             if result then
               self.disputeReason, self.disputeAmount = "", ""
-              self.disputeCorrectPlayer, self.disputeCorrectItem = "", ""
+              self.disputeCorrectPlayer, self.disputeCorrectItem = nil, nil
               self.disputeCorrectPlayerQuery, self.disputeCorrectItemQuery = "", ""
               self.disputeCorrectItemKey = nil
+              self.disputeCorrectionFiltersInitialized = false
               self.disputeTargetRequestId = nil
               self.disputeConfirmed = false
             end
@@ -2024,6 +3015,10 @@ local function createAceWindow(initialRoute)
             local decision = protectedActionDecision(actionId)
             return decision and decision.allowed == true
           end
+          local function hasTargetCorrectionSelection()
+            return trimText(self.disputeCorrectPlayer) ~= ""
+              or (self.disputeCorrectItemKey ~= nil and trimText(self.disputeCorrectItem) ~= "")
+          end
           local terminal = selected.status == "Resolved" or selected.status == "Rejected"
           updateDangerousButtons = function()
             local authorized = trimText(self.disputeReason) ~= "" and self.disputeConfirmed == true and not terminal
@@ -2034,7 +3029,7 @@ local function createAceWindow(initialRoute)
               authorized and protectedActionAllowed("ledger.adjust"),
               authorized and protectedActionAllowed("ledger.adjust"),
               authorized and adjustmentDecision and adjustmentDecision.allowed and adjustmentDecision.role == "gm",
-              authorized,
+              authorized and hasTargetCorrectionSelection(),
             }
             for index, control in ipairs(dangerousButtons) do
               Dibs.AceGUI.SetDisabled(control, not allowed[index])
@@ -2082,12 +3077,10 @@ local function createAceWindow(initialRoute)
             }, 90)
             if self.disputeTargetRequestId ~= selected.requestId then
               self.disputeTargetRequestId = selected.requestId
-              self.disputeCorrectPlayer, self.disputeCorrectItem = "", ""
+              self.disputeCorrectPlayer, self.disputeCorrectItem = nil, nil
               self.disputeCorrectPlayerQuery, self.disputeCorrectItemQuery = "", ""
               self.disputeCorrectItemKey = nil
             end
-            self.disputeCorrectPlayer = self.disputeCorrectPlayer or ""
-            self.disputeCorrectItem = self.disputeCorrectItem or ""
             self.disputeCorrectPlayerQuery = self.disputeCorrectPlayerQuery or ""
             self.disputeCorrectItemQuery = self.disputeCorrectItemQuery or ""
 
@@ -2097,14 +3090,27 @@ local function createAceWindow(initialRoute)
             local correctedPlayerSearch = Dibs.AceGUI.AddEditBox(shell, playerGroup, "Search guild players", function(value)
               self.disputeCorrectPlayerQuery = value or ""
               local choices = buildGuildMemberChoices(self.disputeCorrectPlayerQuery, self.disputeCorrectPlayer)
+              if self.disputeCorrectPlayer and choices[self.disputeCorrectPlayer] == nil then
+                self.disputeCorrectPlayer = nil
+              end
               if correctedPlayerDropdown and correctedPlayerDropdown.SetList then correctedPlayerDropdown:SetList(choices) end
+              if correctedPlayerDropdown then
+                if self.disputeCorrectPlayer then Dibs.AceGUI.SetValue(correctedPlayerDropdown, self.disputeCorrectPlayer)
+                else Dibs.AceGUI.SetText(correctedPlayerDropdown, "Select a guild player...") end
+              end
             end, 250)
             setControlText(correctedPlayerSearch, self.disputeCorrectPlayerQuery)
             correctedPlayerDropdown = Dibs.AceGUI.AddDropdown(shell, playerGroup, "Correct player", playerChoices, function(value)
-              if value and value ~= "" then self.disputeCorrectPlayer = tostring(value) end
+              self.disputeCorrectPlayer = value and tostring(value) ~= "" and tostring(value) or nil
             end, 270)
-            if correctedPlayerDropdown and self.disputeCorrectPlayer ~= "" then
-              Dibs.AceGUI.SetValue(correctedPlayerDropdown, self.disputeCorrectPlayer)
+            if correctedPlayerDropdown then
+              if self.disputeCorrectPlayer and playerChoices[self.disputeCorrectPlayer] then
+                Dibs.AceGUI.SetValue(correctedPlayerDropdown, self.disputeCorrectPlayer)
+                Dibs.AceGUI.SetText(correctedPlayerDropdown, playerChoices[self.disputeCorrectPlayer])
+              else
+                self.disputeCorrectPlayer = nil
+                Dibs.AceGUI.SetText(correctedPlayerDropdown, "Select a guild player...")
+              end
             end
             if playerCount == 0 then
               Dibs.AceGUI.AddLabel(shell, targetSection, "No guild roster is available. Refresh the guild roster before correcting a player.", true)
@@ -2118,27 +3124,130 @@ local function createAceWindow(initialRoute)
             if Dibs.EncounterJournal and type(Dibs.EncounterJournal.GetLootCatalog) == "function" then
               itemCatalog, itemMeta = Dibs.EncounterJournal.GetLootCatalog("", { limit = 3500 })
             end
+                    local candidateContext = itemCandidateContext(selected, evidence)
             self.disputeItemCatalogByKey = {}
             for _, item in ipairs(itemCatalog or {}) do self.disputeItemCatalogByKey[tostring(item.key)] = item end
 
+            self.disputeCorrectExpansionID = filterValue(self.disputeCorrectExpansionID)
+            self.disputeCorrectSeasonID = filterValue(self.disputeCorrectSeasonID)
+            self.disputeCorrectRaidID = filterValue(self.disputeCorrectRaidID)
+            self.disputeCorrectBossID = filterValue(self.disputeCorrectBossID)
+            local initialFilterRender = not self.disputeCorrectionFiltersInitialized
+            local currentExpansion = getCurrentExpansionID()
+            if initialFilterRender and self.disputeCorrectExpansionID == nil and currentExpansion ~= nil then
+              self.disputeCorrectExpansionID = tostring(currentExpansion)
+            end
+            local function normalizeCorrectionFilters()
+              local state = {
+                expansionID = self.disputeCorrectExpansionID,
+                seasonID = self.disputeCorrectSeasonID,
+                raidID = self.disputeCorrectRaidID,
+                bossID = self.disputeCorrectBossID,
+              }
+              local expansionChoices, seasonChoices, raidChoices, bossChoices, filterMeta
+              for _ = 1, 4 do
+                expansionChoices, seasonChoices, raidChoices, bossChoices, filterMeta = buildAdventureGuideFilterChoices(itemCatalog, state)
+                local changed = false
+                if not state.expansionID and state.seasonID then state.seasonID = nil; changed = true end
+                if state.expansionID and not expansionChoices[state.expansionID] then state.expansionID = nil; changed = true end
+                if state.seasonID and not seasonChoices[state.seasonID] then state.seasonID = nil; changed = true end
+                if state.raidID and not raidChoices[state.raidID] then state.raidID = nil; changed = true end
+                if state.bossID and not bossChoices[state.bossID] then state.bossID = nil; changed = true end
+                if not changed then break end
+              end
+              self.disputeCorrectExpansionID = state.expansionID
+              self.disputeCorrectSeasonID = state.seasonID
+              self.disputeCorrectRaidID = state.raidID
+              self.disputeCorrectBossID = state.bossID
+              return expansionChoices, seasonChoices, raidChoices, bossChoices, filterMeta
+            end
+            local expansionChoices, seasonChoices, raidChoices, bossChoices, filterMeta = normalizeCorrectionFilters()
+            if initialFilterRender and not self.disputeCorrectSeasonID and self.disputeCorrectExpansionID then
+              local currentSeasonID = Dibs.EncounterJournal and Dibs.EncounterJournal.GetCurrentGameSeason
+                and select(1, Dibs.EncounterJournal.GetCurrentGameSeason()) or nil
+              if currentSeasonID and seasonChoices[tostring(currentSeasonID)] then
+                self.disputeCorrectSeasonID = tostring(currentSeasonID)
+                expansionChoices, seasonChoices, raidChoices, bossChoices, filterMeta = normalizeCorrectionFilters()
+              end
+            end
+            self.disputeCorrectionFiltersInitialized = true
+            local filterGroup = Dibs.AceGUI.AddInlineGroup(shell, targetSection)
+            local function refreshCorrectionFilters()
+              self:Refresh()
+            end
+            local expansionDropdown = Dibs.AceGUI.AddDropdown(shell, filterGroup, "Expansion", expansionChoices, function(value)
+              self.disputeCorrectExpansionID = filterValue(value)
+              refreshCorrectionFilters()
+            end, 180)
+            local seasonDropdown = Dibs.AceGUI.AddDropdown(shell, filterGroup, "Season", seasonChoices, function(value)
+              self.disputeCorrectSeasonID = filterValue(value)
+              refreshCorrectionFilters()
+            end, 180)
+            local raidDropdown = Dibs.AceGUI.AddDropdown(shell, filterGroup, "Raid", raidChoices, function(value)
+              self.disputeCorrectRaidID = filterValue(value)
+              refreshCorrectionFilters()
+            end, 220)
+            local bossDropdown = Dibs.AceGUI.AddDropdown(shell, filterGroup, "Boss", bossChoices, function(value)
+              self.disputeCorrectBossID = filterValue(value)
+              refreshCorrectionFilters()
+            end, 220)
+            Dibs.AceGUI.SetValue(expansionDropdown, self.disputeCorrectExpansionID or "")
+            Dibs.AceGUI.SetValue(seasonDropdown, self.disputeCorrectSeasonID or "")
+            Dibs.AceGUI.SetValue(raidDropdown, self.disputeCorrectRaidID or "")
+            Dibs.AceGUI.SetValue(bossDropdown, self.disputeCorrectBossID or "")
+            Dibs.AceGUI.SetDisabled(seasonDropdown, not self.disputeCorrectExpansionID or not filterMeta.hasSeasonMetadata)
+
             local itemGroup = Dibs.AceGUI.AddInlineGroup(shell, targetSection)
-            local itemChoices = buildAdventureGuideItemChoices(itemCatalog, "", self.disputeCorrectItemKey, 200)
+            local searchGroup = Dibs.AceGUI.AddInlineGroup(shell, targetSection)
             local correctedItemDropdown
-            local correctedItemSearch = Dibs.AceGUI.AddEditBox(shell, itemGroup, "Search Adventure Guide (name, ID, boss, type)", function(value)
+            local itemSearchState
+            local openLootRules = function()
+              self:SelectTab("lootTypes")
+            end
+            local correctedItemSearch = Dibs.AceGUI.AddEditBox(shell, searchGroup, "Search Adventure Guide", function(value)
               self.disputeCorrectItemQuery = value or ""
-              local choices = buildAdventureGuideItemChoices(itemCatalog, self.disputeCorrectItemQuery, self.disputeCorrectItemKey, 200)
+              local searchContext = itemCandidateContext(selected, evidence)
+              searchContext.expansionID = self.disputeCorrectExpansionID
+              searchContext.seasonID = self.disputeCorrectSeasonID
+              searchContext.raidID = self.disputeCorrectRaidID
+              searchContext.bossID = self.disputeCorrectBossID
+              local choices, _, filteredByRules = buildAdventureGuideItemChoices(itemCatalog, self.disputeCorrectItemQuery, self.disputeCorrectItemKey, 200, searchContext)
+              if self.disputeCorrectItemKey and choices[self.disputeCorrectItemKey] == nil then
+                self.disputeCorrectItemKey, self.disputeCorrectItem = nil, nil
+              end
               if correctedItemDropdown and correctedItemDropdown.SetList then correctedItemDropdown:SetList(choices) end
+              if correctedItemDropdown then
+                if self.disputeCorrectItemKey then Dibs.AceGUI.SetValue(correctedItemDropdown, self.disputeCorrectItemKey)
+                else Dibs.AceGUI.SetText(correctedItemDropdown, "Select an Adventure Guide item...") end
+              end
+              if itemSearchState then
+                itemSearchState:SetText(filteredByRules and "No eligible items match the current Loot Rules." or (next(choices or {}) == nil and "No eligible raid items found." or ""))
+              end
             end, 360)
             setControlText(correctedItemSearch, self.disputeCorrectItemQuery)
+            local filteredContext = itemCandidateContext(selected, evidence)
+            filteredContext.expansionID = self.disputeCorrectExpansionID
+            filteredContext.seasonID = self.disputeCorrectSeasonID
+            filteredContext.raidID = self.disputeCorrectRaidID
+            filteredContext.bossID = self.disputeCorrectBossID
+            local itemChoices, itemCount, filteredByRules = buildAdventureGuideItemChoices(itemCatalog, self.disputeCorrectItemQuery, self.disputeCorrectItemKey, 200, filteredContext)
             correctedItemDropdown = Dibs.AceGUI.AddDropdown(shell, itemGroup, "Correct item", itemChoices, function(value)
               local item = value and self.disputeItemCatalogByKey and self.disputeItemCatalogByKey[tostring(value)] or nil
               if item then
                 self.disputeCorrectItemKey = tostring(item.key)
                 self.disputeCorrectItem = item.itemLink or ("item:" .. tostring(item.itemID))
+              else
+                self.disputeCorrectItemKey, self.disputeCorrectItem = nil, nil
               end
             end, 430)
-            if correctedItemDropdown and self.disputeCorrectItemKey then
-              Dibs.AceGUI.SetValue(correctedItemDropdown, self.disputeCorrectItemKey)
+            if correctedItemDropdown then
+              if self.disputeCorrectItemKey and itemChoices[self.disputeCorrectItemKey] then
+                Dibs.AceGUI.SetValue(correctedItemDropdown, self.disputeCorrectItemKey)
+                Dibs.AceGUI.SetText(correctedItemDropdown, itemChoices[self.disputeCorrectItemKey])
+              else
+                self.disputeCorrectItemKey, self.disputeCorrectItem = nil, nil
+                Dibs.AceGUI.SetText(correctedItemDropdown, "Select an Adventure Guide item...")
+              end
             end
             if not itemMeta.available then
               local reason = tostring(itemMeta.reason or "ADVENTURE_GUIDE_UNAVAILABLE")
@@ -2150,20 +3259,31 @@ local function createAceWindow(initialRoute)
                 self:Refresh()
               end, 210)
             else
-              Dibs.AceGUI.AddLabel(shell, targetSection, tostring(itemMeta.total or #itemCatalog) .. " Adventure Guide loot entries loaded. Search matches boss, item name, ID, and type.", true)
+              itemSearchState = Dibs.AceGUI.AddLabel(shell, targetSection, filteredByRules
+                and "No eligible items match the current Loot Rules."
+                or (itemCount > 0
+                and (tostring(itemCount) .. " eligible raid item candidates loaded. Search matches boss, item name, and ID.")
+                or "No eligible raid items found."), true)
+              if filteredByRules then Dibs.AceGUI.AddButton(shell, targetSection, "Open Loot Rules", openLootRules, 150) end
             end
             targetButton = Dibs.AceGUI.AddButton(shell, targetSection, "Apply target correction", function()
+              if not hasTargetCorrectionSelection() then
+                self.disputeStatusMessage = "Select a replacement player or item before applying the correction."
+                self:Refresh()
+                return
+              end
               resolve("correct_target", {
                 confirmed = self.disputeConfirmed,
-                playerName = trimText(self.disputeCorrectPlayer),
-                itemLink = trimText(self.disputeCorrectItem),
+                playerName = trimText(self.disputeCorrectPlayer) ~= "" and trimText(self.disputeCorrectPlayer) or nil,
+                itemID = self.disputeCorrectItemKey and self.disputeItemCatalogByKey and self.disputeItemCatalogByKey[self.disputeCorrectItemKey] and self.disputeItemCatalogByKey[self.disputeCorrectItemKey].itemID or nil,
+                itemLink = trimText(self.disputeCorrectItem) ~= "" and trimText(self.disputeCorrectItem) or nil,
               })
             end, 180)
             end
 
             local administrativeGroup = Dibs.AceGUI.AddSection(shell, advancedSection, "Administrative correction", "These actions write auditable corrections through the existing request service.")
             local adjustmentDecision = protectedActionDecision("ledger.adjust")
-            correction = Dibs.AceGUI.AddButton(shell, administrativeGroup, "Correct balance", function()
+            correction = Dibs.AceGUI.AddButton(shell, administrativeGroup, "Adjust Dibs", function()
               local options = { confirmed = self.disputeConfirmed }
               local parsed = tonumber(trimText(self.disputeAmount))
               if parsed then options.amount = parsed end
@@ -2510,6 +3630,19 @@ local function createAceWindow(initialRoute)
         Dibs.AceGUI.AddSelectableText(shell, report, "Report", Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", 820, 220)
         Dibs.AceGUI.AddButton(shell, report, "Copy report to chat", function() Dibs.Message(Dibs.BuildDebugReport()) end, 180)
       end
+      local catalogDiagnostics = Dibs.EncounterJournal and Dibs.EncounterJournal.GetLootCatalogDiagnostics
+        and Dibs.EncounterJournal.GetLootCatalogDiagnostics() or {}
+      Dibs.AceGUI.AddPropertyTable(shell, tabs, {
+        { "Adventure Guide expansions", tostring(catalogDiagnostics.expansionCount or 0) },
+        { "Adventure Guide game seasons", tostring(catalogDiagnostics.seasonCount or 0) },
+        { "Adventure Guide raids", tostring(catalogDiagnostics.raidCount or 0) },
+        { "Adventure Guide encounters", tostring(catalogDiagnostics.encounterCount or 0) },
+        { "Adventure Guide items", tostring(catalogDiagnostics.eligibleItemCount or 0) },
+        { "Current expansion", tostring(catalogDiagnostics.currentExpansionID or "unresolved") .. " / " .. tostring(catalogDiagnostics.currentExpansionName or "unresolved") },
+        { "Current game season", tostring(catalogDiagnostics.currentGameSeasonID or "unresolved") .. " / " .. tostring(catalogDiagnostics.currentGameSeasonName or "unresolved") },
+        { "Selected expansion", tostring(self.disputeCorrectExpansionID or "All expansions") },
+        { "Selected game season", tostring(self.disputeCorrectSeasonID or "All seasons") },
+      }, 300)
       return
     end
 
@@ -2662,7 +3795,13 @@ local function createAceWindow(initialRoute)
   end
   activateRoute = function(route, syncTree)
     local normalized = normalizeOfficerTab(route or frame.activeTab or "overview")
-    if not officerRouteVisible(normalized) then normalized = "overview" end
+    if not officerRouteVisible(normalized) then
+      local routeModules = {
+        disputes = "requests", preDibs = "preDibs", announcements = "announcements",
+        integration = "rclootcouncil", eligibility = "lootEligibility",
+      }
+      if not routeModules[normalized] or moduleEnabled(routeModules[normalized]) then normalized = "overview" end
+    end
     frame.activeTab, frame.selectedRoute, frame.ledgerPage = normalized, normalized, 1
     frame.routeDispatchCount = (frame.routeDispatchCount or 0) + 1
     if syncTree ~= false and navigation and frame._dibsTreeRoute ~= normalized then
@@ -2675,6 +3814,7 @@ local function createAceWindow(initialRoute)
     local ok, reason = pcall(renderRoute, frame)
     frame._dibsRenderingRoute = false
     if not ok then error(reason, 0) end
+    if navigation and navigation.DoLayout then navigation:DoLayout() end
   end
   frame.ActivateRoute = function(self, route)
     activateRoute(route, true)
@@ -2685,11 +3825,12 @@ local function createAceWindow(initialRoute)
   end
 
   shell.onRelease = function()
+    closeRequestDetail()
     for _, key in ipairs({
       "aceTabs", "contentHost", "mountedPage", "mountedPageHost", "developerSandboxButton", "lootTypeControls",
       "enableLootTypes", "defaultLootTypes", "eligibilityAdvanced", "eligibilityFamily", "eligibilitySearchBox",
       "disputeStatusFilter", "disputeQuery", "disputeSearchBox", "disputeSelectedId", "disputeReason",
-      "disputeStatusMessage", "disputeTechnicalExpanded", "disputeAdvancedExpanded", "disputeHistoryExpanded",
+      "disputeStatusMessage", "disputeTechnicalExpanded", "disputeAdvancedExpanded", "disputeHistoryExpanded", "disputeDetailOpen", "requestDetailShell", "requestDetailRoot",
       "disputeAmount", "disputeConfirmed", "disputeTargetRequestId", "disputeCorrectPlayer", "disputeCorrectItem",
       "disputeCorrectPlayerQuery", "disputeCorrectItemQuery", "disputeCorrectItemKey", "disputeItemCatalogByKey",
       "rankRows", "rankDrafts", "rankRowCount", "selectedSeasonId", "inputBoundSeasonId", "ledgerPage", "ledgerQuery",

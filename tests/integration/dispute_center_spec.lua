@@ -166,4 +166,17 @@ describe("Dispute center", function()
       assert_equal("Resolved", result.request.status)
     end
   end)
+
+  it("canonicalizes a short player name before an accounting correction", function()
+    local dibs, season = setup({ guildLeader = true, guildMembers = { "Tester-Realm", "Huudada-Durotan" } })
+    local request = dibs.Disputes.CreateReport({ category = "wrong_debit", note = "short name correction" })
+    request.player.name = "Huudada"
+    local result, reason = dibs.Disputes.Resolve(request.requestId, "adjustment", {
+      amount = 2, confirmed = true, reason = "Canonical identity test",
+    }, nil)
+    assert_true(result and result.ok, tostring(reason))
+    local history = dibs.Ledger.GetHistory("Huudada-Durotan", season.id)
+    assert_equal(2, history[#history].amount)
+    assert_equal("Huudada-Durotan", history[#history].playerName)
+  end)
 end)

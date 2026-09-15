@@ -377,6 +377,8 @@ function M.installEncounterJournalContext(opts)
   local journalLoot = opts.loot or {}
   local hasCatalogFixture = next(raidInstances) ~= nil or next(journalEncounters) ~= nil or next(journalLoot) ~= nil
 
+  _G.GetExpansionLevel = function() return tonumber(opts.expansionLevel) end
+
   _G.EJ_GetCurrentInstance = function()
     return currentInstanceID
   end
@@ -384,7 +386,10 @@ function M.installEncounterJournalContext(opts)
   _G.EJ_GetInstanceByIndex = function(index, isRaid)
     if isRaid == true then
       local entry = raidInstances[index]
-      if type(entry) == "table" then return entry.id or entry.instanceID, entry.name end
+      if type(entry) == "table" then
+        return entry.id or entry.instanceID, entry.name, nil, nil, nil, nil, nil,
+          entry.expansionID, entry.seasonID, entry.seasonName
+      end
       if index == 1 then return raidInstanceID end
       return nil
     end
@@ -417,6 +422,10 @@ function M.installEncounterJournalContext(opts)
       return entry.itemID or entry.id, encounterID, entry.name, entry.icon, entry.slot, entry.armorType, entry.link
     end
     _G.C_EncounterJournal = {
+      GetCurrentSeason = function()
+        if type(opts.currentGameSeason) == "table" then return opts.currentGameSeason end
+        return opts.currentGameSeason
+      end,
       GetLootInfoByIndex = function(index)
         local encounterID = _G.__ejNavigation and _G.__ejNavigation.encounterId
         local list = journalLoot[tonumber(encounterID)] or journalLoot[tostring(encounterID)] or {}

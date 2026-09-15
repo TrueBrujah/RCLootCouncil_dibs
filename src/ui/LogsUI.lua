@@ -378,9 +378,10 @@ function Dibs.LogsUI.OpenOfficer(view, seasonId, query)
     local rows = {}
     for _, line in ipairs(page.lines or {}) do rows[#rows + 1] = splitLine(line, expected) end
     Dibs.AceGUI.AddTable(shell, tabs, columns, rows, windowHeight - 190)
-    local previous = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function() pageNumber = math.max(1, pageNumber - 1); refresh() end, 95)
-    Dibs.AceGUI.AddLabel(shell, tabs, "Page " .. tostring(page.page) .. "/" .. tostring(page.totalPages))
-    local nextButton = Dibs.AceGUI.AddButton(shell, tabs, "Next", function() pageNumber = math.min(page.totalPages, pageNumber + 1); refresh() end, 75)
+    local pageControls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+    local previous = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function() pageNumber = math.max(1, pageNumber - 1); refresh() end, 95)
+    Dibs.AceGUI.AddLabel(shell, pageControls, "Page " .. tostring(page.page) .. "/" .. tostring(page.totalPages))
+    local nextButton = Dibs.AceGUI.AddButton(shell, pageControls, "Next", function() pageNumber = math.min(page.totalPages, pageNumber + 1); refresh() end, 75)
     Dibs.AceGUI.SetDisabled(previous, page.page <= 1)
     Dibs.AceGUI.SetDisabled(nextButton, page.page >= page.totalPages)
   end

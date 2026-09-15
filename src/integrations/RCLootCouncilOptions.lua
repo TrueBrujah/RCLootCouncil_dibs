@@ -129,7 +129,7 @@ local RCLC_BUTTON_SET_DEFINITIONS = {
   { key = "PETS", label = "Pets", dibsType = "PETS", state = "semantic", note = "Battle pet or companion item." },
   { key = "RECIPES", label = "Recipes", dibsType = "RECIPE", state = "semantic", note = "Profession recipe, pattern, plan or formula." },
   { key = "DECOR", label = "Decor", dibsType = "DECOR", state = "semantic", note = "Housing decor; disabled by the default Encounter Journal matrix." },
-  { key = "COSMETIC_ITEMS", label = "Cosmetic Items", dibsType = "COSMETIC", state = "blocked", note = "Cosmetic-only item; not a Dibs progression category." },
+  { key = "COSMETIC_ITEMS", label = "Cosmetic Items", dibsType = "COSMETIC", state = "semantic", note = "Cosmetic or collection item; blocked by default and enabled only through Loot Rules." },
   { key = "RARE_ITEMS", label = "Rare items", dibsType = "OTHER", state = "alias", note = "RCLC rarity group; Dibs treats it as the configurable Other family." },
   { key = "SPECIAL_EFFECTS_ITEMS", label = "Items /w special effects", dibsType = "OTHER", state = "alias", note = "RCLC qualifier; Dibs treats it as the configurable Other family." },
   { key = "SLOTS", label = "Chest, Back, Feet, Finger, Hands, Head, Legs, Neck, Shoulder, Trinket, Waist, Wrist, Weapon", dibsType = nil, state = "slot", note = "Equipment-slot specificity only; it inherits the semantic Dibs decision." },
@@ -183,9 +183,7 @@ local function canonicalSemanticTypeKey(value)
   if key == "CATALYST" or key == "CATALYSTS" or key == "CATALYST_ITEMS" or key == "CATALYSTITEMS" then
     return nil
   end
-  if key == "COSMETIC" or key == "COSMETIC_ITEMS" or key == "COSMETICITEMS" then
-    return nil
-  end
+  if key == "COSMETIC" or key == "COSMETIC_ITEMS" or key == "COSMETICITEMS" then return "COSMETIC" end
   if key == "ARMOR_TOKEN" or compact == "ARMORTOKEN" then return "TOKEN_SET" end
   if key == "MOUNT" or key == "MOUNTS" then return "MOUNTS" end
   if key == "PET" or key == "PETS" then return "PETS" end
@@ -292,6 +290,7 @@ local function getDibTypeValues()
   addValue("RECIPE")
   addValue("DECOR")
   addValue("OTHER")
+  addValue("COSMETIC")
 
   -- Keep persisted keys visible so users can recover from old hidden false values.
   for key in pairs(getDibTypeSettings()) do

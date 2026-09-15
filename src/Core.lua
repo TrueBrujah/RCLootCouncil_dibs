@@ -198,7 +198,10 @@ local defaultDB = {
   },
   operationalPolicy = {
     schema = 1, status = "POLICY_UNINITIALIZED", policyRevision = 0, hash = "GENESIS",
-    records = {}, auditLog = {}, conflicts = {},
+    records = {}, auditLog = {}, conflicts = {}, values = { modules = {
+      preDibs = true, requests = true, rclootcouncil = true, announcements = true,
+      lootEligibility = true, historicalReconciliation = true,
+    } },
   },
   legacyBaseline = {
     schema = 1,
@@ -1103,6 +1106,19 @@ function Dibs.BuildDebugReport()
     "Raid Dibs: " .. (clubId and ("available clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId)) or "unavailable"),
     "Debug levels: all=" .. tostring(levels.all or 1) .. " announce=" .. tostring(levels.announce or "inherit") .. " sync=" .. tostring(levels.sync or "inherit") .. " ui=" .. tostring(levels.ui or "inherit") .. " encounter_journal=" .. tostring(levels.encounter_journal or "inherit"),
   }
+  local moduleDiagnostics = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleManagementDiagnostics
+    and Dibs.OperationalPolicy.GetModuleManagementDiagnostics(nil)
+  if moduleDiagnostics then
+    lines[#lines + 1] = "Module management: governanceInitialized=" .. tostring(moduleDiagnostics.governanceInitialized)
+      .. " governanceActive=" .. tostring(moduleDiagnostics.governanceActive)
+      .. " governanceRevision=" .. tostring(moduleDiagnostics.governanceRevision)
+      .. " canonicalPlayer=" .. tostring(moduleDiagnostics.canonicalPlayer or "unavailable")
+      .. " governanceGM=" .. tostring(moduleDiagnostics.governanceGM or "unavailable")
+      .. " gmIdentityMatch=" .. tostring(moduleDiagnostics.gmIdentityMatch)
+      .. " operationalPolicyReady=" .. tostring(moduleDiagnostics.operationalPolicyReady)
+      .. " canManageModules=" .. tostring(moduleDiagnostics.canManageModules)
+      .. " blockingReason=" .. tostring(moduleDiagnostics.blockingReason or "none")
+  end
   return table.concat(lines, "\n")
 end
 
@@ -1325,6 +1341,11 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "requests" or action == "report" then
+    local enabled, message = true, nil
+    if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+      enabled, _, message = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
+    end
+    if not enabled then Dibs.Message(message or "Requests is disabled by the Guild Master."); return end
     local frame = Dibs.PlayerUI and Dibs.PlayerUI.CreateWindow and Dibs.PlayerUI.CreateWindow()
     if frame and frame.SelectTab then frame.SelectTab("requests") end
     if frame then frame:Show(); frame:Raise() end
@@ -1332,6 +1353,11 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "review" or action == "disputes" then
+    local enabled, message = true, nil
+    if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+      enabled, _, message = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
+    end
+    if not enabled then Dibs.Message(message or "Requests is disabled by the Guild Master."); return end
     if Dibs.OfficerUI and Dibs.OfficerUI.Toggle then
       local opened = Dibs.OfficerUI.Toggle(true)
       local frame = opened and _G.DibsOfficerFrame or nil
@@ -1341,6 +1367,11 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "reconcile" or action == "history" then
+    local enabled, message = true, nil
+    if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+      enabled, _, message = Dibs.OperationalPolicy.RequireModuleEnabled("historicalReconciliation")
+    end
+    if action == "reconcile" and not enabled then Dibs.Message(message or "Historical Reconciliation is disabled by the Guild Master."); return end
     if Dibs.OfficerUI and Dibs.OfficerUI.Toggle then
       local opened = Dibs.OfficerUI.Toggle(true)
       local frame = opened and _G.DibsOfficerFrame or nil
@@ -1376,6 +1407,11 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "pre" then
+    local enabled, message = true, nil
+    if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+      enabled, _, message = Dibs.OperationalPolicy.RequireModuleEnabled("preDibs")
+    end
+    if not enabled then Dibs.Message(message or "Pre-Dibs is disabled by the Guild Master."); return end
     local itemID = tonumber(args[2]) or 0
     local itemName = table.concat(args, " ", 3)
     local payloadName = itemName ~= "" and itemName or "Item " .. tostring(itemID)

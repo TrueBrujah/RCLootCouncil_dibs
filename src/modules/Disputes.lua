@@ -443,6 +443,10 @@ local function requestOwner(request)
 end
 
 local function canReadRequest(requestId, actor)
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
+    if not enabled then return nil, reason end
+  end
   local request = ensureState().requests[requestId]
   if not request then return nil, "REQUEST_NOT_FOUND" end
   if request.guildScope ~= currentScope() then return nil, "REQUEST_NOT_FOUND" end
@@ -490,6 +494,10 @@ end
 -- Side effects: Persists a bounded dispute request and normalized evidence.
 function Disputes.CreateReport(payload, actor)
   payload = type(payload) == "table" and payload or {}
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled then
+    local enabled = Dibs.OperationalPolicy.IsModuleEnabled("requests")
+    if enabled ~= true then return nil, "MODULE_DISABLED_REQUESTS" end
+  end
   actor = actor or payload.actor
   local player = ownerName(payload)
   local ownerId = identity(player)
@@ -566,6 +574,10 @@ end
 
 function Disputes.ListForPlayer(actor, options)
   options = type(options) == "table" and options or {}
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
+    if not enabled then return {}, reason end
+  end
   if not isLocalActor(actor) then return {}, "PLAYER_SCOPE_REQUIRED" end
   local ownerId = localIdentity()
   local state = ensureState()
@@ -589,6 +601,10 @@ end
 ---@return DibsDisputeRequest[] requests Permission-filtered officer queue.
 function Disputes.ListForOfficer(actor, options)
   options = type(options) == "table" and options or {}
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
+    if not enabled then return {}, reason end
+  end
   if not isOfficer(actor) then return {}, "GUILD_ADMIN_REQUIRED" end
   local state = ensureState()
   local result = {}
@@ -648,6 +664,10 @@ end
 Disputes.Reply = Disputes.AddReply
 
 local function requireOfficer(requestId, actor)
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
+    if not enabled then return nil, reason end
+  end
   if not isOfficer(actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   local request = ensureState().requests[requestId]
   if not request then return nil, "REQUEST_NOT_FOUND" end
@@ -657,6 +677,17 @@ end
 local function requireReason(options)
   local reason = bounded(options and (options.reason or options.explanation), MAX_REASON_LENGTH)
   return reason ~= "" and reason or nil
+end
+
+local function canonicalRequestPlayerName(request)
+  local playerName = request and request.player and request.player.name or nil
+  if Dibs.Identity and type(Dibs.Identity.ResolveRosterMember) == "function" and playerName then
+    local ok, resolved = pcall(Dibs.Identity.ResolveRosterMember, playerName)
+    if ok and type(resolved) == "table" and resolved.status == "RESOLVED" then
+      return resolved.displayName or playerName
+    end
+  end
+  return playerName
 end
 
 local function finishWithoutCorrection(request, action, actor, newStatus, reason, extra)
@@ -895,7 +926,7 @@ local function applyCorrection(request, action, actor, options)
   local state = ensureState()
   local existingId = state.corrections[key]
   if existingId then
-    local existing = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(request.seasonId, request.player.name) or {}
+    local existing = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(request.seasonId, canonicalRequestPlayerName(request)) or {}
     for _, transaction in ipairs(existing) do
       if transaction.transactionId == existingId then
         return { ok = true, idempotentReplay = true, request = copy(request), transaction = copy(transaction), changedBalance = true }
@@ -904,7 +935,7 @@ local function applyCorrection(request, action, actor, options)
   end
   if not Dibs.ProtectedActions or type(Dibs.ProtectedActions.Execute) ~= "function" then return nil, "PROTECTED_ACTION_UNAVAILABLE" end
   local payload = {
-    playerName = request.player.name,
+    playerName = canonicalRequestPlayerName(request),
     amount = details.amount,
     reason = "Review " .. request.requestId .. ": " .. reason,
     source = "dispute-center",

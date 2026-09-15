@@ -17,6 +17,13 @@ Related docs: docs/developer/data-model.md, docs/player/README.md.
 local Dibs = _G.Dibs
 Dibs.PreDibs = Dibs.PreDibs or {}
 
+local function requirePreDibsEnabled()
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
+    return Dibs.OperationalPolicy.RequireModuleEnabled("preDibs")
+  end
+  return true
+end
+
 local VALID_ANNOUNCE_CHANNELS = {
   NONE = true,
   GUILD = true,
@@ -280,6 +287,10 @@ local function sendAnnouncement(channel, message, raidDibsInfo)
 end
 
 function Dibs.PreDibs.SendTestAnnouncement(channel, audience, actor)
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled
+    and Dibs.OperationalPolicy.IsModuleEnabled("announcements") ~= true then
+    return false, "MODULE_DISABLED_ANNOUNCEMENTS"
+  end
   if not Dibs.Permissions or type(Dibs.Permissions.Can) ~= "function"
     or not Dibs.Permissions.Can("settings.modify", actor) then
     return false, "GUILD_ADMIN_REQUIRED"
@@ -317,6 +328,8 @@ end
 local function announcePreDib(request)
   ensureState()
   if type(request) ~= "table" then return end
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled
+    and Dibs.OperationalPolicy.IsModuleEnabled("announcements") ~= true then return end
   local message = buildAnnouncementMessage(request)
   local publicChannel = normalizeChannel(Dibs.db.settings.preDibAnnouncementChannel, "GUILD")
   local officerChannel = normalizeChannel(Dibs.db.settings.preDibOfficerAnnouncementChannel, "OFFICER")
@@ -469,6 +482,8 @@ end
 
 function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId)
   ensureState()
+  local enabled, reason = requirePreDibsEnabled()
+  if not enabled then return nil, reason end
   if not tonumber(itemID) or tonumber(itemID) <= 0 then return nil end
 
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
@@ -503,6 +518,8 @@ end
 -- Side effects: Persists/updates a confirmed request and may send configured announcements.
 function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, source, context)
   ensureState()
+  local enabled, reason = requirePreDibsEnabled()
+  if not enabled then return nil, reason end
   if Dibs.PreDibs.IsPublicEnabled() ~= true then
     return nil, "PUBLIC_PRE_DIBS_DISABLED"
   end
@@ -597,6 +614,8 @@ end
 ---@return string|nil reasonCode
 -- Side effects: Advances a request revision and records lifecycle timestamps.
 function Dibs.PreDibs.UpdateStatus(requestId, status)
+  local enabled, reason = requirePreDibsEnabled()
+  if not enabled then return nil, reason end
   ensureState()
 
   for _, request in ipairs(Dibs.db.preDibs.requests) do
@@ -744,6 +763,8 @@ end
 
 function Dibs.PreDibs.CancelForPlayer(requestId, playerName)
   ensureState()
+  local enabled, reason = requirePreDibsEnabled()
+  if not enabled then return nil, reason end
   local player = playerName or (Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
   for _, request in ipairs(Dibs.db.preDibs.requests) do
     if request.requestId == requestId then
@@ -816,6 +837,8 @@ end
 -- Side effects: Persists a display-only acquisition; it never consumes a Dib.
 function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty)
   ensureState()
+  local enabled, reason = requirePreDibsEnabled()
+  if not enabled then return nil, reason end
   local targetItem = tonumber(itemID)
   if not targetItem or targetItem <= 0 then return nil, "INVALID_ITEM" end
   local player = playerName or (Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)

@@ -5,8 +5,12 @@ Dibs.DeveloperSandboxStore = Dibs.DeveloperSandboxStore or {}
 local Store = Dibs.DeveloperSandboxStore
 
 local SCHEMA = 1
-local MAX_NODES = 20000
+local MAX_NODES = 100000
 local persisted
+
+local function guildKey()
+  return tostring(Dibs.currentGuildKey or (Dibs.GetGuildKey and Dibs.GetGuildKey()) or "unknown-guild")
+end
 
 local function copy(value, seen)
   if type(value) ~= "table" then return value end
@@ -15,6 +19,14 @@ local function copy(value, seen)
   local result = {}
   seen[value] = result
   for key, item in pairs(value) do result[copy(key, seen)] = copy(item, seen) end
+  return result
+end
+
+local function cleanPayload(payload)
+  local result = copy(payload)
+  if type(result) == "table" then
+    result.backups, result.pendingImports, result.pendingRestores, result.auditLog = nil, nil, nil, nil
+  end
   return result
 end
 
@@ -47,21 +59,31 @@ end
 
 function Store.Initialize()
   if _G.RCLootCouncil_dibsSandboxDB == nil then
-    _G.RCLootCouncil_dibsSandboxDB = { schema = SCHEMA, payload = nil, updatedAt = nil }
+    _G.RCLootCouncil_dibsSandboxDB = { schema = SCHEMA, guilds = {} }
   end
   persisted = _G.RCLootCouncil_dibsSandboxDB
   if type(persisted) ~= "table" then return false, "INVALID_SANDBOX_STORE" end
   if persisted.schema == nil then persisted.schema = SCHEMA end
+  if tonumber(persisted.schema) and tonumber(persisted.schema) > SCHEMA then return false, "FUTURE_SANDBOX_SCHEMA" end
+  if persisted.guilds == nil then
+    persisted = { schema = SCHEMA, guilds = { [guildKey()] = { payload = cleanPayload(persisted.payload), updatedAt = persisted.updatedAt } } }
+    _G.RCLootCouncil_dibsSandboxDB = persisted
+  end
+  if type(persisted.guilds) ~= "table" then return false, "INVALID_SANDBOX_STORE" end
   return true
 end
 
 function Store.GetPersisted()
-  return persisted and copy(persisted) or nil
+  if not persisted then return nil end
+  if type(persisted.guilds) ~= "table" then return copy(persisted) end
+  local entry = persisted.guilds and persisted.guilds[guildKey()]
+  return copy({ schema = persisted.schema, payload = entry and entry.payload or nil, updatedAt = entry and entry.updatedAt or nil })
 end
 
 function Store.GetPayload()
-  if not persisted or type(persisted.payload) ~= "table" then return nil end
-  return copy(persisted.payload)
+  local entry = persisted and persisted.guilds and persisted.guilds[guildKey()]
+  if not entry or type(entry.payload) ~= "table" then return nil end
+  return copy(entry.payload)
 end
 
 function Store.Validate(value)
@@ -73,14 +95,19 @@ function Store.SavePayload(payload)
   local candidate = { schema = SCHEMA, payload = copy(payload), updatedAt = time() }
   local valid, reason = validate(candidate)
   if not valid then return false, reason end
-  persisted = candidate
+  if not persisted or type(persisted.guilds) ~= "table" then
+    persisted = { schema = SCHEMA, guilds = {} }
+  end
+  persisted.schema = SCHEMA
+  persisted.guilds[guildKey()] = { payload = candidate.payload, updatedAt = candidate.updatedAt }
   _G.RCLootCouncil_dibsSandboxDB = persisted
   return true, copy(candidate)
 end
 
 function Store.CloneProduction()
   if not Dibs.GetDB then return false, "PRODUCTION_STORE_UNAVAILABLE" end
-  return Store.SavePayload(Dibs.GetDB())
+  local payload = Dibs.ImportExport and Dibs.ImportExport.GetPayload and Dibs.ImportExport.GetPayload("full") or Dibs.GetDB()
+  return Store.SavePayload(payload)
 end
 
 return Store

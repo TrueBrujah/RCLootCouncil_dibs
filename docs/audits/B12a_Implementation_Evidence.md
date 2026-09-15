@@ -17,6 +17,14 @@
 - T012: reusable context-menu replacement/close, tooltip argument ordering and item-link handling, raw-frame rejection, lib-st ownership/release, and combat refresh deferral.
 - T013-T018: existing B11 V3 implementation verified by the focused regressions for permanent content ownership, recursive cleanup, window state, enum normalization, safe tooltip/table ownership, and callback/shell cleanup.
 
+## Adventure Guide metadata/default remediation
+
+- Adventure Guide catalog projection now fails closed when raid or encounter identity is missing, non-positive, or unnamed.
+- Synthetic `Current raid`, `Current boss`, and encounter ID `0` fallback rows were removed; item keys require a positive real encounter ID.
+- Correction filters default to real catalog metadata only. The initial season default is resolved from an explicit game/Adventure Guide season API when available; the guild Dibs season is not used.
+- Developer Debug diagnostics expose bounded expansion, game-season, raid, encounter, eligible-item, current-context, and selected-filter counts without adding metadata controls to the normal Officer workflow.
+- Focused selector validation: 5 passed, 0 failed. Adjacent navigation, B12a ownership/stabilization, and dispute regressions: 44 passed, 0 failed.
+
 ## Guild Rules / Seasons orphaned UI remediation
 
 The manual blocker was reproduced by repeatedly switching through Seasons and
@@ -142,3 +150,87 @@ Automated mocks cannot establish zero live Retail BugSack errors. Manual Retail 
 `B12a automated validation complete; manual Retail validation required.`
 
 `B12a REQUEST INITIAL MOUNT FIX READY FOR RETAIL RE-VALIDATION`
+
+## Correction dropdown placeholder remediation
+
+The Officer correction workflow now treats the player and Adventure Guide item
+placeholders as display-only text. Neither placeholder is inserted into the
+choice map, and both controls start with a `nil` canonical value instead of a
+first roster/catalog result. A valid selected player keeps its full Name-Realm
+identity; a valid item keeps its existing catalog key and item ID/link identity.
+
+Search refreshes rebuild the native MSA key list and retain a selection only
+while it remains present in the refreshed roster/catalog. Otherwise the value
+returns to `nil` and the display returns to the placeholder. Apply remains
+disabled by the existing confirmation/reason gates and has an additional
+fail-safe that refuses to resolve without a real replacement. Current evidence
+and targets are unchanged until the explicit correction action is applied.
+
+Focused selector validation:
+
+```text
+3 passed, 0 failed (1 file)
+```
+
+Coverage includes both placeholder labels, menu exclusion, initial `nil`
+values, explicit player/item selection, selection persistence across refresh,
+fail-safe Apply behavior, and preservation of current evidence. No correction
+service or `ProtectedActions` semantics were changed.
+
+## Correction item candidate projection
+
+The Officer `Correct item` dropdown now projects candidates in this order:
+relevant Adventure Guide raid scope, safe Dibs semantic classification, and
+the effective RCLootCouncil Dibs type rule. The existing classifier and
+`IsItemDibTypeAllowed(..., { strictWhitelist = true })` service remain the
+authorities; the UI does not duplicate loot eligibility semantics.
+
+When a request has a safe raid or encounter context it is preferred; otherwise
+the active Adventure Guide raid is the default scope. Search is applied only
+after projection and matches item name, item ID, or boss name. Unknown or
+blocked items therefore remain hidden even for an exact ID search. Rows use
+human-readable `Item Name — Boss Name` labels, never raw classifier output.
+The first row is not selected, canonical item keys remain intact, and an
+empty safe projection displays `No eligible raid items found.`
+
+Focused candidate validation:
+
+```text
+4 passed, 0 failed (1 file)
+```
+
+Coverage includes raid scoping, allowed and blocked families, unknown
+classification, name/ID search fail-closed behavior, non-selection of the
+first result, human-readable labels, canonical item identity, unchanged
+current evidence, and the intentional empty state. Protected correction
+authority remains in the existing `Disputes` and `ProtectedActions` path.
+
+## Cascading Adventure Guide filters
+
+The correction item selector now presents compact Expansion, Season, Raid, and
+Boss controls above the item dropdown. Canonical IDs are stored separately
+from labels. Expansion defaults to the current Retail expansion only on the
+initial open when that expansion is represented in the local Adventure Guide
+data; the active season is selected only when its canonical local ID is
+explicitly present. Otherwise the selector safely uses All expansions or All
+seasons with the season control disabled when no expansion/season metadata is
+available.
+
+Each downstream list is rebuilt from the current upstream scope. Valid values
+and selected items are preserved across changes; invalid season, raid, boss,
+or item values are cleared without selecting a replacement. Raid and boss are
+never auto-selected, and the item value remains `nil` until an explicit item
+selection. Search matches item name, item ID, boss/encounter name and ID, raid
+name, and known expansion name after all scope and eligibility filters have
+already been applied.
+
+Focused cascading selector validation:
+
+```text
+5 passed, 0 failed (1 file)
+```
+
+The regression covers all-expansion and expansion-scoped raid lists, seasonal
+and raid/boss narrowing, all requested search fields, human-readable context
+labels, canonical IDs, no first-result selection, fail-closed eligibility,
+placeholder isolation, and invalid downstream reset behavior.

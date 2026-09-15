@@ -783,28 +783,86 @@ end
 -- APIs is not available yet.
 local function getJournalInstanceDetails(index)
   if type(EJ_GetInstanceByIndex) ~= "function" then return nil end
-  local ok, instanceID, name = pcall(EJ_GetInstanceByIndex, index, true)
+  local ok, instanceID, name, _, _, _, _, _, expansionID, seasonID, seasonName = pcall(EJ_GetInstanceByIndex, index, true)
   if ok and tonumber(instanceID) and tonumber(instanceID) > 0 then
-    return tonumber(instanceID), tostring(name or ("Raid " .. tostring(instanceID)))
+    if tostring(name or "") == "" then return nil end
+    return tonumber(instanceID), tostring(name), tonumber(expansionID), seasonID, seasonName
   end
-  ok, instanceID, name = pcall(EJ_GetInstanceByIndex, index)
+  ok, instanceID, name, _, _, _, _, _, expansionID, seasonID, seasonName = pcall(EJ_GetInstanceByIndex, index)
   if ok and tonumber(instanceID) and tonumber(instanceID) > 0 then
-    return tonumber(instanceID), tostring(name or ("Raid " .. tostring(instanceID)))
+    if tostring(name or "") == "" then return nil end
+    return tonumber(instanceID), tostring(name), tonumber(expansionID), seasonID, seasonName
   end
   return nil
+end
+
+local function getInstanceMetadata(instanceID)
+  local api = _G.C_EncounterJournal
+  if type(api) ~= "table" or type(api.GetInstanceInfo) ~= "function" then return {} end
+  local ok, info = pcall(api.GetInstanceInfo, instanceID)
+  if not ok or type(info) ~= "table" then return {} end
+  return {
+    expansionID = tonumber(info.expansionID or info.expansionLevel),
+    expansionName = info.expansionName,
+    seasonID = info.seasonID and tostring(info.seasonID) or nil,
+    seasonName = info.seasonName or info.seasonLabel,
+  }
 end
 
 local function getJournalEncounterDetails(index, instanceID)
   if type(EJ_GetEncounterInfoByIndex) ~= "function" then return nil end
   local ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index, instanceID)
   if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
-    return tonumber(encounterID), tostring(name or ("Encounter " .. tostring(encounterID)))
+    if tostring(name or "") == "" then return nil end
+    return tonumber(encounterID), tostring(name)
   end
   ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index)
   if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
-    return tonumber(encounterID), tostring(name or ("Encounter " .. tostring(encounterID)))
+    if tostring(name or "") == "" then return nil end
+    return tonumber(encounterID), tostring(name)
   end
   return nil
+end
+
+function Dibs.EncounterJournal.GetCurrentLootContext()
+  local instanceID = getCurrentJournalInstanceID()
+  local context = { instanceID = instanceID }
+  if instanceID and type(EJ_GetInstanceByIndex) == "function" then
+    for index = 1, EJ_CATALOG_MAX_INSTANCES do
+      local candidateID, candidateName = getJournalInstanceDetails(index)
+      if not candidateID then break end
+      if tonumber(candidateID) == tonumber(instanceID) then
+        context.instanceName = candidateName
+        local metadata = getInstanceMetadata(candidateID)
+        context.expansionID, context.expansionName = metadata.expansionID, metadata.expansionName
+        context.seasonID, context.seasonName = metadata.seasonID, metadata.seasonName
+        break
+      end
+    end
+  end
+  local ej = _G.EncounterJournal
+  local encounter = ej and ej.encounter and ej.encounter.info
+  local encounterID = type(encounter) == "table" and encounter["encounterID"] or nil
+  if tonumber(encounterID) then
+    context.encounterID = tonumber(encounterID)
+    context.encounterName = encounter["name"] or encounter["encounterName"]
+  end
+  return context
+end
+
+function Dibs.EncounterJournal.GetCurrentGameSeason()
+  local api = _G.C_EncounterJournal
+  if type(api) == "table" and type(api.GetCurrentSeason) == "function" then
+    local ok, season = pcall(api.GetCurrentSeason)
+    if ok and type(season) == "table" then
+      local id = season.id or season.seasonID
+      local label = season.name or season.label or season.seasonName
+      if id ~= nil and tostring(id) ~= "" then return tostring(id), label and tostring(label) or nil end
+    elseif ok and season ~= nil and tostring(season) ~= "" then
+      return tostring(season), nil
+    end
+  end
+  return nil, nil
 end
 
 local function getJournalLootDetails(index)
@@ -829,7 +887,11 @@ local function getJournalLootDetails(index)
   return nil
 end
 
-local function enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanceName, bossName, encounterID, lootIndex)
+local function enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanceName, bossName, encounterID, lootIndex, expansionID, seasonID, seasonName)
+  local metadata = getInstanceMetadata(instanceID)
+  expansionID = expansionID or metadata.expansionID
+  seasonID = seasonID or metadata.seasonID
+  seasonName = seasonName or metadata.seasonName
   local link = itemLink
   local name = itemName
   if type(C_Item) == "table" and type(C_Item.GetItemInfo) == "function" then
@@ -857,7 +919,7 @@ local function enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanc
     end
   end
   local typeSearch = table.concat({ itemType, className, subClassName, equipLoc }, " ")
-  local key = tostring(itemID) .. ":" .. tostring(encounterID or 0)
+  local key = tostring(itemID) .. ":" .. tostring(encounterID)
   return {
     key = key,
     itemID = itemID,
@@ -866,8 +928,12 @@ local function enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanc
     instanceID = tonumber(instanceID),
     encounterID = tonumber(encounterID),
     lootIndex = tonumber(lootIndex),
-    instanceName = tostring(instanceName or "Adventure Guide"),
-    bossName = tostring(bossName or "Unknown boss"),
+    expansionID = tonumber(expansionID),
+    expansionName = metadata.expansionName or (tonumber(expansionID) and _G["EXPANSION_NAME" .. tostring(expansionID)] or nil),
+    seasonID = seasonID and tostring(seasonID) or nil,
+    seasonName = seasonName and tostring(seasonName) or nil,
+    instanceName = tostring(instanceName or ""),
+    bossName = tostring(bossName or ""),
     type = itemType,
     typeLabel = typeSearch:gsub("^%s+", ""):gsub("%s+$", ""),
     searchText = safeLower(table.concat({ tostring(name or ""), tostring(itemID), tostring(instanceName or ""), tostring(bossName or ""), typeSearch }, " ")),
@@ -879,11 +945,16 @@ local function scanAdventureGuideCatalog()
   local seen = {}
   local meta = { available = false, reason = nil, scannedInstances = 0, scannedEncounters = 0, scannedLoot = 0 }
 
-  local function addLoot(instanceID, instanceName, bossName, encounterID, lootIndex)
+  local function addLoot(instanceID, instanceName, bossName, encounterID, lootIndex, expansionID, seasonID, seasonName)
     if #result >= EJ_CATALOG_MAX_ITEMS then return end
+    if not tonumber(instanceID) or tonumber(instanceID) <= 0
+      or not tonumber(encounterID) or tonumber(encounterID) <= 0
+      or tostring(instanceName or "") == "" or tostring(bossName or "") == "" then
+      return
+    end
     local itemID, itemName, itemLink = getJournalLootDetails(lootIndex)
     if not itemID then return end
-    local item = enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanceName, bossName, encounterID, lootIndex)
+    local item = enrichCatalogItem(itemID, itemName, itemLink, instanceID, instanceName, bossName, encounterID, lootIndex, expansionID, seasonID, seasonName)
     -- A token can appear in multiple encounter tables. Keep the first source,
     -- while retaining a stable key for the dropdown and audit payload.
     local dedupeKey = tostring(item.itemID) .. "|" .. tostring(item.bossName) .. "|" .. tostring(item.instanceName)
@@ -897,7 +968,7 @@ local function scanAdventureGuideCatalog()
     if type(EJ_GetInstanceByIndex) ~= "function" then return end
     local duplicateStreak = 0
     for instanceIndex = 1, EJ_CATALOG_MAX_INSTANCES do
-      local instanceID, instanceName = getJournalInstanceDetails(instanceIndex)
+      local instanceID, instanceName, expansionID, seasonID, seasonName = getJournalInstanceDetails(instanceIndex)
       if not instanceID then break end
       -- Some test clients and older API shims expose the current instance for
       -- every index. Stop on a duplicate to avoid a hot loop in that case.
@@ -923,7 +994,7 @@ local function scanAdventureGuideCatalog()
           if lootCount and lootCount > 0 then
             for lootIndex = 1, math.min(lootCount, EJ_CATALOG_MAX_LOOT) do
               meta.scannedLoot = meta.scannedLoot + 1
-              addLoot(instanceID, instanceName, bossName, encounterID, lootIndex)
+              addLoot(instanceID, instanceName, bossName, encounterID, lootIndex, expansionID, seasonID, seasonName)
             end
           end
           if #result >= EJ_CATALOG_MAX_ITEMS then return end
@@ -954,18 +1025,6 @@ local function scanAdventureGuideCatalog()
     scanInstances()
   end
 
-  if #result == 0 and type(EJ_GetNumLoot) == "function" then
-    -- A limited fallback for clients that expose only the currently selected
-    -- encounter through C_EncounterJournal. It still remains Adventure Guide
-    -- sourced and is useful while the journal is open on a single boss.
-    local okNum, lootCount = pcall(EJ_GetNumLoot)
-    lootCount = okNum and tonumber(lootCount) or 0
-    for lootIndex = 1, math.min(lootCount, EJ_CATALOG_MAX_LOOT) do
-      meta.scannedLoot = meta.scannedLoot + 1
-      addLoot(previousInstance, "Current raid", "Current boss", previousEncounter or 0, lootIndex)
-    end
-  end
-
   if type(EJ_SelectTier) == "function" and previousTier then pcall(EJ_SelectTier, previousTier) end
   if type(EJ_SelectInstance) == "function" and previousInstance then pcall(EJ_SelectInstance, previousInstance) end
   if type(EJ_SelectEncounter) == "function" and previousEncounter then pcall(EJ_SelectEncounter, previousEncounter) end
@@ -977,7 +1036,29 @@ local function scanAdventureGuideCatalog()
   end)
   meta._seenInstanceIDs = nil
   meta.available = #result > 0
+  meta.expansions = {}
+  meta.seasons = {}
+  meta.raids = {}
+  meta.encounters = {}
+  for _, item in ipairs(result) do
+    if item.expansionID then meta.expansions[tostring(item.expansionID)] = item.expansionName end
+    if item.seasonID then meta.seasons[tostring(item.seasonID)] = item.seasonName end
+    if item.instanceID then meta.raids[tostring(item.instanceID)] = item.instanceName end
+    if item.encounterID then meta.encounters[tostring(item.encounterID)] = item.bossName end
+  end
+  meta.expansionCount, meta.seasonCount = 0, 0
+  meta.raidCount, meta.encounterCount = 0, 0
+  for _ in pairs(meta.expansions) do meta.expansionCount = meta.expansionCount + 1 end
+  for _ in pairs(meta.seasons) do meta.seasonCount = meta.seasonCount + 1 end
+  for _ in pairs(meta.raids) do meta.raidCount = meta.raidCount + 1 end
+  for _ in pairs(meta.encounters) do meta.encounterCount = meta.encounterCount + 1 end
   meta.reason = meta.available and nil or (type(EJ_GetInstanceByIndex) == "function" and "NO_RAID_LOOT_FOUND" or "ADVENTURE_GUIDE_API_UNAVAILABLE")
+  if type(GetExpansionLevel) == "function" then
+    local okExpansion, expansionID = pcall(GetExpansionLevel)
+    meta.currentExpansionID = okExpansion and tonumber(expansionID) or nil
+    meta.currentExpansionName = meta.currentExpansionID and _G["EXPANSION_NAME" .. tostring(meta.currentExpansionID)] or nil
+  end
+  meta.currentGameSeasonID, meta.currentGameSeasonName = Dibs.EncounterJournal.GetCurrentGameSeason()
   return result, meta
 end
 
@@ -1007,6 +1088,21 @@ function Dibs.EncounterJournal.GetLootCatalog(query, options)
   meta.total = #(adventureGuideCatalog or {})
   meta.returned = #matches
   return matches, meta
+end
+
+function Dibs.EncounterJournal.GetLootCatalogDiagnostics()
+  local _, meta = Dibs.EncounterJournal.GetLootCatalog("", { limit = EJ_CATALOG_MAX_ITEMS })
+  return {
+    expansionCount = tonumber(meta.expansionCount) or 0,
+    seasonCount = tonumber(meta.seasonCount) or 0,
+    raidCount = tonumber(meta.raidCount) or 0,
+    encounterCount = tonumber(meta.encounterCount) or 0,
+    eligibleItemCount = tonumber(meta.total) or 0,
+    currentExpansionID = meta.currentExpansionID,
+    currentExpansionName = meta.currentExpansionName,
+    currentGameSeasonID = meta.currentGameSeasonID,
+    currentGameSeasonName = meta.currentGameSeasonName,
+  }
 end
 
 local function updateButtonState(button)

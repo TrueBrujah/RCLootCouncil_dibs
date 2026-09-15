@@ -242,6 +242,32 @@ describe("B11 Retail UI-004 ownership", function()
     end
   end)
 
+  it("keeps exactly one current header through Guild Rules and Pre-Dibs routes", function()
+    local _, dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow()
+    local expected = {
+      overview = "Officer dashboard",
+      seasons = "Seasons",
+      ranks = "Rank Rules",
+      preDibs = "Pre-Dibs",
+      settings = "Settings",
+    }
+    local descriptions = {
+      overview = "Guild-wide operational summary for authorized Officers and GM.",
+      preDibs = "Officer controls and current local projection.",
+    }
+    for _, route in ipairs({ "overview", "seasons", "ranks", "preDibs", "settings" }) do
+      frame.SelectTab(route)
+      assert_equal(1, countText(frame.contentHost, expected[route]))
+      for previousRoute, title in pairs(expected) do
+        if previousRoute ~= route then assert_equal(0, countText(frame.contentHost, title), previousRoute) end
+      end
+      local descriptionCount = 0
+      for _, description in pairs(descriptions) do descriptionCount = descriptionCount + countText(frame.contentHost, description) end
+      assert_true(descriptionCount <= 1, route)
+    end
+  end)
+
   it("passes canonical Pre-Dib and enum dropdown keys to services", function()
     local _, dibs = setup()
     local captured = {}

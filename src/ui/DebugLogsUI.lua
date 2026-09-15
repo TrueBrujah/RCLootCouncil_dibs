@@ -36,6 +36,7 @@ function Dibs.DebugLogs.Clear(actor)
 end
 
 function Dibs.DebugLogs.Open(actor)
+  actor = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
   if not canViewDebugLogs(actor) then return false, "GUILD_ADMIN_REQUIRED" end
   if not Dibs.AceGUI or not Dibs.AceGUI.CreateWindow then return false end
   local shell = Dibs.AceGUI.CreateWindow("Dibs Debug Logs", 900, 650, { "CENTER", 0, 0 })
@@ -76,8 +77,8 @@ function Dibs.DebugLogs.Open(actor)
     end
     table.sort(rows, function(a, b) return descending and a > b or a < b end)
     if #rows == 0 then rows[1] = "No matching debug logs." end
-    Dibs.AceGUI.AddLabel(shell, tabs, table.concat(rows, "\n"), true)
-    local clear = Dibs.AceGUI.AddButton(shell, tabs, "Clear logs", function() Dibs.DebugLogs.Clear(); refresh() end, 130)
+    Dibs.AceGUI.AddSelectableText(shell, tabs, "Log entries", table.concat(rows, "\n"), 820, 300)
+    local clear = Dibs.AceGUI.AddButton(shell, tabs, "Clear logs", function() Dibs.DebugLogs.Clear(actor); refresh() end, 130)
     Dibs.AceGUI.AddTooltip(clear, "Clear logs", "Deletes the in-memory diagnostic log. This does not change the Dibs ledger.")
   end
   refresh()

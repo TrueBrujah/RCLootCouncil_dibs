@@ -534,6 +534,10 @@ function Eligibility.Evaluate(context, playerName, seasonId)
   local input = type(context) == "table" and context or {}
   local targetSeason = currentSeason(seasonId or input.seasonId)
   local family = inferFamily(input)
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled
+    and Dibs.OperationalPolicy.IsModuleEnabled("lootEligibility") ~= true then
+    return buildDecision(input, playerName, targetSeason, "review", "MODULE_DISABLED_LOOT_ELIGIBILITY", "Loot eligibility is disabled by the Guild Master.", { family = family })
+  end
   if not targetSeason or not validSeason(targetSeason) then
     return buildDecision(input, playerName, targetSeason, "review", "SEASON_NOT_FOUND", "No active Dibs season is available.")
   end

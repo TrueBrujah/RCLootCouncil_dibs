@@ -14,3 +14,4 @@ Start with [architecture.md](architecture.md), then use the focused references:
 - [testing.md](testing.md)
 - [contributing.md](contributing.md)
 - [coverage.md](coverage.md)
+- [b12-ui-design-rules.md](b12-ui-design-rules.md)

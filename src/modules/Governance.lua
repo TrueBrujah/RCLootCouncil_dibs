@@ -318,6 +318,11 @@ function Governance.GetCurrentRecord()
   return state.records[tostring(state.revision)] and copy(state.records[tostring(state.revision)]) or nil
 end
 
+function Governance.CanAdoptInitial(actor)
+  local record, reason = Governance.CreateInitialRecord(actor, { reason = "GOVERNANCE_BOOTSTRAP_CHECK" })
+  return record ~= nil, reason
+end
+
 function Governance.CreateInitialRecord(actor, proposal)
   local blocked, reason = rejectSandbox(); if blocked then return nil, reason end
   local state = ensureState()

@@ -105,6 +105,28 @@ describe("Retail Officer navigation lifecycle", function()
     assert_false(containsText(frame.contentHost, "Target season"))
   end)
 
+  it("lays out Requests and History during their first TreeGroup selection", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    local layoutCalls = 0
+    local originalDoLayout = frame.aceTabs.DoLayout
+    frame.aceTabs.DoLayout = function(self)
+      layoutCalls = layoutCalls + 1
+      if originalDoLayout then originalDoLayout(self) end
+    end
+    local callback = frame.aceTabs.callbacks.OnGroupSelected
+    local separator = string.char(1)
+
+    callback(frame.aceTabs, "OnGroupSelected", "section_dibs" .. separator .. "disputes")
+    assert_true(containsText(frame.contentHost, "Officer review requests"))
+    assert_true(layoutCalls > 0)
+
+    local callsAfterRequests = layoutCalls
+    callback(frame.aceTabs, "OnGroupSelected", "section_dibs" .. separator .. "history")
+    assert_true(containsText(frame.contentHost, "RCLootCouncil History"))
+    assert_true(layoutCalls > callsAfterRequests)
+  end)
+
   it("reopens directly on Requests without a blank page", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow("requests")
@@ -129,6 +151,24 @@ describe("Retail Officer navigation lifecycle", function()
     frame.SelectTab("requests")
     assert_equal(before + 1, frame.routeDispatchCount)
     assert_equal("disputes", frame.mountedPage)
+  end)
+
+  it("selects grouped Officer routes by value so the DIBS section opens", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow()
+    local selectedByValue
+    local selectedDirectly
+    frame.aceTabs.SelectByValue = function(_, value)
+      selectedByValue = value
+    end
+    frame.aceTabs.Select = function(_, value)
+      selectedDirectly = value
+    end
+
+    frame.SelectTab("requests")
+
+    assert_equal("section_dibs" .. string.char(1) .. "disputes", selectedByValue)
+    assert_nil(selectedDirectly)
   end)
 
   it("never leaves a blank page root for a valid initial route", function()

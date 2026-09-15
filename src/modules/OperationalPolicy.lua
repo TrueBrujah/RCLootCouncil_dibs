@@ -13,6 +13,31 @@ local Policy = Dibs.OperationalPolicy
 
 local SCHEMA, GENESIS_HASH = 1, "GENESIS"
 local VALID_MODES = { WILD_OPEN = true, ENCOUNTER = true }
+local CORE_MODULE_DEFINITIONS = {
+  { key = "ledger", label = "Ledger", core = true, alwaysEnabled = true },
+  { key = "identity", label = "Canonical Identity / Name-Realm", core = true, alwaysEnabled = true },
+  { key = "governance", label = "Governance", core = true, alwaysEnabled = true },
+  { key = "protectedActions", label = "ProtectedActions", core = true, alwaysEnabled = true },
+  { key = "syncV2", label = "SyncV2", core = true, alwaysEnabled = true },
+  { key = "coordinatorRecovery", label = "Coordinator / Recovery", core = true, alwaysEnabled = true },
+  { key = "persistenceValidation", label = "Persistence validation", core = true, alwaysEnabled = true },
+}
+local MODULE_DEFINITIONS = {
+  { key = "preDibs", label = "Pre-Dibs" },
+  { key = "requests", label = "Requests" },
+  { key = "rclootcouncil", label = "RCLootCouncil" },
+  { key = "announcements", label = "Announcements" },
+  { key = "lootEligibility", label = "Loot Eligibility" },
+  { key = "historicalReconciliation", label = "Historical Reconciliation", requires = "rclootcouncil" },
+}
+local MODULE_KEYS = {}
+for _, definition in ipairs(MODULE_DEFINITIONS) do MODULE_KEYS[definition.key] = true end
+
+local function defaultModules()
+  local modules = {}
+  for _, definition in ipairs(MODULE_DEFINITIONS) do modules[definition.key] = true end
+  return modules
+end
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
 local function integer(value) return type(value) == "number" and value == math.floor(value) end
@@ -61,6 +86,17 @@ local function normalizedValues(values)
         modes[tostring(seasonId)] = tostring(mode)
       end
       result.preDibModes = modes
+    elseif key == "modules" then
+      if type(value) ~= "table" then return nil, "INVALID_MODULE_POLICY" end
+      local modules = defaultModules()
+      for moduleKey, enabled in pairs(value) do
+        if not MODULE_KEYS[moduleKey] or type(enabled) ~= "boolean" then return nil, "INVALID_MODULE_POLICY" end
+        modules[moduleKey] = enabled
+      end
+      if modules.historicalReconciliation and not modules.rclootcouncil then
+        return nil, "MODULE_DEPENDENCY_RCLootCouncil"
+      end
+      result.modules = modules
     else
       return nil, "POLICY_FIELD_FORBIDDEN"
     end
@@ -137,7 +173,7 @@ local function createRecord(actor, values, revision, parentRevision, parentHash,
     policyRevision = revision, parentRevision = parentRevision, parentHash = parentHash,
     authorNameRealm = snapshot.displayName, authorMemberKey = snapshot.memberKey,
     authorSnapshot = copy(snapshot), timestamp = Dibs.GetTimestamp and Dibs.GetTimestamp() or time(),
-    audit = { action = action, reason = reason }, values = allowed,
+    audit = { action = action, reason = reason, governanceRevision = currentGovernance() and currentGovernance().governanceRevision or nil }, values = allowed,
   }
   record.contentHash = canonicalHash(record)
   if not record.contentHash then return nil, "CANONICAL_HASH_UNAVAILABLE" end
@@ -175,6 +211,134 @@ end
 function Policy.GetPublicPreDibsEnabled()
   local values = Policy.GetValues(); return values and values.allowPublicPreDibs
 end
+function Policy.GetModuleDefinitions() return copy(MODULE_DEFINITIONS) end
+function Policy.GetCoreModuleDefinitions() return copy(CORE_MODULE_DEFINITIONS) end
+function Policy.GetModuleDefinition(moduleKey)
+  for _, definition in ipairs(MODULE_DEFINITIONS) do
+    if definition.key == moduleKey then return copy(definition) end
+  end
+  return nil
+end
+function Policy.GetModuleValues()
+  local values = Policy.GetValues() or {}
+  local modules = values.modules or defaultModules()
+  return copy(modules)
+end
+function Policy.IsModuleEnabled(moduleKey)
+  if not MODULE_KEYS[moduleKey] then return false, "UNKNOWN_MODULE" end
+  return Policy.GetModuleValues()[moduleKey] == true
+end
+function Policy.GetModuleStatus(moduleKey)
+  local definition = Policy.GetModuleDefinition(moduleKey)
+  if not definition then return { key = moduleKey, enabled = false, reasonCode = "UNKNOWN_MODULE" } end
+  local enabled = Policy.IsModuleEnabled(moduleKey) == true
+  if enabled and definition.requires and Policy.IsModuleEnabled(definition.requires) ~= true then enabled = false end
+  local reasonCodes = { preDibs = "MODULE_DISABLED_PRE_DIBS" }
+  return {
+    key = definition.key, label = definition.label, enabled = enabled,
+    reasonCode = enabled and nil or (reasonCodes[definition.key] or ("MODULE_DISABLED_" .. string.upper(definition.key))),
+    requires = definition.requires,
+  }
+end
+function Policy.RequireModuleEnabled(moduleKey)
+  local status = Policy.GetModuleStatus(moduleKey)
+  if status.enabled then return true end
+  return false, status.reasonCode, (status.label or tostring(moduleKey)) .. " is disabled by the Guild Master."
+end
+function Policy.SetModuleEnabled(moduleKey, enabled, actor)
+  if not MODULE_KEYS[moduleKey] then return nil, "UNKNOWN_MODULE" end
+  if type(enabled) ~= "boolean" then return nil, "INVALID_MODULE_POLICY" end
+  return Policy.ChangeModules({ [moduleKey] = enabled }, actor, "MODULE_ENABLEMENT")
+end
+local MODULE_MANAGEMENT_MESSAGES = {
+  GOVERNANCE_UNAVAILABLE = "Canonical governance revision is unavailable.",
+  POLICY_UNINITIALIZED = "Canonical governance revision is unavailable.",
+  IDENTITY_UNAVAILABLE = "Guild Master authority could not be verified.",
+  ROSTER_UNAVAILABLE = "Guild Master authority could not be verified.",
+  UNKNOWN_ROSTER_MEMBER = "Guild Master authority could not be verified.",
+  AMBIGUOUS_IDENTITY = "Guild Master authority could not be verified.",
+  CURRENT_GUILD_MASTER_REQUIRED = "Only the Guild Master can change guild modules.",
+  POLICY_WRITER_REQUIRED = "Only the Guild Master or an explicitly authorized policy writer may change modules.",
+  LOCAL_ACTOR_REQUIRED = "The verified authority must be the current local player.",
+  MIXED_PROVIDER_REJECTED = "Module management is unavailable while the developer sandbox is active.",
+}
+
+local function moduleManagementStatus(actor)
+  local result = {
+    governanceInitialized = false,
+    governanceActive = false,
+    governanceRevision = 0,
+    canonicalPlayer = nil,
+    governanceGM = nil,
+    gmIdentityMatch = false,
+    operationalPolicyReady = ensureState().status == "POLICY_ADOPTED",
+    production = not (Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive()),
+    canManageModules = false,
+    blockingReason = nil,
+  }
+  local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+  local governanceRecord = Dibs.Governance and Dibs.Governance.GetCurrentRecord and Dibs.Governance.GetCurrentRecord() or nil
+  result.governanceInitialized = governanceState.status == "GOVERNANCE_ADOPTED"
+  result.governanceRevision = tonumber(governanceState.revision) or 0
+  result.governanceGM = governanceRecord and (governanceRecord.authorNameRealm or governanceRecord.authorSnapshot and governanceRecord.authorSnapshot.displayName) or nil
+  result.governanceActive = result.governanceInitialized and governanceRecord ~= nil
+    and governanceRecord.contentHash == governanceState.hash
+  if not result.production then result.blockingReason = "MIXED_PROVIDER_REJECTED"; return result end
+  if not result.governanceActive then result.blockingReason = result.governanceInitialized and "POLICY_UNINITIALIZED" or "POLICY_UNINITIALIZED"; return result end
+
+  local snapshot, identityReason = currentMember(actor)
+  if snapshot then result.canonicalPlayer = snapshot.displayName end
+  if not snapshot then result.blockingReason = identityReason or "IDENTITY_UNAVAILABLE"; return result end
+  result.gmIdentityMatch = governanceRecord.authorMemberKey == snapshot.memberKey
+  local gm, gmReason = isCurrentGM(snapshot)
+  if not gm then result.blockingReason = gmReason or "CURRENT_GUILD_MASTER_REQUIRED"; return result end
+  local localSnapshot, localReason = requireLocalActor(snapshot)
+  if not localSnapshot then result.blockingReason = localReason; return result end
+  if result.operationalPolicyReady then
+    local authorized, authorizationReason = writerAuthorized(actor)
+    if not authorized then result.blockingReason = authorizationReason or "POLICY_WRITER_REQUIRED"; return result end
+  end
+  result.canManageModules = true
+  return result
+end
+
+function Policy.GetModuleManagementDiagnostics(actor)
+  local result = moduleManagementStatus(actor)
+  result.blockingMessage = result.blockingReason and MODULE_MANAGEMENT_MESSAGES[result.blockingReason] or nil
+  return result
+end
+
+function Policy.CanChangeModules(actor)
+  local result = moduleManagementStatus(actor)
+  return result.canManageModules, result.blockingReason
+end
+function Policy.ChangeModules(patch, actor, reason)
+  if type(patch) ~= "table" then return false, "INVALID_MODULE_POLICY" end
+  local modules = Policy.GetModuleValues()
+  for moduleKey, enabled in pairs(patch) do
+    if not MODULE_KEYS[moduleKey] or type(enabled) ~= "boolean" then return false, "INVALID_MODULE_POLICY" end
+    modules[moduleKey] = enabled
+  end
+  local values, valuesReason = normalizedValues({ modules = modules })
+  if not values then return false, valuesReason end
+  local state = ensureState()
+  if state.status == "POLICY_UNINITIALIZED" then
+    local record, recordReason = createRecord(actor, { modules = modules }, 1, 0, GENESIS_HASH, "MODULE_ENABLEMENT", reason, false)
+    if not record then return false, recordReason end
+    local oldModules, changes = defaultModules(), {}
+    for _, definition in ipairs(MODULE_DEFINITIONS) do
+      if oldModules[definition.key] ~= modules[definition.key] then
+        table.insert(changes, { moduleId = definition.key, oldState = oldModules[definition.key] == true, newState = modules[definition.key] == true })
+      end
+    end
+    record.audit.moduleChanges = { old = oldModules, new = copy(modules), changes = changes }
+    record.contentHash = canonicalHash(record)
+    local applied, applyReason = Policy.ApplyRecord(record, actor)
+    if applied and Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then Dibs.Sync.AnnounceOperationalPolicy() end
+    return applied, applyReason, applied and record or nil
+  end
+  return Policy.Change(actor, { modules = modules }, reason or "MODULE_ENABLEMENT")
+end
 function Policy.CanWrite(actor)
   local snapshot, reason = writerAuthorized(actor); return snapshot ~= nil, reason
 end
@@ -190,7 +354,20 @@ function Policy.CreateChangeRecord(actor, patch, reason)
   local current = state.records[tostring(state.policyRevision)]
   local values, mergeReason = mergeValues(current and current.values, patch)
   if not values then return nil, mergeReason end
-  return createRecord(actor, values, state.policyRevision + 1, state.policyRevision, state.hash, "POLICY_CHANGE", reason, false)
+  local record, recordReason = createRecord(actor, values, state.policyRevision + 1, state.policyRevision, state.hash, "POLICY_CHANGE", reason, false)
+  if record and type(patch) == "table" and patch.modules then
+    local oldModules = copy(current and current.values and current.values.modules or defaultModules())
+    local newModules = copy(values.modules or defaultModules())
+    local changes = {}
+    for _, definition in ipairs(MODULE_DEFINITIONS) do
+      if oldModules[definition.key] ~= newModules[definition.key] then
+        table.insert(changes, { moduleId = definition.key, oldState = oldModules[definition.key] == true, newState = newModules[definition.key] == true })
+      end
+    end
+    record.audit.moduleChanges = { old = oldModules, new = newModules, changes = changes }
+    record.contentHash = canonicalHash(record)
+  end
+  return record, recordReason
 end
 
 function Policy.ApplyRecord(record, sender)
@@ -198,7 +375,7 @@ function Policy.ApplyRecord(record, sender)
   if not valid then return false, validationReason end
   local state = ensureState()
   local snapshot, authorityReason
-  if state.status == "POLICY_UNINITIALIZED" and record.policyRevision == 1 then
+  if state.status == "POLICY_UNINITIALIZED" and record.policyRevision == 1 and record.audit.action ~= "MODULE_ENABLEMENT" then
     local governance, governanceReason = currentGovernance()
     if not governance then return false, governanceReason end
     snapshot, authorityReason = currentMember(sender)

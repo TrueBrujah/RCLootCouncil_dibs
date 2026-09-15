@@ -66,6 +66,18 @@ local function showStatus(gui, shell, parent)
   if state.status ~= "" then gui.AddLabel(shell, parent, state.status, true) end
 end
 
+local function addDatabaseSummary(gui, shell, parent)
+  local diagnostics = Dibs.ImportExport and Dibs.ImportExport.GetSizeDiagnostics and Dibs.ImportExport.GetSizeDiagnostics()
+  if not diagnostics then return end
+  local formatSize = Dibs.ImportExport.FormatSize or tostring
+  gui.AddHeading(shell, parent, "Database size", "Serialized Dibs data and the full recovery package size. Backups and restore workflow state are excluded from the full payload.")
+  gui.AddLabel(shell, parent,
+    "Serialized DB: " .. formatSize(diagnostics.databaseBytes) ..
+    " | Full payload: " .. formatSize(diagnostics.fullPayloadBytes) ..
+    " | Full backup package: " .. formatSize(diagnostics.fullPackageBytes) .. " / " .. formatSize(diagnostics.backupLimitBytes) ..
+    "\nPortable export limit: " .. formatSize(diagnostics.portableLimitBytes), true)
+end
+
 local function addChoice(gui, shell, parent, label, values, callback, width, value)
   local control
   if gui.AddMSADropdown then control = gui.AddMSADropdown(shell, parent, label, values, callback, width) end
@@ -153,6 +165,7 @@ end
 local function addBackups(shell, parent)
   local gui = Dibs.AceGUI
   gui.AddHeading(shell, parent, "Safety backups", "Create a dated recovery point before restoring or importing data.")
+  addDatabaseSummary(gui, shell, parent)
   showStatus(gui, shell, parent)
   local controls = addStack(gui, shell, parent, "Create a backup", "Choose which Dibs data should be captured before a restore or import.")
   addChoice(gui, shell, controls, "Backup scope", {
@@ -314,6 +327,7 @@ end
 local function addTransfer(shell, parent)
   local gui = Dibs.AceGUI
   gui.AddHeading(shell, parent, "Import / export", "Copy a package, paste it on another character, validate the preview, then confirm explicitly.")
+  addDatabaseSummary(gui, shell, parent)
   showStatus(gui, shell, parent)
   local exportPanel = addStack(gui, shell, parent, "Export package", "Choose what to copy out of this character or guild.")
   addChoice(gui, shell, exportPanel, "Export scope", {

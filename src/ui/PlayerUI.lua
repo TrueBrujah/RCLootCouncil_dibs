@@ -87,14 +87,21 @@ end
 
 local PLAYER_NAV_TREE = {
   { text = "My Dibs", value = "my-dibs" },
-  { text = "Requests", value = "requests" },
+  { text = "Requests", value = "requests", module = "requests" },
   { text = "History", value = "history" },
 }
 
+local function moduleEnabled(moduleKey)
+  return not moduleKey or not Dibs.OperationalPolicy or not Dibs.OperationalPolicy.GetModuleStatus
+    or Dibs.OperationalPolicy.GetModuleStatus(moduleKey).enabled == true
+end
+
 function Dibs.PlayerUI.GetNavigation()
   local navigation = {}
-  for index, entry in ipairs(PLAYER_NAV_TREE) do
-    navigation[index] = { text = entry.text, value = entry.value }
+  for _, entry in ipairs(PLAYER_NAV_TREE) do
+    if moduleEnabled(entry.module) then
+      navigation[#navigation + 1] = { text = entry.text, value = entry.value }
+    end
   end
   return navigation
 end

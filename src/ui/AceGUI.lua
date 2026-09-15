@@ -597,6 +597,35 @@ function Adapter.AddLabel(shell, parent, text, fullWidth)
   return label
 end
 
+-- Form rows deliberately own their vertical budget. AceGUI controls can
+-- report their final height after they are attached, so the parent must not
+-- infer the next row position from an unmeasured child.
+function Adapter.AddFormRow(shell, parent, label, createControl, height)
+  local row = Adapter.Create(shell, "SimpleGroup", parent)
+  if not row then return nil, nil end
+  call(row, "SetFullWidth", true)
+  call(row, "SetLayout", "List")
+  call(row, "SetHeight", tonumber(height) or 52)
+  if label and label ~= "" then Adapter.AddLabel(shell, row, label, true) end
+  local control
+  if type(createControl) == "function" then control = createControl(row) end
+  return control, row
+end
+
+function Adapter.AddSummaryRow(shell, parent, label, value, height)
+  local row = Adapter.Create(shell, "SimpleGroup", parent)
+  if not row then return nil end
+  call(row, "SetFullWidth", true)
+  call(row, "SetLayout", "Flow")
+  call(row, "SetHeight", tonumber(height) or 28)
+  local labelWidget = Adapter.AddLabel(shell, row, tostring(label or ""), false)
+  local valueWidget = Adapter.AddLabel(shell, row, tostring(value or "Unavailable"), false)
+  call(labelWidget, "SetWidth", 150)
+  call(valueWidget, "SetWidth", 300)
+  row._dibsValueWidget = valueWidget
+  return valueWidget, row
+end
+
 function Adapter.AddTruncatedLabel(shell, parent, value, maximum, description)
   local full = tostring(value or "")
   local visible, truncated = full, false
@@ -1059,6 +1088,22 @@ function Adapter.AddEditBox(shell, parent, label, callback, width)
   return edit
 end
 
+-- MultiLineEditBox ships with AceGUI's generic Accept label/button contract.
+-- Request workflows own confirmation and must use only the editor surface.
+function Adapter.AddMultilineEditBox(shell, parent, label, callback, width, height)
+  local edit = Adapter.Create(shell, "MultiLineEditBox", parent)
+  if not edit then edit = Adapter.Create(shell, "EditBox", parent) end
+  if not edit then return nil end
+  call(edit, "SetLabel", label or "")
+  call(edit, "SetWidth", width or 420)
+  call(edit, "SetHeight", height or 76)
+  if edit.DisableButton then edit:DisableButton(true) end
+  call(edit, "SetCallback", "OnTextChanged", function(_, _, value)
+    if callback then callback(value or "") end
+  end)
+  return edit
+end
+
 -- Add a read-only report surface that remains selectable in the live client.
 -- MultiLineEditBox is provided by AceGUI on Retail; the EditBox fallback keeps
 -- the report available with older or reduced AceGUI installations.
@@ -1135,6 +1180,7 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
   end
 
   local wrapper = { frame = control, host = host, values = values or {}, value = nil }
+  local keys = {}
   host._dibsMSALabel = labelText
   host._dibsMSAControl = control
   host._dibsMSAWrapper = wrapper
@@ -1146,8 +1192,8 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
   end
 
   local function canonicalValue(value)
-    if values and values[value] ~= nil then return value end
-    for key, text in pairs(values or {}) do
+    if wrapper.values and wrapper.values[value] ~= nil then return value end
+    for key, text in pairs(wrapper.values or {}) do
       if tostring(key) == tostring(value) or tostring(text) == tostring(value) then return key end
     end
     return nil
@@ -1180,7 +1226,16 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
 
   function wrapper:SetList(nextValues)
     self.values = nextValues or {}
-    if self.value ~= nil then self:SetValue(self.value) end
+    for index = #keys, 1, -1 do keys[index] = nil end
+    for key in pairs(self.values) do keys[#keys + 1] = key end
+    table.sort(keys, function(a, b)
+      return tostring(valueLabel(a)):lower() < tostring(valueLabel(b)):lower()
+    end)
+    if self.value ~= nil and self.values[self.value] ~= nil then
+      self:SetValue(self.value)
+    else
+      self.value = nil
+    end
   end
 
   function wrapper:SetDisabled(disabled)
@@ -1196,7 +1251,6 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
     end
   end
 
-  local keys = {}
   for key in pairs(wrapper.values) do keys[#keys + 1] = key end
   table.sort(keys, function(a, b)
     return tostring(valueLabel(a)):lower() < tostring(valueLabel(b)):lower()
@@ -1238,7 +1292,10 @@ function Adapter.AddDropdown(shell, parent, label, values, callback, width, useM
         if tostring(key) == tostring(value) or tostring(text) == tostring(value) then canonical = key break end
       end
     end
-    if callback then callback(canonical or value) end
+    local selected = canonical or value
+    call(dropdown, "SetValue", selected)
+    call(dropdown, "SetText", values and values[selected] or selected)
+    if callback then callback(selected) end
   end)
   return dropdown
 end
@@ -1246,6 +1303,7 @@ end
 function Adapter.AddCheckBox(shell, parent, label, value, callback, width)
   local checkbox = Adapter.Create(shell, "CheckBox", parent)
   if not checkbox then return nil end
+  if checkbox.frame and type(checkbox.frame.EnableMouse) == "function" then checkbox.frame:EnableMouse(true) end
   call(checkbox, "SetLabel", label or "")
   if width then call(checkbox, "SetWidth", width) else call(checkbox, "SetFullWidth", true) end
   if value ~= nil then Adapter.SetValue(checkbox, value == true) end
@@ -1316,8 +1374,9 @@ function Adapter.AddTree(shell, tree, onSelect, treeWidth)
 end
 
 function Adapter.SelectTree(tree, value)
-  if tree and type(tree.Select) == "function" then
-    local ok, reason = pcall(tree.Select, tree, value)
+  local selector = tree and (type(tree.SelectByValue) == "function" and tree.SelectByValue or tree.Select)
+  if selector then
+    local ok, reason = pcall(selector, tree, value)
     if not ok and Dibs.Message then
       Dibs.Message("[ui debug] Tree selection failed: " .. tostring(reason))
     end

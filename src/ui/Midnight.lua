@@ -189,6 +189,46 @@ function Midnight.ApplyToFrame(frame, tokens)
   return true
 end
 
+function Midnight.ApplyToWidget(widget, tokens)
+  tokens = tokens or Midnight.GetTokens()
+  if type(widget) ~= "table" or not widget.frame then return false end
+  local colors = tokens.colors or {}
+  local normal = colors.TEXT or { 0.94, 0.96, 0.98, 1 }
+  local muted = colors.TEXT_MUTED or { 0.64, 0.70, 0.76, 1 }
+  local accent = colors.WARNING or { 0.95, 0.67, 0.20, 1 }
+  local surface = colors.SURFACE or { 0.035, 0.055, 0.075, 0.97 }
+  local raised = colors.SURFACE_RAISED or { 0.075, 0.10, 0.13, 0.98 }
+  local border = colors.BORDER or { 0.22, 0.30, 0.38, 1 }
+
+  local function styleBackdrop(frame, color)
+    if type(frame.SetBackdropColor) == "function" then frame:SetBackdropColor(unpack(color)) end
+    if type(frame.SetBackdropBorderColor) == "function" then frame:SetBackdropBorderColor(unpack(border)) end
+  end
+
+  styleBackdrop(widget.frame, surface)
+  if widget.label and type(widget.label.SetTextColor) == "function" then widget.label:SetTextColor(unpack(normal)) end
+  if widget.text and type(widget.text.SetTextColor) == "function" then widget.text:SetTextColor(unpack(normal)) end
+  if widget.titletext and type(widget.titletext.SetTextColor) == "function" then widget.titletext:SetTextColor(unpack(accent)) end
+  if widget.editbox and type(widget.editbox.SetTextColor) == "function" then widget.editbox:SetTextColor(unpack(normal)) end
+
+  if type(widget.frame.GetChildren) == "function" then
+    local children = { widget.frame:GetChildren() }
+    for _, child in ipairs(children) do
+      styleBackdrop(child, raised)
+      if child.GetFontString and child:GetFontString() and child:GetFontString().SetTextColor then
+        child:GetFontString():SetTextColor(unpack(normal))
+      end
+    end
+  end
+  if widget.type == "Heading" and widget.label and type(widget.label.SetTextColor) == "function" then
+    widget.label:SetTextColor(unpack(accent))
+  end
+  if widget.type == "Label" and widget.label and type(widget.label.SetTextColor) == "function" then
+    widget.label:SetTextColor(unpack(muted))
+  end
+  return true
+end
+
 function Midnight.CreatePanel(shell, parent, title)
   local gui = Dibs.AceGUI
   if not gui or type(gui.Create) ~= "function" then return nil end
