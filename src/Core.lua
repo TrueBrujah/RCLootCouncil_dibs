@@ -1005,7 +1005,17 @@ end
 
 ---@return string|nil playerName Canonical local player name/GUID representation.
 function Dibs.GetPlayerName()
-  return UnitName("player") or "UnknownPlayer"
+  local name, realm
+  if type(UnitFullName) == "function" then
+    name, realm = UnitFullName("player")
+  end
+  name = name or (type(UnitName) == "function" and UnitName("player"))
+  if not name then return "UnknownPlayer" end
+  realm = realm or (type(GetRealmName) == "function" and GetRealmName())
+  if realm and realm ~= "" and not tostring(name):find("-", 1, true) then
+    return tostring(name) .. "-" .. tostring(realm)
+  end
+  return tostring(name)
 end
 
 ---@return integer timestamp Current Unix timestamp.
@@ -1061,6 +1071,13 @@ end
 
 function Dibs.BuildDebugReport()
   local levels = Dibs.GetDebugLevels()
+  local size = Dibs.ImportExport and Dibs.ImportExport.GetSizeDiagnostics and Dibs.ImportExport.GetSizeDiagnostics() or {}
+  local formatSize = Dibs.ImportExport and Dibs.ImportExport.FormatSize or tostring
+  local largestSections = {}
+  for index = 1, math.min(5, #(size.largestSections or {})) do
+    local section = size.largestSections[index]
+    largestSections[#largestSections + 1] = tostring(section.name) .. "=" .. formatSize(section.bytes)
+  end
   local clubId, streamId = nil, nil
   if Dibs.PreDibs and Dibs.PreDibs.GetRaidDibsChannel then
     clubId, streamId = Dibs.PreDibs.GetRaidDibsChannel()
@@ -1074,6 +1091,8 @@ function Dibs.BuildDebugReport()
   local lines = {
     "Dibs debug report",
     "Version: " .. tostring(Dibs.VERSION),
+    "Database size: serializedDB=" .. formatSize(size.databaseBytes) .. " fullPayload=" .. formatSize(size.fullPayloadBytes) .. " fullPackage=" .. formatSize(size.fullPackageBytes) .. " backupLimit=" .. formatSize(size.backupLimitBytes) .. " portableLimit=" .. formatSize(size.portableLimitBytes),
+    "Largest full sections: " .. (#largestSections > 0 and table.concat(largestSections, ", ") or "unavailable"),
     "Framework: " .. Dibs.GetFrameworkStatus(),
     "RCLootCouncil: " .. tostring(rc and (rc.diagnostic or rc.status or "available") or "absent") .. " reason=" .. tostring(rc and rc.reasonCode or "RC_ABSENT"),
     "Capabilities: " .. tostring(Dibs.Capabilities and Dibs.Capabilities.FormatDiagnostics and Dibs.Capabilities.FormatDiagnostics() or "unavailable"),
@@ -1162,6 +1181,11 @@ function Dibs.HandleSlashCommand(msg)
     else
       Dibs.Message("Debug level " .. module .. " = " .. tostring(applied))
     end
+    return
+  end
+
+  if action == "overview" then
+    Dibs.Message(Dibs.OfficerUI and Dibs.OfficerUI.BuildStatusText and Dibs.OfficerUI.BuildStatusText() or "Dibs overview unavailable.")
     return
   end
 
@@ -1672,6 +1696,7 @@ local eventFrame = CreateFrame("Frame")
 local function onRuntimeEvent(event, ...)
   if event == "PLAYER_LOGIN" then
     Dibs.Initialize()
+    if Dibs.RCLootCouncil and Dibs.RCLootCouncil.Initialize then Dibs.RCLootCouncil.Initialize() end
     -- Core initialization must never depend on the optional adapter.  A late
     -- RCLootCouncil load is rechecked after Dibs is ready, while Standalone
     -- mode still receives the normal database, UI, and slash-command setup.
@@ -1685,6 +1710,7 @@ local function onRuntimeEvent(event, ...)
     -- optional adapter when its addon becomes available; Standalone mode is
     -- unaffected.
     if loadedAddon == "RCLootCouncil" then
+      if Dibs.RCLootCouncil and Dibs.RCLootCouncil.Initialize then Dibs.RCLootCouncil.Initialize() end
       if Dibs.Capabilities and Dibs.Capabilities.Retry then
         Dibs.Capabilities.Retry("rclootcouncil", "RCLootCouncil_LOADED")
         Dibs.Capabilities.Retry("rclootcouncil_options", "RCLootCouncil_LOADED")
@@ -1700,6 +1726,7 @@ local function onRuntimeEvent(event, ...)
     and Dibs.Capabilities
     and Dibs.Capabilities.Retry
   then
+    if Dibs.RCLootCouncil and Dibs.RCLootCouncil.Initialize then Dibs.RCLootCouncil.Initialize() end
     -- A reload can restore RCLootCouncil's AceDB after ADDON_LOADED. Retry at
     -- the first world entry so its profile and ML module are ready before the
     -- Master Looter options are opened.

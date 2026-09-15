@@ -577,6 +577,41 @@ function Ledger.GetPlayerSeasonState(seasonId, playerGuidOrName)
   local state = Ledger.GetPlayerState(playerName, targetSeason)
   return { seasonId = targetSeason, playerGuid = tostring(playerGuidOrName or state.playerId or playerName), playerName = playerName, currentRankIndex = 0, baseAllocation = tonumber(state.allocation) or 0, transactionDelta = delta, remainingBalance = Ledger.GetBalance(playerName, targetSeason), historySummary = { count = #transactions }, lastComputedAt = time() }
 end
+function Ledger.GetCanonicalPlayerDibsState(seasonId, playerIdentity)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local input = playerIdentity or (Dibs.GetPlayerName and Dibs.GetPlayerName())
+  local canonicalName
+  if Dibs.Identity and type(Dibs.Identity.CanonicalMemberKey) == "function" then
+    canonicalName = Dibs.Identity.CanonicalMemberKey(input)
+    if canonicalName then
+      local resolved = Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember(input)
+      if not resolved or resolved.status ~= "RESOLVED" then
+        return { available = false, balance = nil, canonicalName = nil, reason = resolved and resolved.status or "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
+      end
+      canonicalName = resolved.displayName
+    elseif Dibs.Identity.ResolveRosterMember then
+      local resolved = Dibs.Identity.ResolveRosterMember(input)
+      if not resolved or resolved.status ~= "RESOLVED" then
+        return { available = false, balance = nil, canonicalName = nil, reason = resolved and resolved.status or "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
+      end
+      canonicalName = resolved.displayName
+    end
+  end
+  if not canonicalName or tostring(canonicalName) == "" then
+    return { available = false, balance = nil, canonicalName = nil, reason = "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
+  end
+  local rankMaximum
+  if Dibs.RankRules and type(Dibs.RankRules.GetAllocationForPlayer) == "function" then
+    local rankOk, allocation = pcall(Dibs.RankRules.GetAllocationForPlayer, canonicalName, targetSeason)
+    if rankOk then rankMaximum = tonumber(allocation) end
+  end
+  local ok, state = pcall(Ledger.GetPlayerSeasonState, targetSeason, canonicalName)
+  local balance = ok and type(state) == "table" and tonumber(state.remainingBalance) or nil
+  if balance == nil then
+    return { available = false, balance = nil, rankMaximum = rankMaximum, canonicalName = canonicalName, reason = "BALANCE_UNAVAILABLE", seasonId = targetSeason }
+  end
+  return { available = true, balance = balance, rankMaximum = rankMaximum, canonicalName = canonicalName, seasonId = targetSeason }
+end
 function Ledger.CalculateCanonicalContentHash(record) return transactionCanonicalHash(record or {}) end
 function Ledger.CalculateCanonicalCommitHash(record) return canonicalCommitHash(record or {}) end
 

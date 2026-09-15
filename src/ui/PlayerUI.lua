@@ -317,7 +317,8 @@ end
 ---@return table summary Player-scoped balance and request summary.
 function Dibs.PlayerUI.GetSummary(playerName)
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
-  local balance = Dibs.Ledger and Dibs.Ledger.GetBalance(playerName or Dibs.GetPlayerName(), season and season.id) or 0
+  local canonical = Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
+    and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, playerName or Dibs.GetPlayerName()) or nil
   local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(playerName or Dibs.GetPlayerName()) or {}
   local acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsForPlayer and Dibs.PreDibs.GetAcquisitionsForPlayer(playerName or Dibs.GetPlayerName()) or {}
   local eligibility = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
@@ -326,7 +327,8 @@ function Dibs.PlayerUI.GetSummary(playerName)
   return {
     season = season,
     player = playerName or Dibs.GetPlayerName(),
-    balance = balance,
+    balance = canonical and canonical.balance or 0,
+    balanceState = canonical,
     activePreDibs = requests,
     acquisitions = acquisitions,
     eligibility = eligibility,
@@ -745,12 +747,13 @@ local function createLegacyAceWindow()
           end,
         }
       end)
-      local previous = Dibs.AceGUI.AddButton(shell, tabs, "Previous", function()
+      local pageControls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+      local previous = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function()
         self.historyPage = math.max(1, self.historyPage - 1)
         self:Refresh()
       end, 90)
-      local pageLabel = Dibs.AceGUI.AddLabel(shell, tabs, "Page " .. tostring(self.historyPage) .. "/" .. tostring(totalPages))
-      local nextButton = Dibs.AceGUI.AddButton(shell, tabs, "Next", function()
+      local pageLabel = Dibs.AceGUI.AddLabel(shell, pageControls, "Page " .. tostring(self.historyPage) .. "/" .. tostring(totalPages))
+      local nextButton = Dibs.AceGUI.AddButton(shell, pageControls, "Next", function()
         self.historyPage = math.min(totalPages, self.historyPage + 1)
         self:Refresh()
       end, 70)

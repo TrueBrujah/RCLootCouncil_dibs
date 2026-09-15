@@ -1638,23 +1638,29 @@ end
 
 local function getVotingFrameModule(rc)
   if type(rc) ~= "table" then return nil end
+  local function isVotingFrameModule(module)
+    return type(module) == "table"
+      and (type(module.scrollCols) == "table"
+        or type(module.AddColumn) == "function"
+        or type(module.GetFrame) == "function")
+  end
   if type(rc.GetActiveModule) == "function" then
     local ok, module = pcall(rc.GetActiveModule, rc, "votingframe")
-    if ok and type(module) == "table" then return module end
+    if ok and isVotingFrameModule(module) then return module end
   end
   if type(rc.GetModule) == "function" then
     local ok, module = pcall(rc.GetModule, rc, "RCVotingFrame", true)
-    if ok and type(module) == "table" then return module end
+    if ok and isVotingFrameModule(module) then return module end
   end
   if type(rc.modules) == "table" and type(rc.modules.RCVotingFrame) == "table" then
-    return rc.modules.RCVotingFrame
+    if isVotingFrameModule(rc.modules.RCVotingFrame) then return rc.modules.RCVotingFrame end
   end
   if type(rc.modules) == "table" then
     for _, key in ipairs({ "RCLootCouncilVotingFrame", "VotingFrame", "votingframe" }) do
-      if type(rc.modules[key]) == "table" then return rc.modules[key] end
+      if isVotingFrameModule(rc.modules[key]) then return rc.modules[key] end
     end
   end
-  if type(rc.votingFrame) == "table" then return rc.votingFrame end
+  if isVotingFrameModule(rc.votingFrame) then return rc.votingFrame end
   return nil
 end
 
@@ -1782,37 +1788,18 @@ local function getCandidateIdentity(rowData)
 end
 
 local function getRemainingDibsText(playerName)
-  if not playerName or not Dibs.Ledger then
-    return "0/0", 0
+  if not playerName or not Dibs.Ledger or type(Dibs.Ledger.GetCanonicalPlayerDibsState) ~= "function" then
+    return "-", 0, nil, nil
   end
   local seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
-  local state
-  if type(Dibs.Ledger.GetPlayerSeasonState) == "function" then
-    local ok, value = pcall(Dibs.Ledger.GetPlayerSeasonState, seasonId, playerName)
-    if ok and type(value) == "table" then state = value end
+  local ok, state = pcall(Dibs.Ledger.GetCanonicalPlayerDibsState, seasonId, playerName)
+  if not ok or type(state) ~= "table" then
+    return "-", 0, nil, nil
   end
-  local remaining = tonumber(state and state.remainingBalance)
-  local maximum = tonumber(state and state.baseAllocation)
-  local historyCount = tonumber(state and state.historySummary and state.historySummary.count) or 0
-  -- A guild member can appear in the RCLootCouncil voting table before the
-  -- Dibs ledger has created a per-player state.  In that case the rank rule is
-  -- the authoritative initial allocation and should be visible immediately.
-  if maximum == 0 and historyCount == 0
-    and Dibs.RankRules and type(Dibs.RankRules.GetAllocationForPlayer) == "function"
-  then
-    local ok, rankAllocation = pcall(Dibs.RankRules.GetAllocationForPlayer, playerName, seasonId)
-    if ok and tonumber(rankAllocation) then
-      maximum = tonumber(rankAllocation)
-      remaining = maximum
-    end
-  end
-  if remaining == nil and type(Dibs.Ledger.GetBalance) == "function" then
-    local ok, value = pcall(Dibs.Ledger.GetBalance, playerName, seasonId)
-    if ok then remaining = tonumber(value) end
-  end
-  remaining = remaining or 0
-  maximum = maximum or 0
-  return formatCount(remaining) .. "/" .. formatCount(maximum), remaining
+  local left = state.available == true and tonumber(state.balance) and formatCount(state.balance) or "-"
+  local right = tonumber(state.rankMaximum) and formatCount(state.rankMaximum) or "-"
+  local text = left == "-" and right == "-" and "-" or left .. "/" .. right
+  return text, tonumber(state.balance) or 0, state.canonicalName, state
 end
 
 local function setDibsColumnCell(rowFrame, cellFrame, data, cols, row, realrow, column, fShow, tableArg)
@@ -1820,6 +1807,17 @@ local function setDibsColumnCell(rowFrame, cellFrame, data, cols, row, realrow, 
   local textValue, sortValue = Dibs.RCLootCouncil.GetDibsColumnValue(data[realrow])
   cellFrame.text:SetText(textValue)
   cellFrame.text:SetTextColor(1, 1, 1, 1)
+  if type(cellFrame.SetScript) == "function" and GameTooltip
+    and type(GameTooltip.SetOwner) == "function" and type(GameTooltip.SetText) == "function" then
+    cellFrame:SetScript("OnEnter", function(self)
+      local rowData = data and data[realrow]
+      if not rowData then return end
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:SetText(Dibs.RCLootCouncil.GetDibsColumnTooltip(rowData))
+      GameTooltip:Show()
+    end)
+    cellFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  end
   if data[realrow].cols and data[realrow].cols[column] then
     data[realrow].cols[column].value = sortValue
   end
@@ -1830,8 +1828,20 @@ end
 -- RCLootCouncil fork adds a GUID or hyperlink beside the official `name` key.
 function Dibs.RCLootCouncil.GetDibsColumnValue(rowData)
   local candidateName = getCandidateIdentity(rowData)
-  local textValue, sortValue = getRemainingDibsText(candidateName)
-  return textValue, sortValue, candidateName
+  local textValue, sortValue, canonicalName = getRemainingDibsText(candidateName)
+  return textValue, sortValue, canonicalName or candidateName
+end
+
+function Dibs.RCLootCouncil.GetDibsColumnTooltip(rowData)
+  local candidateName = getCandidateIdentity(rowData)
+  local _, _, canonicalName, state = getRemainingDibsText(candidateName)
+  if type(state) ~= "table" then return "Dibs\nUnavailable" end
+  local season = Dibs.Seasons and Dibs.Seasons.GetById and Dibs.Seasons.GetById(state.seasonId)
+  local balance = tonumber(state.balance) and formatCount(state.balance) or "-"
+  local maximum = tonumber(state.rankMaximum) and formatCount(state.rankMaximum) or "-"
+  return "Dibs\nCurrent balance: " .. balance .. "\nRank maximum: " .. maximum
+    .. "\nSeason: " .. tostring(season and season.name or state.seasonId or "Unavailable")
+    .. "\nPlayer: " .. tostring(canonicalName or "Unavailable")
 end
 
 local function getVotingSessionInfo(votingFrame)
@@ -2014,7 +2024,15 @@ local function installVotingFrameColumn()
   }
 
   local added = false
-  if type(votingFrame.scrollCols) == "table" then
+  if type(votingFrame.AddColumn) == "function" and type(votingFrame.scrollCols) == "table" then
+    local ok = pcall(votingFrame.AddColumn, votingFrame, spec, "response", "after")
+    if ok then
+      for _, column in ipairs(votingFrame.scrollCols) do
+        if type(column) == "table" and column.colName == spec.colName then added = true break end
+      end
+    end
+  end
+  if not added and type(votingFrame.scrollCols) == "table" then
     local insertAt = #votingFrame.scrollCols + 1
     for index, column in ipairs(votingFrame.scrollCols) do
       if type(column) == "table" and column.colName == "response" then
@@ -2077,7 +2095,15 @@ local function installDibConvertColumn()
   }
 
   local added = false
-  if type(votingFrame.scrollCols) == "table" then
+  if type(votingFrame.AddColumn) == "function" and type(votingFrame.scrollCols) == "table" then
+    local ok = pcall(votingFrame.AddColumn, votingFrame, spec, "dibsRemaining", "after")
+    if ok then
+      for _, column in ipairs(votingFrame.scrollCols) do
+        if type(column) == "table" and column.colName == spec.colName then added = true break end
+      end
+    end
+  end
+  if not added and type(votingFrame.scrollCols) == "table" then
     local insertAt = #votingFrame.scrollCols + 1
     for index, column in ipairs(votingFrame.scrollCols) do
       if type(column) == "table" and column.colName == "dibsRemaining" then
@@ -2115,6 +2141,58 @@ local function installVotingFrameColumns()
       end
     end)
     votingFrame.__dibsOnEnableHooked = true
+  end
+  if type(votingFrame) == "table" and type(hooksecurefunc) == "function" then
+    if not votingFrame.__dibsOnInitializeHooked and type(votingFrame.OnInitialize) == "function" then
+      hooksecurefunc(votingFrame, "OnInitialize", function()
+        if C_Timer and type(C_Timer.After) == "function" then
+          C_Timer.After(0, function()
+            installVotingFrameColumn()
+            installDibConvertColumn()
+          end)
+        else
+          installVotingFrameColumn()
+          installDibConvertColumn()
+        end
+      end)
+      votingFrame.__dibsOnInitializeHooked = true
+    end
+    if not votingFrame.__dibsOnShowHooked and type(votingFrame.Show) == "function" then
+      hooksecurefunc(votingFrame, "Show", function()
+        if C_Timer and type(C_Timer.After) == "function" then
+          C_Timer.After(0, function()
+            installVotingFrameColumn()
+            installDibConvertColumn()
+          end)
+        else
+          installVotingFrameColumn()
+          installDibConvertColumn()
+        end
+      end)
+      votingFrame.__dibsOnShowHooked = true
+    end
+    local hookFrameRefresh = function(frame)
+      if type(frame) ~= "table" or frame.__dibsUpdateStHooked or type(frame.UpdateSt) ~= "function" then return end
+      hooksecurefunc(frame, "UpdateSt", function()
+        if C_Timer and type(C_Timer.After) == "function" then
+          C_Timer.After(0, function()
+            installVotingFrameColumn()
+            installDibConvertColumn()
+          end)
+        else
+          installVotingFrameColumn()
+          installDibConvertColumn()
+        end
+      end)
+      frame.__dibsUpdateStHooked = true
+    end
+    if type(votingFrame.GetFrame) == "function" and not votingFrame.__dibsGetFrameHooked then
+      hooksecurefunc(votingFrame, "GetFrame", function(self)
+        hookFrameRefresh(self.frame)
+      end)
+      votingFrame.__dibsGetFrameHooked = true
+    end
+    hookFrameRefresh(votingFrame.frame)
   end
   if type(votingFrame) == "table" and not votingFrame.__dibsOnUpdateHooked and type(hooksecurefunc) == "function" then
     hooksecurefunc(votingFrame, "Update", function()
