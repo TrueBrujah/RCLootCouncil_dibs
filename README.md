@@ -1,4 +1,4 @@
-# RCLootCouncil_dibs
+# RCLootCouncil_dibs 0.6.0 Release Candidate
 
 RCLootCouncil_dibs is a World of Warcraft Retail addon for seasonal guild Dibs
 and Pre-Dib loot management. It can run on its own or integrate with
@@ -12,14 +12,14 @@ guild Dibs ledger, reservations, permissions, and audit history.
 - [Stable release v0.3.5](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.5)
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
-Each release includes a WoW-ready ZIP and a SHA-256 checksum. The repository is
-currently private, so GitHub download links require repository access. A public
-test mirror can be used for guild testers without exposing the source repository.
+Each release includes a WoW-ready ZIP and a SHA-256 checksum. The 0.6.0 build
+is a release candidate: automated checks are complete, but live Retail and
+two-client validation remain manual release gates.
 
-The current development tree is not a Retail production release. Standalone
-Dibs and the automated fixture contract are available, but Retail runtime,
-two-client, partition, handoff, recovery, and release-package checks remain
-pending in [the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md).
+The 0.6.0 build is not yet a Retail production release. Standalone Dibs and
+the automated fixture contract are available, but Retail runtime, two-client,
+partition, handoff, recovery, and release-package checks remain pending in
+[the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md).
 
 ## Features
 
@@ -38,14 +38,28 @@ pending in [the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
 - Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
 - Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
-- Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions (dev 0.5.10).
+- Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions.
 - SavedVariables migrations and localized English/French runtime strings.
+
+### Optional modules and corrections
+
+The Guild Master controls optional modules from **System > Modules**. Disabled
+modules keep their stored requests, Pre-Dibs, history, RCLootCouncil evidence,
+eligibility policy, announcement configuration, and reconciliation evidence.
+Their normal navigation entries disappear where appropriate, but direct routes
+and slash commands remain guarded and fail closed. Modules can be re-enabled
+later; core safety modules cannot be disabled.
+
+Administrative Dibs corrections are append-only. Existing ledger and history
+events are never silently deleted or rewritten. A correction retains audit
+evidence for the actor, target player, timestamp, reason, before/after values,
+delta, request reference, and canonical event/reference.
 
 ## How to use
 
 ### Installation
 
-1. Download the stable or development ZIP from the release links above.
+1. Download the 0.6.0 release-candidate ZIP from the release links above.
 2. Extract it into `World of Warcraft/_retail_/Interface/AddOns/`.
 3. Confirm that the extracted folder is named `RCLootCouncil_dibs` and contains
    `RCLootCouncil_dibs.toc` directly inside it.
@@ -53,7 +67,8 @@ pending in [the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md
 5. Reload the interface with `/reload` after installing or updating.
 
 Install RCLootCouncil separately when the guild wants the integrated loot
-workflow. RCLootCouncil remains optional for the Dibs core.
+workflow. RCLootCouncil remains optional for the Dibs core; the bundled addon
+includes its required libraries and declares RCLootCouncil as optional.
 
 ### First-time setup for a GM or Officer
 
@@ -73,6 +88,8 @@ workflow. RCLootCouncil remains optional for the Dibs core.
 9. Open the **Data** tab for safety backups, named local/guild profiles, and
    portable package transfer. Every restore or import shows a preview and
    requires an explicit confirmation.
+10. Open **System > Modules** to review optional features. The GM can disable
+   and later re-enable them without deleting their stored data.
 
 Only the current guild master and officers selected by the configured guild
 rank policy can change Dibs settings, seasons, rank rules, modes, or balances.

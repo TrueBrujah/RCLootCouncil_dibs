@@ -1,5 +1,8 @@
 # Player guide
 
+This guide describes the 0.6.0 release candidate. Live Retail behavior still
+requires the final validation listed in [B12 release checklist](../../B12_Release_Candidate_Checklist.md).
+
 ## What is a Dib?
 
 A Dib is one seasonal accounting unit assigned by your guild. It is not DKP and it is not a promise that you win an item. Officers configure the season and rank allocations.
@@ -23,5 +26,10 @@ Only a qualifying finalized award, or an officer-confirmed historical award with
 ## What can officers see?
 
 Officers can review requests, balances, transaction history, rank-at-transaction evidence, disputes, backups, synchronization status, and (when available) RCLootCouncil award evidence. Player views remain player-scoped.
+
+The Guild Master may disable optional features. A disabled feature can disappear
+from navigation, but its stored data is retained and direct or stale access is
+rejected. Re-enabling the feature restores access to that data. Core safety
+services remain enabled.
 
 See [FAQ](faq.md) for common errors.

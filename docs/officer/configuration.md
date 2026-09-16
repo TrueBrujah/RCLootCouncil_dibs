@@ -8,4 +8,11 @@
 6. Review loot eligibility policies for supported semantic families and difficulties.
 7. Create a backup before importing or restoring data. Imports are preview-first and require explicit application.
 
+8. Review **System > Modules** as the Guild Master. Optional modules can be
+   disabled without deleting their requests, Pre-Dibs, history, RCLootCouncil
+   evidence, eligibility policy, announcements, or reconciliation evidence.
+   Disabled features leave normal navigation and reject direct or stale access;
+   re-enable them from this page to restore access. Core safety modules cannot
+   be disabled.
+
 Use profiles for repeatable settings. Activating a profile changes configuration projection; it does not rewrite ledger history. Keep the default backup retention unless guild policy requires another bounded value.

@@ -6,7 +6,7 @@ The automated suite runs in Lua through Fengari with WoW, Ace3, and optional RCL
 npx.cmd --yes fengari tests/run.lua
 ```
 
-Use `DIBS_TEST_FILES` to run a semicolon-separated subset. Tests cover domain policies, ledger invariants, SavedVariables migration, sync validation, import/export limits, RC capability degradation, UI callback wiring, and TOC load integrity. The documentation pass was validated with 226 passing tests in 54 files.
+Use `DIBS_TEST_FILES` to run a semicolon-separated subset. Tests cover domain policies, ledger invariants, SavedVariables migration, sync validation, import/export limits, RC capability degradation, UI callback wiring, optional-module navigation and guards, and TOC load integrity. The 0.6.0 release-candidate pass was validated with 455 passing tests in 91 files.
 
 Retail-only checks remain manual: protected-frame behavior, real RC callback
 authority, Blizzard Encounter Journal timing, guild roster identity, visual
