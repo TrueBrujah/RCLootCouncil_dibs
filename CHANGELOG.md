@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.6.0 - 2026-09-15 (Release Candidate)
+## 0.6.0 - 2026-09-15
 
-- Prepare the first public release candidate for seasonal Dibs balances, rank
+- Publish the first stable release for seasonal Dibs balances, rank
   allocations, append-only accounting, Pre-Dibs, and the Player and Officer/GM
   control centers.
 - Include audited Requests workflow corrections, RCLootCouncil integration and
@@ -11,7 +11,7 @@
 - Add GM-controlled optional modules with preserved data, hidden disabled
   navigation entries, fail-closed direct access, and safe re-enable behavior.
 - Document governance and synchronization safety, including append-only
-  corrections and explicit Retail validation still required before publication.
+  corrections and the remaining operational Retail validation checks.
 
 ## Unreleased B12 design gate - 2026-09-14
 

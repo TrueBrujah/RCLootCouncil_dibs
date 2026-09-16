@@ -1,4 +1,4 @@
-# RCLootCouncil_dibs 0.6.0 Release Candidate
+# RCLootCouncil_dibs 0.6.0
 
 RCLootCouncil_dibs is a World of Warcraft Retail addon for seasonal guild Dibs
 and Pre-Dib loot management. It can run on its own or integrate with
@@ -9,17 +9,12 @@ guild Dibs ledger, reservations, permissions, and audit history.
 
 ## Downloads
 
-- [Stable release v0.3.5](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.3.5)
+- [Stable release v0.6.0](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.6.0)
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. The 0.6.0 build
-is a release candidate: automated checks are complete, but live Retail and
-two-client validation remain manual release gates.
-
-The 0.6.0 build is not yet a Retail production release. Standalone Dibs and
-the automated fixture contract are available, but Retail runtime, two-client,
-partition, handoff, recovery, and release-package checks remain pending in
-[the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md).
+is the current stable publication. Live Retail and two-client validation remain
+operational checks documented in [the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md).
 
 ## Features
 
@@ -59,7 +54,7 @@ delta, request reference, and canonical event/reference.
 
 ### Installation
 
-1. Download the 0.6.0 release-candidate ZIP from the release links above.
+1. Download the 0.6.0 ZIP from the release links above.
 2. Extract it into `World of Warcraft/_retail_/Interface/AddOns/`.
 3. Confirm that the extracted folder is named `RCLootCouncil_dibs` and contains
    `RCLootCouncil_dibs.toc` directly inside it.
