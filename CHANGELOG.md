@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.2 - 2026-09-17
+
+- Synchronize the addon version across the TOC, runtime metadata, README,
+  player/officer guides, and testing documentation.
+- Document the release versioning policy in constitution `2.6.0`, including
+  version-specific changelog entries for fixes and new features.
+
 ## 0.6.1 - 2026-09-17
 
 - Correct LuaLS/LuaCATS annotations and dynamic return contracts across core,
