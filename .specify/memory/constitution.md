@@ -2,14 +2,15 @@
 
 <!--
 Sync Impact Report
-Version change: 2.4.0 -> 2.5.0
-Modified principles: none; Governance metadata updated
-Added sections: XXII. Documentation and Guide Maintenance
+Version change: 2.5.0 -> 2.6.0
+Modified principles: XIX. Change Notes and Addon Versioning; XXII. Documentation and Guide Maintenance
+Added sections: none
 Removed sections: none
-Rationale for MINOR bump: add enforceable documentation and screenshot-maintenance
-  rules so that player and GM/Officer workflows remain documented in French and English.
-Dependent documents: French and English player and GM/Officer guides, README indexes,
-  screenshot inventory, release checklist, and manual test plan must follow this rule.
+Rationale for MINOR bump: require one consistent addon version across source metadata,
+  documentation, scripts, changelog, and release artifacts for every shipped change.
+Dependent documents: all README files, user and developer guides, specifications, plans,
+  tasks, release notes, validation checklists, maintenance scripts, and release artifacts
+  must follow this rule.
   Existing ledger, protocol, and SavedVariables data remain compatible.
 Follow-up TODOs: TODO(RATIFICATION_DATE) remains because the original adoption date is unknown.
 -->
@@ -360,9 +361,21 @@ addon behavior MUST NOT leave the addon version unchanged. Documentation-only ed
 do not alter the addon build still require a changelog note but MAY retain the addon
 version.
 
-The changelog entry and TOC version update MUST be reviewed together before a release is
-accepted. SavedVariables or protocol migrations MUST identify their compatibility impact
-in the same change note.
+The active addon version MUST be kept consistent across every version-bearing README,
+guide, specification, plan, task list, release note, validation checklist, maintenance
+script, packaging script, and release artifact. A version-bearing document or script MUST
+NOT continue to advertise an older release after a new version is shipped. If a document
+or script is intentionally historical, it MUST be explicitly labeled as historical and
+MUST NOT be used as the current installation or release instruction.
+
+Every fix, change, or new feature MUST have a dated changelog entry under the version in
+which it was added. The entry MUST state what changed, why it changed, and any
+compatibility, migration, or player-facing impact. Release notes and GitHub release
+metadata MUST use the same version and summarize the same changes.
+
+The changelog entry, TOC version, version-bearing documentation and scripts, and release
+metadata MUST be reviewed together before a release is accepted. SavedVariables or
+protocol migrations MUST identify their compatibility impact in the same change note.
 
 ### XX. RCLootCouncil Item Mapping and Installation Safety
 
@@ -469,4 +482,4 @@ XIX: add a dated changelog note and increment the addon TOC version when the add
 or behavior changes. Specifications, plans, tasks, release notes, and code reviews MUST
 check compliance with the current constitution before implementation is accepted.
 
-**Version**: 2.5.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-16
+**Version**: 2.6.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-17
