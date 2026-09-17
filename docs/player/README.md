@@ -1,5 +1,14 @@
 # Player guide
 
+## Mode d'emploi en français
+
+Voir [Mode d'emploi joueur](MODE_EMPLOI_JOUEUR.md) pour l'installation,
+les commandes, les Pre-Dibs, les debits et les signalements.
+
+## English guide
+
+See [Player Guide](PLAYER_GUIDE_EN.md) for the same player workflow in English.
+
 This guide describes the 0.6.0 release candidate. Live Retail behavior still
 requires the final validation listed in [B12 release checklist](../../B12_Release_Candidate_Checklist.md).
 

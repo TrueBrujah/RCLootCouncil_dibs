@@ -2,15 +2,15 @@
 
 <!--
 Sync Impact Report
-Version change: 2.3.0 -> 2.4.0
+Version change: 2.4.0 -> 2.5.0
 Modified principles: none; Governance metadata updated
-Added sections: XXI. Human-Centered Interface and Search Quality
+Added sections: XXII. Documentation and Guide Maintenance
 Removed sections: none
-Rationale for MINOR bump: add enforceable interface and search quality rules so that
-  every future feature remains readable, responsive, predictable, and easy to use.
-Dependent documents: UI modules, options guide, search and history specifications,
-  release checklist, and manual test plan must follow this rule. Existing ledger,
-  protocol, and SavedVariables data remain compatible.
+Rationale for MINOR bump: add enforceable documentation and screenshot-maintenance
+  rules so that player and GM/Officer workflows remain documented in French and English.
+Dependent documents: French and English player and GM/Officer guides, README indexes,
+  screenshot inventory, release checklist, and manual test plan must follow this rule.
+  Existing ledger, protocol, and SavedVariables data remain compatible.
 Follow-up TODOs: TODO(RATIFICATION_DATE) remains because the original adoption date is unknown.
 -->
 
@@ -443,6 +443,16 @@ responsiveness with a realistic history size. A release MUST reject any screen t
 freezes the client, hides the active filter or sort, loses the date, or leaves a player
 unable to tell what action is available.
 
+### XXII. Documentation and Guide Maintenance
+
+Every change affecting player-facing behavior, officer/GM workflow, permissions,
+settings, commands, synchronization, ledger behavior, or RCLootCouncil integration
+MUST update the relevant French and English Player Guide and GM/Officer Guide.
+
+Documentation updates MUST include or update screenshot references when the affected
+screen, workflow, status, or control is visible to users. A feature is not complete
+until its affected guides and screenshot inventory are reviewed.
+
 ## Governance
 
 This constitution governs all specifications, plans, tasks, and implementations in this repository.
@@ -459,4 +469,4 @@ XIX: add a dated changelog note and increment the addon TOC version when the add
 or behavior changes. Specifications, plans, tasks, release notes, and code reviews MUST
 check compliance with the current constitution before implementation is accepted.
 
-**Version**: 2.4.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-10
+**Version**: 2.5.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-16

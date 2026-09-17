@@ -37,6 +37,8 @@ local DEFAULT_POLICIES = {
   },
 }
 
+---@param value any
+---@return any
 local function copy(value)
   if Dibs.DeepCopy then return Dibs.DeepCopy(value) end
   if type(value) ~= "table" then return value end
@@ -156,6 +158,10 @@ local function defaultPolicy(family)
   return copy(DEFAULT_POLICIES[family])
 end
 
+---@param input table Policy fields plus season/family.
+---@param seasonId string
+---@return DibsCharacterEligibilityPolicy|nil policy
+---@return string|nil reasonCode
 local function sanitizePolicy(input, seasonId)
   local family = normalizeFamily(input and (input.family or input.dibsType))
   if not family or family == "CATALYST" then return nil, "INVALID_FAMILY" end
@@ -205,9 +211,9 @@ function Eligibility.GetPolicy(seasonId, family)
   return result
 end
 
----@param input DibsEligibilityPolicy|table Policy fields plus season/family.
+---@param input DibsCharacterEligibilityPolicy|table Policy fields plus season/family.
 ---@param actor string|nil Officer actor identity.
----@return DibsEligibilityPolicy|nil policy
+---@return DibsCharacterEligibilityPolicy|nil policy
 ---@return string|nil reasonCode
 -- Side effects: Persists a versioned season/family eligibility policy.
 function Eligibility.SetPolicy(input, actor)
@@ -223,6 +229,7 @@ function Eligibility.SetPolicy(input, actor)
   policy.updatedAt, policy.updatedBy = now(), actorId(actor)
   state.policies[targetSeason][policy.family] = policy
   appendAudit("eligibility.policy.set", actor, policy, input and input.reason or "Policy updated")
+  ---@cast policy DibsEligibilityPolicy
   return copy(policy)
 end
 

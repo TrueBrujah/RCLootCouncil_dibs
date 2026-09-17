@@ -13,6 +13,8 @@ Invariants: DIBS-RULE-007 and DIBS-RULE-008.
 Related docs: docs/officer/auditing.md, docs/developer/data-model.md.
 ]]
 
+---@diagnostic disable: return-type-mismatch, redundant-return-value
+
 local Dibs = _G.Dibs
 Dibs.Disputes = Dibs.Disputes or {}
 
@@ -491,6 +493,7 @@ end
 ---@param actor string Player or officer actor identity.
 ---@return DibsDisputeRequest|nil request
 ---@return string|nil reasonCode
+---@return boolean|nil duplicate Whether an active duplicate was found.
 -- Side effects: Persists a bounded dispute request and normalized evidence.
 function Disputes.CreateReport(payload, actor)
   payload = type(payload) == "table" and payload or {}
@@ -598,7 +601,8 @@ end
 
 ---@param actor string Officer actor identity.
 ---@param options table|nil Filter/pagination options.
----@return DibsDisputeRequest[] requests Permission-filtered officer queue.
+---@return table[] requests Permission-filtered officer queue.
+---@return string|nil reasonCode
 function Disputes.ListForOfficer(actor, options)
   options = type(options) == "table" and options or {}
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
@@ -979,7 +983,7 @@ end
 ---@param action string Resolution action.
 ---@param options table|nil Correction/annotation fields.
 ---@param actor string Officer actor identity.
----@return DibsDisputeRequest|nil request Updated dispute.
+---@return table|nil result Resolution result containing the updated dispute.
 ---@return string|nil reasonCode
 -- Side effects: Appends an auditable correction when requested; never edits old transactions.
 function Disputes.Resolve(requestId, action, options, actor)

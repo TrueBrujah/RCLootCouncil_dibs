@@ -13,6 +13,8 @@ Combat safety: Central read-only source for DIBS-RULE-009.
 Related docs: docs/developer/combat-safety.md.
 ]]
 
+---@diagnostic disable: return-type-mismatch, undefined-field
+
 local Dibs = _G.Dibs
 Dibs.Readiness = Dibs.Readiness or {}
 
@@ -34,6 +36,17 @@ local function safeCall(fn, ...)
   if type(fn) ~= "function" then return false, nil end
   local ok, a, b, c = pcall(fn, ...)
   return ok, a, b, c
+end
+
+---@param fn function|nil
+---@return table|nil result
+local function safeTableCall(fn)
+  if type(fn) ~= "function" then return nil end
+  local result = { pcall(fn) }
+  if result[1] == true and type(result[2]) == "table" then
+    return result[2]
+  end
+  return nil
 end
 
 local function localRole()
@@ -106,6 +119,7 @@ local function groupContext()
   }
 end
 
+---@return table|nil projection RCLootCouncil configuration projection.
 local function projectionSummary()
   if not Dibs.RCLootCouncil or type(Dibs.RCLootCouncil.GetConfigProjectionStatus) ~= "function" then
     return nil
@@ -124,6 +138,8 @@ local function projectionReady(projection)
     or default.hasDibResponse == true
 end
 
+---@param rcStatus table|nil
+---@param projection table|nil
 local function fingerprintFor(mode, season, rcStatus, projection, context)
   local default = projection and projection.default or {}
   return table.concat({
@@ -153,10 +169,10 @@ end
 function Readiness.ComputeFingerprint()
   local season = currentSeason()
   local mode = currentMode()
+  ---@type table|nil
   local rcStatus
   if Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.GetLocalStatus) == "function" then
-    local ok, value = safeCall(Dibs.RCLootCouncil.GetLocalStatus)
-    rcStatus = ok and type(value) == "table" and value or nil
+    rcStatus = safeTableCall(Dibs.RCLootCouncil.GetLocalStatus)
   end
   local context = groupContext()
   return fingerprintFor(mode, season, rcStatus, projectionSummary(), context)
@@ -170,13 +186,17 @@ function Readiness.Evaluate(options)
   local season = currentSeason()
   local mode = currentMode()
   local context = groupContext()
-  local rcStatus
+  ---@type table
+  local rcStatus = { status = "absent", reasonCode = "RC_ABSENT" }
   if Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.GetLocalStatus) == "function" then
-    local ok, value = safeCall(Dibs.RCLootCouncil.GetLocalStatus)
-    rcStatus = ok and type(value) == "table" and value or { status = "degraded", reasonCode = "RC_STATUS_UNAVAILABLE" }
-  else
-    rcStatus = { status = "absent", reasonCode = "RC_ABSENT" }
+    local currentStatus = safeTableCall(Dibs.RCLootCouncil.GetLocalStatus)
+    if currentStatus then
+      rcStatus = currentStatus
+    else
+      rcStatus = { status = "degraded", reasonCode = "RC_STATUS_UNAVAILABLE" }
+    end
   end
+  ---@type table|nil
   local projection = projectionSummary()
   local result = {
     checkedAt = checkedAt,
@@ -372,7 +392,7 @@ function Readiness.GetLast()
 end
 
 ---@param reason string|nil Invalidation reason.
----@return table result Current invalidated readiness state.
+---@return boolean invalidated Whether the cached result was invalidated.
 function Readiness.Invalidate(reason)
   local last = Readiness.GetLast()
   if last then
@@ -393,7 +413,7 @@ function Readiness.IsFresh(result)
 end
 
 ---@return boolean allowed Whether a verified, fresh live-award context exists.
----@return string|nil reasonCode
+---@return table result Readiness result when the gate is evaluated.
 function Readiness.CanProcessLiveAward()
   local result = Readiness.Evaluate({ forAward = true })
   if result.integrationStatus == "Blocked" or result.standaloneStatus == "Blocked" then

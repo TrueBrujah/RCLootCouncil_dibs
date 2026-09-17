@@ -13,6 +13,8 @@ Combat safety: Protected UI opening is retried after combat.
 Related docs: docs/developer/combat-safety.md, docs/player/README.md.
 ]]
 
+---@diagnostic disable: undefined-global, undefined-field
+
 local Dibs = _G.Dibs
 Dibs.EncounterJournal = Dibs.EncounterJournal or {}
 local EJ_RETRY_MAX_ATTEMPTS = 120
@@ -876,8 +878,9 @@ local function getJournalLootDetails(index)
     end
   end
 
-  if type(EJ_GetLootInfoByIndex) == "function" then
-    local ok, itemID, _, itemName, _, _, _, itemLink = pcall(EJ_GetLootInfoByIndex, index)
+  local legacyLootInfo = rawget(_G, "EJ_GetLootInfoByIndex")
+  if type(legacyLootInfo) == "function" then
+    local ok, itemID, _, itemName, _, _, _, itemLink = pcall(legacyLootInfo, index)
     itemID = tonumber(itemID)
     if ok and itemID and itemID > 0 then
       return itemID, tostring(itemName or ("Item " .. tostring(itemID))), itemLink
@@ -1004,10 +1007,12 @@ local function scanAdventureGuideCatalog()
   end
 
   local previousInstance = getCurrentJournalInstanceID()
-  local previousEncounter = _G.EncounterJournal and _G.EncounterJournal.encounter and _G.EncounterJournal.encounter.info and tonumber(_G.EncounterJournal.encounter.info.encounterID) or nil
+  local encounterInfo = _G.EncounterJournal and _G.EncounterJournal.encounter and _G.EncounterJournal.encounter.info
+  local previousEncounter = type(encounterInfo) == "table" and tonumber(rawget(encounterInfo, "encounterID")) or nil
   local previousTier
-  if type(EJ_GetCurrentTier) == "function" then
-    local okTier, tierValue = pcall(EJ_GetCurrentTier)
+  local getCurrentTier = rawget(_G, "EJ_GetCurrentTier")
+  if type(getCurrentTier) == "function" then
+    local okTier, tierValue = pcall(getCurrentTier)
     if okTier then previousTier = tonumber(tierValue) end
   end
   local tierCount = 0

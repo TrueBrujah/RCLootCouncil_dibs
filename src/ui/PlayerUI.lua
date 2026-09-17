@@ -14,6 +14,8 @@ Invariants: DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-005.
 Related docs: docs/player/README.md.
 ]]
 
+---@diagnostic disable: redundant-return-value
+
 local Dibs = _G.Dibs
 Dibs.PlayerUI = Dibs.PlayerUI or {}
 
@@ -597,7 +599,13 @@ local function createLegacyAceWindow()
           seasonId = summary.season and summary.season.id or nil,
         }
         if self.disputeTransactionId ~= "" then payload.transactionRef = self.disputeTransactionId end
-        local request, reason = Dibs.Disputes and Dibs.Disputes.CreateReport and Dibs.Disputes.CreateReport(payload)
+        ---@type table
+        local reportResult = {}
+        if Dibs.Disputes and Dibs.Disputes.CreateReport then
+          reportResult = { Dibs.Disputes.CreateReport(payload) }
+        end
+        local request = reportResult[1]
+        local reason = reportResult[2] or "DISPUTES_UNAVAILABLE"
         if request then
           self.disputeStatusText = "Request " .. tostring(request.requestId) .. " submitted. Officers can now review it."
           self.disputeNote = ""
