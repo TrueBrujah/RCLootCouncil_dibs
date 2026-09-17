@@ -1,5 +1,15 @@
 # Officer guide
 
+## Mode d'emploi en français
+
+Voir [Mode d'emploi GM / Officer](MODE_EMPLOI_GM_OFFICER.md) pour la
+configuration, la readiness, RCLootCouncil, les corrections et les sauvegardes.
+
+## English guide
+
+See [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md) for setup, governance,
+reconciliation, recovery, and release checks in English.
+
 This guide describes the 0.6.0 release candidate. Do not treat it as Retail
 certification until the manual checks in [B12 release checklist](../../B12_Release_Candidate_Checklist.md) are complete.
 

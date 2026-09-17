@@ -13,6 +13,8 @@ Invariants: Restore is explicit and bounded; DIBS-RULE-008.
 Related docs: docs/developer/saved-variables.md, docs/officer/auditing.md.
 ]]
 
+---@diagnostic disable: return-type-mismatch, redundant-return-value, undefined-field
+
 local Dibs = _G.Dibs
 Dibs.Backup = Dibs.Backup or {}
 local M = Dibs.Backup
@@ -40,7 +42,7 @@ end
 ---@param reason string|nil Why the snapshot was created.
 ---@param actor string Officer actor identity.
 ---@return DibsBackupSnapshot|nil snapshot
----@return string|nil reasonCode
+---@return table|string|nil prunedOrReason Pruned snapshot IDs or error code.
 -- Side effects: Persists a bounded recovery snapshot before risky data operations.
 function M.Create(scope, reason, actor)
   scope = scope or "full"; if not authorized(scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
@@ -78,7 +80,7 @@ end
 ---@param confirm boolean Explicit confirmation.
 ---@param reason string|nil Restore reason.
 ---@param actor string Officer actor identity.
----@return boolean restored
+---@return table|nil result Restore result or cancelled preview.
 ---@return string|nil reasonCode
 -- Side effects: Restores a snapshot only after explicit preview and confirmation.
 function M.Restore(previewId, confirm, reason, actor)

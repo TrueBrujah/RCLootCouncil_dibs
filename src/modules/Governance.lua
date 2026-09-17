@@ -418,8 +418,8 @@ function Governance.BeginHandoff(actor, details)
   local blocked, reason = rejectSandbox(); if blocked then return nil, reason end
   local state, authority = ensureState(), authorityState(ensureState())
   if authority.state ~= "ACTIVE" then return nil, "AUTHORITY_ACTIVE_REQUIRED" end
-  local actorSnapshot, reason = snapshot(actor)
-  if not actorSnapshot then return nil, reason end
+  local actorSnapshot, snapshotReason = snapshot(actor)
+  if not actorSnapshot then return nil, snapshotReason end
   if actorSnapshot.memberKey ~= authority.coordinator.memberKey then return nil, "CURRENT_COORDINATOR_REQUIRED" end
   details = details or {}
   local closure = { schema = AUTHORITY_SCHEMA, guildKey = Dibs.GetGuildKey(), previousEpoch = authority.ledgerEpoch,
@@ -493,8 +493,8 @@ function Governance.ClassifyLateEvidence(event)
   if not identity then return false, "EVIDENCE_ID_REQUIRED" end
   local baselineHash = authority.transition and authority.transition.baselineHash
   local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
-  if authority.state == "ACTIVE" and authority.transition and authority.transition.kind == "FORCED_RECOVERY"
-    and baseline and baseline.legacyBaselineHash == baselineHash then
+    if authority.state == "ACTIVE" and authority.transition and authority.transition.kind == "FORCED_RECOVERY"
+      and baseline and baseline.legacyBaselineHash == baselineHash then
     for _, evidenceId in ipairs(baseline.includedEvidenceIds or {}) do if evidenceId == identity then return true, "KNOWN_BASELINE_EVIDENCE" end end
     local existing = authority.orphanedEvidence[identity]; if existing then return false, "ORPHANED_EVIDENCE" end
     if (function() local n=0; for _ in pairs(authority.orphanedEvidence) do n=n+1 end; return n end)() >= MAX_ORPHANS then return false, "ORPHAN_LIMIT_EXCEEDED" end
@@ -508,15 +508,15 @@ function Governance.ClassifyLateEvidence(event)
 end
 
 function Governance.ApplyOrphanedEvidence(event, sender)
-  local blocked, reason = rejectSandbox(); if blocked then return false, reason end
+  local blocked, sandboxReason = rejectSandbox(); if blocked then return false, sandboxReason end
   local senderSnapshot, senderReason = snapshot(sender); if not senderSnapshot then return false, senderReason end
-  local accepted, reason = Governance.ClassifyLateEvidence(event)
-  if reason == "ORPHANED_EVIDENCE" then
+  local accepted, evidenceReason = Governance.ClassifyLateEvidence(event)
+  if evidenceReason == "ORPHANED_EVIDENCE" then
     local identity = trim(event and event.evidenceId) or trim(event and event.eventId) or trim(event and event.transactionId)
     local stored = identity and authorityState(ensureState()).orphanedEvidence[identity]
     if stored then stored.receivedFrom = copy(senderSnapshot) end
   end
-  return accepted, reason
+  return accepted, evidenceReason
 end
 
 function Governance.BuildAuthoritySignal()

@@ -103,6 +103,7 @@ end
 
 -- Stable 31-bit polynomial hash. Each intermediate is representable exactly by
 -- Lua's number type. This non-cryptographic hash detects differing content only.
+---@param serialized string Canonical serialized content.
 local function contentHash(serialized)
   local hash = 0
   for index = 1, #serialized do hash = (hash * 131 + serialized:byte(index)) % 2147483647 end

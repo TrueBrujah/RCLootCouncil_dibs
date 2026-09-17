@@ -420,7 +420,7 @@ end
 ---@param itemID integer Item identifier.
 ---@param seasonId string Season scope.
 ---@param context table|nil Encounter, difficulty, and eligibility context.
----@return boolean accepted
+---@return boolean|nil accepted
 ---@return string|nil reasonCode
 ---@return table|nil policy
 ---@return table|nil validation Normalized request context when accepted.
@@ -834,6 +834,7 @@ end
 ---@param itemID integer Item identifier.
 ---@param difficulty DibsDifficulty|nil Difficulty context.
 ---@return DibsVaultAcquisition|nil acquisition
+---@return string|nil reasonCode
 -- Side effects: Persists a display-only acquisition; it never consumes a Dib.
 function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty)
   ensureState()
@@ -852,7 +853,7 @@ function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty)
   end
   local record = {
     acquisitionId = Dibs.NewId("vault"), playerName = player, itemID = targetItem,
-    difficulty = normalizedDifficulty, source = "VAULT", acquiredAt = time(),
+    difficulty = normalizedDifficulty, source = "VAULT", acquiredAt = time(), createdAt = time(),
     seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil,
   }
   table.insert(Dibs.db.preDibs.acquisitions, record)

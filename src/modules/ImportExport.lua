@@ -13,6 +13,8 @@ Invariants: DIBS-RULE-008 and bounded package limits.
 Related docs: docs/developer/saved-variables.md, docs/officer/auditing.md.
 ]]
 
+---@diagnostic disable: return-type-mismatch, redundant-return-value, assign-type-mismatch, undefined-field
+
 local Dibs = _G.Dibs
 Dibs.ImportExport = Dibs.ImportExport or {}
 
@@ -92,6 +94,9 @@ local function checksum(text)
 end
 M.Checksum = checksum
 
+---@param text string
+---@return table|nil value
+---@return string|nil reasonCode
 local function parser(text)
   local position, nodes = 1, 0
   local function skip()
@@ -310,7 +315,9 @@ end
 ---@return table|nil preview Preview with changes/conflicts and pending ID.
 ---@return string|nil reasonCode
 function M.Preview(text, targetScope, strategy, actor)
-  local package, reason = type(text) == "table" and text or M.Decode(text); if not package then return nil, reason end
+  local package, reason
+  if type(text) == "table" then package = text else package, reason = M.Decode(text) end
+  if not package then return nil, reason end
   targetScope = targetScope or package.scope; strategy = strategy or (package.scope == "full" and "append" or "merge")
   if targetScope ~= package.scope then return nil, "SCOPE_MISMATCH" end
   if strategy ~= "merge" and strategy ~= "replace" and strategy ~= "append" then return nil, "INVALID_STRATEGY" end

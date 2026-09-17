@@ -96,7 +96,10 @@ function Dibs.Sync.BuildManifest()
   for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests() or {}) do
     table.insert(requests, { requestId = request.requestId, revision = tonumber(request.revision) or 1 })
   end
-  return { version = Dibs.PROTOCOL_VERSION or 1, guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil, type = "MANIFEST", senderId = Dibs.GetPlayerName(), requests = requests }
+  ---@type string
+  local senderId = ""
+  if Dibs.GetPlayerName then senderId = Dibs.GetPlayerName() end
+  return { version = Dibs.PROTOCOL_VERSION or 1, guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil, type = "MANIFEST", senderId = senderId, requests = requests }
 end
 
 ---@param message DibsSyncEnvelope Sync envelope; live loot fields are rejected.

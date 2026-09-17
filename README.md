@@ -52,6 +52,16 @@ delta, request reference, and canonical event/reference.
 
 ## How to use
 
+### Guides utilisateur en français
+
+- [Mode d'emploi joueur](docs/player/MODE_EMPLOI_JOUEUR.md)
+- [Mode d'emploi GM / Officer](docs/officer/MODE_EMPLOI_GM_OFFICER.md)
+
+### English user guides
+
+- [Player Guide](docs/player/PLAYER_GUIDE_EN.md)
+- [GM / Officer Guide](docs/officer/GM_OFFICER_GUIDE_EN.md)
+
 ### Installation
 
 1. Download the 0.6.0 ZIP from the release links above.

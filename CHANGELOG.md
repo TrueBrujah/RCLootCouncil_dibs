@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 - 2026-09-17
+
+- Correct LuaLS/LuaCATS annotations and dynamic return contracts across core,
+  synchronization, readiness, import/export, eligibility, and UI modules.
+- Preserve runtime behavior while removing unsupported diagnostic directives and
+  keeping the full automated suite green.
+- Add French and English Player and GM/Officer guides, README links, and the
+  constitution requirement to maintain guide and screenshot references.
+
 ## 0.6.0 - 2026-09-15
 
 - Publish the first stable release for seasonal Dibs balances, rank

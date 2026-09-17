@@ -20,7 +20,7 @@ runtime state or changing addon load order.
 ---@field name string Display name.
 ---@field status "active"|"archived"|"draft"
 ---@field createdAt integer Unix timestamp.
----@field archivedAt? integer Unix timestamp.
+---@field archivedAt integer|nil Unix timestamp.
 
 ---@class DibsRankRule
 ---@field rankIndex integer Guild rank index.
@@ -35,10 +35,10 @@ runtime state or changing addon load order.
 ---@field reason string Accounting reason.
 ---@field source string Source subsystem or audit reference.
 ---@field createdAt integer Unix timestamp.
----@field rankIndex? integer Rank at transaction time.
----@field rankName? string Rank name at transaction time.
----@field awardRef? string RCLootCouncil award reference.
----@field evidenceId? string Evidence reference.
+---@field rankIndex integer|nil Rank at transaction time.
+---@field rankName string|nil Rank name at transaction time.
+---@field awardRef string|nil RCLootCouncil award reference.
+---@field evidenceId string|nil Evidence reference.
 
 ---@class DibsPlayerSeasonState
 ---@field playerName string Canonical player identity.
@@ -51,21 +51,21 @@ runtime state or changing addon load order.
 ---@field requestId string Stable request identifier.
 ---@field playerName string Request owner.
 ---@field itemID integer Item identifier.
----@field itemName? string Display name captured at request time.
+---@field itemName string|nil Display name captured at request time.
 ---@field seasonId string Season identifier.
----@field difficulty? DibsDifficulty
----@field mode? "WILD_OPEN"|"ENCOUNTER"
+---@field difficulty DibsDifficulty|nil
+---@field mode "WILD_OPEN"|"ENCOUNTER"|nil
 ---@field status DibsRequestStatus
 ---@field createdAt integer Unix timestamp.
 ---@field updatedAt integer Unix timestamp.
 ---@field revision integer Monotonic sync revision.
----@field source? string User or test source.
+---@field source string|nil User or test source.
 
 ---@class DibsVaultAcquisition
 ---@field acquisitionId string Stable acquisition identifier.
 ---@field playerName string Character who acquired the item.
 ---@field itemID integer
----@field difficulty? DibsDifficulty
+---@field difficulty DibsDifficulty|nil
 ---@field createdAt integer Unix timestamp.
 ---@field source string Acquisition source; display-only and never a ledger use.
 
@@ -77,6 +77,21 @@ runtime state or changing addon load order.
 ---@field difficultyScope DibsDifficulty
 ---@field matchingScope "FAMILY"|"ITEM"
 ---@field enforcement "BLOCK"|"REVIEW"|"UNKNOWN"
+
+---@class DibsCharacterEligibilityPolicy
+---@field seasonId string
+---@field family "TOKEN"|"TOKEN_SET"
+---@field enabled boolean
+---@field matchingScope "EXACT"|"FAMILY"|"SLOT"|"GROUP"
+---@field difficultyScope DibsDifficulty
+---@field enforcementOutcome "BLOCK"|"REVIEW"|"ALLOW"
+---@field unknownDataBehavior "BLOCK"|"REVIEW"
+---@field completionThreshold integer|nil
+---@field higherTrackOutcome "BLOCK"|"REVIEW"|"ALLOW"|nil
+---@field baselineTrack integer|nil
+---@field roundRule "LOWEST_PROGRESS"|nil
+---@field tierSetGroupMode "CLASS_TOKEN"|nil
+---@field groups table|nil
 
 ---@class DibsDisputeRequest
 ---@field requestId string
@@ -125,7 +140,7 @@ runtime state or changing addon load order.
 ---@class DibsIdentitySnapshot
 ---@field memberKey string Normalized Name-Realm comparison/wire key.
 ---@field displayName string Name-Realm display value observed at snapshot time.
----@field guidWitness? string Optional corroborating GUID; never a wire key.
+---@field guidWitness string|nil Optional corroborating GUID; never a wire key.
 ---@field rosterGeneration integer Current roster generation when observed.
 
 ---@class DibsGovernanceRecord
@@ -148,14 +163,14 @@ runtime state or changing addon load order.
 ---@field version integer
 ---@field guildKey string
 ---@field senderId string
----@field requestId? string
----@field revision? integer
----@field request? DibsPreDibRequest
----@field requests? table[]
----@field transferId? string
----@field chunkCount? integer
----@field chunkIndex? integer
----@field chunk? string
+---@field requestId string|nil
+---@field revision integer|nil
+---@field request DibsPreDibRequest|nil
+---@field requests table[]|nil
+---@field transferId string|nil
+---@field chunkCount integer|nil
+---@field chunkIndex integer|nil
+---@field chunk string|nil
 
 ---@class DibsSyncManifest
 ---@field version integer
@@ -166,7 +181,7 @@ runtime state or changing addon load order.
 
 ---@class DibsGuildDB
 ---@field version integer Current guild schema version.
----@field currentSeasonId? string
+---@field currentSeasonId string|nil
 ---@field seasons table<string, DibsSeason>
 ---@field rankRules table
 ---@field ledger table
@@ -179,8 +194,15 @@ runtime state or changing addon load order.
 ---@field backups DibsBackupSnapshot[]
 ---@field backupRetention integer
 ---@field auditLog table[]
+---@field pendingRestores table<string, table>
+---@field pendingImports table<string, table>
 ---@field sync table
 ---@field settings table
+
+---@class Dibs
+---@field currentGuildKey string|nil Active guild scope cache.
+---@field Midnight table|nil Optional UI compatibility surface.
+---@field Debug table|nil Optional developer diagnostics surface.
 
 ---@class DibsSavedVariables
 ---@field schemaVersion integer Root SavedVariables schema.

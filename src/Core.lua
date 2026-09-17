@@ -1006,7 +1006,7 @@ function Dibs.GetCurrentSeasonId()
   return Dibs.db.currentSeasonId
 end
 
----@return string|nil playerName Canonical local player name/GUID representation.
+---@return string playerName Canonical local player name/GUID representation.
 function Dibs.GetPlayerName()
   local name, realm
   if type(UnitFullName) == "function" then
@@ -1665,7 +1665,7 @@ function Dibs.RegisterOptionsPanel()
 end
 
 local function registerOptionalCapabilities()
-  local capabilities = Dibs.Capabilities
+  local capabilities = rawget(Dibs, "Capabilities")
   if not capabilities or not capabilities.Register then return end
   capabilities.Register("player_ui", { dependency = "Dibs UI", initialize = function()
     return Dibs.PlayerUI and Dibs.PlayerUI.CreateWindow and Dibs.PlayerUI.CreateWindow() or false
@@ -1680,7 +1680,11 @@ local function registerOptionalCapabilities()
     return false, status.reasonCode or "RCLC_UNAVAILABLE"
   end })
   capabilities.Register("encounter_journal", { dependency = "Blizzard_EncounterJournal", retryEvents = { "Blizzard_EncounterJournal_LOADED" }, initialize = function()
-    local ok, reason = Dibs.EncounterJournal and Dibs.EncounterJournal.AddActionIfAvailable and Dibs.EncounterJournal.AddActionIfAvailable(0)
+    local ok = false
+    local reason = "ENCOUNTER_JOURNAL_UNAVAILABLE"
+    if Dibs.EncounterJournal and Dibs.EncounterJournal.AddActionIfAvailable then
+      ok, reason = Dibs.EncounterJournal.AddActionIfAvailable(0)
+    end
     return ok == true, reason or "ENCOUNTER_JOURNAL_UNAVAILABLE"
   end })
   capabilities.Register("options_panel", { dependency = "Retail Settings", initialize = function()
@@ -1693,7 +1697,7 @@ local function registerOptionalCapabilities()
 end
 
 local function initializeOptionalCapabilities()
-  local capabilities = Dibs.Capabilities
+  local capabilities = rawget(Dibs, "Capabilities")
   if not capabilities or not capabilities.Initialize then return end
   for _, id in ipairs({ "player_ui", "officer_ui", "rclootcouncil", "encounter_journal", "options_panel", "rclootcouncil_options" }) do
     capabilities.Initialize(id, "STARTUP")

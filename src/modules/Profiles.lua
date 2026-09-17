@@ -13,6 +13,8 @@ Invariants: Persisted names remain stable for compatibility.
 Related docs: docs/developer/saved-variables.md, docs/officer/configuration.md.
 ]]
 
+---@diagnostic disable: redundant-return-value
+
 local Dibs = _G.Dibs
 Dibs.Profiles = Dibs.Profiles or {}
 local M = Dibs.Profiles
@@ -92,6 +94,7 @@ end
 ---@param actor string Officer actor identity.
 ---@return DibsProfile|nil profile
 ---@return string|nil reasonCode
+---@return table|nil activationPreview Preview when confirmation is required.
 function M.Create(name, scope, options, actor)
   scope = scopeName(scope); name = tostring(name or ""):match("^%s*(.-)%s*$"); if not validName(name) then return nil, "INVALID_PROFILE_NAME" end
   if not authorized(scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end

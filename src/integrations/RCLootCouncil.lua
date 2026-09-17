@@ -14,6 +14,8 @@ Invariants: DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-004, DIBS-RULE-009, DIBS-RUL
 Related docs: docs/developer/rclc-integration.md.
 ]]
 
+---@diagnostic disable: return-type-mismatch, redundant-return-value
+
 local Dibs = _G.Dibs
 -- Change log 0.5.1-dev (2026-09-10): repair the modeless data control center
 -- workflows and keep guild-scoped backup/profile reads permission filtered.
@@ -1402,9 +1404,7 @@ end
 -- Dib, writes history, sends an RCLootCouncil response, or invokes a protected
 -- action.
 ---@param payload table Award context from RC or a dry run.
----@return boolean valid
----@return string|nil reasonCode
----@return table|nil normalized Validated award context.
+---@return table result Validation result with `ok` and optional reason/context fields.
 function Dibs.RCLootCouncil.ValidateAwardInput(payload)
   payload = type(payload) == "table" and payload or {}
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled

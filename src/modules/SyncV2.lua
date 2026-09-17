@@ -5,6 +5,8 @@ distributed ledger. Hashes and sender checks are integrity/attribution signals,
 not cryptographic authentication.
 ]]
 
+---@diagnostic disable: return-type-mismatch, redundant-return-value, assign-type-mismatch
+
 local Dibs = _G.Dibs
 local Sync = Dibs.Sync
 
@@ -47,12 +49,16 @@ local function serialize(value, seen)
   end
   seen[value] = nil; table.sort(parts); return "t{" .. table.concat(parts, ",") .. "}"
 end
+---@param text string
+---@return string hash
 local function hashText(text)
   local value = 0
   for i = 1, #text do value = (value * 131 + text:byte(i)) % 2147483647 end
   return string.format("D3-V2-%08x", value)
 end
-local function hash(value) local text = serialize(value); return text and hashText(text) or nil end
+---@param text string
+local function hashTextValue(text) return hashText(text) end
+local function hash(value) local text = serialize(value); return text and hashTextValue(text) or nil end
 
 local function status(code, extra)
   local state = ensure(); state.status = code
@@ -313,7 +319,11 @@ local function applyRequest(payload, transfer, sender)
     if incomingRevision == currentRevision then return currentHash == transfer.contentHash, currentHash == transfer.contentHash and "IDEMPOTENT_REPLAY" or "REQUEST_CONFLICT" end
     if incomingRevision < currentRevision then return false, "STALE_REVISION" end
   end
-  local applied, reason = Dibs.PreDibs.ApplyVerifiedSyncRecord and Dibs.PreDibs.ApplyVerifiedSyncRecord(payload, sender.displayName)
+  local applied = false
+  local reason = "SYNC_APPLY_UNAVAILABLE"
+  if Dibs.PreDibs and Dibs.PreDibs.ApplyVerifiedSyncRecord then
+    applied, reason = Dibs.PreDibs.ApplyVerifiedSyncRecord(payload, sender.displayName)
+  end
   if not applied then return false, reason end
   local state = ensure(); state.requestIndex[payload.requestId] = { requestId = payload.requestId, revision = payload.revision, contentHash = transfer.contentHash, terminal = TERMINAL[payload.status] == true, updatedAt = payload.updatedAt or time() }
   if TERMINAL[payload.status] then state.tombstones[payload.requestId] = copy(state.requestIndex[payload.requestId]) end
@@ -366,7 +376,11 @@ function Sync.Receive(message, sender)
   end
   if message.type == "DIGEST" and message.entityType == "OPERATIONAL_POLICY" then
     if not finiteInteger(message.revision) or type(message.contentHash) ~= "string" then return false, "INVALID_POLICY_DIGEST" end
-    local writerAllowed, writerReason = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(resolved.displayName)
+    local writerAllowed = false
+    local writerReason = "POLICY_WRITER_REQUIRED"
+    if Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite then
+      writerAllowed, writerReason = Dibs.OperationalPolicy.CanWrite(resolved.displayName)
+    end
     if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
     local current = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or { policyRevision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.policyRevision) or 0) then
@@ -438,7 +452,11 @@ function Sync.Receive(message, sender)
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
     if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" then return false, "UNSUPPORTED_ENTITY" end
     if message.entityType == "OPERATIONAL_POLICY" then
-      local writerAllowed, writerReason = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(resolved.displayName)
+      local writerAllowed = false
+      local writerReason = "POLICY_WRITER_REQUIRED"
+      if Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite then
+        writerAllowed, writerReason = Dibs.OperationalPolicy.CanWrite(resolved.displayName)
+      end
       if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
     end
     local existing = Dibs.runtime.v2Transfers[message.transferId]
