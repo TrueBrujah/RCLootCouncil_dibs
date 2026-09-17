@@ -10,7 +10,7 @@ configuration, la readiness, RCLootCouncil, les corrections et les sauvegardes.
 See [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md) for setup, governance,
 reconciliation, recovery, and release checks in English.
 
-This guide describes the 0.6.0 release candidate. Do not treat it as Retail
+This guide describes the 0.6.2 release candidate. Do not treat it as Retail
 certification until the manual checks in [B12 release checklist](../../B12_Release_Candidate_Checklist.md) are complete.
 
 Use this guide to administer seasonal Dibs without changing the audit trail. Dibs is an accounting and eligibility layer; RCLootCouncil remains the loot voting/award interface when it is installed.

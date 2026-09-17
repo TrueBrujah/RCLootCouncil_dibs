@@ -9,7 +9,7 @@ les commandes, les Pre-Dibs, les debits et les signalements.
 
 See [Player Guide](PLAYER_GUIDE_EN.md) for the same player workflow in English.
 
-This guide describes the 0.6.0 release candidate. Live Retail behavior still
+This guide describes the 0.6.2 release candidate. Live Retail behavior still
 requires the final validation listed in [B12 release checklist](../../B12_Release_Candidate_Checklist.md).
 
 ## What is a Dib?
