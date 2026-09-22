@@ -1,6 +1,8 @@
 # SavedVariables and compatibility
 
-The TOC declares one persisted root: `RCLootCouncil_dibsDB`. The current root shape is:
+The TOC declares one guild-scoped root and one per-character local root. The
+guild-scoped root is `RCLootCouncil_dibsDB`; the local root is
+`RCLootCouncil_dibsLocalDB`.
 
 ```lua
 RCLootCouncil_dibsDB = {
@@ -9,6 +11,17 @@ RCLootCouncil_dibsDB = {
   persistenceRecovery = { version = 1, backups = {}, quarantine = {} },
 }
 ```
+
+The local root is intentionally small and never synchronized:
+
+```lua
+RCLootCouncil_dibsLocalDB = {
+  notifications = { enabled = true, seen = { [eventId] = timestamp } },
+}
+```
+
+Notification replay identities are bounded and local presentation state must
+not be used as guild authority or accounting evidence.
 
 Legacy flat roots are wrapped into a guild bucket during `Core.lua` initialization. Runtime code uses `Dibs.db`; `_G.DibsDB` remains a compatibility alias for the active guild bucket. The guild schema currently reports version 6, with versioned reconciliation and character-eligibility sub-stores.
 
@@ -28,5 +41,11 @@ runtime subtree is rebuilt. A failed staged migration leaves the original
 SavedVariables root unchanged.
 
 Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `preDibs`, `reconciliation`, `characterEligibility`, `governance`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
+
+B12 adds no SavedVariables fields and no SyncV2 fields. Requests, history
+projections, context-menu state, route state, and release evidence remain
+runtime or documentation concerns. The existing developer sandbox store remains
+separate from `RCLootCouncil_dibsDB`; its bounded validation and production
+isolation are documented in the developer testing and release evidence records.
 
 Backups are bounded snapshots with a configurable retention (default 5, maximum 25). Import/export is versioned and preview-first; applying a package or restoring a snapshot is explicit and audited. No live loot candidates, votes, or item transfers belong in SavedVariables or sync payloads.

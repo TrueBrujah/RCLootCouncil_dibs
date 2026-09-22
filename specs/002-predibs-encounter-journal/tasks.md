@@ -188,12 +188,12 @@ description: "Task list for Pre-Dibs Encounter Journal feature implementation"
 
 ## Phase 9: Ace3 Pre-Dib UI Follow-Up
 
-- [ ] T048 Add AceEvent/AceTimer regression coverage for Encounter Journal retries and combat-safe refreshes in `tests/integration/combat_safety_spec.lua` and `tests/integration/toc_load_spec.lua`
-- [ ] T049 Migrate Encounter Journal event/retry plumbing to AceEvent/AceTimer where available in `src/integrations/EncounterJournal.lua`, retaining safe fallback behavior
-- [ ] T050 Migrate player/officer Pre-Dib configuration registration to AceConfig in `src/integrations/RCLootCouncilOptions.lua` and preserve standalone settings access in `src/Core.lua`
-- [ ] T051 Verify Pre-Dib lifecycle, announcements, and standalone operation remain unchanged with Ace3 services present or unavailable in `tests/unit/predibs_lifecycle_spec.lua` and `tests/integration/predibs_announcements_spec.lua`
-- [ ] T052 [P] Add AceGUI regression coverage for Player Pre-Dib submission state, history, and Officer Pre-Dib list filtering in `tests/unit/predibs_request_spec.lua`, `tests/unit/predibs_lifecycle_spec.lua`, and `tests/integration/combat_safety_spec.lua`
-- [ ] T053 Create reusable AceGUI request-list and status-row adapters in `src/ui/AceGUI.lua` and cover their fallback behavior in `tests/helpers/wow_api.lua`
-- [ ] T054 Rebuild the Player Pre-Dib panel with AceGUI controls while preserving public submission, Developer Mode isolation, and personal history in `src/ui/PlayerUI.lua`
-- [ ] T055 Rebuild Officer Pre-Dib review, category policy, announcement settings, and seasonal filtering with AceGUI tabs/lists in `src/ui/OfficerUI.lua` and `src/integrations/RCLootCouncilOptions.lua`
-- [ ] T056 Verify AceGUI UI migration preserves Adventure Guide action behavior, request lifecycle, announcements, combat safety, and optional RCLootCouncil operation in `tests/integration/combat_safety_spec.lua`, `tests/integration/predibs_announcements_spec.lua`, and `tests/contract/core_independence_spec.lua`
+- [X] T048 Add AceEvent/AceTimer regression coverage for Encounter Journal retries and combat-safe refreshes in `tests/integration/combat_safety_spec.lua` and `tests/integration/toc_load_spec.lua`
+- [X] T049 Migrate Encounter Journal event/retry plumbing to AceEvent/AceTimer where available in `src/integrations/EncounterJournal.lua`, retaining safe fallback behavior
+- [X] T050 Migrate player/officer Pre-Dib configuration registration to AceConfig in `src/integrations/RCLootCouncilOptions.lua` and preserve standalone settings access in `src/Core.lua`
+- [X] T051 Verify Pre-Dib lifecycle, announcements, and standalone operation remain unchanged with Ace3 services present or unavailable in `tests/unit/predibs_lifecycle_spec.lua` and `tests/integration/predibs_announcements_spec.lua`
+- [X] T052 [P] Add AceGUI regression coverage for Player Pre-Dib submission state, history, and Officer Pre-Dib list filtering in `tests/unit/predibs_request_spec.lua`, `tests/unit/predibs_lifecycle_spec.lua`, and `tests/integration/combat_safety_spec.lua`
+- [X] T053 Create reusable AceGUI request-list and status-row adapters in `src/ui/AceGUI.lua` and cover their fallback behavior in `tests/helpers/wow_api.lua`
+- [X] T054 Rebuild the Player Pre-Dib panel with AceGUI controls while preserving public submission, Developer Mode isolation, and personal history in `src/ui/PlayerUI.lua`
+- [X] T055 Rebuild Officer Pre-Dib review, category policy, announcement settings, and seasonal filtering with AceGUI tabs/lists in `src/ui/OfficerUI.lua` and `src/integrations/RCLootCouncilOptions.lua`
+- [X] T056 Verify AceGUI UI migration preserves Adventure Guide action behavior, request lifecycle, announcements, combat safety, and optional RCLootCouncil operation in `tests/integration/combat_safety_spec.lua`, `tests/integration/predibs_announcements_spec.lua`, and `tests/contract/core_independence_spec.lua`

@@ -10,8 +10,14 @@ configuration, la readiness, RCLootCouncil, les corrections et les sauvegardes.
 See [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md) for setup, governance,
 reconciliation, recovery, and release checks in English.
 
-This guide describes the 0.6.2 release candidate. Do not treat it as Retail
-certification until the manual checks in [B12 release checklist](../../B12_Release_Candidate_Checklist.md) are complete.
+For the first installation, open **Overview > Setup Assistant**. The English
+workflow is documented in [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md), and the
+French workflow is documented in [Mode d'emploi GM / Officer](MODE_EMPLOI_GM_OFFICER.md).
+The assistant derives readiness from current state, routes supported changes
+through protected actions, and keeps its dry-run local.
+
+This guide describes the 0.6.4-dev B12 release candidate. Do not treat it as
+Retail certification until the manual checks in the [B12 Retail evidence record](../audits/B12_Retail_Validation_Evidence.md) are complete.
 
 Use this guide to administer seasonal Dibs without changing the audit trail. Dibs is an accounting and eligibility layer; RCLootCouncil remains the loot voting/award interface when it is installed.
 

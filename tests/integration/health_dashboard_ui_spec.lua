@@ -1,0 +1,12 @@
+local loader = require("helpers.load_addon")
+
+describe("Health dashboard UI", function()
+  it("keeps Diagnostics as one Officer-owned page", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local frame = dibs.OfficerUI.CreateWindow("diagnostics")
+    assert_equal("diagnostics", frame.selectedRoute)
+    assert_equal("diagnostics", frame.mountedPage)
+    assert_equal(1, frame.primaryPageCount)
+    assert_true(frame.contentHost._dibsCurrentPageRoot ~= nil)
+  end)
+end)

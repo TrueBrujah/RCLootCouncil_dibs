@@ -4,7 +4,7 @@
 
 **Input**: Feature specification from `/specs/012-release-ui-stabilization/spec.md`
 
-**Status**: Design-ready; implementation, Retail validation, and release publication are not complete.
+**Status**: Implementation evidence is recorded; real Retail validation and release publication are not complete.
 
 ## Summary
 
@@ -149,4 +149,6 @@ No constitution violations or complexity exceptions are required. B12 reuses the
 - **Combat, privacy, and sandbox safety**: PASS. Existing deferral, role scopes, provider isolation, and bounded-store behavior remain required by the contract and quickstart.
 - **Release quality**: PASS. Phase 6 and Phase 7 require focused tests, full regression accounting, real Retail evidence, a dated changelog entry, and an explicit version bump.
 
-Planning artifacts may proceed to task generation. This plan does not claim implementation completion or Retail validation.
+The implementation evidence is recorded in the B12 audit artifacts, but this plan
+does not claim Retail validation or release publication. The candidate remains
+blocked until the real-client matrix and every required release gate are complete.

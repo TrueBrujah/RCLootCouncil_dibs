@@ -359,6 +359,56 @@ local function mergeInto(target, source, replace)
   if replace then for k in pairs(target) do target[k] = nil end end
   for k, v in pairs(source or {}) do target[k] = clone(v) end
 end
+
+local function vaultIdentity(record)
+  if type(record) ~= "table" then return nil end
+  return record.acquisitionId or record.acquisitionKey
+end
+
+local function sameVaultIdentity(first, second)
+  if type(first) ~= "table" or type(second) ~= "table" then return false end
+  return (first.acquisitionId and second.acquisitionId and first.acquisitionId == second.acquisitionId)
+    or (first.acquisitionKey and second.acquisitionKey and first.acquisitionKey == second.acquisitionKey)
+end
+
+local function vaultIdentityMatches(current, incoming)
+  for _, field in ipairs({ "guildKey", "playerName", "characterId", "itemID", "resetId", "source" }) do
+    if tostring(current[field] or "") ~= tostring(incoming[field] or "") then return false end
+  end
+  return true
+end
+
+local function planVaultMerge(existing, incoming, guildKey)
+  local additions, seen = {}, {}
+  if type(incoming) ~= "table" then return additions end
+  for _, record in ipairs(incoming) do
+    if type(record) ~= "table" then return nil, "INVALID_VAULT_RECORD" end
+    local identity = vaultIdentity(record)
+    if not identity or identity == "" then return nil, "INVALID_VAULT_IDENTITY" end
+    if type(record.guildKey) ~= "string" or record.guildKey == "" or record.guildKey ~= guildKey then
+      return nil, "GUILD_SCOPE_MISMATCH"
+    end
+    if not seen[identity] then
+      seen[identity] = true
+      local current
+      for _, candidate in ipairs(existing or {}) do
+        if sameVaultIdentity(candidate, record) then current = candidate break end
+      end
+      if not current then
+        for _, candidate in ipairs(additions) do
+          if sameVaultIdentity(candidate, record) then current = candidate break end
+        end
+      end
+      if current then
+        if not vaultIdentityMatches(current, record) then return nil, "VAULT_CONFLICT_REVIEW_REQUIRED" end
+      else
+        table.insert(additions, clone(record))
+      end
+    end
+  end
+  return additions
+end
+
 ---@param previewId string Preview identifier.
 ---@param confirm boolean Explicit confirmation.
 ---@param reason string|nil Apply reason.
@@ -373,6 +423,8 @@ function M.Apply(previewId, confirm, reason, actor)
   if not roleAllowed(preview.targetScope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   if package.scope == "full" then
     if package.sourceGuild ~= Dibs.currentGuildKey then return nil, "CROSS_GUILD_FULL_BLOCKED" end
+    local vaultAdds, vaultReason = planVaultMerge((db.preDibs or {}).acquisitions, (package.payload.preDibs or {}).acquisitions, Dibs.currentGuildKey)
+    if not vaultAdds then return nil, vaultReason end
     local safety = Dibs.Backup and Dibs.Backup.Create and Dibs.Backup.Create("full", "before-import:" .. tostring(package.checksum), actor)
     if not safety then return nil, "SAFETY_SNAPSHOT_FAILED" end
     preview.safetySnapshotId = safety.snapshotId
@@ -410,7 +462,13 @@ function M.Apply(previewId, confirm, reason, actor)
     end
     for k, v in pairs(ledger.awardTransactions or {}) do targetLedger.awardTransactions[k] = targetLedger.awardTransactions[k] or v end
     for k, v in pairs(ledger.evidenceTransactions or {}) do targetLedger.evidenceTransactions[k] = targetLedger.evidenceTransactions[k] or v end
-    for key, value in pairs(package.payload) do if key ~= "ledger" then db[key] = clone(value) end end
+    for key, value in pairs(package.payload) do if key ~= "ledger" and key ~= "preDibs" then db[key] = clone(value) end end
+    if package.payload.preDibs then
+      db.preDibs = db.preDibs or {}
+      for key, value in pairs(package.payload.preDibs) do if key ~= "acquisitions" then db.preDibs[key] = clone(value) end end
+      db.preDibs.acquisitions = db.preDibs.acquisitions or {}
+      for _, record in ipairs(vaultAdds) do table.insert(db.preDibs.acquisitions, clone(record)) end
+    end
   elseif preview.targetScope == "local" then db.settings = db.settings or {}; mergeInto(db.settings, package.payload.presentation or {}, preview.strategy == "replace")
   else
     local safety = Dibs.Backup and Dibs.Backup.Create and Dibs.Backup.Create("guild", "before-config-import:" .. tostring(package.checksum), actor)

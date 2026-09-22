@@ -194,6 +194,14 @@ describe("RCLootCouncil history reconciliation", function()
       end
     end
 
+    local function findWidgetContaining(widget, kind, text)
+      if widget and widget.kind == kind and ((widget.text and widget.text:find(text, 1, true)) or (widget.label and widget.label:find(text, 1, true))) then return widget end
+      for _, child in ipairs(widget and widget.children or {}) do
+        local found = findWidgetContaining(child, kind, text)
+        if found then return found end
+      end
+    end
+
     local tree = frame.aceTabs
     local search = findWidget(tree, "Button", "Search history (preview)")
     assert_not_nil(search)
@@ -206,6 +214,15 @@ describe("RCLootCouncil history reconciliation", function()
       if widget.kind == "Frame" and widget.title == "RCLootCouncil - Dibs | Transfer" then transferWindow = widget break end
     end
     assert_not_nil(transferWindow)
+    local summary = findWidgetContaining(transferWindow, "Label", "Item:")
+    local technicalToggle = findWidget(transferWindow, "Button", "Show technical evidence")
+    assert_not_nil(summary)
+    assert_not_nil(technicalToggle)
+    assert_nil(findWidget(transferWindow, "Label", "Technical evidence"))
+    technicalToggle.callbacks.OnClick()
+    assert_not_nil(findWidget(transferWindow, "Label", "Technical evidence"))
+    assert_not_nil(findWidgetContaining(transferWindow, "Label", "Item:"))
+
     local confirm = findWidget(transferWindow, "Button", "Confirm as DIB")
     assert_not_nil(confirm)
     assert_true(confirm.disabled)

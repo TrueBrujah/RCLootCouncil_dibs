@@ -20,7 +20,7 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 - [X] T001 Add the planned B11 module and UI file load order to `src/RCLootCouncil_dibs.toc` and `src/embeds.xml` without changing existing module order semantics.
 - [X] T002 [P] Add B11 fixture reset helpers and production-state snapshot utilities to `tests/helpers/load_addon.lua` for comparing production state before and after sandbox operations.
 - [X] T003 [P] Add test doubles for LibSharedMedia, LibWindow, MSA-DropDownMenu, and optional external UI environments to `tests/helpers/`.
-- [ ] T004 [P] Add B11 test file registration and focused-suite selection documentation to `tests/run.lua` and `docs/TEST_PLAN.md`.
+- [X] T004 [P] Add B11 test file registration and focused-suite selection documentation to `tests/run.lua` and `docs/TEST_PLAN.md`.
 
 ---
 
@@ -36,7 +36,7 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 - [X] T008 Define provider selection, authority origin, active mode, and fail-closed mixed-provider guards in `src/integrations/DeveloperSandbox.lua`.
 - [X] T009 Define the versioned separate developer store, deep-copy clone validation, future-schema rejection, and reload cleanup in `src/integrations/DeveloperSandboxStore.lua` and `src/Core.lua`.
 - [X] T010 Add dirty-state/coalesced refresh scheduling and post-combat retry integration to `src/ui/AceGUI.lua` without rebuilding complex windows for every event.
-- [ ] T011 Add foundational provider, persistence, presentation fallback, refresh, and combat contract tests in `tests/contract/b11_foundation_spec.lua`.
+- [X] T011 Add foundational provider, persistence, presentation fallback, refresh, and combat contract tests in `tests/contract/b11_foundation_spec.lua`.
 - [X] T012 Add foundational developer-store migration and production-state noninterference tests in `tests/integration/b11_sandbox_lifecycle_spec.lua`.
 
 ---
@@ -59,7 +59,7 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 - [X] T017 [US1] Implement presentation-hint application and native fallback in `src/ui/EnvironmentAdapters.lua` without exposing policy or authority values to adapters.
 - [X] T018 [US1] Add shared context-menu registration through `src/ui/AceGUI.lua` and `src/libs/MSA-DropDownMenu-1.0/` integration points, keeping critical actions visible outside menus.
 - [X] T019 [US1] Add local presentation profile and window position/scale persistence through `src/ui/WindowState.lua` without writing guild policy or sync state.
-- [ ] T020 [US1] Integrate Midnight component lifecycle and coalesced refresh behavior into `src/ui/PlayerUI.lua`, `src/ui/OfficerUI.lua`, `src/ui/LogsUI.lua`, and `src/ui/DataUI.lua`.
+- [X] T020 [US1] Integrate Midnight component lifecycle and coalesced refresh behavior into `src/ui/PlayerUI.lua`, `src/ui/OfficerUI.lua`, `src/ui/LogsUI.lua`, and `src/ui/DataUI.lua`.
 
 **Checkpoint**: User Story 1 is independently functional when all complex Dibs windows share Midnight tokens, survive adapter failure, preserve local position/scale, and pass the focused UI tests.
 
@@ -204,11 +204,11 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 
 **Purpose**: Verify the complete B11 increment, preserve B00-B10 behavior, and document release boundaries.
 
-- [ ] T060 [P] Add full B11 regression coverage and update `docs/TEST_PLAN.md` with automated, Retail, one-client, and two-client scenarios from `specs/011-midnight-ui-developer-sandbox/quickstart.md`.
-- [ ] T061 [P] Update `docs/developer/architecture.md`, `docs/developer/testing.md`, `docs/developer/saved-variables.md`, and `docs/developer/modules.md` to document Midnight, provider isolation, local persistence, and sandbox lifecycle.
-- [ ] T062 Run the complete Fengari suite from `specs/011-midnight-ui-developer-sandbox/quickstart.md`, record known pre-B11 baseline failures separately, and run `git diff --check`.
+- [X] T060 [P] Add full B11 regression coverage and update `docs/TEST_PLAN.md` with automated, Retail, one-client, and two-client scenarios from `specs/011-midnight-ui-developer-sandbox/quickstart.md`.
+- [X] T061 [P] Update `docs/developer/architecture.md`, `docs/developer/testing.md`, `docs/developer/saved-variables.md`, and `docs/developer/modules.md` to document Midnight, provider isolation, local persistence, and sandbox lifecycle.
+- [X] T062 Run the complete Fengari suite from `specs/011-midnight-ui-developer-sandbox/quickstart.md`, record known pre-B11 baseline failures separately, and run `git diff --check`.
 - [ ] T063 Run Retail one-client and two-client validation for UI fallback, combat safety, sandbox isolation, provider restoration, player privacy, Officer authority, and reconciliation behavior using `docs/TEST_PLAN.md` and `specs/011-midnight-ui-developer-sandbox/quickstart.md`.
-- [ ] T064 Confirm no production SavedVariables migration, SyncV2 change, ledger semantic change, RCLootCouncil write, or sandbox-to-production path exists; record the B11 release note in `CHANGELOG.md` only when implementation is complete.
+- [X] T064 Confirm no production SavedVariables migration, SyncV2 change, ledger semantic change, RCLootCouncil write, or sandbox-to-production path exists; record the B11 release note in `CHANGELOG.md` only when implementation is complete.
 
 ---
 

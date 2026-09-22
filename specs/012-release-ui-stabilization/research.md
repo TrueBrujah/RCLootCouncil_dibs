@@ -48,4 +48,4 @@ Validation must cover RCLootCouncil absent, late-loaded, degraded, operational, 
 
 ## Release Evidence
 
-A release candidate requires an explicit version bump in `src/RCLootCouncil_dibs.toc` and its source version owner, a dated `CHANGELOG.md` entry, updated affected operator/player documentation, automated test output, diagnostics, whitespace validation, and documented Retail evidence. B12 planning artifacts do not claim release readiness, Retail certification, or implementation completion.
+A release candidate requires an explicit version bump in `src/RCLootCouncil_dibs.toc` and its source version owner, a dated `CHANGELOG.md` entry, updated affected operator/player documentation, automated test output, diagnostics, whitespace validation, and documented Retail evidence. B12 evidence artifacts record implementation progress but do not claim release readiness or Retail certification before the real-client matrix is complete.

@@ -19,7 +19,7 @@ describe("Pre-Dib migration", function()
 
     local migrated = dibs.GetDB()
 
-    assert_equal(6, migrated.version)
+    assert_equal(7, migrated.version)
     assert_equal(request.requestId, migrated.preDibs.requests[1].requestId)
     assert_equal(request.playerName, migrated.preDibs.requests[1].playerName)
     assert_equal(request.itemID, migrated.preDibs.requests[1].itemID)

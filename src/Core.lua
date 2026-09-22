@@ -33,6 +33,7 @@ Dibs.OperationalPolicy = Dibs.OperationalPolicy or {}
 Dibs.LegacyBaseline = Dibs.LegacyBaseline or {}
 Dibs.ProtectedActions = Dibs.ProtectedActions or {}
 Dibs.PreDibs = Dibs.PreDibs or {}
+Dibs.GreatVault = Dibs.GreatVault or {}
 Dibs.Seasons = Dibs.Seasons or {}
 Dibs.RankRules = Dibs.RankRules or {}
 Dibs.Ledger = Dibs.Ledger or {}
@@ -57,6 +58,9 @@ Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 Dibs.RCOptions = Dibs.RCOptions or {}
 Dibs.PlayerUI = Dibs.PlayerUI or {}
 Dibs.OfficerUI = Dibs.OfficerUI or {}
+Dibs.SetupAssistant = Dibs.SetupAssistant or {}
+Dibs.HealthUI = Dibs.HealthUI or {}
+Dibs.Notifications = Dibs.Notifications or {}
 Dibs.LogsUI = Dibs.LogsUI or {}
 Dibs.DebugLogs = Dibs.DebugLogs or {}
 Dibs.Reconciliation = Dibs.Reconciliation or {}
@@ -68,11 +72,17 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.6.2"
+Dibs.VERSION = "0.6.4-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
 Dibs.SAVED_VARIABLE_NAME = "RCLootCouncil_dibsDB"
+
+_G.RCLootCouncil_dibsLocalDB = _G.RCLootCouncil_dibsLocalDB or {}
+function Dibs.GetLocalDB()
+  _G.RCLootCouncil_dibsLocalDB = _G.RCLootCouncil_dibsLocalDB or {}
+  return _G.RCLootCouncil_dibsLocalDB
+end
 
 if Dibs ~= RCLootCouncil_dibs then
   RCLootCouncil_dibs = Dibs
@@ -132,12 +142,18 @@ function Dibs.GetGuildKey()
       return normalizeGuildKey(realm, guildName)
     end
   end
-  local playerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or "unknown"
-  return normalizeGuildKey(realm, "no-guild:" .. tostring(playerName))
+  return Dibs.GetCharacterScopeKey(Dibs.GetPlayerName and Dibs.GetPlayerName() or "unknown")
+end
+
+---@param playerName string Character name used for an unguilded ownership scope.
+---@return string scopeKey
+function Dibs.GetCharacterScopeKey(playerName)
+  local realm = type(GetRealmName) == "function" and GetRealmName() or "unknown-realm"
+  return normalizeGuildKey(realm, "no-guild:" .. tostring(playerName or "unknown"))
 end
 
 local defaultDB = {
-  version = 6,
+  version = 7,
   currentSeasonId = nil,
   seasons = {},
   rankRules = {},
@@ -156,6 +172,7 @@ local defaultDB = {
     requests = {},
     modePolicies = {},
     acquisitions = {},
+    vaultConflicts = {},
   },
   disputes = {
     version = 1,
@@ -239,12 +256,19 @@ local defaultDB = {
     defaultSyncInterval = 5,
     raidEntryDibPromptsEnabled = false,
     raidReminderMessage = "[Dibs] Review your eligible Pre-Dibs before the encounter.",
+    dibButtonTemplate = {
+      text = "Dib",
+      whisperKey = "dib",
+      color = { 0.15, 0.85, 1, 1 },
+      requireNotes = false,
+    },
+    dibRCEnabledTypes = {},
   },
 }
 
 local FLAT_ROOT_MARKERS = { "seasons", "preDibs", "ledger", "permissions", "settings" }
 local ROOT_SCHEMA_VERSION = 6
-local GUILD_SCHEMA_VERSION = 6
+local GUILD_SCHEMA_VERSION = 7
 local RECOVERY_METADATA_VERSION = 1
 local MAX_STARTUP_BACKUPS = 3
 local MAX_QUARANTINE_RECORDS = 25
@@ -437,6 +461,7 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   ensureTable(preDibs, "requests", {}, root, changes, scope .. ".preDibs.requests")
   ensureTable(preDibs, "modePolicies", {}, root, changes, scope .. ".preDibs.modePolicies")
   ensureTable(preDibs, "acquisitions", {}, root, changes, scope .. ".preDibs.acquisitions")
+  ensureTable(preDibs, "vaultConflicts", {}, root, changes, scope .. ".preDibs.vaultConflicts")
   sanitizeRecordMap(preDibs.requests, root, changes, scope .. ".preDibs.requests")
   sanitizeRecordMap(preDibs.modePolicies, root, changes, scope .. ".preDibs.modePolicies")
   sanitizeRecordMap(preDibs.acquisitions, root, changes, scope .. ".preDibs.acquisitions")
@@ -614,6 +639,31 @@ local function migrateGuild(db)
     db.disputes.corrections = db.disputes.corrections or {}
     db.version = 6
   end
+  if db.version < 7 then
+    db.preDibs = db.preDibs or { requests = {}, modePolicies = {}, acquisitions = {} }
+    db.preDibs.acquisitions = db.preDibs.acquisitions or {}
+    for index, record in ipairs(db.preDibs.acquisitions) do
+      if type(record) == "table" then
+        record.acquisitionId = record.acquisitionId or ("vault-legacy-" .. tostring(index))
+        record.guildKey = record.guildKey or (Dibs.GetCharacterScopeKey and Dibs.GetCharacterScopeKey(record.playerName) or Dibs.currentGuildKey)
+        record.source = record.source == "VAULT" and "VAULT_LEGACY" or (record.source or "VAULT_LEGACY")
+        record.verificationState = record.verificationState or "LEGACY_RECORDED"
+        record.evidenceState = record.evidenceState or "MISSING"
+        record.claimedAt = record.claimedAt or record.acquiredAt or record.createdAt or time()
+        record.createdAt = record.createdAt or record.acquiredAt or record.claimedAt
+        record.revision = tonumber(record.revision) or 1
+        record.syncState = record.syncState or "LOCAL"
+        record.acquisitionKey = record.acquisitionKey or table.concat({
+          tostring(record.guildKey or ""), tostring(record.playerName or ""),
+          tostring(record.characterId or ""), tostring(record.seasonId or ""),
+          tostring(record.resetId or "no-reset"), tostring(record.itemID or ""),
+          tostring(record.difficulty or "UNKNOWN"), tostring(record.source or "VAULT_LEGACY"),
+        }, "|")
+        record.migration = record.migration or { sourceSchemaVersion = 6, migratedAt = time() }
+      end
+    end
+    db.version = 7
+  end
 end
 
 Dibs.Persistence.MigrateGuild = Dibs.Persistence.MigrateGuild or migrateGuild
@@ -677,7 +727,26 @@ local function ensureDB()
   if isFlatLegacyRoot(staged) then
     local legacy = staged
     staged = newRoot()
-    staged.guilds[guildKey] = legacy
+    if guildKey:find(":no-guild:", 1, true) and type(legacy.preDibs) == "table" and type(legacy.preDibs.acquisitions) == "table" then
+      local activeLegacy = deepcopy(legacy)
+      activeLegacy.preDibs = deepcopy(legacy.preDibs)
+      activeLegacy.preDibs.acquisitions = {}
+      staged.guilds[guildKey] = activeLegacy
+      for _, acquisition in ipairs(legacy.preDibs.acquisitions) do
+        if type(acquisition) == "table" then
+          local ownerScope = acquisition.guildKey
+          if not ownerScope or ownerScope == "" then
+            ownerScope = Dibs.GetCharacterScopeKey(acquisition.playerName)
+          end
+          staged.guilds[ownerScope] = staged.guilds[ownerScope] or { version = 1, preDibs = { requests = {}, modePolicies = {}, acquisitions = {} } }
+          local ownerPreDibs = staged.guilds[ownerScope].preDibs
+          ownerPreDibs.acquisitions = ownerPreDibs.acquisitions or {}
+          table.insert(ownerPreDibs.acquisitions, deepcopy(acquisition))
+        end
+      end
+    else
+      staged.guilds[guildKey] = legacy
+    end
     changes.changed, changes.migration, changes.needsBackup = true, true, true
   elseif not isWholeNumber(staged.schemaVersion) then
     if staged.schemaVersion ~= nil then quarantine(staged, changes, "root.schemaVersion", "EXPECTED_SUPPORTED_INTEGER", staged.schemaVersion) end
@@ -1106,6 +1175,12 @@ function Dibs.BuildDebugReport()
     "Raid Dibs: " .. (clubId and ("available clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId)) or "unavailable"),
     "Debug levels: all=" .. tostring(levels.all or 1) .. " announce=" .. tostring(levels.announce or "inherit") .. " sync=" .. tostring(levels.sync or "inherit") .. " ui=" .. tostring(levels.ui or "inherit") .. " encounter_journal=" .. tostring(levels.encounter_journal or "inherit"),
   }
+  if Dibs.PreDibs and Dibs.PreDibs.GetVaultDiagnostics then
+    local vault = Dibs.PreDibs.GetVaultDiagnostics()
+    lines[#lines + 1] = "Great Vault: records=" .. tostring(vault.total) .. " legacy=" .. tostring(vault.legacy)
+      .. " review=" .. tostring(vault.reviewRequired) .. " conflicts=" .. tostring(vault.conflicts)
+      .. " synced=" .. tostring(vault.synced)
+  end
   local moduleDiagnostics = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleManagementDiagnostics
     and Dibs.OperationalPolicy.GetModuleManagementDiagnostics(nil)
   if moduleDiagnostics then
@@ -1239,7 +1314,7 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
@@ -1433,7 +1508,9 @@ function Dibs.HandleSlashCommand(msg)
   if action == "vault" then
     local record, reason = Dibs.PreDibs and Dibs.PreDibs.RecordVaultAcquisition and Dibs.PreDibs.RecordVaultAcquisition(Dibs.GetPlayerName(), args[2], args[3]) or nil, "ACQUISITIONS_UNAVAILABLE"
     if record then
-      Dibs.Message("Vault acquisition recorded for item " .. tostring(record.itemID) .. " (" .. tostring(record.difficulty) .. ").")
+      local resultKey = "VAULT_RESULT_" .. tostring(record.outcome or "RECORDED_MANUAL")
+      local resultText = Dibs.L and Dibs.L[resultKey] or "Vault acquisition recorded."
+      Dibs.Message(resultText .. " Item " .. tostring(record.itemID) .. " (" .. tostring(record.difficulty) .. ").")
     else
       Dibs.Message(reason == "INVALID_ITEM" and "A valid item ID is required." or "Unable to record Vault acquisition.")
     end

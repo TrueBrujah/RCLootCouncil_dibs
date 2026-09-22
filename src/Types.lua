@@ -12,7 +12,9 @@ runtime state or changing addon load order.
 ---@alias DibsLootFamily "TOKEN"|"TOKEN_SET"|"EQUIPMENT"|"COSMETIC"|"CATALYST"|"UNKNOWN"
 ---@alias DibsRequestStatus "pending"|"confirmed"|"invalidated"|"fulfilled"|"cancelled"
 ---@alias DibsEligibilityOutcome "ELIGIBLE"|"INELIGIBLE"|"UNKNOWN"|"REVIEW"
----@alias DibsSyncMessageType "HELLO"|"MANIFEST"|"FETCH"|"TRANSFER_BEGIN"|"TRANSFER_CHUNK"|"TRANSFER_END"|"REQUEST_ACK"|"REQUEST"
+---@alias DibsSyncMessageType "HELLO"|"MANIFEST"|"FETCH"|"TRANSFER_BEGIN"|"TRANSFER_CHUNK"|"TRANSFER_END"|"REQUEST_ACK"|"REQUEST"|"VAULT_DIGEST"|"VAULT_FETCH"|"VAULT_DETAIL"|"VAULT_ACK"
+---@alias DibsVaultVerificationState "AUTOMATIC_CONFIRMED"|"MANUAL_RECORDED"|"LEGACY_RECORDED"|"UNVERIFIED"|"OFFICER_CONFIRMED"|"REJECTED"|"REFERENCE_ONLY"
+---@alias DibsVaultEvidenceState "COMPLETE"|"PARTIAL"|"AMBIGUOUS"|"MISSING"
 ---@alias DibsActionId "FINALIZE_AWARD"|"MANAGE_DIBS"|"MANAGE_SEASON"|"MANAGE_RANK_RULES"|"MANAGE_SYNC"
 
 ---@class DibsSeason
@@ -67,7 +69,24 @@ runtime state or changing addon load order.
 ---@field itemID integer
 ---@field difficulty DibsDifficulty|nil
 ---@field createdAt integer Unix timestamp.
----@field source string Acquisition source; display-only and never a ledger use.
+---@field claimedAt integer Unix timestamp.
+---@field guildKey string Guild or character isolation scope.
+---@field characterId string|nil Stable character identity.
+---@field resetId string|nil Weekly reset identity.
+---@field source string Acquisition source; never a ledger use.
+---@field verificationState DibsVaultVerificationState
+---@field evidenceState DibsVaultEvidenceState
+---@field evidenceId string|nil
+---@field evidence table|nil Original bounded evidence when available.
+---@field originalEvidence table|nil Immutable evidence snapshot retained for review.
+---@field review table|nil Latest Officer review decision and audit context.
+---@field reviewHistory table[]|nil Prior Officer review decisions.
+---@field acquisitionKey string Stable deduplication identity.
+---@field revision integer
+---@field contentHash string|nil
+---@field syncState string
+---@field outcome string|nil Acquisition outcome for local/manual recording.
+---@field idempotentReplay boolean|nil Whether the returned record was an idempotent replay.
 
 ---@class DibsEligibilityPolicy
 ---@field seasonId string
@@ -203,6 +222,9 @@ runtime state or changing addon load order.
 ---@field currentGuildKey string|nil Active guild scope cache.
 ---@field Midnight table|nil Optional UI compatibility surface.
 ---@field Debug table|nil Optional developer diagnostics surface.
+---@field SetupAssistant table|nil Transient first-installation assistant surface.
+---@field HealthUI table|nil Transient Officer health projection surface.
+---@field Notifications table|nil Local idempotent notification surface.
 
 ---@class DibsSavedVariables
 ---@field schemaVersion integer Root SavedVariables schema.

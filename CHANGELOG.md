@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.4-dev - B12 release candidate hardening - 2026-09-22
+
+- Stabilize Player and Officer route ownership, shared context-menu cleanup,
+  responsive window behavior, and safe empty or unavailable UI states.
+- Improve request and historical DIB transfer projections while preserving the
+  existing ledger, permission, combat-safety, synchronization, and RCLootCouncil
+  ownership semantics.
+- Document supported Player and Officer workflows, release evidence links,
+  conditional two-client applicability, and the real-client Retail gate.
+- Validate focused B12 and full Fengari suites; retain Retail validation and the
+  developer-only `SANDBOX_STORE_TOO_LARGE` boundary as explicit limitations.
+
+## 0.6.3-dev - Great Vault acquisition tracking - 2026-09-21
+
+- Add evidence-only Great Vault acquisition tracking with automatic claim
+  capability checks and the `/dibs vault` manual fallback.
+- Add guild-scoped `VAULT_DIGEST`, `VAULT_FETCH`, `VAULT_DETAIL`, and
+  `VAULT_ACK` synchronization with bounded recovery, privacy filtering, and
+  immutable conflict review.
+- Preserve and classify legacy Vault records during schema 7 migration, with
+  stable import deduplication and Officer migration review.
+- Keep Vault records outside the Dibs ledger; update player and Officer status,
+  reset, sync, diagnostic, and eligibility explanations.
+
 ## 0.6.2 - 2026-09-17
 
 - Synchronize the addon version across the TOC, runtime metadata, README,

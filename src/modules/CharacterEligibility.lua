@@ -477,6 +477,26 @@ local function acquisitionMatches(acquisition, targetSeason, group, family, poli
   return true
 end
 
+local function collectVaultEvidence(state, targetSeason, group, family, policy, context)
+  local records, uncertain = {}, false
+  local vaultRecords = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitions and Dibs.PreDibs.GetAcquisitions() or {}
+  for _, vault in ipairs(vaultRecords) do
+    local status = vault and vault.verificationState
+    local trusted = status == "AUTOMATIC_CONFIRMED" or status == "OFFICER_CONFIRMED"
+    local uncertainStatus = status == "MANUAL_RECORDED" or status == "LEGACY_RECORDED" or status == "UNVERIFIED"
+    if vault and (trusted or uncertainStatus) then
+      local projected = copy(vault)
+      projected.family = normalizeFamily(vault.family or vault.rewardCategory)
+      projected.playerGroupId = Eligibility.GetPlayerGroup(vault.playerName, targetSeason)
+      projected.characterName = vault.playerName
+      if projected.family and acquisitionMatches(projected, targetSeason, projected.playerGroupId, family, policy, context) then
+        if trusted then table.insert(records, projected) else uncertain = true end
+      end
+    end
+  end
+  return records, uncertain
+end
+
 local function uniqueProgress(records, family)
   local seen, count, maxTrack = {}, 0, 0
   for _, record in ipairs(records) do
@@ -562,6 +582,13 @@ function Eligibility.Evaluate(context, playerName, seasonId)
   local state, records = ensureState(), {}
   for _, acquisition in ipairs(state.acquisitions) do
     if acquisitionMatches(acquisition, targetSeason, group, family, policy, input) then table.insert(records, acquisition) end
+  end
+  local vaultRecords, uncertainVault = collectVaultEvidence(state, targetSeason, group, family, policy, input)
+  for _, acquisition in ipairs(vaultRecords) do table.insert(records, acquisition) end
+  if uncertainVault and policy.unknownDataBehavior == "REVIEW" then
+    return buildDecision(input, playerName, targetSeason, "review", "VAULT_EVIDENCE_UNCERTAIN",
+      "A matching Great Vault acquisition needs confirmation before protected-loot eligibility can be decided.",
+      { family = family, playerGroupId = group, acquisitions = records, unknownData = true })
   end
   local probation = Eligibility.GetProbation(playerName, targetSeason)
   local probationException

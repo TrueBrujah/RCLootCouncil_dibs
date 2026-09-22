@@ -38,7 +38,12 @@ idempotent compensating transaction with the request, evidence, and reason.
 ### PreDibs
 Owns advance reservation/request lifecycle, per-season `WILD_OPEN` and `ENCOUNTER` policies, request revisions, immutable origin metadata, validation context, normalized difficulty, and delivery acknowledgement metadata. Active request identity includes player, item, season, and difficulty. Mode changes validate future requests only and never rewrite ledger or request history.
 
-PreDibs also owns explicit player-recorded Great Vault acquisition records. They are display-only ownership records (`VAULT`, item, difficulty, timestamp), never synchronize as live loot, never alter request status, and never append or consume ledger state.
+PreDibs also owns explicit Great Vault acquisition records. They are evidence
+records scoped to the active guild, or to the claiming character when
+unguilded. They may synchronize through the bounded `VAULT_DIGEST`,
+`VAULT_FETCH`, `VAULT_DETAIL`, and `VAULT_ACK` path, but never synchronize as
+live loot, alter request status, or append or consume ledger state. Immutable
+identity conflicts are retained for Officer review instead of last-write-wins.
 
 ### LootPipeline
 Owns shared loot-item processing entry points so different adapters (for example Encounter Journal and Developer Mode) converge on one Request Dib processing path instead of duplicating business logic.

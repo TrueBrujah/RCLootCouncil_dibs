@@ -1,10 +1,10 @@
 local loader = require("helpers.load_addon")
 
 describe("DB migration", function()
-  it("initializes schema version 6 with required indexes", function()
+  it("initializes schema version 7 with required indexes", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local db = dibs.GetDB()
-    assert_equal(6, db.version)
+    assert_equal(7, db.version)
     assert_not_nil(db.permissions)
     assert_not_nil(db.ledger.awardTransactions)
     assert_not_nil(db.preDibs.acquisitions)

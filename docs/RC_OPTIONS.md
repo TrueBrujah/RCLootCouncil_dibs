@@ -17,6 +17,24 @@ window. Use **Backups** for dated recovery points and preview-first restore,
 **Import / Export** for checksummed `DIBS-PKG-1` packages. Configuration imports
 show merge/replace impact; full-data imports are append-only and deduplicated.
 
+## Great Vault tracking
+
+Players can use `/dibs vault <itemID> [difficulty]` to record a manual Vault
+acquisition when the Retail claim signal is unavailable. Opening the Vault or
+viewing a reward choice is not treated as a claim. Automatic records require a
+claim identity and reset identity supplied by the Retail adapter.
+
+The Player window shows item, source, reset, verification status, eligibility
+explanation, and sync state. The Officer **Vault Review** view shows guild-safe
+records, legacy migration rows, unresolved conflicts, and audited review
+actions. Complete evidence remains Officer-only. Vault records never consume a
+Dib.
+
+Vault sync is guild-scoped and privacy-filtered. It uses bounded digest/fetch/
+detail/ack messages, retries missing detail after reconnect, rejects malformed
+or cross-guild data, and discards incomplete transfers. Changing guilds does
+not merge prior history; unguilded records remain character-scoped.
+
 ## RCLootCouncil button-set mapping
 
 RCLootCouncil's **Additional Buttons** menu mixes item families and equipment

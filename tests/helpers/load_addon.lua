@@ -14,11 +14,13 @@ local TOC_FILES = {
   "modules/Ledger.lua",
   "modules/Permissions.lua",
   "modules/ProtectedActions.lua",
+  "modules/Notifications.lua",
   "modules/ImportExport.lua",
   "modules/Profiles.lua",
   "modules/Backup.lua",
   "modules/Disputes.lua",
   "modules/PreDibs.lua",
+  "integrations/GreatVault.lua",
   "modules/CharacterEligibility.lua",
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
@@ -40,6 +42,8 @@ local TOC_FILES = {
   "ui/EnvironmentAdapters.lua",
   "ui/WindowState.lua",
   "ui/AceGUI.lua",
+  "ui/SetupAssistant.lua",
+  "ui/HealthUI.lua",
   "ui/DeveloperUI.lua",
   "ui/LogsUI.lua",
   "ui/DataUI.lua",
@@ -190,6 +194,9 @@ function M.load(opts)
   end
   if opts.sandboxVariables ~= nil then
     _G.RCLootCouncil_dibsSandboxDB = opts.sandboxVariables
+  end
+  if opts.localVariables ~= nil then
+    _G.RCLootCouncil_dibsLocalDB = opts.localVariables
   end
 
   local rc = opts.rclootcouncil

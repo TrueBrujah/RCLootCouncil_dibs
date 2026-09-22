@@ -12,8 +12,8 @@ local Sync = Dibs.Sync
 
 local MAJOR, MINOR = 2, 0
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX = 256, 8, 16, 8192, 500
-local TTL, HEARTBEAT = 30, 60
-local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, LEDGER_DIGEST = true }
+local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 30, 60, 3
+local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
@@ -27,6 +27,7 @@ local function ensure()
   state.v2 = state.v2 or { schema = 1, protocolState = "LEGACY_LOCAL", requestIndex = {}, tombstones = {}, replay = {}, peers = {} }
   state.v2.requestIndex = state.v2.requestIndex or {}; state.v2.tombstones = state.v2.tombstones or {}
   state.v2.replay = state.v2.replay or {}; state.v2.peers = state.v2.peers or {}
+    state.v2.replay = state.v2.replay or {}; state.v2.peers = state.v2.peers or {}; state.v2.vaultPending = state.v2.vaultPending or {}
   Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.v2Transfers = Dibs.runtime.v2Transfers or {}
   return state.v2
 end
@@ -116,6 +117,34 @@ function Sync.ClearSyncBehind()
 end
 local function requestAwardCommit(target, epoch, sequence, contentHash)
   return Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "AWARD_COMMIT", entityId = tostring(epoch) .. ":" .. tostring(sequence), revision = sequence, contentHash = contentHash } } }, "WHISPER", target)
+end
+local function rememberVaultRequests(requests, target)
+  local state = ensure()
+  for _, request in ipairs(requests or {}) do
+    if type(request.acquisitionId) == "string" and type(target) == "string" then
+      local current = state.vaultPending[request.acquisitionId] or { attempts = 0 }
+      current.revision, current.contentHash, current.target = request.revision, request.contentHash, target
+      state.vaultPending[request.acquisitionId] = current
+    end
+  end
+end
+local function clearVaultRequest(acquisitionId)
+  ensure().vaultPending[acquisitionId] = nil
+end
+local function retryVaultRequests()
+  local state, grouped = ensure(), {}
+  for acquisitionId, request in pairs(state.vaultPending) do
+    if (tonumber(request.attempts) or 0) < MAX_VAULT_RETRIES then
+      local target = request.target
+      grouped[target] = grouped[target] or {}
+      grouped[target][#grouped[target] + 1] = { acquisitionId = acquisitionId, revision = request.revision, contentHash = request.contentHash }
+    end
+  end
+  for target, requests in pairs(grouped) do
+    if Sync.Send(Sync.BuildVaultFetch(requests), "WHISPER", target) then
+      for _, request in ipairs(requests) do state.vaultPending[request.acquisitionId].attempts = (state.vaultPending[request.acquisitionId].attempts or 0) + 1 end
+    end
+  end
 end
 local function clearResolvedLedgerGap(sender)
   local state, target = ensure(), ensure().ledgerTarget
@@ -240,6 +269,63 @@ function Sync.BuildOperationalPolicyDigest()
   }
 end
 
+local function vaultProjection(record)
+  local projection = Dibs.PreDibs.ProjectVaultAcquisition(record, "player")
+  projection.evidence = nil
+  projection.originalEvidence = nil
+  projection.review = nil
+  projection.syncState = nil
+  return projection
+end
+
+local function vaultHash(record)
+  return hash(vaultProjection(record))
+end
+
+function Sync.BuildVaultDigest()
+  local records = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitions and Dibs.PreDibs.GetAcquisitions() or {}
+  local entries = {}
+  for _, record in ipairs(records) do
+    entries[#entries + 1] = {
+      acquisitionId = record.acquisitionId, revision = tonumber(record.revision) or 1,
+      contentHash = vaultHash(record), playerName = record.playerName, itemID = tonumber(record.itemID),
+      seasonId = record.seasonId, resetId = record.resetId, claimedAt = record.claimedAt,
+      verificationState = record.verificationState,
+      source = record.source, syncState = record.syncState,
+    }
+  end
+  table.sort(entries, function(a, b) return tostring(a.acquisitionId) < tostring(b.acquisitionId) end)
+  while #entries > MAX_INDEX do table.remove(entries) end
+  return { type = "VAULT_DIGEST", entityType = "VAULT_INDEX", entityId = "current", revision = 1,
+    contentHash = hash(entries), records = entries, entries = entries }
+end
+
+function Sync.BuildVaultFetch(requests)
+  local bounded = {}
+  for index, request in ipairs(type(requests) == "table" and requests or {}) do
+    if index > 32 then break end
+    bounded[#bounded + 1] = {
+      acquisitionId = request.acquisitionId, revision = tonumber(request.revision) or 1,
+      contentHash = request.contentHash,
+    }
+  end
+  return { type = "VAULT_FETCH", requests = bounded }
+end
+
+function Sync.BuildVaultDetail(record)
+  local payload = vaultProjection(record)
+  return {
+    type = "VAULT_DETAIL", acquisitionId = payload.acquisitionId,
+    revision = tonumber(payload.revision) or 1, contentHash = vaultHash(payload),
+    acquisition = payload, projection = "PLAYER", payload = payload,
+  }
+end
+
+function Sync.BuildVaultAck(acquisitionId, revision, outcome, reasonCode)
+  return { type = "VAULT_ACK", acquisitionId = acquisitionId, revision = tonumber(revision) or 1,
+    result = outcome, outcome = outcome, reasonCode = reasonCode }
+end
+
 local function validateEnvelope(message, sender)
   if type(message) ~= "table" or not TYPES[message.type] or type(message.protocol) ~= "table" then return nil, "MALFORMED_ENVELOPE" end
   if tonumber(message.protocol.major) ~= MAJOR then return nil, "UNSUPPORTED_PROTOCOL_MAJOR" end
@@ -264,7 +350,7 @@ local function requestDetail(target, requestId)
   return Sync.SendDetail("PREDIB_REQUEST", requestId, tonumber(request.revision) or 1, requestHash(request), request, target)
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local encoded = Dibs.Ace3.Serialize(payload); if type(encoded) ~= "string" or #encoded > MAX_BYTES then return false, "PAYLOAD_TOO_LARGE" end
   local transferId = Dibs.NewId("v2transfer"); local chunks = {}
@@ -330,6 +416,36 @@ local function applyRequest(payload, transfer, sender)
   return true, "APPLIED"
 end
 
+local function applyVaultDetail(payload, transfer, sender)
+  if type(payload) ~= "table" or payload.acquisitionId ~= transfer.entityId
+    or tonumber(payload.revision) ~= tonumber(transfer.revision) then
+    return false, "ENTITY_IDENTITY_MISMATCH"
+  end
+  if payload.evidence ~= nil or payload.originalEvidence ~= nil or payload.review ~= nil then
+    return false, "FORBIDDEN_PRIVATE_EVIDENCE"
+  end
+  if payload.guildKey and payload.guildKey ~= Dibs.GetGuildKey() then return false, "GUILD_SCOPE_MISMATCH" end
+  local owner = member(payload.playerName)
+  if not owner or (owner.memberKey ~= sender.memberKey and not isAdmin(sender.displayName)) then
+    return false, "VAULT_AUTHORITY_REQUIRED"
+  end
+  if vaultHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
+  local current = Dibs.PreDibs.GetVaultAcquisition and Dibs.PreDibs.GetVaultAcquisition(transfer.entityId)
+  if current then
+    local currentRevision = tonumber(current.revision) or 1
+    if tonumber(transfer.revision) < currentRevision then return false, "STALE_REVISION" end
+    if tonumber(transfer.revision) == currentRevision then
+      if vaultHash(current) == transfer.contentHash then clearVaultRequest(transfer.entityId); return true, "IDEMPOTENT_REPLAY" end
+      return false, "CONFLICT"
+    end
+  end
+  local applied, applyReason = Dibs.PreDibs.ApplyVaultSyncRecord(payload)
+  if not applied then return false, applyReason end
+  clearVaultRequest(transfer.entityId)
+  if Sync.IsSyncBehind() and ensure().reason == "VAULT_DETAIL_MISSING" then Sync.ClearSyncBehind() end
+  return true, applyReason
+end
+
 function Sync.Receive(message, sender)
   ensure(); expiry()
   if Sync.ContainsForbiddenLiveLootData and Sync.ContainsForbiddenLiveLootData(message) then return false, "FORBIDDEN_LIVE_LOOT_DATA" end
@@ -342,6 +458,61 @@ function Sync.Receive(message, sender)
   if message.type == "HELLO" then
     if message.protocolState == "V2_ENFORCED" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
     return true, "HELLO"
+  end
+  if message.type == "VAULT_DIGEST" then
+    local entries = message.records or message.entries
+    if type(entries) ~= "table" or #entries > MAX_INDEX then return false, "INVALID_VAULT_DIGEST" end
+    local needed = {}
+    for _, entry in ipairs(entries) do
+      if type(entry) ~= "table" or type(entry.acquisitionId) ~= "string"
+        or not finiteInteger(entry.revision) or type(entry.contentHash) ~= "string" then
+        return false, "INVALID_VAULT_DIGEST"
+      end
+      local current = Dibs.PreDibs.GetVaultAcquisition and Dibs.PreDibs.GetVaultAcquisition(entry.acquisitionId)
+      local currentRevision = current and (tonumber(current.revision) or 1) or 0
+      if tonumber(entry.revision) > currentRevision then
+        needed[#needed + 1] = { acquisitionId = entry.acquisitionId, revision = entry.revision, contentHash = entry.contentHash }
+        rememberVaultRequests({ needed[#needed] }, resolved.displayName)
+      elseif tonumber(entry.revision) == currentRevision and current and vaultHash(current) ~= entry.contentHash then
+        return false, "CONFLICT"
+      else
+        clearVaultRequest(entry.acquisitionId)
+      end
+    end
+    if #needed > 0 then
+      Sync.MarkSyncBehind("VAULT_DETAIL_MISSING")
+      Sync.Send(Sync.BuildVaultFetch(needed), "WHISPER", resolved.displayName)
+      return true, "VAULT_DETAIL_REQUESTED"
+    end
+    return true, "VAULT_DIGEST_CURRENT"
+  end
+  if message.type == "VAULT_FETCH" then
+    if type(message.requests) ~= "table" or #message.requests > 32 then return false, "INVALID_VAULT_FETCH" end
+    for _, request in ipairs(message.requests) do
+      if type(request) ~= "table" or type(request.acquisitionId) ~= "string" or not finiteInteger(request.revision)
+        or type(request.contentHash) ~= "string" then return false, "INVALID_VAULT_FETCH" end
+      local record = Dibs.PreDibs.GetVaultAcquisition and Dibs.PreDibs.GetVaultAcquisition(request.acquisitionId)
+      if record and (isAdmin(resolved.displayName) or member(record.playerName) and member(record.playerName).memberKey == resolved.memberKey) then
+        Sync.SendDetail("VAULT_DETAIL", record.acquisitionId, tonumber(record.revision) or 1, vaultHash(record), record, resolved.displayName)
+      end
+    end
+    return true, "VAULT_DETAIL_SENT"
+  end
+  if message.type == "VAULT_DETAIL" then
+    local payload = message.acquisition or message.payload
+    if type(payload) ~= "table" or type(message.acquisitionId) ~= "string"
+      or payload.acquisitionId ~= message.acquisitionId or not finiteInteger(message.revision)
+      or tonumber(payload.revision) ~= tonumber(message.revision) or type(message.contentHash) ~= "string" then
+      return false, "INVALID_VAULT_DETAIL"
+    end
+    return applyVaultDetail(payload, { entityId = message.acquisitionId, revision = message.revision, contentHash = message.contentHash }, resolved)
+  end
+  if message.type == "VAULT_ACK" then
+    if type(message.acquisitionId) ~= "string" or not finiteInteger(message.revision)
+      or type(message.result or message.outcome) ~= "string" then
+      return false, "INVALID_VAULT_ACK"
+    end
+    return true, "VAULT_ACK_ACCEPTED"
   end
   if message.type == "LEDGER_DIGEST" then
     if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
@@ -450,7 +621,7 @@ function Sync.Receive(message, sender)
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" then return false, "UNSUPPORTED_ENTITY" end
     if message.entityType == "OPERATIONAL_POLICY" then
       local writerAllowed = false
       local writerReason = "POLICY_WRITER_REQUIRED"
@@ -489,6 +660,7 @@ function Sync.Receive(message, sender)
     if transfer.entityType == "PREDIB_REQUEST" then
       local ok, applyReason = applyRequest(payload, transfer, resolved); if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end; return ok, applyReason
     end
+    if transfer.entityType == "VAULT_DETAIL" then return applyVaultDetail(payload, transfer, resolved) end
     if transfer.entityType == "GOVERNANCE" and Dibs.Governance and Dibs.Governance.ApplyRecord then return Dibs.Governance.ApplyRecord(payload, resolved.displayName) end
     if transfer.entityType == "OPERATIONAL_POLICY" and Dibs.OperationalPolicy and Dibs.OperationalPolicy.ApplyRecord then
       local ok, applyReason = Dibs.OperationalPolicy.ApplyRecord(payload, resolved.displayName)
@@ -538,7 +710,7 @@ function Sync.OnAddonMessage(prefix, payload, channel, sender)
   if prefix ~= "DIBS" or type(payload) ~= "string" then return false, "INVALID_PREFIX" end
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
   local message = Dibs.Ace3.Deserialize(payload); if type(message) ~= "table" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
-  local guildOnly = message.type == "HELLO" or message.type == "DIGEST" or message.type == "LEDGER_DIGEST"
+  local guildOnly = message.type == "HELLO" or message.type == "DIGEST" or message.type == "LEDGER_DIGEST" or message.type == "VAULT_DIGEST"
   if (guildOnly and channel ~= "GUILD") or (not guildOnly and channel ~= "WHISPER") then return false, "INVALID_TRANSPORT_CHANNEL" end
   return Sync.Receive(message, sender)
 end
@@ -558,6 +730,8 @@ end
 function Sync.OnLifecycle(reason)
   if not Sync.RegisterTransport() then return false, "SYNC_UNAVAILABLE" end
   local digest = Sync.BuildManifest(); local sent = Sync.Send(digest, "GUILD")
+  Sync.Send(Sync.BuildVaultDigest(), "GUILD")
+  retryVaultRequests()
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted() then
     Sync.Send(Sync.BuildOperationalPolicyDigest(), "GUILD")
   end

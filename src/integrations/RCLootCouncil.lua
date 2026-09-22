@@ -136,6 +136,95 @@ local typeAllowanceCache = {}
 local TYPE_ALLOWANCE_CACHE_TTL = 300
 local typePolicyRevision = 1
 
+local function getDibButtonSettings()
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  db.settings = db.settings or {}
+  db.settings.dibButtonTemplate = db.settings.dibButtonTemplate or {}
+  local template = db.settings.dibButtonTemplate.default or db.settings.dibButtonTemplate
+  if type(template) ~= "table" then template = {} end
+  template.text = tostring(template.text or "Dib")
+  template.whisperKey = tostring(template.whisperKey or "dib")
+  template.color = type(template.color) == "table" and template.color or { 0.15, 0.85, 1, 1 }
+  template.requireNotes = template.requireNotes == true
+  return template
+end
+
+function Dibs.RCLootCouncil.GetDibButtonTemplate(responseType)
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  db.settings = db.settings or {}
+  db.settings.dibButtonTemplate = db.settings.dibButtonTemplate or {}
+  local template = responseType and db.settings.dibButtonTemplate[canonicalPolicyKey(responseType)] or nil
+  if type(template) ~= "table" then template = getDibButtonSettings() end
+  return {
+    text = template.text,
+    whisperKey = template.whisperKey,
+    color = { template.color[1], template.color[2], template.color[3], template.color[4] or 1 },
+    requireNotes = template.requireNotes,
+  }
+end
+
+function Dibs.RCLootCouncil.SetDibButtonTemplate(responseType, values)
+  if type(responseType) == "table" then values, responseType = responseType, nil end
+  if type(values) ~= "table" then return nil, "INVALID_TEMPLATE" end
+  if type(Dibs.Permissions) ~= "table" or type(Dibs.Permissions.Can) ~= "function"
+    or not Dibs.Permissions.Can("settings.modify") then
+    return nil, "GUILD_ADMIN_REQUIRED"
+  end
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  db.settings = db.settings or {}
+  db.settings.dibButtonTemplate = db.settings.dibButtonTemplate or {}
+  local key = canonicalPolicyKey(responseType or "default")
+  local template = db.settings.dibButtonTemplate[key]
+  if type(template) ~= "table" then
+    local fallback = getDibButtonSettings()
+    template = {
+      text = fallback.text, whisperKey = fallback.whisperKey,
+      color = { fallback.color[1], fallback.color[2], fallback.color[3], fallback.color[4] },
+      requireNotes = fallback.requireNotes,
+    }
+    db.settings.dibButtonTemplate[key] = template
+  end
+  local text = tostring(values.text or template.text):match("^%s*(.-)%s*$")
+  local whisperKey = tostring(values.whisperKey or template.whisperKey):match("^%s*(.-)%s*$")
+  if text == "" or whisperKey == "" then return nil, "INVALID_TEMPLATE" end
+  template.text, template.whisperKey = text, whisperKey
+  if type(values.color) == "table" then template.color = values.color end
+  if values.requireNotes ~= nil then template.requireNotes = values.requireNotes == true end
+  return true
+end
+
+local function getDibRCEnabledSettings()
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  db.settings = db.settings or {}
+  db.settings.dibRCEnabledTypes = db.settings.dibRCEnabledTypes or {}
+  return db.settings.dibRCEnabledTypes
+end
+
+function Dibs.RCLootCouncil.IsRCButtonEnabledForType(responseType)
+  local key = canonicalPolicyKey(responseType)
+  local values = getDibRCEnabledSettings()
+  return values[key] ~= false
+end
+
+function Dibs.RCLootCouncil.SetRCButtonEnabledForType(responseType, enabled, actor)
+  if type(Dibs.Permissions) ~= "table" or type(Dibs.Permissions.Can) ~= "function"
+    or not Dibs.Permissions.Can("settings.modify", actor) then
+    return nil, "GUILD_ADMIN_REQUIRED"
+  end
+  local key = canonicalPolicyKey(responseType)
+  local values = getDibRCEnabledSettings()
+  values[key] = enabled == true
+  local rc = getRC()
+  local db = rc and rc.Getdb and rc:Getdb()
+  if enabled == true and type(db) == "table" then
+    db.enabledButtons = db.enabledButtons or {}
+    db.enabledButtons[key] = true
+  end
+  typePolicyRevision = typePolicyRevision + 1
+  typeAllowanceCache = {}
+  return true
+end
+
 local function nowSeconds()
   if type(GetTime) == "function" then
     return tonumber(GetTime()) or 0
@@ -743,12 +832,13 @@ local function collectRCOptionTables(rc)
   return list
 end
 
-local function sameColor(color)
+local function sameColor(color, expected)
+  expected = expected or FORCED_DIB_COLOR
   return type(color) == "table"
-    and tonumber(color[1]) == FORCED_DIB_COLOR[1]
-    and tonumber(color[2]) == FORCED_DIB_COLOR[2]
-    and tonumber(color[3]) == FORCED_DIB_COLOR[3]
-    and tonumber(color[4]) == FORCED_DIB_COLOR[4]
+    and tonumber(color[1]) == expected[1]
+    and tonumber(color[2]) == expected[2]
+    and tonumber(color[3]) == expected[3]
+    and tonumber(color[4]) == (expected[4] or 1)
 end
 
 local function isDibLabel(value)
@@ -852,7 +942,10 @@ local function findDibResponseIndex(responses, activeCount)
   return nil
 end
 
-local function ensureForcedDibForSet(buttons, responses, maxButtons)
+local function ensureForcedDibForSet(buttons, responses, maxButtons, responseType)
+  local template = Dibs.RCLootCouncil.GetDibButtonTemplate and Dibs.RCLootCouncil.GetDibButtonTemplate(responseType) or {
+    text = FORCED_DIB_TEXT, whisperKey = FORCED_DIB_WHISPER_KEY, color = FORCED_DIB_COLOR, requireNotes = false,
+  }
   if type(buttons) ~= "table" or type(responses) ~= "table" then return false end
   local changed = false
   -- RCLootCouncil keeps default entries for all maxButtons slots even when
@@ -925,16 +1018,16 @@ local function ensureForcedDibForSet(buttons, responses, maxButtons)
     insertAtFront(buttons, button)
     changed = true
   end
-  if button.text ~= FORCED_DIB_TEXT then
-    button.text = FORCED_DIB_TEXT
+  if button.text ~= template.text then
+    button.text = template.text
     changed = true
   end
-  if button.whisperKey ~= FORCED_DIB_WHISPER_KEY then
-    button.whisperKey = FORCED_DIB_WHISPER_KEY
+  if button.whisperKey ~= template.whisperKey then
+    button.whisperKey = template.whisperKey
     changed = true
   end
-  if button.requireNotes ~= false then
-    button.requireNotes = false
+  if button.requireNotes ~= template.requireNotes then
+    button.requireNotes = template.requireNotes
     changed = true
   end
   if button.dibsLocked ~= true then
@@ -948,12 +1041,13 @@ local function ensureForcedDibForSet(buttons, responses, maxButtons)
     insertAtFront(responses, response)
     changed = true
   end
-  if response.text ~= FORCED_DIB_TEXT then
-    response.text = FORCED_DIB_TEXT
+  if response.text ~= template.text then
+    response.text = template.text
     changed = true
   end
-  if not sameColor(response.color) then
-    response.color = { FORCED_DIB_COLOR[1], FORCED_DIB_COLOR[2], FORCED_DIB_COLOR[3], FORCED_DIB_COLOR[4] }
+  local templateColor = template.color or FORCED_DIB_COLOR
+  if not sameColor(response.color, templateColor) then
+    response.color = { templateColor[1], templateColor[2], templateColor[3], templateColor[4] or 1 }
     changed = true
   end
   if tonumber(response.sort) ~= FORCED_DIB_SORT then
@@ -1007,7 +1101,11 @@ local function ensureForcedDibConfigForDB(db)
   local changed = false
   local maxButtons = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS, math.floor(tonumber(db.maxButtons) or FORCED_DIB_MAX_BUTTONS)))
 
-  if ensureForcedDibForSet(db.buttons.default, db.responses.default, maxButtons) then
+  if Dibs.RCLootCouncil.IsRCButtonEnabledForType("default") then
+    if ensureForcedDibForSet(db.buttons.default, db.responses.default, maxButtons, "default") then
+      changed = true
+    end
+  elseif removeDibFromSet(db.buttons.default, db.responses.default) then
     changed = true
   end
 
@@ -1036,9 +1134,12 @@ local function ensureForcedDibConfigForDB(db)
   for typeKey in pairs(typeKeys) do
     local typeButtons = db.buttons[typeKey]
     local typeResponses = db.responses[typeKey]
-    if isPersonalOrCosmeticNonDibType(typeKey) then
+    local dibsEnabled = Dibs.RCLootCouncil.IsDibEnabledForType(typeKey) == true
+    local rcButtonEnabled = Dibs.RCLootCouncil.IsRCButtonEnabledForType(typeKey)
+    if isPersonalOrCosmeticNonDibType(typeKey) or not dibsEnabled or not rcButtonEnabled then
       -- Do not create or retain an adapter-owned DIB response in a personal
-      -- Catalyst button set. Existing stale projections are removed once.
+      -- Catalyst button set or a category disabled by the Adventure Guide
+      -- policy. Existing stale projections are removed once.
       if removeDibFromSet(typeButtons, typeResponses) then
         changed = true
       end
@@ -1061,7 +1162,7 @@ local function ensureForcedDibConfigForDB(db)
           or math.max(0, defaultCount - 1)
         changed = true
       end
-      if ensureForcedDibForSet(typeButtons, typeResponses, maxButtons) then
+      if ensureForcedDibForSet(typeButtons, typeResponses, maxButtons, typeKey) then
         changed = true
       end
     end

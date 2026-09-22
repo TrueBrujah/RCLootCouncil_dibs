@@ -1,6 +1,31 @@
 local loader = require("helpers.load_addon")
 
 describe("Combat safety", function()
+  it("schedules Encounter Journal discovery retries through AceTimer", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true } })
+    dibs.Ace3.libs.timer.scheduled = {}
+
+    local installed = dibs.EncounterJournal.AddActionIfAvailable(0)
+
+    assert_false(installed)
+    assert_equal(1, #dibs.Ace3.libs.timer.scheduled)
+    assert_equal(0.5, dibs.Ace3.libs.timer.scheduled[1].delay)
+
+    dibs.Ace3.libs.timer.scheduled[1].callback()
+    assert_equal(2, #dibs.Ace3.libs.timer.scheduled)
+  end)
+
+  it("keeps Pre-Dib lifecycle behavior available with Ace3 services", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true } })
+    local request = dibs.PreDibs.CreatePublic(
+      "Tester-Realm", 21001, "Ace3 item", dibs.GetCurrentSeasonId(), "test"
+    )
+
+    assert_not_nil(request)
+    assert_equal("confirmed", request.status)
+    assert_equal(1, #dibs.PreDibs.GetHistory())
+  end)
+
   it("defers officer toggle during combat", function()
     local _, dibs = loader.load({ wow = { guildLeader = true, inCombat = true } })
     local shown = dibs.OfficerUI.Toggle(true)

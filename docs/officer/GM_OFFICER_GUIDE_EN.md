@@ -162,6 +162,24 @@ Watch for these coordinator states:
 Do not bypass these states by editing SavedVariables. Reconciliation must use a
 preview, immutable evidence, an explicit reason, and one confirmation.
 
+### Great Vault review and sync
+
+The **Vault Review** view lists guild-scoped acquisitions and legacy records.
+Players see only their permitted projection; complete evidence remains in the
+Officer view. Review actions require an explicit reason and preserve original
+evidence. Immutable identity conflicts are held for review rather than
+replaced by last-write-wins.
+
+Vault synchronization uses bounded `VAULT_DIGEST`, `VAULT_FETCH`,
+`VAULT_DETAIL`, and `VAULT_ACK` messages. It rejects cross-guild, unauthorized,
+private-evidence, malformed, and incomplete transfers. Reconnect retries are
+bounded and idempotent. A guild change does not merge old history, and an
+unguilded character keeps its own local ownership scope.
+
+![Officer Great Vault review](../assets/guides/screenshots/en/officer/officer-vault-review.png)
+
+_Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-vault-review.png`_
+
 ![Synchronization and reconciliation state](../assets/guides/screenshots/en/officer/officer-sync-reconciliation.png)
 
 _Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-sync-reconciliation.png`_

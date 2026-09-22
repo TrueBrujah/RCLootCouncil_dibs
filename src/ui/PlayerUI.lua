@@ -330,6 +330,15 @@ function Dibs.PlayerUI.GetSummary(playerName)
     and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, playerName or Dibs.GetPlayerName()) or nil
   local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(playerName or Dibs.GetPlayerName()) or {}
   local acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsForPlayer and Dibs.PreDibs.GetAcquisitionsForPlayer(playerName or Dibs.GetPlayerName()) or {}
+  if Dibs.PreDibs and Dibs.PreDibs.ProjectVaultAcquisition then
+    local projected = {}
+    for _, acquisition in ipairs(acquisitions) do
+      local entry = Dibs.PreDibs.ProjectVaultAcquisition(acquisition, "player")
+      entry.status = Dibs.PlayerUI.GetVaultAcquisitionPresentation(entry)
+      projected[#projected + 1] = entry
+    end
+    acquisitions = projected
+  end
   local eligibility = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
     and Dibs.CharacterEligibility.GetSummary(playerName or Dibs.GetPlayerName(), season and season.id) or nil
 
@@ -473,6 +482,17 @@ end
 function Dibs.PlayerUI.RecordVaultAcquisition(itemID, difficulty)
   if not (Dibs.PreDibs and Dibs.PreDibs.RecordVaultAcquisition) then return nil, "ACQUISITIONS_UNAVAILABLE" end
   return Dibs.PreDibs.RecordVaultAcquisition(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, itemID, difficulty)
+end
+
+function Dibs.PlayerUI.GetVaultAcquisitionPresentation(record)
+  record = type(record) == "table" and record or {}
+  local status = tostring(record.verificationState or "UNVERIFIED")
+  local label = Dibs.L and Dibs.L["VAULT_STATUS_" .. status] or status
+  local explanation = record.evidenceState == "COMPLETE"
+    and ((Dibs.L and Dibs.L.VAULT_EVIDENCE_COMPLETE) or "The stored Great Vault evidence is complete.")
+    or (Dibs.L and Dibs.L.VAULT_REASON_EVIDENCE_UNCERTAIN or "Great Vault evidence needs review.")
+  return { label = label, explanation = explanation, verificationState = status, source = record.source,
+    resetId = record.resetId, syncState = record.syncState }
 end
 
 function Dibs.PlayerUI.GetHistory(playerName)

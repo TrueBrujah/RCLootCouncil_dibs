@@ -9,8 +9,12 @@ les commandes, les Pre-Dibs, les debits et les signalements.
 
 See [Player Guide](PLAYER_GUIDE_EN.md) for the same player workflow in English.
 
-This guide describes the 0.6.2 release candidate. Live Retail behavior still
-requires the final validation listed in [B12 release checklist](../../B12_Release_Candidate_Checklist.md).
+The first-installation assistant is an Officer-only setup surface. Players can
+continue using the normal player guide; administrative checklist details and
+protected setup controls are not exposed to players.
+
+This guide describes the 0.6.4-dev B12 release candidate. Live Retail behavior
+still requires the final validation listed in the [B12 Retail evidence record](../audits/B12_Retail_Validation_Evidence.md).
 
 ## What is a Dib?
 

@@ -7,6 +7,17 @@ The Pre-Dib recovery protocol uses the registered `DIBS` addon-message prefix. I
 When AceComm and AceSerializer are available through `LibStub`, Dibs serializes each logical protocol message through AceSerializer and sends it through AceComm. AceComm supplies addon-message registration and fragmentation without changing message fields, validation, transfer bounds, or trust rules. Standalone clients without Ace3 retain the legacy `DIBS1:<type>[:requestId:revision]` compatibility payload.
 
 ## Message types
+Great Vault synchronization uses the same bounded transport and guild checks:
+
+- `VAULT_DIGEST` advertises bounded acquisition identities, revisions, status, and content hashes;
+- `VAULT_FETCH` requests missing or newer acquisition details;
+- `VAULT_DETAIL` transfers one validated, privacy-filtered acquisition;
+- `VAULT_ACK` reports applied, replay, stale, rejection, or conflict outcomes.
+
+Vault messages require a verified current guild member and the active guild key.
+They never carry live candidates, votes, responses, loot sessions, or private
+evidence. Detail transfers are bounded, chunked when necessary, expire safely,
+and are retried after reconnect without applying partial data.
 
 The implementation accepts exactly: `HELLO`, `MANIFEST`, `FETCH`, `TRANSFER_BEGIN`,
 `TRANSFER_CHUNK`, `TRANSFER_END`, `REQUEST_ACK`, and `REQUEST`. Names such as
@@ -29,7 +40,10 @@ RCLootCouncil award callbacks never enter this synchronization protocol. They ar
 
 Persisted request records include normalized `Normal`, `Heroic`, `Mythic`, or `UNKNOWN` difficulty. This field is part of active-request identity and is transferred with the request record. Award fulfillment applies an award difficulty only when the award context supplies one, retaining legacy matching for awards without difficulty.
 
-Great Vault acquisitions are local, display-only SavedVariables records. They are not protocol payloads and never cause a request transition or ledger transaction.
+Great Vault acquisitions are display-only SavedVariables records and bounded
+sync projections. They never cause a request transition or ledger transaction.
+Automatic records are evidence-only; `/dibs vault <itemID> [difficulty]` is the
+manual fallback when Retail claim detection is unavailable.
 
 ## Snapshot projection
 

@@ -63,7 +63,7 @@ describe("Pre-Dib requests", function()
     local ledgerCount = #dibs.Ledger.GetAllTransactions()
     local acquisition = dibs.PreDibs.RecordVaultAcquisition("Tester-Realm", 21016, "Heroic")
 
-    assert_equal("VAULT", acquisition.source)
+    assert_equal("VAULT_MANUAL", acquisition.source)
     assert_equal("Heroic", acquisition.difficulty)
     assert_equal("confirmed", request.status)
     assert_equal(1, #dibs.PreDibs.GetHistory())

@@ -102,7 +102,11 @@ local function candidateProjection(candidate, includeTechnical)
     winner = bounded(candidate and (candidate.playerName or candidate.winner) or "Unavailable", 100),
     date = bounded(candidate and (candidate.originalAwardTimeText or candidate.originalAwardTime) or "Unknown date", 80),
     difficulty = bounded(candidate and (candidate.difficultyText or candidate.difficulty) or "Unavailable", 40),
+    encounter = bounded(candidate and ((candidate.instanceName or "Unavailable") .. " - " .. (candidate.encounterName or "Unavailable")) or "Unavailable", 120),
     response = bounded(candidate and (candidate.responseText or candidate.response) or "Unavailable", 60),
+    classification = classification,
+    duplicate = classification == "already_accounted",
+    duplicateStatus = classification == "already_accounted" and "Already accounted" or "Not previously accounted",
     status = status,
     evidenceSummary = status.explanation,
     canConfirm = classification == "eligible",
@@ -212,8 +216,10 @@ function Dibs.LogsUI.ReviewCandidate(sessionId, candidateId)
   if not candidate then return { ok = false, reasonCode = reason or "HISTORY_CANDIDATE_NOT_FOUND" } end
   local view = candidateProjection(candidate, true)
   return { ok = true, view = view, candidateId = view.candidateId, item = view.item, winner = view.winner,
-    date = view.date, difficulty = view.difficulty, response = view.response, status = view.status,
-    evidenceSummary = view.evidenceSummary, technical = view.technical, canConfirm = view.canConfirm }
+    date = view.date, difficulty = view.difficulty, encounter = view.encounter, response = view.response,
+    classification = view.classification, duplicate = view.duplicate, duplicateStatus = view.duplicateStatus,
+    status = view.status, evidenceSummary = view.evidenceSummary, technical = view.technical,
+    canConfirm = view.canConfirm }
 end
 
 function Dibs.LogsUI.ConfirmCandidate(sessionId, candidateId, reason, options)
@@ -222,11 +228,14 @@ function Dibs.LogsUI.ConfirmCandidate(sessionId, candidateId, reason, options)
     and Dibs.RCLootCouncil.GetReconciliationSession(sessionId, localActor()) or nil
   local candidate = findCandidate(session, candidateId)
   if not candidate then return { ok = false, reasonCode = "HISTORY_SESSION_NOT_FOUND" } end
-  if candidate.classification ~= "eligible" then return { ok = false, reasonCode = "HISTORY_CANDIDATE_NOT_CONFIRMABLE" } end
+  if candidate.classification ~= "eligible" and candidate.classification ~= "already_accounted" then
+    return { ok = false, reasonCode = "HISTORY_CANDIDATE_NOT_CONFIRMABLE" }
+  end
   if type(Dibs.RCLootCouncil.ConfirmReconciliationCandidate) ~= "function" then return { ok = false, reasonCode = "PROTECTED_ACTION_UNAVAILABLE" } end
   local payload = type(options) == "table" and options or {}
   payload.reason = reason or payload.reason
-  payload.confirmation = payload.confirmation ~= false
+  if tostring(payload.reason or ""):match("^%s*$") then return { ok = false, reasonCode = "HISTORY_REASON_REQUIRED" } end
+  if payload.confirmation ~= true then return { ok = false, reasonCode = "HISTORY_CONFIRMATION_REQUIRED" } end
   local result, decision = Dibs.RCLootCouncil.ConfirmReconciliationCandidate(sessionId, candidateId, payload, localActor())
   if not result then return { ok = false, reasonCode = decision or "HISTORY_CONFIRM_FAILED" } end
   return { ok = result.ok ~= false, reasonCode = result.reasonCode, result = result, decision = decision }
@@ -314,6 +323,10 @@ function Dibs.LogsUI.OpenPlayerAcquisitions()
       tostring(record.itemLink or record.itemName or ("Item " .. tostring(record.itemID))),
       tostring(record.difficulty or "UNKNOWN"),
       tostring(record.source or "VAULT"),
+      tostring(record.status and record.status.label or record.verificationState or "UNVERIFIED"),
+      tostring(record.resetId or "UNKNOWN"),
+      tostring(record.syncState or "LOCAL"),
+      tostring(record.status and record.status.explanation or ""),
     }
   end
   if #rows == 0 then rows[1] = { "", "No acquisitions", "", "" } end
@@ -321,8 +334,19 @@ function Dibs.LogsUI.OpenPlayerAcquisitions()
     { title = "Date", width = 150, tooltip = "When the acquisition was recorded." },
     { title = "Item", width = 330, tooltip = "Acquired item." },
     { title = "Difficulty", width = 120, tooltip = "Normal, Heroic, Mythic or Vault tier." },
-    { title = "Source", width = 180, tooltip = "Where the acquisition was recorded." },
+    { title = "Source", width = 150, tooltip = "Where the acquisition was recorded." },
+    { title = "Status", width = 210, tooltip = "Verification status of the acquisition." },
+    { title = "Reset", width = 130, tooltip = "Weekly Great Vault reset context." },
+    { title = "Sync", width = 100, tooltip = "Guild synchronization state." },
+    { title = "Explanation", width = 300, tooltip = "Why this evidence has its current status." },
   }, rows, 900, 560)
+end
+
+function Dibs.LogsUI.BuildVaultMigrationPreview(filter)
+  if not canViewOfficerLogs() then return { rows = {}, hidden = true, hiddenCount = 0 } end
+  return Dibs.OfficerUI and Dibs.OfficerUI.BuildVaultMigrationPreview
+    and Dibs.OfficerUI.BuildVaultMigrationPreview(filter)
+    or { rows = {}, hidden = true, hiddenCount = 0 }
 end
 
 function Dibs.LogsUI.OpenOfficer(view, seasonId, query)

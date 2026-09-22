@@ -133,6 +133,7 @@ local function ensureState()
   Dibs.db.preDibs.requests = Dibs.db.preDibs.requests or {}
   Dibs.db.preDibs.modePolicies = Dibs.db.preDibs.modePolicies or {}
   Dibs.db.preDibs.acquisitions = Dibs.db.preDibs.acquisitions or {}
+  Dibs.db.preDibs.vaultConflicts = Dibs.db.preDibs.vaultConflicts or {}
   Dibs.db.settings = Dibs.db.settings or {}
   if Dibs.db.settings.allowPublicPreDibs == nil then
     Dibs.db.settings.allowPublicPreDibs = true
@@ -203,6 +204,22 @@ local function samePlayer(first, second)
     end
   end
   return string.lower(tostring(first or "")) == string.lower(tostring(second or ""))
+end
+
+local function copy(value)
+  if Dibs.DeepCopy then return Dibs.DeepCopy(value) end
+  if type(value) ~= "table" then return value end
+  local result = {}
+  for key, item in pairs(value) do result[key] = copy(item) end
+  return result
+end
+
+---@param value DibsVaultAcquisition
+---@return DibsVaultAcquisition
+local function copyVaultAcquisition(value)
+  local result = Dibs.DeepCopy and Dibs.DeepCopy(value) or copy(value)
+  ---@cast result DibsVaultAcquisition
+  return result
 end
 
 local function requestContext(context)
@@ -636,6 +653,14 @@ function Dibs.PreDibs.UpdateStatus(requestId, status)
       elseif status == "cancelled" and request.cancelledAt == nil then
         request.cancelledAt = request.updatedAt
       end
+      if Dibs.Notifications and Dibs.Notifications.Notify then
+        local kind = status == "confirmed" and "PREDIB_CONFIRMED"
+          or status == "cancelled" and "PREDIB_CANCELLED"
+          or status == "fulfilled" and "REQUEST_RESOLVED"
+        if kind then
+          Dibs.Notifications.Notify("request:" .. tostring(request.requestId) .. ":" .. tostring(request.revision), kind, request)
+        end
+      end
       return request
     end
   end
@@ -833,10 +858,11 @@ end
 ---@param playerName string|nil Character/player identity.
 ---@param itemID integer Item identifier.
 ---@param difficulty DibsDifficulty|nil Difficulty context.
+---@param options table|nil Evidence and reset metadata.
 ---@return DibsVaultAcquisition|nil acquisition
 ---@return string|nil reasonCode
 -- Side effects: Persists a display-only acquisition; it never consumes a Dib.
-function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty)
+function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty, options)
   ensureState()
   local enabled, reason = requirePreDibsEnabled()
   if not enabled then return nil, reason end
@@ -844,20 +870,285 @@ function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty)
   if not targetItem or targetItem <= 0 then return nil, "INVALID_ITEM" end
   local player = playerName or (Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
   if not player or player == "" then return nil, "INVALID_PLAYER" end
+  options = type(options) == "table" and options or {}
   local normalizedDifficulty = Dibs.PreDibs.NormalizeDifficulty(difficulty)
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  local characterId = options.characterId
+  local localPlayer = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
+  if not characterId and localPlayer and tostring(player):lower() == tostring(localPlayer):lower() and type(UnitGUID) == "function" then
+    characterId = UnitGUID("player")
+  end
+  if not characterId and Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId then
+    characterId = Dibs.Permissions.CanonicalPlayerId(player)
+  end
+  local source = options.source or "VAULT_MANUAL"
+  if source == "VAULT" then source = "VAULT_MANUAL" end
+  local verificationState = options.verificationState
+  if not verificationState then
+    verificationState = source == "GREAT_VAULT" and "UNVERIFIED" or "MANUAL_RECORDED"
+  end
+  local evidenceState = options.evidenceState or (source == "GREAT_VAULT" and "PARTIAL" or "MISSING")
+  local resetId = options.resetId and tostring(options.resetId) or nil
+  local seasonId = options.seasonId
+  if seasonId == nil and Dibs.GetCurrentSeasonId then seasonId = Dibs.GetCurrentSeasonId() end
+  local claimedAt = tonumber(options.claimedAt) or time()
+  local createdAt = tonumber(options.createdAt) or time()
+  local acquisitionKey = table.concat({
+    tostring(guildKey or ""), tostring(player), tostring(characterId or ""),
+    tostring(seasonId or ""), tostring(resetId or "no-reset"), tostring(targetItem),
+    tostring(normalizedDifficulty), tostring(options.claimId or options.evidenceId or source),
+  }, "|")
   for _, record in ipairs(Dibs.db.preDibs.acquisitions) do
-    if samePlayer(record.playerName, player) and tonumber(record.itemID) == targetItem
-      and record.source == "VAULT" and Dibs.PreDibs.NormalizeDifficulty(record.difficulty) == normalizedDifficulty then
+    local existingKey = record.acquisitionKey
+    if not existingKey then
+      existingKey = table.concat({
+        tostring(record.guildKey or guildKey or ""), tostring(record.playerName or ""),
+        tostring(record.characterId or characterId or ""), tostring(record.seasonId or ""),
+        tostring(record.resetId or "no-reset"), tostring(record.itemID or ""),
+        tostring(Dibs.PreDibs.NormalizeDifficulty(record.difficulty)),
+        tostring(record.evidenceId or record.source or "VAULT_MANUAL"),
+      }, "|")
+      record.acquisitionKey = existingKey
+    end
+    if existingKey == acquisitionKey or (samePlayer(record.playerName, player)
+      and tonumber(record.itemID) == targetItem and record.source ~= "RCLootCouncil"
+      and Dibs.PreDibs.NormalizeDifficulty(record.difficulty) == normalizedDifficulty
+      and tostring(record.resetId or "no-reset") == tostring(resetId or "no-reset")
+      and tostring(record.seasonId or "") == tostring(seasonId or "")) then
+      if source == "GREAT_VAULT" and record.verificationState == "MANUAL_RECORDED" then
+        record.source = "GREAT_VAULT"
+        record.verificationState = verificationState
+        record.evidenceState = evidenceState
+        record.evidenceId = options.evidenceId or record.evidenceId
+        record.evidence = options.evidence or record.evidence
+        record.evidenceSources = record.evidenceSources or { "VAULT_MANUAL" }
+        table.insert(record.evidenceSources, "GREAT_VAULT")
+        record.revision = (tonumber(record.revision) or 1) + 1
+        record.outcome = "AUTOMATIC_CONFIRMED"
+      else
+        record.outcome = "ALREADY_RECORDED"
+      end
+      record.idempotentReplay = true
       return record
     end
   end
   local record = {
-    acquisitionId = Dibs.NewId("vault"), playerName = player, itemID = targetItem,
-    difficulty = normalizedDifficulty, source = "VAULT", acquiredAt = time(), createdAt = time(),
-    seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil,
+    acquisitionId = options.acquisitionId or Dibs.NewId("vault"), acquisitionKey = acquisitionKey,
+    guildKey = guildKey, playerName = player, characterId = characterId, itemID = targetItem,
+    itemLink = options.itemLink, itemName = options.itemName, itemLevel = tonumber(options.itemLevel),
+    family = options.family, rewardCategory = options.rewardCategory, upgradeTrack = options.upgradeTrack,
+    difficulty = normalizedDifficulty, source = source, verificationState = verificationState,
+    evidenceState = evidenceState, evidenceId = options.evidenceId or options.claimId,
+    evidence = Dibs.DeepCopy and Dibs.DeepCopy(options.evidence) or options.evidence,
+    resetId = resetId, claimedAt = claimedAt, acquiredAt = claimedAt, createdAt = createdAt,
+    seasonId = seasonId, revision = 1, syncState = "LOCAL",
+    outcome = source == "VAULT_MANUAL" and "RECORDED_MANUAL" or verificationState,
   }
   table.insert(Dibs.db.preDibs.acquisitions, record)
+  if Dibs.Notifications and Dibs.Notifications.Notify then
+    Dibs.Notifications.Notify("vault:" .. tostring(record.acquisitionId), "VAULT_RECORDED", record)
+  end
   return record
+end
+
+---@param acquisitionId string Acquisition identity.
+---@param decision string CONFIRMED, REJECTED, or REFERENCE_ONLY.
+---@param actor string|nil Officer reviewing the evidence.
+---@param reason string|nil Review explanation; required for rejection/reference.
+---@return DibsVaultAcquisition|nil acquisition
+---@return string|nil reasonCode
+-- Side effects: Stores an audited decision without changing the Dibs ledger.
+function Dibs.PreDibs.ReviewVaultAcquisition(acquisitionId, decision, actor, reason)
+  ensureState()
+  local action = string.upper(tostring(decision or ""))
+  local targetState = ({
+    CONFIRM = "OFFICER_CONFIRMED", CONFIRMED = "OFFICER_CONFIRMED", OFFICER_CONFIRMED = "OFFICER_CONFIRMED",
+    REJECT = "REJECTED", REJECTED = "REJECTED",
+    REFERENCE = "REFERENCE_ONLY", REFERENCE_ONLY = "REFERENCE_ONLY",
+  })[action]
+  if not targetState then return nil, "INVALID_REVIEW_DECISION" end
+  if tostring(reason or ""):match("^%s*$") then return nil, "REASON_REQUIRED" end
+  local permission = targetState == "OFFICER_CONFIRMED" and "history.confirm" or "history.reject"
+  if not Dibs.Permissions or type(Dibs.Permissions.Can) ~= "function" or not Dibs.Permissions.Can(permission, actor) then
+    return nil, "GUILD_ADMIN_REQUIRED"
+  end
+  ---@type DibsVaultAcquisition|nil
+  local target
+  for _, record in ipairs(Dibs.db.preDibs.acquisitions) do
+    if record.acquisitionId == acquisitionId then target = record break end
+  end
+  if not target then return nil, "ACQUISITION_NOT_FOUND" end
+  if target.verificationState == targetState then
+    local replay = copyVaultAcquisition(target)
+    replay.idempotentReplay = true
+    return replay, "IDEMPOTENT_REPLAY"
+  end
+  local allowedTransitions = {
+    MANUAL_RECORDED = { OFFICER_CONFIRMED = true, REJECTED = true, REFERENCE_ONLY = true },
+    LEGACY_RECORDED = { OFFICER_CONFIRMED = true, REJECTED = true, REFERENCE_ONLY = true },
+    UNVERIFIED = { OFFICER_CONFIRMED = true, REJECTED = true, REFERENCE_ONLY = true },
+    AUTOMATIC_CONFIRMED = { REJECTED = true, REFERENCE_ONLY = true },
+  }
+  if not (allowedTransitions[target.verificationState] and allowedTransitions[target.verificationState][targetState]) then
+    return nil, "INVALID_REVIEW_TRANSITION"
+  end
+  if not target.originalEvidence then target.originalEvidence = copy(target) end
+  target.verificationState = targetState
+  target.evidenceState = targetState == "OFFICER_CONFIRMED" and "COMPLETE" or target.evidenceState
+  target.review = {
+    decision = targetState, actorId = Dibs.Permissions.CanonicalPlayerId(actor),
+    reason = reason, reviewedAt = time(),
+  }
+  target.reviewHistory = target.reviewHistory or {}
+  table.insert(target.reviewHistory, copy(target.review))
+  target.revision = (tonumber(target.revision) or 1) + 1
+  target.syncState = "LOCAL"
+  Dibs.db.auditLog = Dibs.db.auditLog or {}
+  table.insert(Dibs.db.auditLog, {
+    eventId = Dibs.NewId("vault-review"), action = "great_vault.review",
+    acquisitionId = target.acquisitionId, decision = targetState,
+    actorId = target.review.actorId, reason = reason, createdAt = time(),
+  })
+  return copyVaultAcquisition(target)
+end
+
+---@param record DibsVaultAcquisition Acquisition to project.
+---@param visibility string "player" hides private evidence; "officer" preserves it.
+---@return table projection
+function Dibs.PreDibs.ProjectVaultAcquisition(record, visibility)
+  local projection = copy(record or {})
+  if tostring(visibility or "player") ~= "officer" then
+    projection.evidence = nil
+    projection.originalEvidence = nil
+    projection.review = nil
+  end
+  return projection
+end
+
+function Dibs.PreDibs.GetVaultAcquisition(acquisitionId)
+  ensureState()
+  for _, record in ipairs(Dibs.db.preDibs.acquisitions) do
+    if record.acquisitionId == acquisitionId then return record end
+  end
+  return nil
+end
+
+---@param incoming table Bounded, guild-scoped acquisition projection.
+---@return DibsVaultAcquisition|nil acquisition
+---@return string|nil reasonCode
+function Dibs.PreDibs.ApplyVaultSyncRecord(incoming)
+  ensureState()
+  if type(incoming) ~= "table" or type(incoming.acquisitionId) ~= "string" or incoming.acquisitionId == "" then
+    return nil, "INVALID_ACQUISITION"
+  end
+  if tonumber(incoming.itemID) == nil or tonumber(incoming.itemID) <= 0 or type(incoming.playerName) ~= "string" then
+    return nil, "INVALID_ACQUISITION"
+  end
+  if type(incoming.guildKey) ~= "string" or incoming.guildKey == "" or incoming.guildKey ~= Dibs.GetGuildKey() then
+    return nil, "GUILD_SCOPE_MISMATCH"
+  end
+  local existing = Dibs.PreDibs.GetVaultAcquisition(incoming.acquisitionId)
+  if existing then
+    local identityFields = { "guildKey", "playerName", "characterId", "itemID", "resetId", "source" }
+    for _, field in ipairs(identityFields) do
+      if tostring(existing[field] or "") ~= tostring(incoming[field] or "") then
+        table.insert(Dibs.db.preDibs.vaultConflicts, {
+          conflictId = Dibs.NewId("vault-conflict"), acquisitionId = incoming.acquisitionId,
+          current = copy(existing), incoming = copy(incoming), status = "REVIEW_REQUIRED", createdAt = time(),
+        })
+        return nil, "CONFLICT_REVIEW_REQUIRED"
+      end
+    end
+    local currentRevision = tonumber(existing.revision) or 1
+
+    local incomingRevision = tonumber(incoming.revision) or 1
+    if incomingRevision < currentRevision then return nil, "STALE_REVISION" end
+    if incomingRevision == currentRevision then
+      return copyVaultAcquisition(existing), "IDEMPOTENT_REPLAY"
+    end
+  end
+  ---@type DibsVaultAcquisition
+  local record = copy(incoming)
+  ---@cast record DibsVaultAcquisition
+  record.syncState = "SYNCED"
+  record.evidence = nil
+  record.originalEvidence = nil
+  record.review = nil
+  if existing then
+    for index, candidate in ipairs(Dibs.db.preDibs.acquisitions) do
+      if candidate.acquisitionId == record.acquisitionId then Dibs.db.preDibs.acquisitions[index] = record break end
+    end
+  else
+    table.insert(Dibs.db.preDibs.acquisitions, record)
+  end
+  return copyVaultAcquisition(record), "APPLIED"
+end
+
+function Dibs.PreDibs.GetVaultConflicts()
+  ensureState()
+  return Dibs.db.preDibs.vaultConflicts
+end
+
+function Dibs.PreDibs.GetVaultDiagnostics()
+  ensureState()
+  local diagnostics = { total = 0, legacy = 0, reviewRequired = 0, conflicts = 0, synced = 0 }
+  for _, record in ipairs(Dibs.db.preDibs.acquisitions) do
+    diagnostics.total = diagnostics.total + 1
+    if record.verificationState == "LEGACY_RECORDED" then diagnostics.legacy = diagnostics.legacy + 1 end
+    if record.verificationState == "UNVERIFIED" or record.verificationState == "MANUAL_RECORDED" then
+      diagnostics.reviewRequired = diagnostics.reviewRequired + 1
+    end
+    if record.syncState == "SYNCED" then diagnostics.synced = diagnostics.synced + 1 end
+  end
+  for _, conflict in ipairs(Dibs.db.preDibs.vaultConflicts) do
+    if conflict.status == "REVIEW_REQUIRED" then diagnostics.conflicts = diagnostics.conflicts + 1 end
+  end
+  return diagnostics
+end
+
+---@param conflictId string Conflict identity.
+---@param decision string KEEP_CURRENT or ACCEPT_INCOMING.
+---@param actor string|nil Officer resolving the conflict.
+---@param reason string Explanation for the resolution.
+---@return table|nil conflict Resolved conflict.
+---@return string|nil reasonCode
+function Dibs.PreDibs.ResolveVaultConflict(conflictId, decision, actor, reason)
+  ensureState()
+  if tostring(reason or ""):match("^%s*$") then return nil, "REASON_REQUIRED" end
+  local action = string.upper(tostring(decision or ""))
+  if action ~= "KEEP_CURRENT" and action ~= "ACCEPT_INCOMING" then return nil, "INVALID_CONFLICT_DECISION" end
+  local permission = action == "ACCEPT_INCOMING" and "history.confirm" or "history.reject"
+  if not Dibs.Permissions or type(Dibs.Permissions.Can) ~= "function" or not Dibs.Permissions.Can(permission, actor) then
+    return nil, "GUILD_ADMIN_REQUIRED"
+  end
+  local conflict
+  for _, candidate in ipairs(Dibs.db.preDibs.vaultConflicts) do
+    if candidate.conflictId == conflictId then conflict = candidate break end
+  end
+  if not conflict then return nil, "CONFLICT_NOT_FOUND" end
+  if conflict.status == "RESOLVED" then return copy(conflict), "IDEMPOTENT_REPLAY" end
+
+  if action == "ACCEPT_INCOMING" then
+    local incoming = copy(conflict.incoming)
+    incoming.syncState = "SYNCED"
+    incoming.evidence = nil
+    incoming.originalEvidence = nil
+    incoming.review = nil
+    for index, record in ipairs(Dibs.db.preDibs.acquisitions) do
+      if record.acquisitionId == conflict.acquisitionId then Dibs.db.preDibs.acquisitions[index] = incoming break end
+    end
+  end
+  conflict.status = "RESOLVED"
+  conflict.resolution = {
+    decision = action, actorId = Dibs.Permissions.CanonicalPlayerId(actor), reason = reason, resolvedAt = time(),
+  }
+  Dibs.db.auditLog = Dibs.db.auditLog or {}
+  table.insert(Dibs.db.auditLog, {
+    eventId = Dibs.NewId("vault-conflict-review"), action = "great_vault.conflict_review",
+    conflictId = conflict.conflictId, acquisitionId = conflict.acquisitionId, decision = action,
+    actorId = conflict.resolution.actorId, reason = reason, createdAt = conflict.resolution.resolvedAt,
+  })
+  return copy(conflict)
 end
 
 function Dibs.PreDibs.GetAcquisitionsForItem(itemID)

@@ -215,6 +215,7 @@ local function getDibTypeLabel(value)
   if key == "PETS" then return "Pets (PETS)" end
   if key == "RECIPE" or key == "RECIPES" then return "Recipes (RECIPE)" end
   if key == "DECOR" then return "Decor (DECOR)" end
+  if key == "COSMETIC" or key == "COSMETIC_ITEMS" then return "Cosmetic Items (COSMETIC)" end
   if key == "OTHER" then return "Other (OTHER)" end
   local definition = getButtonSetDefinition(value)
   if definition and definition.dibsType then
@@ -274,7 +275,7 @@ local function getDibTypeValues()
   }
 
   local function addValue(key)
-    if key == nil then return end
+    if type(key) ~= "string" then return end
     local text = canonicalSemanticTypeKey(key)
     if text == nil then return end
     if text == "" or text == "*" then return end
@@ -292,15 +293,15 @@ local function getDibTypeValues()
   addValue("OTHER")
   addValue("COSMETIC")
 
-  -- Keep persisted keys visible so users can recover from old hidden false values.
+  -- Keep slots and persisted aliases available to the shared options API. The
+  -- Officer Loot Rules page filters these technical keys from its main grid.
   for key in pairs(getDibTypeSettings()) do
     addValue(key)
   end
-
   local buttons = getRCButtonsTable()
   if type(buttons) == "table" then
     for key, spec in pairs(buttons) do
-      if key ~= "default" and key ~= "*" and type(spec) == "table" then
+      if key ~= "default" and key ~= "*" and type(key) == "string" and type(spec) == "table" then
         addValue(key)
       end
     end
@@ -1107,6 +1108,12 @@ local optionsTable = {
                 end
               end,
             },
+            announcementLocation = {
+              order = 3.5,
+              type = "description",
+              width = "full",
+              name = "Officer pre-dib announce channel: configure announcement channels in Announcements.",
+            },
             preDibAnnouncementChannel = {
               order = 4,
               type = "select",
@@ -1158,6 +1165,13 @@ local optionsTable = {
 
 -- Every surface reads the same services and SavedVariables.
 local groups = optionsTable.args.dibsSettings.args
+
+-- Announcement channels have one officer-facing home: Announcements. Keep
+-- these shared option definitions available to callers and migration tests,
+-- but do not render a second copy inside the Pre-Dibs page.
+groups.preDibs.args.preDibAnnouncementChannel.hidden = true
+groups.preDibs.args.preDibOfficerAnnouncementChannel.hidden = true
+
 local function description(order, name)
   return { type = "description", order = order, width = "full", name = name }
 end
@@ -1236,6 +1250,18 @@ groups.announcements = { type = "group", name = "Announcements", order = 6, args
       "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]")
   end),
 } }
+
+-- The two pages share the same service, but must not share the same option
+-- object: Pre-Dibs hides its duplicate channel controls while Announcements
+-- keeps its own visible copies.
+for _, key in ipairs({ "publicChannel", "officerChannel" }) do
+  local source = groups.announcements.args[key]
+  local copy = {}
+  for field, value in pairs(source) do copy[field] = value end
+  copy.hidden = nil
+  groups.announcements.args[key] = copy
+end
+
 for index, channelKind in ipairs({ "publicChannel", "officerChannel" }) do
   groups.announcements.args["test" .. channelKind] = execute(11 + index, "Test " .. (index == 1 and "public channel" or "officer channel"), function()
     local ok, reason = Dibs.PreDibs.SendTestAnnouncement(Dibs.PreDibs.GetAnnouncementSettings()[channelKind], "Dibs options")
@@ -1243,6 +1269,14 @@ for index, channelKind in ipairs({ "publicChannel", "officerChannel" }) do
   end)
 end
 groups.player = { type = "group", name = "Player", order = 7, args = {
+  notificationsEnabled = { type = "toggle", name = "Show personal notifications", order = 0.5,
+    get = function()
+      return Dibs.Notifications and Dibs.Notifications.IsEnabled and Dibs.Notifications.IsEnabled() or false
+    end,
+    set = function(_, value)
+      if Dibs.Notifications and Dibs.Notifications.SetEnabled then Dibs.Notifications.SetEnabled(value) end
+    end,
+  },
   summary = description(1, function()
     local summary = Dibs.PlayerUI.GetSummary()
     return "Season: " .. tostring(summary.season and summary.season.name or "None") .. "\nDibs: " .. tostring(summary.balance)
@@ -1521,6 +1555,14 @@ groups.debug = { type = "group", name = "Debug", order = 11, args = {
 } }
 groups.debug.args.openLogs = execute(7, "Open debug logs", function() Dibs.DebugLogs.Open() end)
 
+-- Loot Rules owns the single editing surface for Dibs eligibility. Keep the
+-- underlying option definitions available to the dedicated Officer page, but
+-- do not render a second editable copy in the generic settings tree.
+groups.integration.args.types.hidden = true
+for _, key in ipairs({ "ejSubCategoryPolicyIntro", "ejSubCategoryPolicy", "ejSubCategoryMatrixApply", "ejSubCategoryScanNow" }) do
+  if groups.settings.args[key] then groups.settings.args[key].hidden = true end
+end
+
 -- Main navigation is intentionally split into Player and Officer tabs. Officer
 -- owns the administrative sub-sections; Player only exposes personal actions.
 groups.player.childGroups = "tree"
@@ -1587,6 +1629,39 @@ groups.player.hidden = nil
 
 function Dibs.RCOptions.GetLootTypeOptions()
   return groups.integration.args
+end
+
+function Dibs.RCOptions.GetConfiguredButtonSets()
+  local buttons = getRCButtonsTable()
+  if type(buttons) ~= "table" then return nil end
+  local keys = { "default" }
+  local seen = { default = true }
+  for key, spec in pairs(buttons) do
+    if key ~= "*" and key ~= "**" and type(spec) == "table" and not seen[key] then
+      seen[key] = true
+      keys[#keys + 1] = key
+    end
+  end
+  table.sort(keys, function(a, b)
+    if a == "default" then return true end
+    if b == "default" then return false end
+    return tostring(a) < tostring(b)
+  end)
+  local result = {}
+  for _, key in ipairs(keys) do
+    local definition = getButtonSetDefinition(key)
+    local label = key == "default" and "Default" or getDibTypeLabel(key)
+    local description = definition and definition.note
+      or (key == "default" and "The standard RCLootCouncil response set." or "Configured RCLootCouncil button set.")
+    result[#result + 1] = {
+      key = key,
+      label = label,
+      description = description,
+      dibsType = definition and definition.dibsType,
+      state = definition and definition.state,
+    }
+  end
+  return result
 end
 
 function Dibs.RCOptions.GetOptionsTable()

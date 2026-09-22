@@ -217,6 +217,24 @@ Une importation repete deux fois doit rester sans doublon. Une annulation de pre
 
 La synchronisation partage uniquement l'etat Dibs necessaire a la guilde et les metadonnees de recuperation.
 
+### Suivi du Grand Coffre
+
+La vue **Vault Review** affiche les acquisitions de la guilde, les lignes
+legacy a migrer et les conflits qui exigent une decision. Une confirmation,
+un rejet ou un classement en reference demande une raison et conserve la preuve
+originale. Un conflit d'identite n'est jamais resolu par un simple last-write-wins.
+
+Les messages `VAULT_DIGEST`, `VAULT_FETCH`, `VAULT_DETAIL` et `VAULT_ACK` sont
+bornes, controles par guilde et filtres par confidentialite. Les candidats,
+votes, reponses RCLootCouncil et sessions de butin ne sont jamais transmis.
+Une reconnexion peut relancer une demande manquante, sans doublon ni transfert
+partiel. Un changement de guilde ne fusionne pas l'ancien historique; un
+personnage sans guilde conserve son propre scope local.
+
+![Revue GM/Officer du Grand Coffre](../assets/guides/screenshots/fr/officer/officer-vault-review.png)
+
+_Placeholder de capture : `docs/assets/guides/screenshots/fr/officer/officer-vault-review.png`_
+
 Elle ne partage pas :
 
 - les candidats live ;

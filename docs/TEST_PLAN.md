@@ -85,6 +85,26 @@ The B11b slice must prove that retained sandbox data is version-checked and
 re-entered explicitly, active simulation never changes production state, and
 protected production actions fail closed while the sandbox provider is active.
 
+### B12 focused validation manifest
+
+Run the B12 UI stabilization slice before the full suite. The current manifest
+covers the new page-cleanup and responsive contracts together with the existing
+B12a/B11 UI ownership and eligibility regressions:
+
+```powershell
+$env:DIBS_TEST_FILES = "tests/unit/b12_ui_projection_spec.lua;tests/unit/b12_historical_candidate_projection_spec.lua;tests/integration/b12_page_cleanup_spec.lua;tests/contract/b12_page_cleanup_contract_spec.lua;tests/integration/b12_responsive_ui_spec.lua;tests/contract/b12_release_ui_contract_spec.lua;tests/integration/b12_requests_support_ticket_spec.lua;tests/contract/b12_requests_actions_spec.lua;tests/integration/b12_requests_context_menu_spec.lua;tests/integration/b12_requests_primary_actions_spec.lua;tests/contract/b12_advanced_request_actions_spec.lua;tests/contract/b12_request_disclosure_spec.lua;tests/integration/b12_historical_transfer_spec.lua;tests/contract/b12_historical_transfer_actions_spec.lua;tests/integration/b11_request_eligibility_ui_spec.lua;tests/integration/b11_responsive_ui_spec.lua"
+npx.cmd --yes fengari tests/run.lua
+Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
+```
+
+The B11 UI-004 ownership baseline remains the manual Retail record in
+`docs/audits/B11_Retail_UI_004_Runtime_Evidence.md`; automated tests cannot
+replace its repeated open/close and stale-content checks. The unrelated
+RCLootCouncil baseline at
+`tests/integration/rclootcouncil_buttons_spec.lua:155` remains separately
+tracked as the historical `expected 2/2, got 1/1` mismatch. A failure in any
+B12-manifest file is attributable to B12 until proven otherwise.
+
 ### F. Backups, profiles and data transfer
 
 - [ ] Create a local and a full backup; verify date, scope, size, checksum and
@@ -208,6 +228,14 @@ award provenance is sufficient to audit the decision.
 - [ ] Confirm unknown item categories follow the configured unknown-data policy.
 - [ ] Record a Great Vault acquisition and confirm it is display-only.
 
+### B15 Data health dashboard
+
+- [ ] Open Officer Diagnostics and verify version, SavedVariables schema, persistence, readiness, RCLootCouncil, synchronization, and backup states.
+- [ ] Verify unavailable or degraded optional capabilities remain explicit and do not imply live readiness.
+- [ ] Verify normal players cannot access administrative health details.
+- [ ] Verify refresh/reopen during and after combat produces no protected-frame or lifecycle errors.
+- [ ] Verify the health report contains no player identities, ledger rows, private evidence, or raw sync payloads.
+
 Pass criteria: request lifecycle, difficulty matching, announcements, and ledger
 effects match the selected season policy.
 
@@ -232,6 +260,14 @@ disclose another player's stored requests to an ordinary member.
 ### H. UI, combat safety, and performance
 
 - [ ] Open Player and Officer windows from Overview and return through their links.
+- [ ] Open the Officer Setup Assistant as a GM/Officer and confirm the RCLootCouncil,
+      authority, season, rank rules, channel, and loot-type checks are visible.
+- [ ] Run the local dry-run from the Setup Assistant and confirm no ledger,
+      request, RCLootCouncil history, or addon-message state changes.
+- [ ] Reopen the Setup Assistant after changing a supported setting and confirm
+      the checklist is recomputed from current state.
+- [ ] Open the Officer route as a normal player and confirm administrative setup
+      details are denied or reduced to the safe readiness projection.
 - [ ] Visit every Officer page and confirm controls render in the content panel.
 - [ ] Open a wrong-item/player request and confirm **Correct player** only lists
       guild-roster characters; search a short or realm-qualified name.
@@ -257,6 +293,98 @@ disclose another player's stored requests to an ordinary member.
 
 Pass criteria: no visible Lua errors, no scroll reset loop, no duplicate widgets,
 no unbounded memory growth during the test cycle, and no protected UI taint.
+
+### H1. B12 single-client Retail release matrix
+
+Run this matrix on one current Retail client with Developer Mode disabled unless
+the scenario explicitly names the sandbox. Record the WoW build, Dibs version,
+RCLootCouncil version, character role, window dimensions, and evidence capture
+for each completed group.
+
+- [ ] Complete ten Player and Officer open/close cycles from the supported entry
+      routes; confirm no duplicate frames, headers, callbacks, or stale page
+      content remains after each cycle.
+- [ ] Visit every Player and Officer route, including Overview, Pre-Dibs,
+      History/Reconciliation, Settings, Loot Eligibility, Debug, and the
+      RCLootCouncil integration route; confirm one active content owner and
+      readable empty, unavailable, and error states.
+- [ ] Move and resize both windows, reload the UI, relog, and reopen them; confirm
+      independent position restoration, supported minimum dimensions, stable
+      tables, and no top-edge jump or overlap.
+- [ ] Open, replace, and close context menus from request, item, player, and
+      historical rows; confirm the prior menu closes and no menu survives page or
+      window cleanup.
+- [ ] Exercise both `WILD_OPEN` and `ENCOUNTER` Pre-Dib modes through the existing
+      controls; confirm labels and route changes do not alter stored policy values.
+- [ ] Enter and leave combat while opening windows, refreshing pages, opening
+      menus, and invoking protected actions; confirm deferred UI work resumes after
+      combat and dangerous actions fail closed or remain safely data-only.
+- [ ] Test RCLootCouncil absent, disabled, late-loaded, degraded, operational,
+      and unsupported states; confirm explicit availability text and no history
+      mutation in every state.
+- [ ] Verify Player views expose only the local player's confirmed history and
+      safe summaries, while Officer views alone expose candidate lists, technical
+      evidence, and protected review controls.
+- [ ] Run the historical preview/review/confirm/reject/duplicate/stale/ambiguous/
+      unknown-field flow; verify exact aliases, reasons, confirmation, idempotency,
+      and no RCLootCouncil history or vote mutation.
+- [ ] Enable Developer Mode only for the sandbox scenario; verify bounded-store
+      behavior, default-off state, provider isolation, production ledger
+      isolation, and no impact on a normal Player or Officer.
+
+Pass criteria: all ten lifecycle cycles and every matrix group complete without a
+new Dibs Lua error, taint warning, stale-content defect, privacy leak, duplicate
+widget, or authoritative-state contamination. Attach the result to the dated
+Retail evidence record; automated Fengari results do not replace this matrix.
+
+### H2. Conditional B12 two-client matrix
+
+First record whether the B12 changed synchronization, cross-client state
+propagation, coordinator/recovery behavior, or another cross-client contract.
+The UI hardening scope is presentation-only unless the implementation evidence
+shows otherwise.
+
+- [ ] If cross-client behavior changed, run the matrix with a GM/Officer client
+      and a Player client: request visibility, historical confirmation
+      propagation, duplicate/idempotent replay, late join/recovery, and authority
+      enforcement on both clients.
+- [ ] If cross-client behavior did not change, record exactly: **not required:
+      no B12 cross-client behavior change**. Do not claim two-client coverage
+      from the single-client matrix or Fengari tests.
+
+Pass criteria: the applicability decision is recorded before release readiness is
+assessed, and any required two-client scenario has dated evidence for both roles.
+
+### H3. B12 release-candidate publication checklist
+
+Complete this checklist against the candidate ZIP and link each result from the
+release evidence index before publication:
+
+- [ ] Install the candidate in a clean AddOns directory and verify folder name,
+      TOC metadata, SavedVariables declarations, and addon load without errors.
+- [ ] Exercise the supported Player routes: Overview, Requests, Pre-Dibs,
+      History, Settings, Loot Eligibility, and Debug where exposed.
+- [ ] Exercise the supported Officer/GM routes: Dashboard, Requests, Pre-Dibs,
+      History, Seasons, Rank Rules, Loot Rules, Announcements, RCLootCouncil,
+      Settings, Diagnostics, Loot Eligibility, Developer, and Debug where
+      permitted.
+- [ ] Link the aligned version owner, dated changelog, automated evidence,
+      Retail evidence, and conditional two-client decision.
+- [ ] Record known limitations, including the unrelated baseline and the
+      developer-only `SANDBOX_STORE_TOO_LARGE` boundary.
+- [ ] Keep the publication decision blocked until required Retail evidence,
+      diagnostics, package checks, and B12 blockers are complete.
+
+Evidence links:
+
+- `specs/012-release-ui-stabilization/quickstart.md`
+- `docs/audits/B12_Release_UI_Hardening_Evidence.md`
+- `docs/audits/B12_Retail_Validation_Evidence.md`
+- `CHANGELOG.md`
+
+Pass criteria: a clean installation can reach every supported Player and
+Officer/GM route, the evidence set is traceable, known limitations are explicit,
+and the candidate is not labeled publishable before the Retail gate is complete.
 
 ### I. Developer Mode and test isolation
 

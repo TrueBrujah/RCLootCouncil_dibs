@@ -312,6 +312,12 @@ function Dibs.ProtectedActions.FinalizeAward(actor, payload)
     return result
   end
 
+  if Dibs.Notifications and Dibs.Notifications.Notify and not result.duplicate then
+    local eventId = command.awardRef or (result.transaction and result.transaction.transactionId)
+    Dibs.Notifications.Notify("award:" .. tostring(eventId), "AWARD_FINALIZED", command)
+    Dibs.Notifications.Notify("dib:" .. tostring(eventId), "DIB_CONSUMED", command)
+  end
+
   if Dibs.PreDibs and Dibs.PreDibs.GetConfirmedRequestForPlayer and Dibs.PreDibs.Fulfill then
     local request = Dibs.PreDibs.GetConfirmedRequestForPlayer(command.playerName, command.itemID, command.seasonId, command.difficulty)
     if request and request.requestId then

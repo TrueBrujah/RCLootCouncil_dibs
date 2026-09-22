@@ -28,7 +28,7 @@ end
 local function currentRoot(guild)
   return {
     schemaVersion = 6,
-    guilds = { ["realm:testguild"] = guild or legacyGuild(6) },
+    guilds = { ["realm:testguild"] = guild or legacyGuild(7) },
     persistenceRecovery = { version = 1, backups = {}, quarantine = {}, nextBackupId = 1 },
   }
 end
@@ -58,7 +58,7 @@ describe("SavedVariables validation and recovery", function()
     for version = 1, 6 do
       local _, dibs = loader.load({ savedVariables = legacyGuild(version) })
       local db = dibs.GetDB()
-      assert_equal(6, db.version, "schema " .. tostring(version))
+      assert_equal(7, db.version, "schema " .. tostring(version))
       assert_equal("legacy-tx-1", db.ledger.transactions["legacy-tx-1"].transactionId)
       assert_equal("legacy-request-1", db.preDibs.requests[1].requestId)
       assert_equal("MIGRATABLE", dibs.GetPersistenceStatus().state)

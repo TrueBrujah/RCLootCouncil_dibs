@@ -2,6 +2,29 @@
 
 This contract defines ownership and release behavior for B12. It supplements the existing addon/domain contracts; it does not replace them.
 
+## B12 Changed-Surface Ownership Map
+
+| Surface | Owner | B12 boundary |
+| --- | --- | --- |
+| Player and Officer shell, route selection, page mounting | `src/ui/PlayerUI.lua`, `src/ui/OfficerUI.lua` | Own presentation state and route lifecycle; do not persist authoritative data directly. |
+| Shared widgets, tables, tooltips, menus, sizing, and refresh deferral | `src/ui/AceGUI.lua` | Own widget cleanup and layout behavior; do not decide permissions or domain values. |
+| Midnight tokens, semantic states, empty states, and modal sizing | `src/ui/Midnight.lua` | Own shared presentation language; do not mutate ledger, policy, or request state. |
+| Settings labels and canonical values | `src/integrations/RCLootCouncilOptions.lua`, existing domain services | Normalize at the UI boundary and delegate mutations through protected services. |
+| Requests and historical candidates | `src/ui/OfficerUI.lua`, `src/ui/LogsUI.lua`, existing request/reconciliation services | Project bounded, privacy-filtered views; do not add ticket lifecycle or alter RCLootCouncil history. |
+| Developer Debug and sandbox presentation | `src/ui/DeveloperUI.lua`, `src/integrations/DeveloperSandbox.lua` | Keep simulation/provider state isolated from production authority and SavedVariables. |
+| RCLootCouncil capability and evidence | `src/integrations/RCLootCouncil.lua` | Report absent, degraded, unsupported, or operational state; do not replace RCLootCouncil ownership. |
+
+## Freeze Constraints
+
+B12 UI work must preserve the following unchanged contracts:
+
+- No new production SavedVariables fields, synchronization payload fields, or request lifecycle states for presentation-only behavior.
+- No direct UI writes to ledger, balances, policy, authority, award history, or RCLootCouncil history.
+- No changes to `AWARD_COMMIT`, `AWARD_PROPOSAL`, governance, coordinator/recovery, identity, or production permission semantics.
+- All dangerous mutations continue through existing authorization, readiness, confirmation, reason, and `ProtectedActions.lua` boundaries.
+- Player projections remain privacy-filtered, Officer/GM evidence remains role-gated, and Developer Mode remains opt-in and provider-isolated.
+- A known Retail or unrelated baseline failure must be recorded separately, never hidden by weakening a B12 assertion.
+
 ## Shell and Lifecycle
 
 1. Player and Officer windows use the shared Midnight shell: dark translucent frame, left navigation, one primary content host, and stable footer.

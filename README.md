@@ -1,4 +1,6 @@
-# RCLootCouncil_dibs 0.6.2
+# RCLootCouncil_dibs 0.6.4-dev
+
+[![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
 RCLootCouncil_dibs is a World of Warcraft Retail addon for seasonal guild Dibs
 and Pre-Dib loot management. It can run on its own or integrate with
@@ -13,8 +15,10 @@ guild Dibs ledger, reservations, permissions, and audit history.
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. The 0.6.2 build
-is the current stable publication. Live Retail and two-client validation remain
-operational checks documented in [the B10 release gate](docs/audits/B10_Retail_Validation_Checklist.md).
+is the current stable publication; 0.6.4-dev is the current development build.
+Live Retail validation remains an operational check documented in the [B12
+Retail evidence record](docs/audits/B12_Retail_Validation_Evidence.md). Two-client
+validation is conditional and is not required for the B12 presentation-only scope.
 
 ## Features
 
@@ -34,6 +38,7 @@ operational checks documented in [the B10 release gate](docs/audits/B10_Retail_V
 - Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
 - Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
 - Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions.
+- Great Vault acquisition tracking with automatic claim evidence, `/dibs vault` manual fallback, Officer review, guild-scoped sync, recovery, and legacy migration.
 - SavedVariables migrations and localized English/French runtime strings.
 
 ### Optional modules and corrections
@@ -64,7 +69,7 @@ delta, request reference, and canonical event/reference.
 
 ### Installation
 
-1. Download the 0.6.2 ZIP from the release links above.
+1. Download the stable 0.6.2 ZIP, or the current 0.6.4-dev artifact when testing the feature.
 2. Extract it into `World of Warcraft/_retail_/Interface/AddOns/`.
 3. Confirm that the extracted folder is named `RCLootCouncil_dibs` and contains
    `RCLootCouncil_dibs.toc` directly inside it.
@@ -213,6 +218,20 @@ selectable report window. Use
 for a bounded local simulation. Both commands are read-only with respect to
 the ledger, RCLootCouncil history, loot sessions, votes, chat traffic and
 SavedVariables.
+
+## Compatibility and troubleshooting
+
+- This addon targets World of Warcraft Retail. RCLootCouncil is optional for
+   the Dibs core and required only for the integrated loot workflow.
+- Run `/reload` after installing or updating the addon.
+- Confirm that `RCLootCouncil_dibs.toc` is directly inside the addon folder.
+- Use `/dibs debug report` for a general diagnostic report and `/dibs debug rc`
+   to inspect RCLootCouncil integration status.
+- When reporting a problem, include the addon version, WoW client version,
+   installation mode, reproduction steps, and a sanitized diagnostic report.
+- Remove player names and other sensitive data before sharing diagnostic
+   reports or exported packages. Never publish `full-data` packages: they may
+   contain player identities, balances, and award history.
 
 ### Slash commands
 

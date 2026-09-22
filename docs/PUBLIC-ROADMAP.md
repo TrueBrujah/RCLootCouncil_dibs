@@ -20,6 +20,109 @@ Curio and Tier Set progression across linked characters, configurable seasonal
 policies, Officer-reviewed main/alt relationships, and bounded main-change
 probation.
 
+## Plan finalise - 7 ameliorations operationnelles
+
+Ce plan complete les fondations deja presentes dans les phases precedentes. Il
+ne remplace pas les regles du ledger, les permissions existantes ou la source
+de verite Dibs. Chaque fonctionnalite doit rester guild-scoped, auditable et
+utilisable sans RCLootCouncil lorsque cela est pertinent.
+
+### Ordre de livraison
+
+#### Etape 0 - Fondation Great Vault et synchronisation
+
+Cette etape est la dependance technique de l'indicateur de synchronisation.
+L'addon sait deja enregistrer une acquisition Vault manuellement avec
+`/dibs vault`; cette etape ajoutera la detection de reclamation lorsque
+l'API Retail le permet, un identifiant de reset pour l'idempotence et une
+source `GREAT_VAULT`. Si l'API ne permet pas une confirmation fiable, l'entree
+restera etiquetee comme manuelle ou a verifier par un Officer.
+
+Les acquisitions Vault seront ensuite ajoutees au protocole de synchronisation
+avec validation de la guilde, de l'identite du personnage, de la saison et de
+la revision. Les donnees ne seront pas envoyees vers GitHub ni vers un service
+central; elles resteront dans les SavedVariables et les messages addon de la
+guilde.
+
+Critere de sortie: une acquisition Vault confirmee apparait une seule fois
+chez les clients autorises, une relecture ne cree aucun doublon, et une donnee
+non verifiable ne peut pas bloquer silencieusement un joueur.
+
+#### Etape 1 - Assistant de premiere installation
+
+L'assistant guidera le GM ou l'Officer a travers la verification de RCLootCouncil,
+des permissions, de la saison, des regles de rang, des canaux et des types de
+loot. Il proposera un test local avant le premier raid et indiquera clairement
+ce qui reste a faire.
+
+Critere de sortie: une nouvelle guilde peut atteindre un etat `Pret pour le
+raid` sans modifier manuellement les SavedVariables.
+
+#### Etape 2 - Tableau de sante
+
+Une page de diagnostic synthetisera la version, la saison active, l'etat de
+RCLootCouncil, la derniere sauvegarde, les migrations, la synchronisation et
+les avertissements de donnees. Les actions dangereuses resteront dans les
+outils existants et demanderont leurs confirmations habituelles.
+
+Critere de sortie: un GM peut identifier la cause d'un etat `Degrade`,
+`Bloque` ou `Non disponible` sans ouvrir les fichiers de donnees.
+
+#### Etape 3 - Notifications joueur
+
+Les notifications couvriront les changements utiles: Pre-Dib accepte ou
+annule, attribution finalisee, Dib consomme, demande resolue et acquisition
+Vault enregistree. Elles seront discretes, localisees et desactivables par
+profil; elles ne devront jamais afficher l'historique prive d'un autre joueur.
+
+Critere de sortie: chaque notification est idempotente, liee a un evenement
+auditable et n'apparait pas plusieurs fois apres une reconnexion.
+
+#### Etape 4 - Recherche et filtres avances
+
+Les vues Player et Officer pourront filtrer l'historique par joueur, objet,
+raid, boss, saison, date, statut et source. Les filtres Officer resteront
+proteges par les memes controles d'acces que les donnees affichees.
+
+Critere de sortie: un Officer peut retrouver une attribution ou une acquisition
+Vault dans un historique volumineux sans parcourir manuellement toute la liste.
+
+#### Etape 5 - Centre de sante des donnees et migration
+
+Ce centre controlera les doublons, references de saison invalides, acquisitions
+incompletes, anciennes versions et conflits de synchronisation. Il affichera
+un apercu avant correction et creera une sauvegarde avant toute operation
+destructive. Les transactions append-only existantes ne seront jamais reecrites.
+
+Critere de sortie: une anomalie peut etre corrigee, ignoree ou exportee pour
+revision avec une trace de l'acteur, de la raison et du resultat.
+
+#### Etape 6 - Export d'audit anonymise
+
+Un export distinct des packages complets supprimera les noms, identites,
+notes privees et donnees inutiles. Il conservera les dates, types d'evenements,
+objets, saisons, decisions et resultats necessaires a l'analyse d'un probleme.
+
+Critere de sortie: un rapport anonymise ne contient aucune identite de joueur,
+aucune permission et aucune transaction executable, tout en restant lisible
+pour un support ou une revue de guilde.
+
+### Regles de livraison communes
+
+- Chaque etape aura une specification, des tests unitaires et un scenario
+  Retail manuel lorsque l'API ou l'interface protege est impliquee.
+- Les nouvelles donnees auront une migration SavedVariables et une politique
+  d'idempotence avant d'etre synchronisees.
+- Les donnees Vault, d'inventaire et de relations main/alt resteront limitees
+  a la guilde et au personnage autorises; aucune base distante publique ne sera
+  creee.
+- Une information seulement detectee localement restera distinguee d'une
+  acquisition confirmee par un award ou par un Officer.
+- Chaque phase pourra etre livree independamment, mais l'Etape 0 doit preceder
+  l'indicateur de synchronisation fiable et l'evaluation Vault de l'eligibilite.
+- Le backlog ci-dessous reste reserve aux idees non approuvees et ne doit pas
+  etre implemente sans une nouvelle decision de perimetre.
+
 ## Later
 - localization expansion
 - configurable tie-breaking policies

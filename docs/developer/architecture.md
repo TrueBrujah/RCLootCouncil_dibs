@@ -24,7 +24,7 @@ The addon uses one global namespace, `Dibs`. `Core.lua` creates the namespace, m
 - **Accounting/persistence:** Ledger, Backup, ImportExport, Profiles, and Disputes operate on the guild database.
 - **Application adapters:** LootPipeline, RaidRelay, RaidPrompts, Readiness, DryRun, and Sync coordinate workflows.
 - **External integrations:** RCLootCouncil, RCLootCouncilOptions, and EncounterJournal probe optional or Blizzard APIs.
-- **UI:** AceGUI, PlayerUI, OfficerUI, DataUI, LogsUI, and DebugLogsUI build views and delegate actions.
+- **UI:** Midnight, AceGUI, PlayerUI, OfficerUI, HealthUI, SetupAssistant, DataUI, LogsUI, and DebugLogsUI own bounded projections and delegate mutations to existing services.
 - **Embedded/vendor libraries:** `src/libs/**` and `src/embeds.xml` provide Ace3, ScrollingTable, and serializer dependencies. They are not Dibs business modules.
 
 ## Authority boundaries
@@ -35,14 +35,35 @@ Guild GM/officer permission is the authority for Dibs administration. RCLootCoun
 
 Players create or confirm Pre-Dibs requests. Encounter context and RCLootCouncil responses can validate eligibility. A finalized qualifying award or an explicitly confirmed historical reconciliation creates an audited ledger use. Queries derive balances and history from append-only transactions. Sync exchanges bounded guild metadata and request revisions; live candidates, votes, and loot are deliberately excluded.
 
+B12 UI hardening keeps PlayerUI, OfficerUI, and LogsUI as projections over those
+existing domain records. Midnight and AceGUI own window, page, and shared
+context-menu lifecycle; they do not become an authority boundary. Historical
+review and confirmation continue through the existing protected reconciliation
+actions, and Player projections omit Officer-only technical evidence.
+
+B12 introduces no SavedVariables fields, SyncV2 fields, request states, ledger
+semantics, or RCLootCouncil mutations. Release validation is recorded separately
+from runtime ownership in the B12 evidence artifacts.
+
+B14 and B15 keep the first-installation assistant and data-health dashboard
+transient and read-only at their projection boundaries. Guided setup actions
+delegate through ProtectedActions; health reports expose status metadata only and
+never repair persistence, mutate authority, or expose raw records.
+
+B16 adds `Dibs.Notifications` as a local presentation projection. It emits only
+after authoritative Pre-Dib, Vault, or award decisions, filters to the local
+character, and uses bounded per-character replay state for idempotency. It never
+mutates or synchronizes domain records.
+
 ## Stores, controllers, and stateful components
 
 `Dibs.Ledger`, `Dibs.PreDibs`, `Dibs.Seasons`, `Dibs.RankRules`, and the
 versioned stores under `Dibs.GetDB()` are repositories/stores. `Dibs.Backup`,
 `Dibs.ImportExport`, `Dibs.Profiles`, and `Dibs.Disputes` are persistence/audit
 services around those stores. `Dibs.PlayerUI`, `Dibs.OfficerUI`, `Dibs.DataUI`,
-and `Dibs.LogsUI` are controllers/projections; `Dibs.AceGUI` is their shared UI
-component adapter. `Dibs.Ace3` is the framework adapter, not a business service.
+and `Dibs.LogsUI` are controllers/projections; `Dibs.Notifications` is a local
+presentation service; `Dibs.AceGUI` is their shared UI component adapter.
+`Dibs.Ace3` is the framework adapter, not a business service.
 
 The main state machines are the Pre-Dib request lifecycle, dispute review
 lifecycle, reconciliation candidate decision lifecycle, season active/archived

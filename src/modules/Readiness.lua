@@ -109,13 +109,21 @@ local function groupContext()
   if type(GetChannelName) == "function" then
     channelId, channelName = GetChannelName("Raid Dibs")
   end
+  local raidDibsConfigured = false
+  if Dibs.PreDibs and type(Dibs.PreDibs.GetRaidDibsChannel) == "function" then
+    local ok, clubId, streamId = pcall(Dibs.PreDibs.GetRaidDibsChannel)
+    raidDibsConfigured = ok and clubId ~= nil and streamId ~= nil
+  end
+  local raidDibsJoined = tonumber(channelId) and tonumber(channelId) > 0 or channelName ~= nil
   return {
     inRaid = inRaid,
     inGroup = inGroup,
     instanceName = instanceName,
     instanceType = instanceType,
     instanceId = instanceId,
-    raidDibsChannel = tonumber(channelId) and tonumber(channelId) > 0 or channelName ~= nil,
+    raidDibsChannel = raidDibsJoined or raidDibsConfigured,
+    raidDibsConfigured = raidDibsConfigured,
+    raidDibsJoined = raidDibsJoined,
   }
 end
 

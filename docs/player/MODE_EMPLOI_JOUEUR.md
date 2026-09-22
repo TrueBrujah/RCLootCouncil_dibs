@@ -32,6 +32,7 @@ Commandes principales :
 /dibs ui          Ouvre la fenetre Joueur
 /dibs balance     Affiche votre solde
 /dibs requests    Affiche vos demandes Pre-Dibs
+/dibs vault <itemID> [difficulte]  Enregistre manuellement un objet du Grand Coffre
 /dibs help        Affiche l'aide des commandes
 ```
 
@@ -88,6 +89,28 @@ Une demande Pre-Dib signale que vous souhaitez un objet. Elle ne depense aucun D
 La commande depend de la configuration de la guilde et de la saison active.
 
 Une meme demande active pour le meme joueur, objet, saison et difficulte n'est pas dupliquee.
+
+## 4. Suivi du Grand Coffre
+
+La fenetre Joueur affiche les acquisitions du Grand Coffre avec l'objet, la
+source, la semaine de reset, l'etat de verification, l'explication
+d'eligibilite et l'etat de synchronisation. Ouvrir le coffre ou regarder un
+choix ne constitue pas une acquisition confirmee.
+
+Si le client Retail ne fournit pas de signal fiable, utilisez :
+
+```text
+/dibs vault <itemID> [difficulte]
+```
+
+L'enregistrement manuel reste `MANUAL_RECORDED` jusqu'a la revue d'un Officer.
+Une acquisition du Grand Coffre est une preuve d'eligibilite et ne depense
+jamais de Dib. L'historique est propre a la guilde actuelle, ou au personnage
+lorsqu'il est sans guilde.
+
+![Statut d'acquisition du Grand Coffre](../assets/guides/screenshots/fr/player/player-vault-history.png)
+
+_Placeholder de capture : `docs/assets/guides/screenshots/fr/player/player-vault-history.png`_
 
 ## Drop-Dib : quand l'objet tombe
 

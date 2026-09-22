@@ -39,6 +39,7 @@ loot voting and award finalization.
 /dibs ui          Open the Player window
 /dibs balance     Show your balance
 /dibs requests    Show your Pre-Dib requests
+/dibs vault <itemID> [difficulty]  Record a Great Vault item manually
 /dibs pre <itemID> [item name]  Create a Pre-Dib request
 /dibs options     Open configuration and launch controls
 ```
@@ -51,6 +52,25 @@ and award references. A rank change does not rewrite older transactions.
 
 A correction never silently deletes the original event. It appends a new,
 audited transaction linked to the original one.
+
+## Great Vault acquisitions
+
+The Player window can show Great Vault acquisitions with their item, source,
+weekly reset, verification state, eligibility explanation, and sync state.
+Opening the Vault or viewing a reward choice is not a completed claim. When
+Retail does not expose a reliable claim signal, use:
+
+```text
+/dibs vault <itemID> [difficulty]
+```
+
+Manual records are marked `MANUAL_RECORDED` until an authorized Officer reviews
+them. Vault records are evidence only and never spend, grant, or change a Dib.
+History is scoped to the current guild, or to the character while unguilded.
+
+![Player Great Vault acquisition status](../assets/guides/screenshots/en/player/player-vault-history.png)
+
+_Screenshot placeholder: `docs/assets/guides/screenshots/en/player/player-vault-history.png`_
 
 ## Pre-Dib workflow
 

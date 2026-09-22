@@ -18,7 +18,7 @@ describe("Pre-Dib ledger boundary", function()
     local record = dibs.PreDibs.RecordVaultAcquisition("Tester-Realm", 21022, "Heroic")
 
     assert_not_nil(record)
-    assert_equal("VAULT", record.source)
+    assert_equal("VAULT_MANUAL", record.source)
     assert_equal("confirmed", request.status)
     assert_equal(before, #dibs.Ledger.GetAllTransactions())
   end)

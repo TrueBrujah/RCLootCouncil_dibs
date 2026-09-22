@@ -921,6 +921,8 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     st._dibsUpdateHeaders()
   end
 
+  local lastActionRow
+  local lastActionAt = 0
   st:RegisterEvents({
     OnEnter = function(rowFrame, cellFrame, data, cols, row, realrow, column, table)
       local cell = realrow and table:GetCell(realrow, column)
@@ -946,6 +948,15 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
       if record and record._dibsAction and column == #tableColumns then
         if type(record._dibsAction.callback) == "function" then record._dibsAction.callback(record._dibsRow or record) end
         return true
+      end
+      if record and record._dibsAction and type(record._dibsAction.callback) == "function" then
+        local currentTime = type(GetTime) == "function" and GetTime() or (type(time) == "function" and time() or 0)
+        if lastActionRow == realrow and currentTime - lastActionAt <= 0.35 then
+          lastActionRow, lastActionAt = nil, 0
+          record._dibsAction.callback(record._dibsRow or record)
+          return true
+        end
+        lastActionRow, lastActionAt = realrow, currentTime
       end
       if table.GetSelection and table.SetSelection then
         if table:GetSelection() == realrow and table.ClearSelection then table:ClearSelection()
