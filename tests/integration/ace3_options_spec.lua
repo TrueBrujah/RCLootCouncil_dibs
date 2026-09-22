@@ -162,6 +162,35 @@ end)
 
 
 describe("Dibs options compatibility", function()
+  it("lists roster allocation gaps and assigns only missing rank Dibs", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({
+      wow = {
+        guildLeader = true,
+        guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 },
+      },
+      rclootcouncil = rc,
+      withAce3 = true,
+    })
+    local seasonId = dibs.GetCurrentSeasonId()
+    dibs.RankRules.SetAllocation(seasonId, 3, "Member", 2)
+    dibs.RCOptions.EnsureRegistered(1)
+    local ranks = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.ranks.args
+    local summary = ranks.rankReconciliation.name()
+    assert_true(string.find(summary, "Alice-Realm", 1, true) ~= nil)
+    assert_true(string.find(summary, "missing 2", 1, true) ~= nil)
+
+    local before = #dibs.Ledger.GetTransactions(seasonId)
+    ranks.reconcileMissing.func()
+    local after = #dibs.Ledger.GetTransactions(seasonId)
+    assert_equal(before + 1, after)
+    assert_equal(2, dibs.Ledger.GetPlayerState("Alice-Realm", seasonId).allocation)
+
+    ranks.reconcileMissing.func()
+    assert_equal(after, #dibs.Ledger.GetTransactions(seasonId))
+  end)
+
   it("opens the shared options without RCLootCouncil", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     local opened

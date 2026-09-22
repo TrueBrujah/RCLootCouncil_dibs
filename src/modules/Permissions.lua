@@ -60,6 +60,7 @@ local ADMIN_ACTIONS = {
   ["season.rename"] = true,
   ["season.archive"] = true,
   ["rank.set"] = true,
+  ["rank.reconcile"] = true,
   ["ledger.grant"] = true,
   ["ledger.use"] = true,
   ["ledger.refund"] = true,

@@ -122,6 +122,52 @@ function Dibs.RankRules.GetAllocationForPlayer(playerName, seasonId)
   return Dibs.DEFAULT_DIBS_PER_RANK
 end
 
+local function getGuildRosterMembers()
+  local members = {}
+  if type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then
+    return members
+  end
+  for index = 1, GetNumGuildMembers() do
+    local name, rankName, rankIndex = GetGuildRosterInfo(index)
+    if type(name) == "string" and name ~= "" then
+      table.insert(members, { playerName = name, rankName = rankName, rankIndex = tonumber(rankIndex) or 0 })
+    end
+  end
+  return members
+end
+
+function Dibs.RankRules.GetAllocationReconciliation(seasonId, members)
+  ensureState()
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local roster = type(members) == "table" and members or getGuildRosterMembers()
+  local rows = {}
+  for _, member in ipairs(roster) do
+    local name = member.playerName or member.name
+    if name and name ~= "" then
+      local rankInfo = member.rankIndex ~= nil and member or Dibs.RankRules.GetPlayerRankInfo(name)
+      local expected = Dibs.RankRules.GetAllocationForPlayer(name, targetSeason)
+      local state = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(name, targetSeason) or {}
+      local assigned = tonumber(state.allocation) or 0
+      local delta = math.max(0, (tonumber(expected) or 0) - assigned)
+      table.insert(rows, {
+        playerName = name,
+        rankName = rankInfo.rankName or "Guild Member",
+        rankIndex = tonumber(rankInfo.rankIndex) or 0,
+        expectedAllocation = tonumber(expected) or 0,
+        assignedAllocation = assigned,
+        missingAllocation = delta,
+        surplusAllocation = math.max(0, assigned - (tonumber(expected) or 0)),
+        balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(name, targetSeason) or 0,
+        status = delta > 0 and "MISSING" or (assigned > (tonumber(expected) or 0) and "SURPLUS" or "ALIGNED"),
+      })
+    end
+  end
+  table.sort(rows, function(left, right)
+    return string.lower(tostring(left.playerName)) < string.lower(tostring(right.playerName))
+  end)
+  return rows
+end
+
 function Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName)
   ensureState()
   if not seasonId or not Dibs.Seasons or not Dibs.Seasons.GetById or not Dibs.Seasons.GetById(seasonId) then

@@ -514,11 +514,13 @@ function Ledger.RecordHistoricalAward(playerName, seasonId, awardRef, evidenceId
   audit = copy(audit or {}); audit.awardRef, audit.evidenceId = awardRef, evidenceId
   return Ledger.Use(playerName, 1, reason or "Historical RCLootCouncil award", "rclootcouncil_history", seasonId, audit)
 end
-function Ledger.RegisterSeasonAllocation(playerName, seasonId, amount, reason)
+function Ledger.RegisterSeasonAllocation(playerName, seasonId, amount, reason, audit)
   local numeric = amount == nil and 1 or tonumber(amount); if not finiteInteger(numeric) or numeric <= 0 then return nil, "INVALID_AMOUNT" end
-  local result = Ledger.CommitLocalTransaction({ systemBootstrap = true }, {
+  local context = audit and compatibilityContext("rank.reconcile", audit) or { systemBootstrap = true }
+  local result = Ledger.CommitLocalTransaction(context, {
     playerName = playerName or Dibs.GetPlayerName(), amount = numeric, type = "SEASON_ALLOCATION",
-    reason = reason or "Season allocation", source = "system", seasonId = seasonId or Dibs.GetCurrentSeasonId(),
+    reason = reason or "Season allocation", source = audit and "rank_reconciliation" or "system", seasonId = seasonId or Dibs.GetCurrentSeasonId(),
+    transactionId = audit and audit.transactionId,
   })
   return result.value, result.reasonCode
 end

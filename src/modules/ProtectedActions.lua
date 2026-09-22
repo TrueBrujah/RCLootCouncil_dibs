@@ -26,6 +26,7 @@ local VALID_ACTIONS = {
   ["season.rename"] = true,
   ["season.archive"] = true,
   ["rank.set"] = true,
+  ["rank.reconcile"] = true,
   ["settings.modify"] = true,
   ["installation.mode.set"] = true,
   ["ledger.grant"] = true,
@@ -139,6 +140,24 @@ local function executeRankSet(actor, payload, decision)
   local rankName = payload and payload.rankName
   local rule, reason = Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName)
   return buildResult(rule ~= nil, rule, decision, reason)
+end
+
+local function executeRankReconcile(actor, payload, decision)
+  if not Dibs.Ledger or not Dibs.Ledger.RegisterSeasonAllocation then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  local amount = tonumber(payload and payload.amount)
+  if not amount or amount < 1 or amount ~= math.floor(amount) then
+    return reject(decision, "INVALID_ALLOCATION_DELTA")
+  end
+  local tx, reason = Dibs.Ledger.RegisterSeasonAllocation(
+    payload and payload.playerName,
+    payload and payload.seasonId,
+    amount,
+    payload and payload.reason or "Rank allocation reconciliation",
+    buildAudit("rank.reconcile", actor, payload or {}, decision)
+  )
+  return buildResult(tx ~= nil, tx, decision, reason)
 end
 
 local function executeLedgerGrant(actor, payload, decision)
@@ -622,6 +641,7 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "season.rename" then return executeSeasonRename(actor, command, decision) end
   if actionId == "season.archive" then return executeSeasonArchive(actor, command, decision) end
   if actionId == "rank.set" then return executeRankSet(actor, command, decision) end
+  if actionId == "rank.reconcile" then return executeRankReconcile(actor, command, decision) end
   if actionId == "ledger.grant" then return executeLedgerGrant(actor, command, decision) end
   if actionId == "ledger.use" then return executeLedgerUse(actor, command, decision) end
   if actionId == "ledger.refund" then return executeLedgerRefund(actor, command, decision) end

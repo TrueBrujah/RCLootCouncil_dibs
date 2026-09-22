@@ -592,6 +592,22 @@ local function buildRankSummaryText(seasonId)
   return "Current rank rules:\n" .. table.concat(lines, "\n")
 end
 
+local function buildRankReconciliationText(seasonId)
+  local rows = Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation
+    and Dibs.RankRules.GetAllocationReconciliation(seasonId) or {}
+  if #rows == 0 then
+    return "No guild roster members are available for reconciliation."
+  end
+  local lines = { "Roster allocation status (expected / assigned):" }
+  for _, row in ipairs(rows) do
+    table.insert(lines, tostring(row.playerName) .. " | " .. tostring(row.rankName)
+      .. " | " .. tostring(row.expectedAllocation) .. " / " .. tostring(row.assignedAllocation)
+      .. " | " .. tostring(row.status)
+      .. (row.missingAllocation > 0 and (" | missing " .. tostring(row.missingAllocation)) or ""))
+  end
+  return table.concat(lines, "\n")
+end
+
 getState = function()
   Dibs.RCOptions.state = Dibs.RCOptions.state or {
     selectedSeasonId = nil,
@@ -856,6 +872,39 @@ local optionsTable = {
                   allocation = allocation,
                 }) or { ok = false, diagnostic = "Protected actions unavailable." }
                 setStatus(result.ok and ("Saved rule: " .. tostring(rankName) .. " = " .. tostring(allocation)) or (result.diagnostic or "Failed to set rank allocation."))
+              end,
+            },
+            rankReconciliation = {
+              order = 5,
+              type = "description",
+              width = "full",
+              name = function()
+                return buildRankReconciliationText(getSelectedSeasonId())
+              end,
+            },
+            reconcileMissing = {
+              order = 6,
+              type = "execute",
+              width = "full",
+              name = "Assign missing Dibs to guild members",
+              func = function()
+                local seasonId = getSelectedSeasonId()
+                local rows = Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation
+                  and Dibs.RankRules.GetAllocationReconciliation(seasonId) or {}
+                local assigned, failed = 0, 0
+                for _, row in ipairs(rows) do
+                  if tonumber(row.missingAllocation) and row.missingAllocation > 0 then
+                    local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+                      and Dibs.ProtectedActions.Execute("rank.reconcile", nil, {
+                        playerName = row.playerName,
+                        seasonId = seasonId,
+                        amount = row.missingAllocation,
+                        reason = "Season rank allocation reconciliation",
+                      }) or { ok = false }
+                    if result.ok then assigned = assigned + row.missingAllocation else failed = failed + 1 end
+                  end
+                end
+                setStatus("Rank reconciliation complete: assigned " .. tostring(assigned) .. " Dibs; failed " .. tostring(failed) .. ".")
               end,
             },
           },
