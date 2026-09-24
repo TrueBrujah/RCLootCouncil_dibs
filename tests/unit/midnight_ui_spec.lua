@@ -14,6 +14,26 @@ describe("B11a Midnight tokens", function()
     assert_true(tokens.typography.body >= 12)
   end)
 
+  it("exposes isolated color variants without changing the active theme", function()
+    local _, dibs = loader.load()
+    local names = dibs.Midnight.GetThemeNames()
+    assert_equal(5, #names)
+    assert_equal("MIDNIGHT", names[1])
+    assert_equal("ARCANE_VIOLET", names[4])
+
+    local palette = dibs.Midnight.GetThemePalette("FEL_GREEN")
+    assert_not_nil(palette)
+    assert_not_nil(palette.PRIMARY)
+    assert_not_nil(palette.SURFACE)
+    palette.PRIMARY[1] = 0
+    assert_true(dibs.Midnight.GetThemePalette("FEL_GREEN").PRIMARY[1] > 0)
+    local preview = dibs.Midnight.GetThemeTokens("FROST_STEEL")
+    assert_equal("FROST_STEEL", preview.theme)
+    assert_true(preview.sizing.minWidth >= 420)
+    assert_equal("MIDNIGHT", dibs.Midnight.GetTokens().theme)
+    assert_nil(dibs.Midnight.GetThemePalette("UNKNOWN"))
+  end)
+
   it("uses LibSharedMedia when available and falls back when media is missing", function()
     local _, dibs = loader.load()
     local previous = _G.LibStub

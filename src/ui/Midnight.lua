@@ -41,6 +41,63 @@ local defaults = {
   contrast = "normal",
 }
 
+local THEME_CATALOG = {
+  {
+    id = "MIDNIGHT",
+    name = "Midnight",
+    description = "Bleu nuit, acier et or discret.",
+    colors = defaults.colors,
+  },
+  {
+    id = "AZEROTH_GOLD",
+    name = "Azeroth Gold",
+    description = "Noir profond, or chaud et bronze.",
+    colors = {
+      PRIMARY = { 0.82, 0.58, 0.16, 1 }, TEXT = { 0.98, 0.95, 0.86, 1 },
+      TEXT_MUTED = { 0.72, 0.66, 0.54, 1 }, SUCCESS = { 0.32, 0.78, 0.42, 1 },
+      WARNING = { 0.96, 0.72, 0.18, 1 }, DANGER = { 0.88, 0.30, 0.24, 1 },
+      INFO = { 0.38, 0.68, 0.84, 1 }, SURFACE = { 0.075, 0.055, 0.035, 0.97 },
+      SURFACE_RAISED = { 0.14, 0.105, 0.065, 0.98 }, BORDER = { 0.55, 0.36, 0.12, 1 },
+    },
+  },
+  {
+    id = "FEL_GREEN",
+    name = "Fel Green",
+    description = "Obsidienne, jade et energie gangrenee.",
+    colors = {
+      PRIMARY = { 0.22, 0.82, 0.52, 1 }, TEXT = { 0.90, 0.98, 0.92, 1 },
+      TEXT_MUTED = { 0.58, 0.74, 0.64, 1 }, SUCCESS = { 0.34, 0.92, 0.48, 1 },
+      WARNING = { 0.94, 0.70, 0.20, 1 }, DANGER = { 0.94, 0.28, 0.26, 1 },
+      INFO = { 0.30, 0.78, 0.76, 1 }, SURFACE = { 0.025, 0.075, 0.055, 0.97 },
+      SURFACE_RAISED = { 0.055, 0.14, 0.095, 0.98 }, BORDER = { 0.16, 0.48, 0.30, 1 },
+    },
+  },
+  {
+    id = "ARCANE_VIOLET",
+    name = "Arcane Violet",
+    description = "Prune profond, violet arcanique et argent.",
+    colors = {
+      PRIMARY = { 0.70, 0.40, 0.94, 1 }, TEXT = { 0.96, 0.92, 1, 1 },
+      TEXT_MUTED = { 0.70, 0.64, 0.80, 1 }, SUCCESS = { 0.34, 0.82, 0.56, 1 },
+      WARNING = { 0.96, 0.68, 0.24, 1 }, DANGER = { 0.94, 0.32, 0.46, 1 },
+      INFO = { 0.46, 0.70, 0.96, 1 }, SURFACE = { 0.055, 0.035, 0.085, 0.97 },
+      SURFACE_RAISED = { 0.12, 0.07, 0.17, 0.98 }, BORDER = { 0.42, 0.24, 0.62, 1 },
+    },
+  },
+  {
+    id = "FROST_STEEL",
+    name = "Frost Steel",
+    description = "Givre, acier clair et cyan froid.",
+    colors = {
+      PRIMARY = { 0.30, 0.74, 0.92, 1 }, TEXT = { 0.92, 0.98, 1, 1 },
+      TEXT_MUTED = { 0.62, 0.76, 0.84, 1 }, SUCCESS = { 0.28, 0.86, 0.68, 1 },
+      WARNING = { 0.94, 0.74, 0.28, 1 }, DANGER = { 0.88, 0.34, 0.38, 1 },
+      INFO = { 0.38, 0.82, 0.96, 1 }, SURFACE = { 0.035, 0.075, 0.10, 0.97 },
+      SURFACE_RAISED = { 0.08, 0.15, 0.19, 0.98 }, BORDER = { 0.30, 0.58, 0.70, 1 },
+    },
+  },
+}
+
 local function copy(value, seen)
   if type(value) ~= "table" then return value end
   seen = seen or {}
@@ -97,6 +154,42 @@ local STATE_PRESENTATIONS = {
 
 function Midnight.GetDefaults()
   return copy(defaults)
+end
+
+function Midnight.GetThemeNames()
+  local names = {}
+  for _, theme in ipairs(THEME_CATALOG) do names[#names + 1] = theme.id end
+  return names
+end
+
+function Midnight.GetThemePalette(themeID)
+  for _, theme in ipairs(THEME_CATALOG) do
+    if theme.id == themeID then return copy(theme.colors) end
+  end
+  return nil
+end
+
+function Midnight.GetThemeTokens(themeID)
+  for _, theme in ipairs(THEME_CATALOG) do
+    if theme.id == themeID then
+      local tokens = copy(defaults)
+      tokens.theme = theme.id
+      tokens.colors = copy(theme.colors)
+      return tokens
+    end
+  end
+  return nil
+end
+
+function Midnight.GetThemeCatalog()
+  local catalog = {}
+  for _, theme in ipairs(THEME_CATALOG) do
+    catalog[#catalog + 1] = {
+      id = theme.id, name = theme.name, description = theme.description,
+      colors = copy(theme.colors),
+    }
+  end
+  return catalog
 end
 
 function Midnight.GetTokens()
