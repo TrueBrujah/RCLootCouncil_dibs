@@ -27,7 +27,7 @@ local GUILD_SETTING_KEYS = {
   "allowPublicPreDibs", "defaultAllocation", "officerMaxRankIndex", "officerRankIndices",
   "preDibAnnouncementChannel", "preDibOfficerAnnouncementChannel", "preDibAnnouncementTemplate",
   "raidReminderTemplate", "raidReminderMessage", "raidEntryDibPromptsEnabled", "dibAllowedTypes",
-  "dibButtonTemplate", "dibRCEnabledTypes", "ejBlockedSubCategories",
+  "dibButtonTemplate", "dibRCEnabledTypes", "ejBlockedSubCategories", "installationMode",
 }
 
 local function guildConfiguration()

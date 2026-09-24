@@ -560,6 +560,10 @@ local function executeInstallationModeSet(actor, payload, decision)
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
   local mode, reason = Dibs.Permissions.SetInstallationMode(payload and payload.mode, actor)
+  if mode and Dibs.Seasons and Dibs.Seasons.PublishCatalog then
+    local published = Dibs.Seasons.PublishCatalog(actor, "INSTALLATION_MODE_SET")
+    if published and Dibs.Sync and Dibs.Sync.AnnounceSeasonCatalog then Dibs.Sync.AnnounceSeasonCatalog() end
+  end
   return buildResult(mode ~= nil, mode, decision, reason)
 end
 
