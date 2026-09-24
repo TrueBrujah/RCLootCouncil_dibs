@@ -181,6 +181,7 @@ function Sync.BuildSyncProbeReport()
     },
     operationalPolicyRevision = tonumber(policy.policyRevision) or 0,
     seasonCatalogRevision = tonumber(catalog.catalogRevision) or 0,
+    entityDigests = localSyncDigests(),
     ledger = {
       epoch = ledger.epoch,
       revision = (tonumber(ledger.nextSeq) or 1) - 1,
@@ -801,6 +802,7 @@ function Sync.Receive(message, sender)
     if type(message.requestId) ~= "string" or type(message.report) ~= "table" then return false, "INVALID_SYNC_PROBE_RESPONSE" end
     peer.syncProbe = { requestId = message.requestId, receivedAt = time(), report = copy(message.report) }
     peer.baselineHash = message.report.baselineHash
+    if type(message.report.entityDigests) == "table" then peer.entities = copy(message.report.entityDigests) end
     state.peers[resolved.memberKey] = peer
     return true, "SYNC_PROBE_ACCEPTED"
   end
@@ -992,7 +994,10 @@ function Sync.Receive(message, sender)
     for _, requested in ipairs(message.requests) do
       if requested.entityType == "PREDIB_REQUEST" and type(requested.entityId) == "string" then
         local request = localRequest(requested.entityId)
-        if request and member(request.playerName) and member(request.playerName).memberKey == (localSnapshot() and localSnapshot().memberKey) then requestDetail(resolved.displayName, requested.entityId) end
+        local owner = request and member(request.playerName)
+        local localMember = localSnapshot()
+        local ownerIsLocal = owner and localMember and owner.memberKey == localMember.memberKey
+        if request and owner and (ownerIsLocal or localRole() == "gm" or localRole() == "officer") then requestDetail(resolved.displayName, requested.entityId) end
       elseif requested.entityType == "GOVERNANCE" and localRole() == "gm" then
         local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState()
         local record = governanceState and governanceState.records and governanceState.records[tostring(requested.revision)]
