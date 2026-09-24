@@ -214,7 +214,9 @@ function Sync.FormatSyncProbeReport(probe)
   if type(report) ~= "table" then return "No synchronization probe response." end
   local governance = report.governance or {}; local authority = report.authority or {}; local ledger = report.ledger or {}
   local transferAck = probe and probe.transferAck
-  local suffix = transferAck and string.format(" baselineAck=%s/%s", tostring(transferAck.result), tostring(transferAck.reasonCode or "none")) or ""
+  local progress = transferAck and tonumber(transferAck.chunkCount) and tonumber(transferAck.chunkCount) > 0
+    and string.format(" chunks=%d/%d", tonumber(transferAck.receivedChunks) or 0, tonumber(transferAck.chunkCount)) or ""
+  local suffix = transferAck and string.format(" baselineAck=%s/%s%s", tostring(transferAck.result), tostring(transferAck.reasonCode or "none"), progress) or ""
   return string.format(
     "%s role=%s protocol=%s behind=%s reason=%s governance=%s/%s baseline=%s authority=%s coordinator=%s policy=%s catalog=%s ledger=%s/%s epoch=%s",
     tostring(report.displayName or "unknown"), tostring(report.role or "unknown"), tostring(report.protocolState or "unknown"),
@@ -312,9 +314,14 @@ function Sync.GetPeerStatuses()
       elseif peer and peer.baselineHash then
         baselineStatus = "Present"
       elseif peer and peer.transferAck and (peer.transferAck.result == "STARTED" or peer.transferAck.result == "APPLIED") then
-        baselineStatus = "Applying"
+        local receivedChunks = tonumber(peer.transferAck.receivedChunks) or 0
+        local chunkCount = tonumber(peer.transferAck.chunkCount) or 0
+        baselineStatus = chunkCount > 0 and string.format("Applying %d/%d", receivedChunks, chunkCount) or "Applying"
       elseif peer and peer.transferAck and peer.transferAck.result == "REJECTED" then
-        baselineStatus = "Rejected/" .. tostring(peer.transferAck.reasonCode or "unknown")
+        local receivedChunks = tonumber(peer.transferAck.receivedChunks) or 0
+        local chunkCount = tonumber(peer.transferAck.chunkCount) or 0
+        local progress = chunkCount > 0 and string.format(" %d/%d", receivedChunks, chunkCount) or ""
+        baselineStatus = "Rejected/" .. tostring(peer.transferAck.reasonCode or "unknown") .. progress
       elseif peer and peer.syncProbe then
         baselineStatus = "Missing"
       end
@@ -650,7 +657,8 @@ local function sendTransferAck(target, transfer, accepted, reason)
   if not transfer or transfer.entityType ~= "LEGACY_BASELINE" then return end
   local result = accepted and (reason == "TRANSFER_STARTED" and "STARTED" or "APPLIED") or "REJECTED"
   Sync.Send({ type = "TRANSFER_ACK", transferId = transfer.transferId, entityType = transfer.entityType,
-    entityId = transfer.entityId, result = result, reasonCode = reason }, "WHISPER", target)
+    entityId = transfer.entityId, result = result, reasonCode = reason,
+    receivedChunks = tonumber(transfer.receivedChunks) or 0, chunkCount = tonumber(transfer.chunkCount) or 0 }, "WHISPER", target)
 end
 
 -- B05a evidence transport: the receiving side stages this as non-canonical
@@ -800,7 +808,8 @@ function Sync.Receive(message, sender)
       return false, "INVALID_TRANSFER_ACK"
     end
     peer.transferAck = { transferId = message.transferId, entityId = message.entityId,
-      result = message.result, reasonCode = message.reasonCode, receivedAt = time() }
+      result = message.result, reasonCode = message.reasonCode, receivedChunks = tonumber(message.receivedChunks) or 0,
+      chunkCount = tonumber(message.chunkCount) or 0, receivedAt = time() }
     state.peers[resolved.memberKey] = peer
     return true, "TRANSFER_ACK_ACCEPTED"
   end
@@ -1062,14 +1071,17 @@ function Sync.Receive(message, sender)
       return false, "TRANSFER_ID_CONFLICT"
     end
     local count = 0; for _ in pairs(Dibs.runtime.v2Transfers) do count = count + 1 end; if count >= MAX_TRANSFERS then return false, "TRANSFER_CAPACITY" end
-    Dibs.runtime.v2Transfers[message.transferId] = { sender = resolved.memberKey, entityType = message.entityType, entityId = message.entityId, revision = message.revision, contentHash = message.contentHash, payloadHash = message.payloadHash, chunkCount = message.chunkCount, chunks = {}, totalBytes = 0, expiresAt = time() + TTL }
+    Dibs.runtime.v2Transfers[message.transferId] = { transferId = message.transferId, sender = resolved.memberKey,
+      entityType = message.entityType, entityId = message.entityId, revision = message.revision,
+      contentHash = message.contentHash, payloadHash = message.payloadHash, chunkCount = message.chunkCount,
+      chunks = {}, receivedChunks = 0, totalBytes = 0, expiresAt = time() + TTL }
     return true, "TRANSFER_STARTED"
   end
   if message.type == "TRANSFER_CHUNK" then
     local transfer = Dibs.runtime.v2Transfers[message.transferId]; local index = tonumber(message.chunkIndex)
     if not transfer or transfer.sender ~= resolved.memberKey or not finiteInteger(index) or index < 1 or index > transfer.chunkCount or type(message.chunk) ~= "string" or #message.chunk > MAX_BYTES then return false, "INVALID_TRANSFER_CHUNK" end
     if transfer.chunks[index] and transfer.chunks[index] ~= message.chunk then Dibs.runtime.v2Transfers[message.transferId] = nil; return false, "CONFLICTING_CHUNK" end
-    if not transfer.chunks[index] then transfer.totalBytes = transfer.totalBytes + #message.chunk end
+    if not transfer.chunks[index] then transfer.totalBytes = transfer.totalBytes + #message.chunk; transfer.receivedChunks = transfer.receivedChunks + 1 end
     if transfer.totalBytes > MAX_BYTES then Dibs.runtime.v2Transfers[message.transferId] = nil; return false, "PAYLOAD_TOO_LARGE" end
     transfer.chunks[index] = message.chunk; return true, "CHUNK_ACCEPTED"
   end

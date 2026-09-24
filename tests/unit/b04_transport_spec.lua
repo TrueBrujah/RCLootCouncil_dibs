@@ -91,6 +91,22 @@ describe("B04 V2 transport", function()
     assert_false(bad); assert_equal("INVALID_TRANSFER_CHUNK", why)
   end)
 
+  it("tracks received chunks so incomplete transfers expose actionable progress", function()
+    local dibs = load(); local payload = request(dibs, 4, "cancelled")
+    local raw = assert(dibs.Ace3.Serialize(payload)); local first, second = raw:sub(1, 2), raw:sub(3)
+    local begin = remote(dibs, { type = "TRANSFER_BEGIN", transferId = "progress", entityType = "PREDIB_REQUEST",
+      entityId = payload.requestId, revision = payload.revision, contentHash = dibs.Sync.CalculateRequestHash(payload),
+      payloadHash = dibs.Sync.CalculateContentHash(raw), chunkCount = 2 }, "Owner-Realm")
+    assert_true(dibs.Sync.Receive(begin, "Owner-Realm"))
+    assert_equal(0, dibs.runtime.v2Transfers.progress.receivedChunks)
+    assert_true(dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_CHUNK", transferId = "progress", chunkIndex = 1, chunk = first }, "Owner-Realm"), "Owner-Realm"))
+    assert_equal(1, dibs.runtime.v2Transfers.progress.receivedChunks)
+    assert_true(dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_CHUNK", transferId = "progress", chunkIndex = 1, chunk = first }, "Owner-Realm"), "Owner-Realm"))
+    assert_equal(1, dibs.runtime.v2Transfers.progress.receivedChunks)
+    local ok, reason = dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_END", transferId = "progress" }, "Owner-Realm"), "Owner-Realm")
+    assert_false(ok); assert_equal("MISSING_TRANSFER_CHUNK", reason)
+  end)
+
   it("locks a transfer ID to its first sender and rejects unsupported detail entities", function()
     local dibs = load(); local payload = request(dibs, 2, "cancelled")
     local begin = { type = "TRANSFER_BEGIN", transferId = "locked", entityType = "PREDIB_REQUEST", entityId = payload.requestId, revision = payload.revision, contentHash = dibs.Sync.CalculateRequestHash(payload), payloadHash = "hash", chunkCount = 1 }

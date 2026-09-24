@@ -1766,12 +1766,14 @@ end
 function Dibs.OfficerUI.BuildSynchronizationProjection()
   local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
   local peers = Dibs.Sync and Dibs.Sync.GetPeerStatuses and Dibs.Sync.GetPeerStatuses() or {}
+  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
   return {
     state = Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or {},
     protocolState = Dibs.Sync and Dibs.Sync.GetProtocolState and Dibs.Sync.GetProtocolState() or "Unknown",
     policy = status.operationalPolicyAdopted == true and "Adopted" or "Not adopted",
     seasonCatalogRevision = tonumber(status.seasonCatalogRevision) or 0,
     pendingAwardProposals = tonumber(status.pendingAwardProposals) or 0,
+    localBaselineStatus = baseline.legacyBaselineHash and "Present" or "Missing",
     peers = peers,
   }
 end
@@ -2930,6 +2932,7 @@ local function createAceWindow(initialRoute)
         " | Policy: " .. tostring(projection.policy) ..
         " | Season catalog revision: " .. tostring(projection.seasonCatalogRevision) ..
         " | Pending award proposals: " .. tostring(projection.pendingAwardProposals) ..
+        "\nLocal baseline: " .. tostring(projection.localBaselineStatus or "Unknown") ..
         "\nRoster scope: " .. rosterScope, true)
       Dibs.AceGUI.AddLabel(shell, tabs, "Synchronized: Pre-Dibs requests, guild policy, season catalog, vault acquisition summaries, and ledger digests when V2 enforcement is active. Live loot candidates, votes, responses, and item transfers are never synchronized.", true)
       Dibs.AceGUI.AddButton(shell, tabs, "Announce presence", function()
@@ -2945,7 +2948,8 @@ local function createAceWindow(initialRoute)
         self:Refresh()
       end, 130)
       if Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM()
-        and Dibs.Governance and Dibs.Governance.ActivateV2 then
+        and Dibs.Governance and Dibs.Governance.ActivateV2
+        and not (Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
         Dibs.AceGUI.AddButton(shell, tabs, "Approve baseline and enable V2", function()
           local ok, reason = Dibs.Governance.ActivateV2(nil)
           if ok and Dibs.Sync and Dibs.Sync.AnnounceGovernance then Dibs.Sync.AnnounceGovernance() end
