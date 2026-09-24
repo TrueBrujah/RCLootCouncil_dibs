@@ -14,7 +14,7 @@ Improve the addon across six areas: transfer reliability, diagnostics, automated
 - [x] Automated transport coverage: a unit test now checks duplicate chunks and reports missing-chunk progress.
 - [x] Backup/export review: existing Backup and ImportExport modules provide bounded recovery workflows; no destructive reset was added without a guild-scope guarantee.
 - [ ] Firebutt-only reset command: existing backup/import infrastructure exists, but a destructive reset needs a separate explicit workflow and live validation.
-- [ ] Full governance recovery validation: requires two live WoW clients; unit tests cannot reproduce AceComm scheduling and roster identity behavior.
+- [ ] Full governance recovery validation: requires two live WoW clients; the automated suite now covers the deterministic transport and governance paths, but not live AceComm scheduling.
 
 ## Confirmed Findings
 
@@ -26,7 +26,8 @@ Improve the addon across six areas: transfer reliability, diagnostics, automated
 
 ## Blockers
 
-- No local WoW runtime can be simulated by the Lua test runner. AceComm throttling, message ordering, and Firebutt's actual SavedVariables load must be tested in game.
+- Lua runtime blocker resolved: Lua 5.4.6 is installed locally and `lua tests/run.lua` passes 24 tests with 0 failures.
+- No local WoW runtime can be simulated by the Lua test runner. AceComm throttling, message ordering, and Firebutt's actual SavedVariables load must still be tested in game.
 - A receiver-side error after `TRANSFER_BEGIN` can only be conclusively identified from the new final ACK and chunk counters.
 - A safe Firebutt-only reset depends on whether Firebutt uses a separate WoW account/guild scope; deleting the global account file could erase GM data.
 
