@@ -12,7 +12,7 @@ local Sync = Dibs.Sync
 
 local MAJOR, MINOR = 2, 0
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX, MAX_PROTOCOL_MISMATCHES = 256, 8, 16, 8192, 500, 10
-local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 30, 60, 3
+local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 300, 60, 3
 local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 
@@ -303,19 +303,22 @@ function Sync.GetPeerStatuses()
       local remoteVault = peer and peer.entities and peer.entities.VAULT_INDEX or {}
       local remoteLedger = peer and peer.entities and peer.entities.LEDGER or {}
       local localMember = localSnapshot() or {}
+      local isLocalMember = memberKey == localMember.memberKey
+        or string.lower(tostring(resolved and resolved.displayName or name)) == string.lower(tostring(localMember.displayName or ""))
       local localBaseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
       local baselineStatus = "Unknown"
-      if memberKey == localMember.memberKey then
+      if isLocalMember then
         baselineStatus = localBaseline.legacyBaselineHash and "Present" or "Missing"
       elseif peer and peer.baselineHash then
         baselineStatus = "Present"
-      elseif peer and peer.transferAck and peer.transferAck.result == "APPLIED" then
+      elseif peer and peer.transferAck and (peer.transferAck.result == "STARTED" or peer.transferAck.result == "APPLIED") then
         baselineStatus = "Applying"
       elseif peer and peer.transferAck and peer.transferAck.result == "REJECTED" then
         baselineStatus = "Rejected/" .. tostring(peer.transferAck.reasonCode or "unknown")
       elseif peer and peer.syncProbe then
         baselineStatus = "Missing"
       end
+      if isLocalMember then syncStatus = Sync.IsSyncBehind() and "Behind" or "Up to date" end
       rows[#rows + 1] = {
         playerName = resolved and resolved.displayName or name,
         rankIndex = tonumber(rankIndex) or 0,
@@ -639,13 +642,15 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   local sent = Sync.Send({ type = "TRANSFER_BEGIN", transferId = transferId, entityType = entityType, entityId = entityId, revision = revision, contentHash = contentHash, payloadHash = rawHash, chunkCount = #chunks }, "WHISPER", target)
   if not sent then return false, "SYNC_UNAVAILABLE" end
   for index, chunk in ipairs(chunks) do if not Sync.Send({ type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, "WHISPER", target) then return false, "SYNC_UNAVAILABLE" end end
-  return Sync.Send({ type = "TRANSFER_END", transferId = transferId }, "WHISPER", target)
+  return Sync.Send({ type = "TRANSFER_END", transferId = transferId, entityType = entityType, entityId = entityId,
+    revision = revision, contentHash = contentHash }, "WHISPER", target)
 end
 
 local function sendTransferAck(target, transfer, accepted, reason)
   if not transfer or transfer.entityType ~= "LEGACY_BASELINE" then return end
+  local result = accepted and (reason == "TRANSFER_STARTED" and "STARTED" or "APPLIED") or "REJECTED"
   Sync.Send({ type = "TRANSFER_ACK", transferId = transfer.transferId, entityType = transfer.entityType,
-    entityId = transfer.entityId, result = accepted and "APPLIED" or "REJECTED", reasonCode = reason }, "WHISPER", target)
+    entityId = transfer.entityId, result = result, reasonCode = reason }, "WHISPER", target)
 end
 
 -- B05a evidence transport: the receiving side stages this as non-canonical
@@ -1161,7 +1166,11 @@ function Sync.OnAddonMessage(prefix, payload, channel, sender)
     transfer = { transferId = message.transferId, entityType = message.entityType, entityId = message.entityId }
   end
   local accepted, reason = Sync.Receive(message, sender)
-  if transfer and transfer.entityType == "LEGACY_BASELINE" and (message.type == "TRANSFER_BEGIN" or message.type == "TRANSFER_END") then
+  if message.type == "TRANSFER_END" and not transfer and message.entityType == "LEGACY_BASELINE" then
+    transfer = { transferId = message.transferId, entityType = message.entityType, entityId = message.entityId }
+  end
+  if transfer and transfer.entityType == "LEGACY_BASELINE"
+    and (message.type == "TRANSFER_END" or (message.type == "TRANSFER_BEGIN" and not accepted)) then
     sendTransferAck(sender, transfer, accepted, reason)
   end
   return accepted, reason
