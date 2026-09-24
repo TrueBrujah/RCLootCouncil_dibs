@@ -209,3 +209,52 @@ describe("Award proposal relay contract across simultaneous raids", function()
     assert_equal(sentBefore, #officer.Ace3.libs.comm.sent)
   end)
 end)
+
+describe("Season allocation relay across simultaneous raids", function()
+  it("relays a non-coordinator's automatic/manual rank grant to the coordinator and converges balance and allocation", function()
+    local saved = activateV2()
+    local officer = load("Officer2-Realm", saved)
+    local season = officer.GetCurrentSeasonId()
+
+    local value, reasonCode = officer.Ledger.RegisterSeasonAllocation("Player-Realm", season, 1, "Promotion to Officer", {
+      source = "automatic_rank_assignment", rankIndex = 1, rankName = "Officer",
+    })
+    assert_nil(value)
+    assert_equal("CURRENT_COORDINATOR_REQUIRED", reasonCode)
+
+    -- The officer's own client may also auto-bootstrap its own season allocation on load; find the Player-Realm proposal specifically.
+    local proposal
+    for _, candidate in ipairs(officer.Governance.GetAwardProposals()) do
+      if candidate.type == "SEASON_ALLOCATION" and candidate.playerSnapshot.displayName == "Player-Realm" then proposal = candidate end
+    end
+    assert_not_nil(proposal)
+
+    local coordinator = load("Coordinator-Realm", saved)
+    local accepted, reason = coordinator.Governance.ReceiveRelayedProposal(proposal, "Officer2-Realm")
+    assert_true(accepted, tostring(reason))
+    local commit = coordinator.Ledger.CommitAwardProposal(nil, proposal.proposalId, {})
+    assert_true(commit.accepted, tostring(commit.reasonCode))
+    assert_equal(4, coordinator.Ledger.GetBalance("Player-Realm", season))
+    local completed = findProposal(coordinator.Governance.GetAwardProposals(), proposal.proposalId)
+    assert_equal("COMMITTED", completed.status)
+
+    officer = load("Officer2-Realm", officer.DeepCopy(_G.RCLootCouncil_dibsDB))
+    local applied = officer.Ledger.ApplyAwardCommit(commit.value, "Coordinator-Realm")
+    assert_true(applied.accepted, tostring(applied.reasonCode))
+    assert_equal(4, officer.Ledger.GetBalance("Player-Realm", season))
+  end)
+
+  it("prevents a duplicate automatic bootstrap grant once the coordinator has already committed one", function()
+    local saved = activateV2()
+    -- Loading the coordinator already auto-bootstraps its own missing season allocation.
+    local coordinator = load("Coordinator-Realm", saved)
+    local season = coordinator.GetCurrentSeasonId()
+    assert_equal(1, coordinator.Ledger.GetPlayerState("Coordinator-Realm", season).allocation)
+
+    local secondAttempt = coordinator.Ledger.CommitSeasonAllocation({ systemBootstrap = true }, {
+      playerName = "Coordinator-Realm", seasonId = season, amount = 1, reason = "Initial season allocation",
+    })
+    assert_false(secondAttempt.accepted)
+    assert_equal("SEASON_ALLOCATION_EXISTS", secondAttempt.reasonCode)
+  end)
+end)

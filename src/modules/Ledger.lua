@@ -368,10 +368,21 @@ function Ledger.CommitAwardProposal(context, proposalId, awardEvidence)
   end
   if not proposal or proposal.status ~= "PENDING_RECONCILIATION" then return { accepted = false, reasonCode = "PROPOSAL_NOT_PENDING" } end
   evidence.playerName = evidence.playerName or proposal.playerSnapshot.displayName
-  evidence.itemID = evidence.itemID or proposal.itemID; evidence.itemLink = evidence.itemLink or proposal.itemLink
-  evidence.awardRef = evidence.awardRef or proposal.awardRef; evidence.evidenceId = evidence.evidenceId or proposal.evidenceId
   evidence.proposalId = proposal.proposalId
-  local result = Ledger.CommitDibUse(context, evidence)
+  local result
+  if proposal.type == "SEASON_ALLOCATION" then
+    evidence.amount = evidence.amount or proposal.amount
+    evidence.seasonId = evidence.seasonId or proposal.seasonId
+    evidence.rankIndex = evidence.rankIndex or proposal.rankIndex
+    evidence.rankName = evidence.rankName or proposal.rankName
+    evidence.reason = evidence.reason or proposal.context
+    evidence.source = evidence.source or proposal.source
+    result = Ledger.CommitSeasonAllocation(context, evidence)
+  else
+    evidence.itemID = evidence.itemID or proposal.itemID; evidence.itemLink = evidence.itemLink or proposal.itemLink
+    evidence.awardRef = evidence.awardRef or proposal.awardRef; evidence.evidenceId = evidence.evidenceId or proposal.evidenceId
+    result = Ledger.CommitDibUse(context, evidence)
+  end
   if result.accepted and Dibs.Governance and Dibs.Governance.MarkAwardProposalCommitted then
     Dibs.Governance.MarkAwardProposalCommitted(proposal.proposalId, result.value)
   end
@@ -521,13 +532,52 @@ end
 function Ledger.RegisterSeasonAllocation(playerName, seasonId, amount, reason, audit)
   local numeric = amount == nil and 1 or tonumber(amount); if not finiteInteger(numeric) or numeric <= 0 then return nil, "INVALID_AMOUNT" end
   local context = audit and compatibilityContext("rank.reconcile", audit) or { systemBootstrap = true }
-  local result = Ledger.CommitLocalTransaction(context, {
-    playerName = playerName or Dibs.GetPlayerName(), amount = numeric, type = "SEASON_ALLOCATION",
+  local result = Ledger.CommitSeasonAllocation(context, {
+    playerName = playerName or Dibs.GetPlayerName(), amount = numeric,
     reason = reason or "Season allocation", source = audit and (audit.source or "rank_reconciliation") or "system", seasonId = seasonId or Dibs.GetCurrentSeasonId(),
     transactionId = audit and audit.transactionId, rankIndex = audit and audit.rankIndex, rankName = audit and audit.rankName,
     expectedAllocation = audit and audit.expectedAllocation,
   })
   return result.value, result.reasonCode
+end
+
+-- B06 canonical command mirroring CommitDibUse for automatic/manual season-allocation grants.
+function Ledger.CommitSeasonAllocation(context, evidence)
+  local input = copy(evidence or {}); input.type, input.actionType = "SEASON_ALLOCATION", "SEASON_ALLOCATION"
+  input.amount = math.abs(tonumber(input.amount) or 1)
+  if not v2Enforced() then return Ledger.CommitLocalTransaction(context, input) end
+  local authorityState = authority(); local coordinator, coordinatorReason = localCoordinator(authorityState, context and context.actor)
+  if not coordinator then return { accepted = false, idempotentReplay = false, reasonCode = coordinatorReason, proposal = proposalFor(context, input) } end
+  local ledger = ensureState(); local canonical, canonicalReason = canonicalStateForAuthority(ledger, authorityState)
+  if not canonical then return { accepted = false, idempotentReplay = false, reasonCode = canonicalReason } end
+  input.seasonId = input.seasonId or Dibs.GetCurrentSeasonId()
+  if context and context.systemBootstrap == true then
+    local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(input.playerName) or normalizeLegacyPlayerKey(input.playerName)
+    local state = ledger.playerStates[input.seasonId] and ledger.playerStates[input.seasonId][memberKey]
+    if state and (tonumber(state.allocation) or 0) ~= 0 then
+      return { accepted = false, idempotentReplay = false, reasonCode = "SEASON_ALLOCATION_EXISTS" }
+    end
+  end
+  local tx, txReason = buildDetachedTransaction({ action = (context and context.action) or "ledger.adjust", actor = coordinator.displayName, b06Canonical = true }, input)
+  if not tx then return { accepted = false, idempotentReplay = false, reasonCode = txReason } end
+  local existing = ledger.transactions[tx.transactionId]
+  if existing then
+    local key = canonical.transactionIndex[tx.transactionId]; local known = key and canonical.commits[key]
+    if known and existing.canonicalContentHash == tx.canonicalContentHash then return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) } end
+    return { accepted = false, idempotentReplay = false, reasonCode = "TRANSACTION_CONFLICT" }
+  end
+  local commit = { schema = CANONICAL_SCHEMA, recordClass = "AWARD_COMMIT", guildKey = Dibs.GetGuildKey(), protocolMajor = 2,
+    ledgerEpoch = authorityState.ledgerEpoch, sequence = canonical.nextSeq, previousHash = canonical.rootHash,
+    canonicalTransactionId = tx.transactionId, transactionHash = tx.canonicalContentHash, transaction = tx,
+    coordinator = { memberKey = coordinator.memberKey, displayName = coordinator.displayName, guidWitness = coordinator.guidWitness }, proposalId = input.proposalId }
+  local commitHash, hashReason = canonicalCommitHash(commit); if not commitHash then return { accepted = false, idempotentReplay = false, reasonCode = hashReason } end
+  commit.commitHash = commitHash
+  appendValidated(tx)
+  local key = positionKey(commit.ledgerEpoch, commit.sequence)
+  canonical.commits[key], canonical.positions[key], canonical.transactionIndex[tx.transactionId] = copy(commit), commit.commitHash, key
+  canonical.nextSeq, canonical.rootHash = canonical.nextSeq + 1, commit.commitHash
+  if Dibs.Sync and Dibs.Sync.AnnounceAwardCommit then Dibs.Sync.AnnounceAwardCommit(copy(commit)) end
+  return { accepted = true, idempotentReplay = false, reasonCode = "CANONICAL_COMMITTED", value = copy(commit) }
 end
 
 function Ledger.GetBalance(playerName, seasonId)

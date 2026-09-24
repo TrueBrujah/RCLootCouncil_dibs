@@ -1160,7 +1160,13 @@ function Sync.Receive(message, sender)
       if transfer.entityId ~= payload.proposalId then return false, "ENTITY_IDENTITY_MISMATCH" end
       if Sync.CalculateContentHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
       local accepted, applyReason = Dibs.Governance.ReceiveRelayedProposal(payload, resolved.displayName)
-      if accepted then Sync.Send({ type = "AWARD_PROPOSAL_ACK", proposalId = payload.proposalId }, "WHISPER", resolved.displayName) end
+      if accepted then
+        Sync.Send({ type = "AWARD_PROPOSAL_ACK", proposalId = payload.proposalId }, "WHISPER", resolved.displayName)
+        -- Season-allocation grants are deterministic rank rules, not a loot judgment call; commit immediately.
+        if payload.type == "SEASON_ALLOCATION" and Dibs.Ledger and Dibs.Ledger.CommitAwardProposal then
+          Dibs.Ledger.CommitAwardProposal(nil, payload.proposalId, {})
+        end
+      end
       return accepted, applyReason
     end
     return false, "UNSUPPORTED_ENTITY"

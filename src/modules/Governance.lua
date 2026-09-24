@@ -82,8 +82,9 @@ local function proposalContent(proposal)
   return {
     schema = proposal.schema, recordClass = proposal.recordClass, proposalId = proposal.proposalId,
     status = proposal.status, guildKey = proposal.guildKey, playerSnapshot = proposal.playerSnapshot,
-    itemID = proposal.itemID, itemLink = proposal.itemLink, awardRef = proposal.awardRef,
+    type = proposal.type, itemID = proposal.itemID, itemLink = proposal.itemLink, awardRef = proposal.awardRef,
     evidenceId = proposal.evidenceId, source = proposal.source, context = proposal.context,
+    amount = proposal.amount, seasonId = proposal.seasonId, rankIndex = proposal.rankIndex, rankName = proposal.rankName,
     actorSnapshot = proposal.actorSnapshot, createdAt = proposal.createdAt, authorityState = proposal.authorityState,
   }
 end
@@ -502,14 +503,18 @@ function Governance.RecordAwardProposal(actor, details)
   local target, targetReason = snapshot(details.playerName or details.memberKey or details.playerKey)
   if not target then return nil, targetReason end
   local actorSnapshot, actorReason = snapshot(actor); if not actorSnapshot then return nil, actorReason end
-  local projection = { guildKey = Dibs.GetGuildKey(), player = target.memberKey, itemID = tonumber(details.itemID), itemLink = trim(details.itemLink),
-    awardRef = trim(details.awardRef), evidenceId = trim(details.evidenceId), source = trim(details.source), context = trim(details.reason) }
+  local proposalType = trim(details.type) or "AWARD"
+  local projection = { guildKey = Dibs.GetGuildKey(), player = target.memberKey, type = proposalType, itemID = tonumber(details.itemID), itemLink = trim(details.itemLink),
+    awardRef = trim(details.awardRef), evidenceId = trim(details.evidenceId), source = trim(details.source), context = trim(details.reason),
+    amount = tonumber(details.amount), seasonId = trim(tostring(details.seasonId or "")) or nil,
+    rankIndex = tonumber(details.rankIndex), rankName = trim(details.rankName) }
   local proposalId = trim(details.proposalId) or ("AP5-" .. authorityHash("PROPOSAL", projection))
   local existing = authority.proposals[proposalId]
   if existing then return copy(existing), "IDEMPOTENT_PROPOSAL" end
   local proposal = { schema = AUTHORITY_SCHEMA, recordClass = "AWARD_PROPOSAL", proposalId = proposalId, status = "PENDING_RECONCILIATION",
-    guildKey = Dibs.GetGuildKey(), playerSnapshot = target, itemID = projection.itemID, itemLink = projection.itemLink, awardRef = projection.awardRef,
-    evidenceId = projection.evidenceId, source = projection.source, context = projection.context, actorSnapshot = actorSnapshot,
+    guildKey = Dibs.GetGuildKey(), playerSnapshot = target, type = projection.type, itemID = projection.itemID, itemLink = projection.itemLink, awardRef = projection.awardRef,
+    evidenceId = projection.evidenceId, source = projection.source, context = projection.context,
+    amount = projection.amount, seasonId = projection.seasonId, rankIndex = projection.rankIndex, rankName = projection.rankName, actorSnapshot = actorSnapshot,
     createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(), authorityState = authority.state }
   proposal.contentHash = authorityHash("PROPOSAL", proposalContent(proposal))
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
