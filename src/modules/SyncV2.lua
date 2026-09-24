@@ -13,7 +13,7 @@ local Sync = Dibs.Sync
 local MAJOR, MINOR = 2, 0
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX, MAX_PROTOCOL_MISMATCHES = 256, 8, 16, 8192, 500, 10
 local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 30, 60, 3
-local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true }
+local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
@@ -151,6 +151,64 @@ function Sync.GetAddonVersionCompatibility(remoteVersion)
   if not remote then return nil, "REMOTE_ADDON_VERSION_UNKNOWN" end
   if localVersion.major == remote.major and localVersion.minor == remote.minor then return true, "ADDON_VERSION_COMPATIBLE" end
   return false, "ADDON_UPDATE_REQUIRED"
+end
+
+function Sync.BuildSyncProbeReport()
+  local state = ensure()
+  local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or {}
+  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+  local ledger = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState() or {}
+  local snapshot = localSnapshot() or {}
+  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
+  local policy = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or {}
+  return {
+    addonVersion = Dibs.VERSION,
+    memberKey = snapshot.memberKey,
+    displayName = snapshot.displayName,
+    role = localRole(),
+    protocolState = state.protocolState,
+    syncBehind = state.syncBehind == true,
+    syncReason = state.reason,
+    governance = { revision = tonumber(governance.revision) or 0, hash = governance.hash, status = governance.status },
+    baselineHash = baseline.legacyBaselineHash,
+    authority = {
+      state = authority.state,
+      ledgerEpoch = authority.ledgerEpoch,
+      coordinatorMemberKey = authority.coordinator and authority.coordinator.memberKey,
+      coordinatorName = authority.coordinator and authority.coordinator.displayName,
+    },
+    operationalPolicyRevision = tonumber(policy.policyRevision) or 0,
+    seasonCatalogRevision = tonumber(catalog.catalogRevision) or 0,
+    ledger = {
+      epoch = ledger.epoch,
+      revision = (tonumber(ledger.nextSeq) or 1) - 1,
+      rootHash = ledger.rootHash,
+    },
+  }
+end
+function Sync.ProbePeer(target)
+  if not target or target == "" then return false, "INVALID_WHISPER_TARGET" end
+  local snapshot = localSnapshot()
+  if not snapshot or (localRole() ~= "gm" and localRole() ~= "officer") then return false, "OFFICER_REQUIRED" end
+  return Sync.Send({ type = "SYNC_PROBE", requestId = Dibs.NewId("syncprobe") }, "WHISPER", target)
+end
+function Sync.GetPeerSyncProbe(target)
+  local resolved = member(target)
+  local peer = resolved and ensure().peers[resolved.memberKey]
+  return peer and copy(peer.syncProbe) or nil
+end
+function Sync.FormatSyncProbeReport(probe)
+  local report = probe and probe.report or probe
+  if type(report) ~= "table" then return "No synchronization probe response." end
+  local governance = report.governance or {}; local authority = report.authority or {}; local ledger = report.ledger or {}
+  return string.format(
+    "%s role=%s protocol=%s behind=%s reason=%s governance=%s/%s baseline=%s authority=%s coordinator=%s policy=%s catalog=%s ledger=%s/%s epoch=%s",
+    tostring(report.displayName or "unknown"), tostring(report.role or "unknown"), tostring(report.protocolState or "unknown"),
+    tostring(report.syncBehind == true), tostring(report.syncReason or "none"), tostring(governance.revision or 0),
+    tostring(governance.hash or "none"), tostring(report.baselineHash or "none"), tostring(authority.state or "unknown"),
+    tostring(authority.coordinatorName or authority.coordinatorMemberKey or "none"), tostring(report.operationalPolicyRevision or 0),
+    tostring(report.seasonCatalogRevision or 0), tostring(ledger.revision or 0), tostring(ledger.rootHash or "none"), tostring(ledger.epoch or "none"))
 end
 
 function Sync.GetStatus()
@@ -684,6 +742,16 @@ function Sync.Receive(message, sender)
     peer.entities[entityType] = { revision = tonumber(message.revision) or 0, contentHash = message.contentHash, at = peer.at }
   end
   state.peers[resolved.memberKey] = peer
+  if message.type == "SYNC_PROBE" then
+    if type(message.requestId) ~= "string" or message.requestId == "" then return false, "INVALID_SYNC_PROBE" end
+    return Sync.Send({ type = "SYNC_PROBE_RESPONSE", requestId = message.requestId, report = Sync.BuildSyncProbeReport() }, "WHISPER", resolved.displayName)
+  end
+  if message.type == "SYNC_PROBE_RESPONSE" then
+    if type(message.requestId) ~= "string" or type(message.report) ~= "table" then return false, "INVALID_SYNC_PROBE_RESPONSE" end
+    peer.syncProbe = { requestId = message.requestId, receivedAt = time(), report = copy(message.report) }
+    state.peers[resolved.memberKey] = peer
+    return true, "SYNC_PROBE_ACCEPTED"
+  end
   if message.type == "HELLO" then
     if message.protocolState == "V2_ENFORCED" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
     return true, "HELLO"

@@ -1311,6 +1311,24 @@ function Dibs.HandleSlashCommand(msg)
     return
   end
 
+  if action == "sync" then
+    local mode, target = string.lower(args[2] or ""), args[3]
+    if (mode ~= "probe" and mode ~= "report") or not target then
+      Dibs.Message("Usage: /dibs sync probe|report <player>")
+      return
+    end
+    if mode == "probe" then
+      local sent, reason = false, "SYNC_UNAVAILABLE"
+      if Dibs.Sync and Dibs.Sync.ProbePeer then sent, reason = Dibs.Sync.ProbePeer(target) end
+      Dibs.Message(sent and ("Sync probe sent to " .. tostring(target) .. ".") or ("Sync probe failed: " .. tostring(reason)))
+    else
+      local probe = Dibs.Sync and Dibs.Sync.GetPeerSyncProbe and Dibs.Sync.GetPeerSyncProbe(target)
+      local report = Dibs.Sync and Dibs.Sync.FormatSyncProbeReport and Dibs.Sync.FormatSyncProbeReport(probe) or "Synchronization probe unavailable."
+      Dibs.Message(report)
+    end
+    return
+  end
+
   if action == "readiness" or action == "ready" or action == "preflight" then
     if Dibs.Readiness and type(Dibs.Readiness.OpenReport) == "function" then
       local shell, report, reason = Dibs.Readiness.OpenReport("detailed")
@@ -1345,7 +1363,7 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs sync probe|report <player> | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
