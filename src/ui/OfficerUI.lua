@@ -4523,7 +4523,9 @@ local function createAceWindow(initialRoute)
       }
       if not routeModules[normalized] or moduleEnabled(routeModules[normalized]) then normalized = "overview" end
     end
-    frame.activeTab, frame.selectedRoute, frame.ledgerPage = normalized, normalized, 1
+    -- Only reset pagination on an actual tab switch; a same-tab refresh (e.g. Next/Previous) must keep it.
+    if normalized ~= frame.activeTab then frame.ledgerPage = 1 end
+    frame.activeTab, frame.selectedRoute = normalized, normalized
     frame.routeDispatchCount = (frame.routeDispatchCount or 0) + 1
     if syncTree ~= false and navigation and frame._dibsTreeRoute ~= normalized then
       frame._dibsRouteSyncing = true

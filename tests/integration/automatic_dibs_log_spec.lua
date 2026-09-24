@@ -33,4 +33,22 @@ describe("Automatic Dibs Officer log", function()
     assert_equal(3, #page.rows)
     assert_true(page.rows[1].playerName ~= nil)
   end)
+
+  it("keeps the current page across a same-tab refresh instead of resetting to page 1", function()
+    local members, ranks = { "Tester-Realm" }, { [1] = 0 }
+    for i = 1, 10 do
+      members[#members + 1] = "Member" .. i .. "-Realm"
+      ranks[#members] = 3
+    end
+    local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true, guildMembers = members, guildRankIndices = ranks } })
+    local frame = dibs.OfficerUI.CreateWindow("automaticDibs")
+    assert_equal(1, frame.ledgerPage)
+
+    frame.ledgerPage = 2
+    frame:Refresh()
+    assert_equal(2, frame.ledgerPage)
+
+    frame:ActivateRoute("history")
+    assert_equal(1, frame.ledgerPage)
+  end)
 end)
