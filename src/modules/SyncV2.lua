@@ -725,7 +725,10 @@ end
 local function applyRequest(payload, transfer, sender)
   if type(payload) ~= "table" or payload.requestId ~= transfer.entityId or tonumber(payload.revision) ~= tonumber(transfer.revision) then return false, "ENTITY_IDENTITY_MISMATCH" end
   if requestHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
-  local owner = member(payload.playerName); if not owner or owner.memberKey ~= sender.memberKey then return false, "OWNER_MISMATCH" end
+  local owner = member(payload.playerName)
+  local officerRelay = owner and owner.memberKey ~= sender.memberKey and isAdmin(sender.displayName)
+    and (localRole() == "gm" or localRole() == "officer")
+  if not owner or (owner.memberKey ~= sender.memberKey and not officerRelay) then return false, "OWNER_MISMATCH" end
   local existing = localRequest(payload.requestId)
   if existing then
     local currentRevision, incomingRevision = tonumber(existing.revision) or 1, tonumber(payload.revision) or 1
@@ -997,7 +1000,9 @@ function Sync.Receive(message, sender)
         local owner = request and member(request.playerName)
         local localMember = localSnapshot()
         local ownerIsLocal = owner and localMember and owner.memberKey == localMember.memberKey
-        if request and owner and (ownerIsLocal or localRole() == "gm" or localRole() == "officer") then requestDetail(resolved.displayName, requested.entityId) end
+        local officerRelay = (localRole() == "gm" or localRole() == "officer")
+          and (resolved.role == "gm" or resolved.role == "officer")
+        if request and owner and (ownerIsLocal or officerRelay) then requestDetail(resolved.displayName, requested.entityId) end
       elseif requested.entityType == "GOVERNANCE" and localRole() == "gm" then
         local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState()
         local record = governanceState and governanceState.records and governanceState.records[tostring(requested.revision)]

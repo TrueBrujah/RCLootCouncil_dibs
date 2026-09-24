@@ -1,10 +1,12 @@
 local loader = require("helpers.load_addon")
 
-local function load()
+local function load(player)
+  player = player or "Tester-Realm"
   local _, dibs = loader.load({ withAce3 = true, wow = {
-    guildLeader = true,
-    guildMembers = { "Tester-Realm", "Owner-Realm", "Officer-Realm" },
-    guildRankIndices = { [1] = 0, [2] = 3, [3] = 1 },
+    playerName = player,
+    guildLeader = player == "Tester-Realm",
+    guildMembers = { "Tester-Realm", "Owner-Realm", "Officer-Realm", "Player-Realm" },
+    guildRankIndices = { [1] = 0, [2] = 3, [3] = 1, [4] = 3 },
   } })
   return dibs
 end
@@ -27,13 +29,14 @@ end
 local function transfer(dibs, payload, opts)
   opts = opts or {}; local raw = assert(dibs.Ace3.Serialize(payload)); local contentHash = dibs.Sync.CalculateRequestHash(payload)
   local chunks = opts.chunks or { raw }; local transferId = opts.transferId or "b04-transfer"
-  assert_true(dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_BEGIN", transferId = transferId, entityType = "PREDIB_REQUEST", entityId = payload.requestId, revision = payload.revision, contentHash = contentHash, payloadHash = opts.payloadHash or dibs.Sync.CalculateContentHash(raw), chunkCount = #chunks }, "Owner-Realm"), "Owner-Realm"))
+  local sender = opts.sender or "Owner-Realm"
+  assert_true(dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_BEGIN", transferId = transferId, entityType = "PREDIB_REQUEST", entityId = payload.requestId, revision = payload.revision, contentHash = contentHash, payloadHash = opts.payloadHash or dibs.Sync.CalculateContentHash(raw), chunkCount = #chunks }, sender), sender))
   for index, chunk in ipairs(chunks) do
-    local ok, reason = dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, opts.chunkSender or "Owner-Realm"), opts.chunkSender or "Owner-Realm")
+    local ok, reason = dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, opts.chunkSender or sender), opts.chunkSender or sender)
     if opts.expectChunkFailure then return ok, reason end
     assert_true(ok, tostring(reason))
   end
-  return dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_END", transferId = transferId }, "Owner-Realm"), "Owner-Realm")
+  return dibs.Sync.Receive(remote(dibs, { type = "TRANSFER_END", transferId = transferId }, sender), sender)
 end
 
 describe("B04 V2 transport", function()
@@ -52,6 +55,18 @@ describe("B04 V2 transport", function()
     assert_true(ok, tostring(reason)); assert_equal("APPLIED", reason)
     assert_equal("fulfilled", dibs.PreDibs.GetHistory()[1].status)
     assert_not_nil(dibs.GetDB().sync.v2.tombstones[payload.requestId])
+  end)
+
+  it("allows officer-to-officer detail relay but rejects it for a player", function()
+    local payload = request(load(), 2, "confirmed")
+    local officer = load()
+    local ok, reason = transfer(officer, payload, { sender = "Officer-Realm" })
+    assert_true(ok, tostring(reason))
+
+    local player = load("Player-Realm")
+    ok, reason = transfer(player, payload, { sender = "Officer-Realm" })
+    assert_false(ok)
+    assert_equal("OWNER_MISMATCH", reason)
   end)
 
   it("handles idempotent, conflict, and stale request revisions deterministically", function()

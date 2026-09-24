@@ -738,7 +738,7 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
 end
 
 -- B04 calls this only after the V2 transport has authenticated the complete
--- transfer envelope, owner, revision, and content hash. Unlike the legacy
+-- transfer envelope, owner or officer relay, revision, and content hash. Unlike the legacy
 -- helper above, it retains terminal lifecycle records as bounded sync
 -- tombstone evidence so a stale client can learn cancellation/invalidation/
 -- fulfillment even when it never saw the active revision.
@@ -752,7 +752,13 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName)
     or (type(incoming.seasonId) ~= "string" and type(incoming.seasonId) ~= "number")
     or not revision or revision < 1 or revision > 1000000 or revision ~= math.floor(revision) or not allowed
   then return nil, "INVALID_REQUEST" end
-  if senderName and not samePlayer(senderName, incoming.playerName) then return nil, "OWNER_MISMATCH" end
+  if senderName and not samePlayer(senderName, incoming.playerName) then
+    local senderRole = Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(senderName)
+    local recipientRole = Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(nil)
+    local senderIsOfficer = senderRole == "gm" or senderRole == "officer"
+    local recipientIsOfficer = recipientRole == "gm" or recipientRole == "officer"
+    if not senderIsOfficer or not recipientIsOfficer then return nil, "OWNER_MISMATCH" end
+  end
   for _, existing in ipairs(Dibs.db.preDibs.requests) do
     if existing.requestId == incoming.requestId then
       local current = tonumber(existing.revision) or 1
