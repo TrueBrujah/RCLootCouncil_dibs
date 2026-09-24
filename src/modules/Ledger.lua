@@ -371,7 +371,11 @@ function Ledger.CommitAwardProposal(context, proposalId, awardEvidence)
   evidence.itemID = evidence.itemID or proposal.itemID; evidence.itemLink = evidence.itemLink or proposal.itemLink
   evidence.awardRef = evidence.awardRef or proposal.awardRef; evidence.evidenceId = evidence.evidenceId or proposal.evidenceId
   evidence.proposalId = proposal.proposalId
-  return Ledger.CommitDibUse(context, evidence)
+  local result = Ledger.CommitDibUse(context, evidence)
+  if result.accepted and Dibs.Governance and Dibs.Governance.MarkAwardProposalCommitted then
+    Dibs.Governance.MarkAwardProposalCommitted(proposal.proposalId, result.value)
+  end
+  return result
 end
 
 function Ledger.ApplyAwardCommit(commit, sender)
@@ -519,8 +523,9 @@ function Ledger.RegisterSeasonAllocation(playerName, seasonId, amount, reason, a
   local context = audit and compatibilityContext("rank.reconcile", audit) or { systemBootstrap = true }
   local result = Ledger.CommitLocalTransaction(context, {
     playerName = playerName or Dibs.GetPlayerName(), amount = numeric, type = "SEASON_ALLOCATION",
-    reason = reason or "Season allocation", source = audit and "rank_reconciliation" or "system", seasonId = seasonId or Dibs.GetCurrentSeasonId(),
-    transactionId = audit and audit.transactionId,
+    reason = reason or "Season allocation", source = audit and (audit.source or "rank_reconciliation") or "system", seasonId = seasonId or Dibs.GetCurrentSeasonId(),
+    transactionId = audit and audit.transactionId, rankIndex = audit and audit.rankIndex, rankName = audit and audit.rankName,
+    expectedAllocation = audit and audit.expectedAllocation,
   })
   return result.value, result.reasonCode
 end

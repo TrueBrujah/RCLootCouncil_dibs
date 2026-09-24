@@ -16,7 +16,7 @@ French workflow is documented in [Mode d'emploi GM / Officer](MODE_EMPLOI_GM_OFF
 The assistant derives readiness from current state, routes supported changes
 through protected actions, and keeps its dry-run local.
 
-This guide describes the 0.6.4-dev B12 release candidate. Do not treat it as
+This guide describes the 0.6.5 B12 release. Do not treat it as
 Retail certification until the manual checks in the [B12 Retail evidence record](../audits/B12_Retail_Validation_Evidence.md) are complete.
 
 Use this guide to administer seasonal Dibs without changing the audit trail. Dibs is an accounting and eligibility layer; RCLootCouncil remains the loot voting/award interface when it is installed.

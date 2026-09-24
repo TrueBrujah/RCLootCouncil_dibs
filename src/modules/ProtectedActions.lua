@@ -94,6 +94,9 @@ local function buildAudit(actionId, actor, payload, decision)
     playerName = payload and payload.playerName,
     playerGuid = payload and (payload.playerGuid or payload.playerId),
     seasonId = payload and payload.seasonId,
+    rankIndex = payload and payload.rankIndex,
+    rankName = payload and payload.rankName,
+    expectedAllocation = payload and payload.expectedAllocation,
     sourceStatus = payload and payload.sourceStatus,
     response = payload and payload.response,
     responseValidated = payload and payload.responseValidated == true or nil,
@@ -102,7 +105,14 @@ local function buildAudit(actionId, actor, payload, decision)
     originalTransactionId = payload and payload.originalTransactionId,
     correctionKey = payload and payload.correctionKey,
     confirmation = payload and payload.confirmation == true or nil,
+    debtPolicy = payload and payload.debtPolicy,
   }
+end
+
+local function announceSeasonCatalog(actor, action)
+  if not (Dibs.Seasons and Dibs.Seasons.PublishCatalog) then return end
+  local published = Dibs.Seasons.PublishCatalog(actor, action)
+  if published and Dibs.Sync and Dibs.Sync.AnnounceSeasonCatalog then Dibs.Sync.AnnounceSeasonCatalog() end
 end
 
 local function executeSeasonCreate(actor, payload, decision)
@@ -115,6 +125,7 @@ local function executeSeasonCreate(actor, payload, decision)
     if name == "" or #name > 80 then return reject(decision, "A valid season name is required.") end
   end
   local season = Dibs.Seasons.Create(name)
+  if season then announceSeasonCatalog(actor, "SEASON_CREATE") end
   return buildResult(season ~= nil, season, decision, season and nil or text("SEASON_CREATE_FAILED", "Failed to create season."))
 end
 
@@ -127,6 +138,7 @@ local function executeSeasonSet(actor, payload, decision)
   if not ok then
     return reject(decision, text("SEASON_NOT_FOUND", "Season not found."))
   end
+  announceSeasonCatalog(actor, "SEASON_SET")
   return buildResult(true, seasonId, decision)
 end
 
@@ -139,6 +151,10 @@ local function executeRankSet(actor, payload, decision)
   local allocation = payload and payload.allocation
   local rankName = payload and payload.rankName
   local rule, reason = Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName)
+  if rule and Dibs.Seasons and Dibs.Seasons.PublishCatalog then
+    local published = Dibs.Seasons.PublishCatalog(actor, "RANK_RULE_SET")
+    if published and Dibs.Sync and Dibs.Sync.AnnounceSeasonCatalog then Dibs.Sync.AnnounceSeasonCatalog() end
+  end
   return buildResult(rule ~= nil, rule, decision, reason)
 end
 
@@ -253,6 +269,7 @@ local function executeSeasonRename(actor, payload, decision)
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
   local season = Dibs.Seasons.RenameSeason(seasonId, name)
+  if season then announceSeasonCatalog(actor, "SEASON_RENAME") end
   return buildResult(season ~= nil, season, decision, season and nil or text("SEASON_NOT_FOUND", "Season not found."))
 end
 
@@ -264,6 +281,7 @@ local function executeSeasonArchive(actor, payload, decision)
     return reject(decision, "At least one season must remain.")
   end
   local season = Dibs.Seasons.ArchiveSeason(payload and payload.seasonId)
+  if season then announceSeasonCatalog(actor, "SEASON_ARCHIVE") end
   return buildResult(season ~= nil, season, decision, season and nil or text("SEASON_NOT_FOUND", "Season not found."))
 end
 

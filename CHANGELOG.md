@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.4-dev - B12 release candidate hardening - 2026-09-22
+## 0.6.5 - B12 release hardening and guild synchronization - 2026-09-22
 
 - Stabilize Player and Officer route ownership, shared context-menu cleanup,
   responsive window behavior, and safe empty or unavailable UI states.
@@ -11,6 +11,10 @@
   conditional two-client applicability, and the real-client Retail gate.
 - Validate focused B12 and full Fengari suites; retain Retail validation and the
   developer-only `SANDBOX_STORE_TOO_LARGE` boundary as explicit limitations.
+- Add coordinator-owned award proposal relay, season catalog synchronization,
+  Pre-Dibs announcement policy synchronization, and addon-version diagnostics.
+- Separate personal language, diagnostics, Developer Mode, and Adventure Guide
+  state into the per-character local SavedVariables root with migration support.
 
 ## 0.6.3-dev - Great Vault acquisition tracking - 2026-09-21
 

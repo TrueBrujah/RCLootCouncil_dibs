@@ -1,21 +1,27 @@
 # Public Roadmap
 
-## Phase 1 - Core
+## Statuts
+
+- [x] **Terminee** : implementation et validation automatisee disponibles.
+- [~] **Partiellement terminee** : une partie fonctionne, mais un element important reste a faire ou a valider.
+- [ ] **A faire** : idee encore non implementee.
+
+## Phase 1 - Core - [x] Terminee
 Season model, rank allocations, immutable ledger, balance derivation, permissions foundation.
 
-## Phase 2 - Pre-Dibs
+## Phase 2 - Pre-Dibs - [x] Terminee
 Pre-Dib request lifecycle, player UI, Encounter Journal adapter where supported.
 
-## Phase 3 - RCLootCouncil
+## Phase 3 - RCLootCouncil - [x] Terminee
 Optional local raid integration and finalized Dib award handling.
 
-## Phase 4 - Distributed Sync
+## Phase 4 - Distributed Sync - [~] Partiellement terminee
 Officer backbone, relay model, reconnect recovery, deduplication, reconciliation.
 
-## Phase 5 - Audit UI
+## Phase 5 - Audit UI - [x] Terminee
 Player history and complete officer/GM ledger views.
 
-## Phase 6 - Protected Loot Governance
+## Phase 6 - Protected Loot Governance - [~] Partiellement terminee
 Curio and Tier Set progression across linked characters, configurable seasonal
 policies, Officer-reviewed main/alt relationships, and bounded main-change
 probation.
@@ -29,7 +35,9 @@ utilisable sans RCLootCouncil lorsque cela est pertinent.
 
 ### Ordre de livraison
 
-#### Etape 0 - Fondation Great Vault et synchronisation
+#### Etape 0 - Fondation Great Vault et synchronisation - [~] Partiellement terminee
+
+> Les acquisitions manuelles, les etats de verification, l'idempotence et la synchronisation sont implementes. La detection automatique depend encore des signaux exposes par l'API Retail, et la validation Retail reste a faire.
 
 Cette etape est la dependance technique de l'indicateur de synchronisation.
 L'addon sait deja enregistrer une acquisition Vault manuellement avec
@@ -48,7 +56,9 @@ Critere de sortie: une acquisition Vault confirmee apparait une seule fois
 chez les clients autorises, une relecture ne cree aucun doublon, et une donnee
 non verifiable ne peut pas bloquer silencieusement un joueur.
 
-#### Etape 1 - Assistant de premiere installation
+#### Etape 1 - Assistant de premiere installation - [x] Terminee
+
+> Assistant, dry-run, controles d'autorite et tests de contrat/integration disponibles. La verification visuelle Retail reste une validation de maintenance.
 
 L'assistant guidera le GM ou l'Officer a travers la verification de RCLootCouncil,
 des permissions, de la saison, des regles de rang, des canaux et des types de
@@ -58,7 +68,9 @@ ce qui reste a faire.
 Critere de sortie: une nouvelle guilde peut atteindre un etat `Pret pour le
 raid` sans modifier manuellement les SavedVariables.
 
-#### Etape 2 - Tableau de sante
+#### Etape 2 - Tableau de sante - [x] Terminee
+
+> Le tableau de sante, les diagnostics de synchronisation, migrations, version et etat RCLootCouncil sont exposes et couverts par les tests.
 
 Une page de diagnostic synthetisera la version, la saison active, l'etat de
 RCLootCouncil, la derniere sauvegarde, les migrations, la synchronisation et
@@ -68,7 +80,9 @@ outils existants et demanderont leurs confirmations habituelles.
 Critere de sortie: un GM peut identifier la cause d'un etat `Degrade`,
 `Bloque` ou `Non disponible` sans ouvrir les fichiers de donnees.
 
-#### Etape 3 - Notifications joueur
+#### Etape 3 - Notifications joueur - [x] Terminee
+
+> Les notifications locales sont dedoublonnees, persistantes, desactivables et protegees contre l'exposition de donnees d'un autre joueur.
 
 Les notifications couvriront les changements utiles: Pre-Dib accepte ou
 annule, attribution finalisee, Dib consomme, demande resolue et acquisition
@@ -78,7 +92,9 @@ profil; elles ne devront jamais afficher l'historique prive d'un autre joueur.
 Critere de sortie: chaque notification est idempotente, liee a un evenement
 auditable et n'apparait pas plusieurs fois apres une reconnexion.
 
-#### Etape 4 - Recherche et filtres avances
+#### Etape 4 - Recherche et filtres avances - [~] Partiellement terminee
+
+> Les recherches et filtres Player/Officer existent pour les vues principales, les demandes et le Great Vault. Il reste a unifier la recherche par raid, boss, date et source sur tout l'historique.
 
 Les vues Player et Officer pourront filtrer l'historique par joueur, objet,
 raid, boss, saison, date, statut et source. Les filtres Officer resteront
@@ -87,7 +103,9 @@ proteges par les memes controles d'acces que les donnees affichees.
 Critere de sortie: un Officer peut retrouver une attribution ou une acquisition
 Vault dans un historique volumineux sans parcourir manuellement toute la liste.
 
-#### Etape 5 - Centre de sante des donnees et migration
+#### Etape 5 - Centre de sante des donnees et migration - [~] Partiellement terminee
+
+> Les migrations, sauvegardes, diagnostics de taille, apercus d'import et conflits Great Vault existent. Il reste un centre unifie de controle/correction/export des anomalies.
 
 Ce centre controlera les doublons, references de saison invalides, acquisitions
 incompletes, anciennes versions et conflits de synchronisation. Il affichera
@@ -97,7 +115,9 @@ destructive. Les transactions append-only existantes ne seront jamais reecrites.
 Critere de sortie: une anomalie peut etre corrigee, ignoree ou exportee pour
 revision avec une trace de l'acteur, de la raison et du resultat.
 
-#### Etape 6 - Export d'audit anonymise
+#### Etape 6 - Export d'audit anonymise - [ ] A faire
+
+> L'export/import actuel sert aux packages de donnees et n'est pas encore un rapport d'audit anonymise garanti sans identites, permissions ou transactions executables.
 
 Un export distinct des packages complets supprimera les noms, identites,
 notes privees et donnees inutiles. Il conservera les dates, types d'evenements,
@@ -153,44 +173,44 @@ Ces idées sont conservées pour discussion uniquement. Elles ne sont pas encore
 acceptées et ne doivent pas être implémentées sans validation préalable.
 
 ### Idée forte
-- **Rappel des Dibs au Ready Check** : détecter un Ready Check avec Dibs
+- [ ] **Rappel des Dibs au Ready Check** : détecter un Ready Check avec Dibs
   autonome, puis afficher les Pre-Dibs actifs connus du client avec l'item et
   le joueur-realm concernés. Regrouper plusieurs Dibs dans une seule fenêtre,
   éviter les répétitions pour un même Ready Check et prévoir un affichage
   personnel, officier ou raid. DBM et BigWigs resteraient optionnels pour une
   intégration supplémentaire au pull ou aux avertissements de boss.
 
-- Profils de règles par raid, boss, difficulté et type de token.
-- Mode simulation avant le pull pour afficher les joueurs qui seraient éligibles.
-- Gestion des personnages principaux, alts et personnages liés.
-- File d'attente hors ligne pour les changements et les récompenses à resynchroniser.
-- Détection et résolution des conflits lorsque plusieurs officiers modifient une
+- [~] Profils de règles par raid, boss, difficulté et type de token.
+- [~] Mode simulation avant le pull pour afficher les joueurs qui seraient éligibles.
+- [x] Gestion des personnages principaux, alts et personnages liés.
+- [x] File d'attente hors ligne pour les changements et les récompenses à resynchroniser.
+- [~] Détection et résolution des conflits lorsque plusieurs officiers modifient une
   règle en même temps.
-- Journal d'audit avec une raison obligatoire pour chaque décision importante.
-- Export, import et sauvegarde de l'historique de guilde.
-- Statistiques d'équité : loots reçus, refusés, priorités et temps d'attente.
-- Alertes lorsqu'une règle laisse trop peu de joueurs éligibles.
-- Exceptions temporaires pour remplaçants, trials, nouveaux joueurs ou absences.
-- Aperçu de l'éligibilité directement dans la fenêtre RCLootCouncil avant le vote.
-- Système d'appel ou de contestation d'une décision.
-- Interface de diagnostic expliquant pourquoi un joueur est ou n'est pas éligible.
+- [x] Journal d'audit avec une raison obligatoire pour chaque décision importante.
+- [x] Export, import et sauvegarde de l'historique de guilde.
+- [ ] Statistiques d'équité : loots reçus, refusés, priorités et temps d'attente.
+- [~] Alertes lorsqu'une règle laisse trop peu de joueurs éligibles.
+- [~] Exceptions temporaires pour remplaçants, trials, nouveaux joueurs ou absences.
+- [x] Aperçu de l'éligibilité directement dans la fenêtre RCLootCouncil avant le vote.
+- [x] Système d'appel ou de contestation d'une décision.
+- [x] Interface de diagnostic expliquant pourquoi un joueur est ou n'est pas éligible.
 - Tableau de bord web optionnel pour les GM et officiers.
-- Assistant de première configuration avec modèles de règles prêts à utiliser.
-- Permissions personnalisées par rang ou par officier.
+- [x] Assistant de première configuration avec modèles de règles prêts à utiliser.
+- [x] Permissions personnalisées par rang ou par officier.
 - Explication détaillée de la raison pour laquelle un joueur est éligible ou non.
-- Indication de la fraîcheur des données d'inventaire.
-- Expiration automatique des anciennes données d'inventaire.
-- Archivage et réinitialisation propre à chaque saison.
-- Élection automatique d'un relais lorsqu'il y a plusieurs raids actifs.
-- Détection des versions RCLootCouncil incompatibles ou trop anciennes.
-- Mode test/sandbox pour simuler un loot sans modifier l'historique.
+- [~] Indication de la fraîcheur des données d'inventaire.
+- [~] Expiration automatique des anciennes données d'inventaire.
+- [x] Archivage et réinitialisation propre à chaque saison.
+- [~] Élection automatique d'un relais lorsqu'il y a plusieurs raids actifs.
+- [x] Détection des versions RCLootCouncil incompatibles ou trop anciennes.
+- [x] Mode test/sandbox pour simuler un loot sans modifier l'historique.
 - Import de données provenant d'un rapport de raid ou d'un export.
 - Support amélioré des noms inter-royaumes et des personnages de factions différentes.
-- Notifications discrètes pour les changements de règles ou les demandes de validation.
-- Mode confidentialité pour limiter l'affichage des informations d'inventaire.
-- Traductions et personnalisation des messages affichés.
-- Système de récupération après corruption des SavedVariables.
-- Tests automatisés de scénarios complets : raids multiples, officiers hors ligne,
+- [x] Notifications discrètes pour les changements de règles ou les demandes de validation.
+- [x] Mode confidentialité pour limiter l'affichage des informations d'inventaire.
+- [~] Traductions et personnalisation des messages affichés.
+- [x] Système de récupération après corruption des SavedVariables.
+- [x] Tests automatisés de scénarios complets : raids multiples, officiers hors ligne,
   reconnexion et conflits de révision.
 
 ### Demandes possibles des guildes à classer

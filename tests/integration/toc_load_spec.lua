@@ -48,7 +48,7 @@ describe("TOC load integrity", function()
   it("keeps slash command output visible when diagnostic logging is disabled", function()
     local loader = require("helpers.load_addon")
     local _, dibs = loader.load({ wow = { guildLeader = true } })
-    dibs.GetDB().settings.debugLevels.all = 0
+    dibs.GetLocalSettings().debugLevels.all = 0
 
     assert_not_nil(_G.SlashCmdList.DIBS)
     _G.SlashCmdList.DIBS("")

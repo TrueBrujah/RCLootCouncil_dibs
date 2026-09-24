@@ -176,18 +176,18 @@ describe("Dibs options compatibility", function()
     local seasonId = dibs.GetCurrentSeasonId()
     dibs.RankRules.SetAllocation(seasonId, 3, "Member", 2)
     dibs.RCOptions.EnsureRegistered(1)
-    local ranks = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.ranks.args
-    local summary = ranks.rankReconciliation.name()
+    local assignments = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.assignments.args
+    local summary = assignments.assignmentLog.name()
     assert_true(string.find(summary, "Alice-Realm", 1, true) ~= nil)
-    assert_true(string.find(summary, "missing 2", 1, true) ~= nil)
+    assert_true(string.find(summary, "Missing 2", 1, true) ~= nil)
 
     local before = #dibs.Ledger.GetTransactions(seasonId)
-    ranks.reconcileMissing.func()
+    assignments.reconcileMissing.func()
     local after = #dibs.Ledger.GetTransactions(seasonId)
     assert_equal(before + 1, after)
     assert_equal(2, dibs.Ledger.GetPlayerState("Alice-Realm", seasonId).allocation)
 
-    ranks.reconcileMissing.func()
+    assignments.reconcileMissing.func()
     assert_equal(after, #dibs.Ledger.GetTransactions(seasonId))
   end)
 

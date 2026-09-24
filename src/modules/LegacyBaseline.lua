@@ -354,6 +354,17 @@ function M.GetFindings() return sortedValues(ensure().findings) end
 function M.GetBaseline() return copy(ensure().baseline) end
 function M.CalculateLegacyBaselineHash(content) return hash(content) end
 
+function M.ApplyApprovedBaseline(baseline)
+  if type(baseline) ~= "table" or type(baseline.legacyBaselineHash) ~= "string" then return false, "INVALID_BASELINE" end
+  local projection = copy(baseline)
+  projection.legacyBaselineHash = nil
+  if M.CalculateLegacyBaselineHash(projection) ~= baseline.legacyBaselineHash then return false, "BASELINE_HASH_MISMATCH" end
+  local state = ensure()
+  if state.baseline and state.baseline.legacyBaselineHash ~= baseline.legacyBaselineHash then return false, "BASELINE_CONFLICT" end
+  state.baseline, state.status = copy(baseline), "BASELINE_APPROVED"
+  return true, "BASELINE_APPLIED"
+end
+
 -- Evidence collection is local and attributable, but does not grant canonical status.
 function M.CollectEvidence(actor, source, records)
   local snapshot, reason = localSnapshot(actor, false, false)

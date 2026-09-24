@@ -62,7 +62,9 @@ local OFFICER_NAV_TREE = {
   { section = "OVERVIEW", text = "Setup Assistant", value = "setup" },
   { section = "DIBS", text = "Requests", value = "disputes", module = "requests" },
   { section = "DIBS", text = "Pre-Dibs", value = "preDibs", module = "preDibs" },
+  { section = "DIBS", text = "Pending Awards", value = "pendingAwards" },
   { section = "DIBS", text = "History", value = "history" },
+  { section = "DIBS", text = "Automatic Dibs", value = "automaticDibs" },
   { section = "DIBS", text = "Vault Review", value = "vault" },
   { section = "GUILD RULES", text = "Seasons", value = "seasons" },
   { section = "GUILD RULES", text = "Rank Rules", value = "ranks" },
@@ -71,6 +73,7 @@ local OFFICER_NAV_TREE = {
   { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration", module = "rclootcouncil" },
   { section = "SYSTEM", text = "Settings", value = "settings" },
   { section = "SYSTEM", text = "Modules", value = "modules" },
+  { section = "SYSTEM", text = "Synchronization", value = "sync" },
   { section = "SYSTEM", text = "Diagnostics", value = "diagnostics" },
   { section = "SYSTEM", text = "Loot Eligibility", value = "eligibility", module = "lootEligibility" },
   { section = "DEVELOPER", text = "Developer", value = "developer" },
@@ -635,6 +638,12 @@ local function getCurrentGuildMemberName(memberNames, playerName)
   return memberNames[fullName] or (shortName ~= nil and memberNames[shortName]) or nil
 end
 
+local function classColorCode(classFileName)
+  local colors = _G.RAID_CLASS_COLORS
+  local color = colors and classFileName and colors[classFileName]
+  return color and color.colorStr or "ffffffff"
+end
+
 local function buildGuildMemberChoices(query, selectedName)
   local roster = getCurrentGuildMemberNames() or {}
   local unique = {}
@@ -1072,17 +1081,24 @@ function Dibs.OfficerUI.GetLedgerOverview()
   }
 end
 
-function Dibs.OfficerUI.BuildLedgerDetails(seasonId)
+function Dibs.OfficerUI.BuildLedgerDetails(seasonId, filter)
   if not canViewOfficerData() then
     return { players = {}, actions = {}, transactionCount = 0, hiddenTransactionCount = 0, hidden = true }
   end
+  filter = type(filter) == "table" and filter or {}
   local allTransactions = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(seasonId) or {}
   local memberNames = getCurrentGuildMemberNames()
   local transactions = {}
   local hiddenTransactionCount = 0
   for _, tx in ipairs(allTransactions) do
     local playerName = getCurrentGuildMemberName(memberNames, tx.playerName or tx.playerKey or tx.playerId)
-    if playerName then
+    local timestamp = tonumber(tx.createdAt or tx.timestamp) or 0
+    local matchesPlayer = not filter.playerName or string.lower(playerName or "") == string.lower(tostring(filter.playerName))
+    local matchesType = not filter.actionType or tostring(tx.type or tx.actionType) == tostring(filter.actionType)
+    local matchesSource = not filter.source or tostring(tx.source or "") == tostring(filter.source)
+    local matchesFrom = not filter.fromTime or timestamp >= tonumber(filter.fromTime)
+    local matchesTo = not filter.toTime or timestamp <= tonumber(filter.toTime)
+    if playerName and matchesPlayer and matchesType and matchesSource and matchesFrom and matchesTo then
       table.insert(transactions, { transaction = tx, playerName = playerName })
     else
       hiddenTransactionCount = hiddenTransactionCount + 1
@@ -1135,6 +1151,114 @@ function Dibs.OfficerUI.BuildLedgerDetails(seasonId)
     transactionCount = #transactions,
     hiddenTransactionCount = hiddenTransactionCount,
   }
+end
+
+function Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
+  if not canViewOfficerData() then
+    return { allocations = {}, hiddenTransactionCount = 0, hidden = true }
+  end
+  local transactions = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(seasonId) or {}
+  local roster = {}
+  if type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
+    for index = 1, _G.GetNumGuildMembers() do
+      local name, rankName, rankIndex, _, className, _, _, _, _, _, classFileName = _G.GetGuildRosterInfo(index)
+      if name and name ~= "" then
+        roster[string.lower(tostring(name))] = {
+          playerName = tostring(name), rankName = rankName, rankIndex = tonumber(rankIndex), className = className, classFileName = classFileName,
+        }
+      end
+    end
+  end
+  local rows = {}
+  local assignedPlayers = {}
+  for _, tx in ipairs(transactions) do
+    local isAssignment = tx.source == "automatic_rank_assignment"
+      or tx.source == "rank_reconciliation"
+      or tx.source == "manual_live_adjustment"
+    if isAssignment then
+      local amount = tonumber(tx.amount or tx.quantityDelta) or 0
+      local playerName = tx.playerName or tx.playerKey or "Unknown"
+      assignedPlayers[string.lower(tostring(playerName))] = true
+      local rosterInfo = roster[string.lower(tostring(playerName))] or {}
+      local rankInfo = Dibs.RankRules and Dibs.RankRules.GetPlayerRankInfo and Dibs.RankRules.GetPlayerRankInfo(playerName) or {}
+      local source = tx.source or "system"
+      local action = source == "automatic_rank_assignment" and "Auto"
+        or (source == "manual_live_adjustment" and ((tx.context and tx.context.authority) or "GM/Officer") or "Roster reconciliation")
+      local balance = Dibs.Ledger.GetBalance(playerName, seasonId)
+      table.insert(rows, {
+        timestamp = tx.createdAt or tx.timestamp or 0,
+        dateText = formatHistoryDate(tx.createdAt or tx.timestamp),
+        playerName = "|c" .. classColorCode(rosterInfo.classFileName) .. playerName .. "|r",
+        plainPlayerName = playerName,
+        className = rosterInfo.className,
+        classFileName = rosterInfo.classFileName,
+        rankIndex = tonumber(tx.rankIndex) or tonumber(rosterInfo.rankIndex) or tonumber(rankInfo.rankIndex),
+        rankName = tx.rankName or rosterInfo.rankName or rankInfo.rankName or "",
+        expected = tonumber(tx.expectedAllocation) or (Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer and Dibs.RankRules.GetAllocationForPlayer(playerName, seasonId) or 0),
+        amount = amount,
+        balance = tonumber(balance) or 0,
+        action = action,
+        reason = tx.reason or "Automatic rank allocation",
+      })
+    end
+  end
+  if #rows == 0 then
+    for _, member in pairs(roster) do
+      local expected = Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer
+        and Dibs.RankRules.GetAllocationForPlayer(member.playerName, seasonId) or 0
+      local balance = Dibs.Ledger.GetBalance(member.playerName, seasonId)
+      local missing = math.max(0, expected - balance)
+      table.insert(rows, {
+        timestamp = 0,
+        dateText = "Current",
+        playerName = "|c" .. classColorCode(member.classFileName) .. member.playerName .. "|r",
+        plainPlayerName = member.playerName,
+        className = member.className,
+        classFileName = member.classFileName,
+        rankIndex = member.rankIndex,
+        rankName = member.rankName or "Guild Member",
+        expected = expected,
+        amount = balance,
+        balance = balance,
+        action = missing > 0 and "Pending auto" or "Current",
+        reason = missing > 0 and ("Missing " .. tostring(missing) .. " Dibs") or "No assignment event recorded yet",
+      })
+    end
+  else
+    for playerKey, member in pairs(roster) do
+      if not assignedPlayers[playerKey] then
+        local expected = Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer
+          and Dibs.RankRules.GetAllocationForPlayer(member.playerName, seasonId) or 0
+        local balance = Dibs.Ledger.GetBalance(member.playerName, seasonId)
+        local missing = math.max(0, expected - balance)
+        table.insert(rows, {
+          timestamp = 0,
+          dateText = "Current",
+          playerName = "|c" .. classColorCode(member.classFileName) .. member.playerName .. "|r",
+          plainPlayerName = member.playerName,
+          className = member.className,
+          classFileName = member.classFileName,
+          rankIndex = member.rankIndex,
+          rankName = member.rankName or "Guild Member",
+          expected = expected,
+          amount = balance,
+          balance = balance,
+          action = missing > 0 and "Pending auto" or "Current",
+          reason = missing > 0 and ("Missing " .. tostring(missing) .. " Dibs") or "No assignment event recorded yet",
+        })
+      end
+    end
+  end
+  table.sort(rows, function(left, right)
+    return left.timestamp == right.timestamp and tostring(left.playerName) < tostring(right.playerName) or left.timestamp > right.timestamp
+  end)
+  local lines = {}
+  for _, row in ipairs(rows) do
+    local rank = row.rankName ~= "" and row.rankName or (row.rankIndex ~= nil and ("Rank " .. tostring(row.rankIndex)) or "Unknown")
+    local sign = row.amount >= 0 and "+" or ""
+    table.insert(lines, table.concat({ row.dateText, row.playerName, rank, tostring(row.expected), sign .. tostring(row.amount), row.action, row.reason }, " | "))
+  end
+  return { allocations = lines, rows = rows, hiddenTransactionCount = 0 }
 end
 
 function Dibs.OfficerUI.BuildPreDibDetails(seasonId)
@@ -1273,39 +1397,53 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
   if not canViewOfficerData() then
     return emptyOfficerPage(view, query)
   end
-  local selectedView = view == "actions" and "actions" or (view == "predibs" and "predibs" or (view == "vault" and "vault" or "players"))
-  local ledger = Dibs.OfficerUI.BuildLedgerDetails(seasonId)
+  local selectedView = view == "actions" and "actions" or (view == "automaticDibs" and "automaticDibs" or (view == "predibs" and "predibs" or (view == "vault" and "vault" or "players")))
+  local structuredFilter = type(statusFilter) == "table" and statusFilter or {}
+  if type(query) == "table" then
+    structuredFilter = query
+    query = query.query
+  end
+  local ledger = Dibs.OfficerUI.BuildLedgerDetails(seasonId, structuredFilter)
+  local automatic = Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
   local preDibs = Dibs.OfficerUI.BuildPreDibDetails(seasonId)
   local vault = Dibs.OfficerUI.BuildVaultAcquisitionReview({ seasonId = seasonId, query = query, verificationState = statusFilter })
   local lines = selectedView == "actions" and ledger.actions
+    or (selectedView == "automaticDibs" and automatic.allocations
     or (selectedView == "predibs" and preDibs.requests
       or (selectedView == "vault" and (function()
         local result = {}
         for _, row in ipairs(vault.rows) do result[#result + 1] = row.text end
         return result
-      end)() or ledger.players))
+      end)() or ledger.players)))
   local emptyText = selectedView == "actions" and "No history for this season."
+    or (selectedView == "automaticDibs" and "No automatic Dibs allocations for this season."
     or (selectedView == "predibs" and "No pre-Dibs for this season."
-      or (selectedView == "vault" and "No Great Vault records for this season." or "No player activity for this season."))
+      or (selectedView == "vault" and "No Great Vault records for this season." or "No player activity for this season.")))
   local title = selectedView == "actions" and "Actions"
-    or (selectedView == "predibs" and "Pre-Dibs" or (selectedView == "vault" and "Vault Review" or "Players"))
+    or (selectedView == "automaticDibs" and "Automatic Dibs"
+    or (selectedView == "predibs" and "Pre-Dibs" or (selectedView == "vault" and "Vault Review" or "Players")))
+  local automaticRows = automatic.rows or {}
   local needle = string.lower(tostring(query or ""))
   if needle ~= "" then
-    local filtered = {}
-    for _, line in ipairs(lines) do
+    local filtered, filteredRows = {}, {}
+    for originalIndex, line in ipairs(lines) do
       if string.find(string.lower(line), needle, 1, true) then
         table.insert(filtered, line)
+        if selectedView == "automaticDibs" then table.insert(filteredRows, automaticRows[originalIndex]) end
       end
     end
     lines = filtered
+    if selectedView == "automaticDibs" then automaticRows = filteredRows end
   end
   local size = math.max(1, tonumber(pageSize) or 8)
   local totalPages = math.max(1, math.ceil(#lines / size))
   local currentPage = math.max(1, math.min(tonumber(page) or 1, totalPages))
   local first = ((currentPage - 1) * size) + 1
   local visible = {}
+  local visibleRows = {}
   for index = first, math.min(first + size - 1, #lines) do
     table.insert(visible, lines[index])
+    if selectedView == "automaticDibs" and automaticRows[index] then table.insert(visibleRows, automaticRows[index]) end
   end
   if #visible == 0 then
     visible[1] = emptyText
@@ -1314,12 +1452,14 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
   return {
     title = title,
     lines = visible,
+    rows = visibleRows,
     page = currentPage,
     totalPages = totalPages,
     totalCount = #lines,
     query = needle,
-    hiddenCount = selectedView == "predibs" and preDibs.hiddenRequestCount
-      or (selectedView == "vault" and vault.hiddenCount or ledger.hiddenTransactionCount),
+    hiddenCount = selectedView == "automaticDibs" and automatic.hiddenTransactionCount
+      or (selectedView == "predibs" and preDibs.hiddenRequestCount
+      or (selectedView == "vault" and vault.hiddenCount or ledger.hiddenTransactionCount)),
   }
 end
 
@@ -1333,12 +1473,14 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId)
       awards = 0,
       corrections = 0,
       activePreDibs = 0,
+      fairness = { awardCount = {}, meanAwards = 0, medianAwards = 0, minAwards = 0, maxAwards = 0 },
       hidden = true,
     }
   end
   local memberNames = getCurrentGuildMemberNames()
   local transactions = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(seasonId) or {}
   local players = {}
+  local awardCount = {}
   local granted, used, corrections, awards = 0, 0, 0, 0
 
   for _, tx in ipairs(transactions) do
@@ -1351,6 +1493,8 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId)
       elseif tx.type == "DIB_USED" then
         used = used + math.abs(amount)
         awards = awards + 1
+        local key = string.lower(playerName)
+        awardCount[key] = (awardCount[key] or 0) + 1
       elseif tx.type == "DIB_REFUNDED" or tx.type == "DIB_REVOKED" or tx.type == "DIB_ADMIN_ADJUSTMENT" then
         corrections = corrections + 1
       end
@@ -1360,6 +1504,16 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId)
   local activePreDibs = Dibs.OfficerUI.BuildPreDibDetails(seasonId)
   local playerCount = 0
   for _ in pairs(players) do playerCount = playerCount + 1 end
+  local awardValues = {}
+  for _, count in pairs(awardCount) do awardValues[#awardValues + 1] = count end
+  table.sort(awardValues)
+  local awardTotal = 0
+  for _, count in ipairs(awardValues) do awardTotal = awardTotal + count end
+  local median = 0
+  if #awardValues > 0 then
+    local middle = math.floor((#awardValues + 1) / 2)
+    median = #awardValues % 2 == 1 and awardValues[middle] or (awardValues[middle] + awardValues[middle + 1]) / 2
+  end
   return {
     players = playerCount,
     transactions = #transactions,
@@ -1368,6 +1522,13 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId)
     awards = awards,
     corrections = corrections,
     activePreDibs = activePreDibs.activeRequestCount,
+    fairness = {
+      awardCount = awardCount,
+      meanAwards = #awardValues > 0 and awardTotal / #awardValues or 0,
+      medianAwards = median,
+      minAwards = awardValues[1] or 0,
+      maxAwards = awardValues[#awardValues] or 0,
+    },
   }
 end
 
@@ -1586,6 +1747,55 @@ function Dibs.OfficerUI.BuildStatusText(selectedSeason)
     "Dibs database: " .. formatSize(size.databaseBytes) .. " | Full backup package: " .. formatSize(size.fullPackageBytes) .. " / " .. formatSize(size.backupLimitBytes) .. "\n" ..
     "Role: " .. tostring(Dibs.Permissions and Dibs.Permissions.GetRole() or "player") .. "\n" ..
     "RCLootCouncil: " .. tostring(Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetAvailability and Dibs.RCLootCouncil.GetAvailability() or "absent")
+end
+
+function Dibs.OfficerUI.BuildSynchronizationStatus()
+  local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
+  local messages = {}
+  if status.operationalPolicyAdopted ~= true then table.insert(messages, (Dibs.L and Dibs.L.SYNC_POLICY_NOT_ADOPTED) or "Guild-wide rules are not active.") end
+  if status.lastProtocolMismatch then
+    table.insert(messages, string.format((Dibs.L and Dibs.L.SYNC_PROTOCOL_MISMATCH) or "Protocol mismatch with %s.", tostring(status.lastProtocolMismatch.sender or "unknown")))
+  end
+  if status.lastAddonVersionMismatch then
+    local key = status.lastAddonVersionMismatch.reasonCode == "REMOTE_ADDON_VERSION_UNKNOWN" and "SYNC_ADDON_VERSION_UNKNOWN" or "SYNC_ADDON_VERSION_MISMATCH"
+    table.insert(messages, string.format((Dibs.L and Dibs.L[key]) or "Addon update required for %s.", tostring(status.lastAddonVersionMismatch.sender or "unknown")))
+  end
+  return table.concat(messages, "\n")
+end
+
+function Dibs.OfficerUI.BuildSynchronizationProjection()
+  local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
+  local peers = Dibs.Sync and Dibs.Sync.GetPeerStatuses and Dibs.Sync.GetPeerStatuses() or {}
+  return {
+    state = Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or {},
+    protocolState = Dibs.Sync and Dibs.Sync.GetProtocolState and Dibs.Sync.GetProtocolState() or "Unknown",
+    policy = status.operationalPolicyAdopted == true and "Adopted" or "Not adopted",
+    seasonCatalogRevision = tonumber(status.seasonCatalogRevision) or 0,
+    pendingAwardProposals = tonumber(status.pendingAwardProposals) or 0,
+    peers = peers,
+  }
+end
+
+function Dibs.OfficerUI.GetPendingAwardProposals()
+  if not canViewOfficerData() or not (Dibs.Governance and Dibs.Governance.GetPendingCoordinatorProposals) then return {} end
+  local rows = {}
+  for _, proposal in ipairs(Dibs.Governance.GetPendingCoordinatorProposals()) do
+    rows[#rows + 1] = {
+      proposalId = proposal.proposalId,
+      playerName = proposal.playerSnapshot and proposal.playerSnapshot.displayName or "Unknown",
+      itemID = proposal.itemID,
+      itemLink = proposal.itemLink,
+      awardRef = proposal.awardRef,
+      submittedBy = proposal.actorSnapshot and proposal.actorSnapshot.displayName,
+    }
+  end
+  return rows
+end
+
+function Dibs.OfficerUI.ConfirmPendingAwardProposal(proposalId)
+  if not canViewOfficerData() then return { accepted = false, reasonCode = "OFFICER_ACCESS_REQUIRED" } end
+  if not (Dibs.Ledger and Dibs.Ledger.CommitAwardProposal) then return { accepted = false, reasonCode = "LEDGER_UNAVAILABLE" } end
+  return Dibs.Ledger.CommitAwardProposal({ actor = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, action = "ledger.use" }, proposalId, {})
 end
 
 local function splitPipeLine(line, expected)
@@ -2607,11 +2817,15 @@ local function createAceWindow(initialRoute)
       return
     end
     local routeTitles = {
-      disputes = "Requests", preDibs = "Pre-Dibs", history = "History", reconciliation = "History", seasons = "Seasons",
+      disputes = "Requests", preDibs = "Pre-Dibs", pendingAwards = "Pending Awards", history = "History", reconciliation = "History", seasons = "Seasons",
       ranks = "Rank Rules", lootTypes = "Loot Rules", announcements = "Announcements",
       integration = "RCLootCouncil", settings = "Settings", diagnostics = "Diagnostics", vault = "Vault Review",
       eligibility = "Loot Eligibility", modules = "Modules", developer = "Developer", debug = "Debug", setup = "Setup Assistant",
     }
+    if self.activeTab == "preDibs" or self.activeTab == "modules" or self.activeTab == "seasons" or self.activeTab == "ranks" or self.activeTab == "lootTypes" or self.activeTab == "announcements" then
+      local syncStatus = Dibs.OfficerUI.BuildSynchronizationStatus()
+      if syncStatus ~= "" then Dibs.AceGUI.AddLabel(shell, tabs, syncStatus, true) end
+    end
     if self.activeTab == "developer" then
       if Dibs.DeveloperUI and Dibs.DeveloperUI.GetProjection then
         local projection = Dibs.DeveloperUI.GetProjection()
@@ -2646,13 +2860,22 @@ local function createAceWindow(initialRoute)
       Dibs.AceGUI.AddHeader(shell, tabs, healthText.HEALTH_DASHBOARD_TITLE or "Data health",
         healthText.HEALTH_DASHBOARD_INTRO or "Bounded operational health for the current guild and client.")
       if health and health.status ~= "DENIED" then
-        Dibs.AceGUI.AddLabel(shell, tabs, string.format(healthText.HEALTH_DASHBOARD_VERSION or "Addon version: %s | SavedVariables schema: %s",
-          tostring(health.version), tostring(health.schemaVersion or "unknown")), true)
+        local summary = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+        Dibs.Midnight.AddStatusBadge(shell, summary, health.status == "READY" and "success" or "warning",
+          tostring(health.status))
+        Dibs.AceGUI.AddLabel(shell, summary, string.format(healthText.HEALTH_DASHBOARD_VERSION or "Addon version: %s | SavedVariables schema: %s",
+          tostring(health.version), tostring(health.schemaVersion or "unknown")), false)
         Dibs.AceGUI.AddLabel(shell, tabs, string.format(healthText.HEALTH_DASHBOARD_STATUS or "Overall status: %s | Blocking: %d | Warnings: %d",
           tostring(health.status), tonumber(health.blockingCount) or 0, tonumber(health.warningCount) or 0), true)
+        Dibs.AceGUI.AddHeader(shell, tabs, "Service status", "A quick view of the services used by the addon.")
         for _, item in ipairs(health.checks or {}) do
-          Dibs.AceGUI.AddLabel(shell, tabs, string.format(healthText.HEALTH_DASHBOARD_CHECK or "%s: %s",
-            tostring(item.id), tostring(item.state)), true)
+          local checkRow = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+          local tone = item.state == "ready" and "success" or (item.state == "blocked" and "danger" or "warning")
+          Dibs.Midnight.AddStatusBadge(shell, checkRow, tone, tostring(item.state):upper())
+          local checkText = Dibs.AceGUI.AddLabel(shell, checkRow, tostring(item.id), false)
+          if checkText and checkText.SetWidth then checkText:SetWidth(145) end
+          local detail = item.reason and tostring(item.reason) or tostring(item.detail or "No additional details.")
+          Dibs.AceGUI.AddLabel(shell, checkRow, detail, false)
         end
         Dibs.AceGUI.AddButton(shell, tabs, self.showHealthTechnical and (healthText.HEALTH_DASHBOARD_HIDE_DETAILS or "Hide technical health details")
           or (healthText.HEALTH_DASHBOARD_DETAILS or "Show technical health details"), function()
@@ -2660,9 +2883,11 @@ local function createAceWindow(initialRoute)
           self:Refresh()
         end, 240)
         if self.showHealthTechnical then
-          Dibs.AceGUI.AddLabel(shell, tabs, "Persistence: " .. tostring(health.persistence and health.persistence.state or "unknown")
-            .. " | Sync: " .. tostring(health.sync and health.sync.state or "unknown")
-            .. " | RCLootCouncil: " .. tostring(health.rclootcouncil and health.rclootcouncil.status or "unknown"), true)
+          Dibs.AceGUI.AddHeader(shell, tabs, "Technical details", "Detailed service state for troubleshooting.")
+          local technical = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+          Dibs.AceGUI.AddLabel(shell, technical, "Persistence\n" .. tostring(health.persistence and health.persistence.state or "unknown"), false)
+          Dibs.AceGUI.AddLabel(shell, technical, "Synchronization\n" .. tostring(health.sync and health.sync.state or "unknown"), false)
+          Dibs.AceGUI.AddLabel(shell, technical, "RCLootCouncil\n" .. tostring(health.rclootcouncil and health.rclootcouncil.status or "unknown"), false)
         end
       else
         Dibs.AceGUI.AddLabel(shell, tabs, healthText.HEALTH_DASHBOARD_NO_REPORT or "Health report unavailable.", true)
@@ -2675,7 +2900,7 @@ local function createAceWindow(initialRoute)
       end, 240)
       if self.showRuntimeDiagnostics then
         Dibs.AceGUI.AddHeader(shell, tabs, "Runtime diagnostics", "Bounded diagnostic information for the local Officer session.")
-        Dibs.AceGUI.AddLabel(shell, tabs, Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", true)
+        Dibs.AceGUI.AddSelectableText(shell, tabs, "Copyable report", Dibs.BuildDebugReport and Dibs.BuildDebugReport() or "Diagnostics unavailable.", 820, 220)
         local moduleDiagnostics = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleManagementDiagnostics
           and Dibs.OperationalPolicy.GetModuleManagementDiagnostics(nil)
         if moduleDiagnostics then
@@ -2692,6 +2917,75 @@ local function createAceWindow(initialRoute)
             "Blocking reason: " .. tostring(moduleDiagnostics.blockingReason or "none"), true)
         end
       end
+      return
+    end
+    if self.activeTab == "sync" then
+      local projection = Dibs.OfficerUI.BuildSynchronizationProjection()
+      local groupCount = type(GetNumGroupMembers) == "function" and tonumber(GetNumGroupMembers()) or 0
+      local rosterScope = groupCount > 0 and ("Current group/raid (" .. tostring(groupCount) .. " members)") or "Guild roster (no group active)"
+      Dibs.AceGUI.AddHeading(shell, tabs, "Guild synchronization", "Shows the shared Dibs data scope and the latest addon handshake observed for the current group or raid.")
+      Dibs.AceGUI.AddLabel(shell, tabs,
+        "Transport: " .. tostring(projection.state.state or "unknown") ..
+        " | Protocol: " .. tostring(projection.protocolState) ..
+        " | Policy: " .. tostring(projection.policy) ..
+        " | Season catalog revision: " .. tostring(projection.seasonCatalogRevision) ..
+        " | Pending award proposals: " .. tostring(projection.pendingAwardProposals) ..
+        "\nRoster scope: " .. rosterScope, true)
+      Dibs.AceGUI.AddLabel(shell, tabs, "Synchronized: Pre-Dibs requests, guild policy, season catalog, vault acquisition summaries, and ledger digests when V2 enforcement is active. Live loot candidates, votes, responses, and item transfers are never synchronized.", true)
+      Dibs.AceGUI.AddButton(shell, tabs, "Announce presence", function()
+        local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
+        if tonumber(catalog.catalogRevision) == 0 and Dibs.Seasons and Dibs.Seasons.PublishCatalog then
+          Dibs.Seasons.PublishCatalog(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, "SYNC_BOOTSTRAP")
+        end
+        if Dibs.Sync and Dibs.Sync.OnLifecycle then
+          Dibs.Sync.OnLifecycle("OFFICER_SYNC_PAGE")
+        elseif Dibs.Sync and Dibs.Sync.Send then
+          Dibs.Sync.Send({ type = "HELLO", protocolState = Dibs.Sync.GetProtocolState and Dibs.Sync.GetProtocolState() or "LEGACY_LOCAL", lifecycle = "OFFICER_SYNC_PAGE" }, "GUILD")
+        end
+        self:Refresh()
+      end, 130)
+      if Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM()
+        and Dibs.Governance and Dibs.Governance.ActivateV2 then
+        Dibs.AceGUI.AddButton(shell, tabs, "Approve baseline and enable V2", function()
+          local ok, reason = Dibs.Governance.ActivateV2(nil)
+          if ok and Dibs.Sync and Dibs.Sync.AnnounceGovernance then Dibs.Sync.AnnounceGovernance() end
+          self:SetStatus(ok and "V2 Ledger is now enforced." or "V2 Ledger activation blocked: " .. tostring(reason or "unknown"))
+          self:Refresh()
+        end, 150)
+      end
+      local rows = {}
+      for _, peer in ipairs(projection.peers) do
+        rows[#rows + 1] = {
+          peer.playerName,
+          peer.online and "Online" or "Offline",
+          peer.addonStatus,
+          peer.addonVersion,
+          peer.compatibility,
+          peer.syncStatus,
+          tostring(peer.seasonCatalogRevision or 0),
+          tostring(peer.policyRevision or 0),
+          tostring(peer.governanceRevision or 0),
+          tostring(peer.predibRevision or 0),
+          tostring(peer.vaultRevision or 0),
+          tostring(peer.ledgerRevision or 0),
+          peer.lastSeenAt > 0 and date("%Y-%m-%d %H:%M", peer.lastSeenAt) or "Never",
+        }
+      end
+      Dibs.AceGUI.AddTable(shell, tabs, {
+        { title = "Player", width = 170, tooltip = "Guild member." },
+        { title = "Online", width = 75, tooltip = "Current guild roster presence." },
+        { title = "Addon", width = 100, tooltip = "Detected when the player answers a Dibs HELLO or sync message." },
+        { title = "Version", width = 90, tooltip = "Last Dibs addon version reported by the player." },
+        { title = "Compatibility", width = 110, tooltip = "Compatibility with this client version." },
+        { title = "Sync", width = 100, tooltip = "Whether the player has the same known synchronization revisions as this client." },
+        { title = "Catalog", width = 70, tooltip = "Season, rank rules, and guild configuration revision reported by this player." },
+        { title = "Policy", width = 65, tooltip = "Operational policy revision reported by this player." },
+        { title = "Governance", width = 80, tooltip = "Governance revision reported by this player." },
+        { title = "Requests", width = 70, tooltip = "Pre-Dibs request index revision reported by this player." },
+        { title = "Vault", width = 60, tooltip = "Vault acquisition index revision reported by this player." },
+        { title = "History", width = 65, tooltip = "Ledger revision reported by this player when V2 enforcement is active." },
+        { title = "Last response", width = 125, tooltip = "Last response received from this player." },
+      }, rows, 430)
       return
     end
     local seasons = getSeasonList()
@@ -3019,7 +3313,7 @@ local function createAceWindow(initialRoute)
         { title = "Category", width = 150, tooltip = "Semantic loot category." },
         { title = "Recommended", width = 100, tooltip = "Recommended presentation state." },
         { title = "Reason", width = 420, tooltip = "Safe explanation for the current state." },
-      }, categoryRows, 220)
+      }, categoryRows, 220, nil, { noScrolling = true })
       Dibs.AceGUI.AddButton(shell, scroll, self.eligibilityAdvanced and "Hide Customize" or "Customize", function()
         self.eligibilityAdvanced = not self.eligibilityAdvanced
         self:Refresh()
@@ -4059,6 +4353,23 @@ local function createAceWindow(initialRoute)
       self.ledgerText = Dibs.AceGUI.AddLabel(shell, tabs, table.concat(Dibs.OfficerUI.BuildDashboardDetails(current), "\n"), true)
       return
     end
+    if self.activeTab == "pendingAwards" then
+      local proposals = Dibs.OfficerUI.GetPendingAwardProposals()
+      Dibs.AceGUI.AddHeading(shell, tabs, (Dibs.L and Dibs.L.PENDING_AWARDS_TITLE) or "Pending awards", (Dibs.L and Dibs.L.PENDING_AWARDS_DESCRIPTION) or "Confirm awards received from another raid before they consume Dibs.")
+      if #proposals == 0 then
+        Dibs.AceGUI.AddLabel(shell, tabs, (Dibs.L and Dibs.L.PENDING_AWARDS_EMPTY) or "No awards are awaiting coordinator confirmation.", true)
+      end
+      for _, proposal in ipairs(proposals) do
+        local detail = tostring(proposal.playerName) .. " | " .. tostring(proposal.itemLink or proposal.itemID or "item") .. " | " .. tostring(proposal.awardRef or "award")
+        Dibs.AceGUI.AddLabel(shell, tabs, detail, true)
+        Dibs.AceGUI.AddButton(shell, tabs, (Dibs.L and Dibs.L.PENDING_AWARDS_CONFIRM) or "Confirm", function()
+          local result = Dibs.OfficerUI.ConfirmPendingAwardProposal(proposal.proposalId)
+          self:SetStatus(result.accepted and ((Dibs.L and Dibs.L.PENDING_AWARDS_CONFIRMED) or "Award confirmed.") or tostring(result.reasonCode or "Unable to confirm award."))
+          self:Refresh()
+        end, 100)
+      end
+      return
+    end
     if self.activeTab == "statistics" then
       local statistics = Dibs.OfficerUI.BuildSeasonStatistics(currentId)
       self.ledgerTitle = Dibs.AceGUI.AddLabel(shell, tabs, "Season statistics", true)
@@ -4078,6 +4389,9 @@ local function createAceWindow(initialRoute)
     if self.activeTab == "history" or self.activeTab == "actions" then
       headerText = "Date | Player | Action | Amount | Reason"
       headerTooltip = "Date: when the ledger entry was recorded. Player: who it affected. Action: the ledger operation. Amount: Dibs gained or spent. Reason: audit context."
+    elseif self.activeTab == "automaticDibs" then
+      headerText = "Date | Player | Rank | Expected | Assigned | Action | Reason"
+      headerTooltip = "Date: assignment time. Player: guild member. Rank: rank used for the rule. Expected: Dibs expected for the rank. Assigned: Dibs delta. Action: Auto, roster reconciliation, or GM/Officer adjustment. Reason: audit context."
     elseif self.activeTab == "predibs" then
       headerText = "Date | Player | Status | Item | Difficulty | Mode | Sync"
       headerTooltip = "Date: request time. Player: requester. Status: lifecycle state. Item: reserved loot. Difficulty: requested difficulty. Mode: Wild Open or Encounter. Sync: delivery acknowledgement."
@@ -4088,7 +4402,7 @@ local function createAceWindow(initialRoute)
       headerText = "Player | Balance | Actions"
       headerTooltip = "Player: guild member. Balance: current Dibs allocation after ledger activity. Actions: number of ledger entries."
     end
-    local expectedColumns = self.activeTab == "history" and 5 or (self.activeTab == "predibs" and 7 or (self.activeTab == "vault" and 8 or 3))
+    local expectedColumns = (self.activeTab == "history" or self.activeTab == "actions") and 5 or (self.activeTab == "automaticDibs" and 7 or (self.activeTab == "predibs" and 7 or (self.activeTab == "vault" and 8 or 3)))
     local tableRows = {}
     if self.activeTab == "predibs" then
       local preDibRows = Dibs.OfficerUI.BuildRequestView("officer", { kind = "predibs", limit = 50 })
@@ -4102,11 +4416,33 @@ local function createAceWindow(initialRoute)
         values[7] = row.details.delivery ~= "" and row.details.delivery or row.explanation
         table.insert(tableRows, values)
       end
+    elseif self.activeTab == "automaticDibs" then
+      for _, row in ipairs(view.rows or {}) do
+        table.insert(tableRows, {
+          row.dateText or "",
+          row.playerName or row.plainPlayerName or "",
+          row.rankName or "Unknown",
+          tostring(row.expected or 0),
+          (tonumber(row.amount) or 0) >= 0 and ("+" .. tostring(row.amount or 0)) or tostring(row.amount or 0),
+          row.action or "Auto",
+          row.reason or "",
+        })
+      end
     else
       for _, line in ipairs(view.lines) do table.insert(tableRows, splitPipeLine(line, expectedColumns)) end
     end
     local columns = {}
-    if expectedColumns == 5 then
+    if expectedColumns == 7 and self.activeTab == "automaticDibs" then
+      columns = {
+        { title = "Date", width = 90, minWidth = 58, priority = 2, tooltip = "When the automatic assignment was recorded." },
+        { title = "Player", width = 150, minWidth = 112, priority = 5, tooltip = "Guild member affected by the assignment." },
+        { title = "Rank", width = 110, minWidth = 78, priority = 4, tooltip = "Guild rank used to calculate the assignment." },
+        { title = "Expected", width = 72, minWidth = 62, priority = 1, tooltip = "Dibs expected for the current guild rank." },
+        { title = "Assigned", width = 72, minWidth = 62, priority = 1, tooltip = "Dibs added or removed by this entry." },
+        { title = "Action", width = 105, minWidth = 88, priority = 3, tooltip = "Automatic, roster reconciliation, or GM/Officer adjustment." },
+        { title = "Reason", width = 190, minWidth = 120, priority = 6, tooltip = "Assignment or adjustment audit context." },
+      }
+    elseif expectedColumns == 5 then
       columns = {
         { title = "Date", width = 145, tooltip = "When the ledger entry was recorded." },
         { title = "Player", width = 135, tooltip = "Guild member affected by the entry." },
@@ -4158,7 +4494,9 @@ local function createAceWindow(initialRoute)
       self.vaultStatusControl = Dibs.AceGUI.AddDropdown(shell, tabs, "Status filter", statusValues, function(value) self.vaultStatusFilter = value == "ALL" and nil or value; self.ledgerPage = 1; self:Refresh() end, 220)
       Dibs.AceGUI.SetValue(self.vaultStatusControl, self.vaultStatusFilter or "ALL")
     end
-    self.aceLedgerScroll = Dibs.AceGUI.AddTable(shell, tabs, columns, tableRows, 430)
+    self.aceLedgerScroll = Dibs.AceGUI.AddTable(shell, tabs, columns, tableRows, 430, nil, {
+      noScrolling = self.activeTab == "automaticDibs",
+    })
     local pageControls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
     local previous = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function() self.ledgerPage = math.max(1, self.ledgerPage - 1); self:Refresh() end, 80)
     self.pageText = Dibs.AceGUI.AddLabel(shell, pageControls, "Page " .. view.page .. "/" .. view.totalPages)

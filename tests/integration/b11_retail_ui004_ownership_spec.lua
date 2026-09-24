@@ -209,7 +209,7 @@ describe("B11 Retail UI-004 ownership", function()
     local fake = {
       _point = { "BOTTOMLEFT", _G.UIParent, "BOTTOMLEFT", 120, 180 },
       _width = 700, _height = 500,
-      GetPoint = function(self) return unpack(self._point) end,
+      GetPoint = function(self) return self._point[1], self._point[2], self._point[3], self._point[4], self._point[5] end,
       ClearAllPoints = function(self) self._cleared = true end,
       SetPoint = function(self, ...) self._point = { ... } end,
       GetLeft = function() return 120 end, GetTop = function() return 680 end,

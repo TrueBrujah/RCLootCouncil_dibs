@@ -1,0 +1,25 @@
+local loader = require("helpers.load_addon")
+
+describe("Health anomaly center contract", function()
+  it("detects anomalies and creates a non-mutating correction preview", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local db = dibs.GetDB()
+    db.seasons = {}
+    db.ledger.transactions = { broken = { transactionId = "broken", seasonId = "missing" } }
+    local scan = dibs.HealthUI.ScanAnomalies()
+    assert_equal("REVIEW_REQUIRED", scan.status)
+    assert_equal(1, scan.count)
+    local preview = dibs.HealthUI.BuildCorrectionPreview(scan.anomalies[1].id)
+    assert_equal("PREVIEW", preview.status)
+    assert_equal("NONE", preview.mutation)
+    assert_not_nil(db.ledger.transactions.broken)
+  end)
+
+  it("exports anomaly reports without making them import packages", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local encoded, report = dibs.HealthUI.ExportAnomalies()
+    assert_not_nil(report)
+    assert_true(encoded:sub(1, #dibs.HealthUI.ANOMALY_EXPORT_PREFIX) == dibs.HealthUI.ANOMALY_EXPORT_PREFIX)
+    assert_false(encoded:sub(1, #dibs.ImportExport.PACKAGE_PREFIX) == dibs.ImportExport.PACKAGE_PREFIX)
+  end)
+end)

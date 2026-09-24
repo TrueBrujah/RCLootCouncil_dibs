@@ -17,11 +17,20 @@ The local root is intentionally small and never synchronized:
 ```lua
 RCLootCouncil_dibsLocalDB = {
   notifications = { enabled = true, seen = { [eventId] = timestamp } },
+  settings = {
+    language = "AUTO",
+    debugLevels = { all = 1 },
+    developerModeEnabled = false,
+    ejKnownSubCategories = {},
+    ejBlockedSubCategories = {},
+  },
 }
 ```
 
-Notification replay identities are bounded and local presentation state must
-not be used as guild authority or accounting evidence.
+Notification replay identities, language, diagnostics, Developer Mode, and
+Adventure Guide discovery state are personal to the character and never
+synchronized. Older values found in the guild `settings` subtree are migrated
+to this local root and removed from the guild copy.
 
 Legacy flat roots are wrapped into a guild bucket during `Core.lua` initialization. Runtime code uses `Dibs.db`; `_G.DibsDB` remains a compatibility alias for the active guild bucket. The guild schema currently reports version 6, with versioned reconciliation and character-eligibility sub-stores.
 
@@ -42,7 +51,7 @@ SavedVariables root unchanged.
 
 Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `preDibs`, `reconciliation`, `characterEligibility`, `governance`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
 
-B12 adds no SavedVariables fields and no SyncV2 fields. Requests, history
+B12 adds local preference fields but no guild synchronization fields. Requests, history
 projections, context-menu state, route state, and release evidence remain
 runtime or documentation concerns. The existing developer sandbox store remains
 separate from `RCLootCouncil_dibsDB`; its bounded validation and production

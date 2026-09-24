@@ -348,8 +348,8 @@ local function announcePreDib(request)
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled
     and Dibs.OperationalPolicy.IsModuleEnabled("announcements") ~= true then return end
   local message = buildAnnouncementMessage(request)
-  local publicChannel = normalizeChannel(Dibs.db.settings.preDibAnnouncementChannel, "GUILD")
-  local officerChannel = normalizeChannel(Dibs.db.settings.preDibOfficerAnnouncementChannel, "OFFICER")
+  local settings = Dibs.PreDibs.GetAnnouncementSettings()
+  local publicChannel, officerChannel = settings.publicChannel, settings.officerChannel
   local sent = {}
   if publicChannel ~= "NONE" and not sent[publicChannel] then
     sendAnnouncement(publicChannel, message)
@@ -456,6 +456,16 @@ end
 
 function Dibs.PreDibs.GetAnnouncementSettings()
   ensureState()
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+    and Dibs.OperationalPolicy.GetAnnouncementChannels then
+    local shared = Dibs.OperationalPolicy.GetAnnouncementChannels()
+    if shared then
+      return {
+        publicChannel = normalizeChannel(shared.publicChannel, "GUILD"),
+        officerChannel = normalizeChannel(shared.officerChannel, "OFFICER"),
+      }
+    end
+  end
   return {
     publicChannel = normalizeChannel(Dibs.db.settings.preDibAnnouncementChannel, "GUILD"),
     officerChannel = normalizeChannel(Dibs.db.settings.preDibOfficerAnnouncementChannel, "OFFICER"),
@@ -468,8 +478,15 @@ function Dibs.PreDibs.SetAnnouncementChannels(publicChannel, officerChannel, act
     or not Dibs.Permissions.Can("settings.modify", actor) then
     return nil, "GUILD_ADMIN_REQUIRED"
   end
-  Dibs.db.settings.preDibAnnouncementChannel = normalizeChannel(publicChannel, "GUILD")
-  Dibs.db.settings.preDibOfficerAnnouncementChannel = normalizeChannel(officerChannel, "OFFICER")
+  local publicValue, officerValue = normalizeChannel(publicChannel, "GUILD"), normalizeChannel(officerChannel, "OFFICER")
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+    and Dibs.OperationalPolicy.SetAnnouncementChannels then
+    local applied, reason = Dibs.OperationalPolicy.SetAnnouncementChannels(publicValue, officerValue, actor)
+    if not applied then return nil, reason end
+    return Dibs.PreDibs.GetAnnouncementSettings()
+  end
+  Dibs.db.settings.preDibAnnouncementChannel = publicValue
+  Dibs.db.settings.preDibOfficerAnnouncementChannel = officerValue
   return Dibs.PreDibs.GetAnnouncementSettings()
 end
 

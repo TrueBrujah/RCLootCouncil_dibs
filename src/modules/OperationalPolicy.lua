@@ -13,6 +13,7 @@ local Policy = Dibs.OperationalPolicy
 
 local SCHEMA, GENESIS_HASH = 1, "GENESIS"
 local VALID_MODES = { WILD_OPEN = true, ENCOUNTER = true }
+local VALID_ANNOUNCE_CHANNELS = { NONE = true, GUILD = true, OFFICER = true, RAID = true, RAID_WARNING = true, RAID_DIBS = true, PARTY = true, INSTANCE_CHAT = true, SAY = true, YELL = true }
 local CORE_MODULE_DEFINITIONS = {
   { key = "ledger", label = "Ledger", core = true, alwaysEnabled = true },
   { key = "identity", label = "Canonical Identity / Name-Realm", core = true, alwaysEnabled = true },
@@ -86,6 +87,11 @@ local function normalizedValues(values)
         modes[tostring(seasonId)] = tostring(mode)
       end
       result.preDibModes = modes
+    elseif key == "announcementChannels" then
+      if type(value) ~= "table" then return nil, "INVALID_ANNOUNCEMENT_CHANNELS" end
+      local publicChannel, officerChannel = string.upper(tostring(value.publicChannel or "")), string.upper(tostring(value.officerChannel or ""))
+      if not VALID_ANNOUNCE_CHANNELS[publicChannel] or not VALID_ANNOUNCE_CHANNELS[officerChannel] then return nil, "INVALID_ANNOUNCEMENT_CHANNELS" end
+      result.announcementChannels = { publicChannel = publicChannel, officerChannel = officerChannel }
     elseif key == "modules" then
       if type(value) ~= "table" then return nil, "INVALID_MODULE_POLICY" end
       local modules = defaultModules()
@@ -210,6 +216,10 @@ function Policy.GetPreDibMode(seasonId)
 end
 function Policy.GetPublicPreDibsEnabled()
   local values = Policy.GetValues(); return values and values.allowPublicPreDibs
+end
+function Policy.GetAnnouncementChannels()
+  local values = Policy.GetValues()
+  return values and values.announcementChannels and copy(values.announcementChannels) or nil
 end
 function Policy.GetModuleDefinitions() return copy(MODULE_DEFINITIONS) end
 function Policy.GetCoreModuleDefinitions() return copy(CORE_MODULE_DEFINITIONS) end
@@ -424,6 +434,11 @@ end
 function Policy.SetPublicPreDibsEnabled(enabled, actor)
   if type(enabled) ~= "boolean" then return nil, "INVALID_POLICY_VALUE" end
   return Policy.Change(actor, { allowPublicPreDibs = enabled }, "PUBLIC_PREDIB_AVAILABILITY")
+end
+function Policy.SetAnnouncementChannels(publicChannel, officerChannel, actor)
+  local publicValue, officerValue = string.upper(tostring(publicChannel or "")), string.upper(tostring(officerChannel or ""))
+  if not VALID_ANNOUNCE_CHANNELS[publicValue] or not VALID_ANNOUNCE_CHANNELS[officerValue] then return nil, "INVALID_ANNOUNCEMENT_CHANNELS" end
+  return Policy.Change(actor, { announcementChannels = { publicChannel = publicValue, officerChannel = officerValue } }, "ANNOUNCEMENT_CHANNELS")
 end
 
 return Policy

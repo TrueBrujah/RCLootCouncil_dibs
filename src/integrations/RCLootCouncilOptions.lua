@@ -608,6 +608,30 @@ local function buildRankReconciliationText(seasonId)
   return table.concat(lines, "\n")
 end
 
+local function classColorCode(classFileName)
+  local colors = _G.RAID_CLASS_COLORS
+  local color = colors and classFileName and colors[classFileName]
+  if color and color.colorStr then return color.colorStr end
+  return "ffffffff"
+end
+
+local function buildAssignmentLogText(seasonId)
+  local details = Dibs.OfficerUI and Dibs.OfficerUI.BuildAutomaticAllocationDetails
+    and Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId) or {}
+  local rows = details.rows or {}
+  if #rows == 0 then return buildRankReconciliationText(seasonId) end
+  local lines = { "Date time | Player | Guild rank | Expected Dibs | Assigned Dibs | Action | Reason" }
+  for _, row in ipairs(rows) do
+    local expected = Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer
+      and Dibs.RankRules.GetAllocationForPlayer(row.plainPlayerName or row.playerName, seasonId) or 0
+    local color = classColorCode(row.classFileName)
+    local player = "|c" .. color .. tostring(row.playerName) .. "|r"
+    table.insert(lines, table.concat({ tostring(row.dateText or ""), player, tostring(row.rankName or "Unknown"),
+      tostring(expected), tostring(row.amount), tostring(row.action or "Auto"), tostring(row.reason or "") }, " | "))
+  end
+  return table.concat(lines, "\n")
+end
+
 getState = function()
   Dibs.RCOptions.state = Dibs.RCOptions.state or {
     selectedSeasonId = nil,
@@ -874,19 +898,32 @@ local optionsTable = {
                 setStatus(result.ok and ("Saved rule: " .. tostring(rankName) .. " = " .. tostring(allocation)) or (result.diagnostic or "Failed to set rank allocation."))
               end,
             },
-            rankReconciliation = {
-              order = 5,
+          },
+        },
+        assignments = {
+          order = 4,
+          type = "group",
+          name = "Dibs Assignments",
+          args = {
+            selectedSeason = {
+              order = 1,
+              type = "select",
+              name = "Season",
+              width = "double",
+              values = function() return getSeasonValues() end,
+              get = function() return getSelectedSeasonId() end,
+              set = function(_, value) getState().selectedSeasonId = value end,
+            },
+            assignmentLog = {
+              order = 2,
               type = "description",
               width = "full",
-              name = function()
-                return buildRankReconciliationText(getSelectedSeasonId())
-              end,
+              name = function() return buildAssignmentLogText(getSelectedSeasonId()) end,
             },
             reconcileMissing = {
-              order = 6,
+              order = 3,
               type = "execute",
-              width = "full",
-              name = "Assign missing Dibs to guild members",
+              name = "Reconcile missing Dibs",
               func = function()
                 local seasonId = getSelectedSeasonId()
                 local rows = Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation
@@ -896,35 +933,85 @@ local optionsTable = {
                   if tonumber(row.missingAllocation) and row.missingAllocation > 0 then
                     local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
                       and Dibs.ProtectedActions.Execute("rank.reconcile", nil, {
-                        playerName = row.playerName,
-                        seasonId = seasonId,
-                        amount = row.missingAllocation,
-                        reason = "Season rank allocation reconciliation",
+                        playerName = row.playerName, seasonId = seasonId, amount = row.missingAllocation,
+                        reason = "Roster rank reconciliation", source = "rank_reconciliation",
+                        rankIndex = row.rankIndex, rankName = row.rankName, expectedAllocation = row.expectedAllocation,
                       }) or { ok = false }
                     if result.ok then assigned = assigned + row.missingAllocation else failed = failed + 1 end
                   end
                 end
-                setStatus("Rank reconciliation complete: assigned " .. tostring(assigned) .. " Dibs; failed " .. tostring(failed) .. ".")
+                setStatus("Roster reconciliation complete: assigned " .. tostring(assigned) .. " Dibs; failed " .. tostring(failed) .. ".")
+              end,
+            },
+            player = {
+              order = 4,
+              type = "select",
+              name = "Player",
+              width = "double",
+              values = function()
+                local values = {}
+                if type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
+                  for index = 1, _G.GetNumGuildMembers() do
+                    local name = _G.GetGuildRosterInfo(index)
+                    if name and name ~= "" then values[name] = name end
+                  end
+                end
+                return values
+              end,
+              get = function() return getState().assignmentPlayer end,
+              set = function(_, value) getState().assignmentPlayer = value end,
+            },
+            amount = {
+              order = 5,
+              type = "range",
+              name = "Dibs adjustment",
+              desc = "Positive adds Dibs; negative removes Dibs. Allowed range: -9 to +9.",
+              min = -9,
+              max = 9,
+              step = 1,
+              get = function() return tonumber(getState().assignmentAmount) or 0 end,
+              set = function(_, value) getState().assignmentAmount = tonumber(value) or 0 end,
+            },
+            reason = {
+              order = 6,
+              type = "input",
+              name = "Reason",
+              width = "full",
+              get = function() return getState().assignmentReason or "" end,
+              set = function(_, value) getState().assignmentReason = tostring(value or "") end,
+            },
+            apply = {
+              order = 7,
+              type = "execute",
+              name = "Apply live adjustment",
+              func = function()
+                local state = getState()
+                local amount = tonumber(state.assignmentAmount) or 0
+                local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute and Dibs.ProtectedActions.Execute("ledger.adjust", nil, {
+                  playerName = state.assignmentPlayer,
+                  seasonId = getSelectedSeasonId(),
+                  amount = amount,
+                  reason = state.assignmentReason,
+                  source = "manual_live_adjustment",
+                  debtPolicy = { allowDebt = true, source = "MANUAL_LIVE_ADJUSTMENT" },
+                }) or { ok = false, diagnostic = "Protected actions unavailable." }
+                setStatus(result.ok and "Live Dibs adjustment recorded." or (result.diagnostic or "Unable to record adjustment."))
               end,
             },
           },
         },
         settings = {
-          order = 4,
+          order = 5,
           type = "group",
           name = "Settings",
           args = {
             language = {
               order = 0, type = "select", name = "Language", desc = "Choose Auto, English or French. English is used as the fallback.",
               values = { AUTO = "Auto (WoW client)", enUS = "English", frFR = "Français" },
-              get = function() return getDBSettings().language or "AUTO" end,
+              get = function() return (Dibs.GetLocalSettings and Dibs.GetLocalSettings().language) or "AUTO" end,
               set = function(_, value)
-                if canEditDibsSettings() then
-                  getDBSettings().language = tostring(value)
-                  setStatus("Language preference saved; reload to refresh text.")
-                else
-                  setStatus("Only the guild master or an officer may change Dibs settings.")
-                end
+                if Dibs.GetLocalSettings then Dibs.GetLocalSettings().language = tostring(value) end
+                setStatus("Language preference saved; reload to refresh text.")
               end,
             },
             defaultAllocation = {

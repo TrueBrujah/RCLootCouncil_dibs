@@ -102,6 +102,24 @@ function Dibs.Sync.BuildManifest()
   return { version = Dibs.PROTOCOL_VERSION or 1, guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil, type = "MANIFEST", senderId = senderId, requests = requests }
 end
 
+local function traceEnabled()
+  return Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() == true
+end
+
+-- Observability only; never influences validation or acceptance. Shared by
+-- both the V1 module below and the active V2 transport in SyncV2.lua.
+function Dibs.Sync.TraceIncoming(prefix, channel, sender, messageType, sizeBytes)
+  if not traceEnabled() or not Dibs.DebugLogs or type(Dibs.DebugLogs.Add) ~= "function" then return end
+  Dibs.DebugLogs.Add("Sync", 4, string.format("RECV prefix=%s channel=%s sender=%s type=%s bytes=%d",
+    tostring(prefix), tostring(channel), tostring(sender), tostring(messageType or "?"), tonumber(sizeBytes) or 0))
+end
+
+function Dibs.Sync.TraceOutgoing(channel, target, messageType)
+  if not traceEnabled() or not Dibs.DebugLogs or type(Dibs.DebugLogs.Add) ~= "function" then return end
+  Dibs.DebugLogs.Add("Sync", 4, string.format("SEND channel=%s target=%s type=%s",
+    tostring(channel or "RAID"), tostring(target or "-"), tostring(messageType)))
+end
+
 ---@param message DibsSyncEnvelope Sync envelope; live loot fields are rejected.
 ---@param channel string|nil WoW addon channel, default `RAID`.
 ---@param target string|nil Whisper target when channel is `WHISPER`.
@@ -110,6 +128,7 @@ function Dibs.Sync.Send(message, channel, target)
   if type(message) ~= "table" or not MESSAGE_TYPES[message.type] or Dibs.Sync.ContainsForbiddenLiveLootData(message) then return false end
   if not message.version then message.version = Dibs.PROTOCOL_VERSION or 1 end
   if not message.guildKey and Dibs.GetGuildKey then message.guildKey = Dibs.GetGuildKey() end
+  Dibs.Sync.TraceOutgoing(channel, target, message.type)
   if Dibs.Ace3 and Dibs.Ace3.SendComm and Dibs.Ace3.SendComm("DIBS", message, channel or "RAID", target) then
     return true
   end
@@ -217,6 +236,7 @@ function Dibs.Sync.OnAddonMessage(prefix, payload, channel, sender)
   if Dibs.Ace3 and Dibs.Ace3.Deserialize then
     local message = Dibs.Ace3.Deserialize(payload)
     if type(message) == "table" then
+      Dibs.Sync.TraceIncoming(prefix, channel, sender, message.type, #payload)
       local result = Dibs.Sync.Receive(message, sender)
       if type(result) == "table" then Dibs.Sync.Send(result, "WHISPER", sender) end
       return result
@@ -224,6 +244,7 @@ function Dibs.Sync.OnAddonMessage(prefix, payload, channel, sender)
   end
   local messageType, requestId, revision = payload:match("^DIBS1:([^:]+):?([^:]*):?([^:]*)$")
   if not MESSAGE_TYPES[messageType] then return false end
+  Dibs.Sync.TraceIncoming(prefix, channel, sender, messageType, #payload)
   return Dibs.Sync.Receive({ type = messageType, requestId = requestId ~= "" and requestId or nil, revision = tonumber(revision) }, sender)
 end
 

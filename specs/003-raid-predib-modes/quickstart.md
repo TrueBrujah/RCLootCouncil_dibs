@@ -28,7 +28,7 @@ git diff --check
 
 Expected outcome: AceComm/AceSerializer is used when provided through `LibStub`; the standalone compact transport still works without Ace3; AceEvent/AceTimer covers prompt, roster, and retry dispatch; AceConfig registers the existing Dibs settings table; and Dibs SavedVariables retain their versioned layout without AceDB.
 
-Automated evidence recorded 2026-09-05: focused Ace3 migration validation passed 13 tests in 6 files. Full Fengari validation passed 76 tests in 31 files, and `git diff --check` passed. Retail validation remains pending.
+Automated evidence recorded 2026-09-22: the complete Fengari suite passed 588 tests in 133 files with 0 failures. Focused Automatic Dibs and UI validation passed 44 tests in 4 files, and `git diff --check` passed. Retail validation remains pending for the scenarios tracked in T050 and T060.
 
 ## Scenario A: Wild Open and Encounter Modes
 

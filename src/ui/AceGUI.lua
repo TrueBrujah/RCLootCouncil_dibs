@@ -991,9 +991,9 @@ end
 
 function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, options)
   options = options or {}
-  local scrolling = Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
+  local scrolling = not options.noScrolling and Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
   if scrolling then return scrolling end
-  local scroll = parent and parent.type == "ScrollFrame" and parent or Adapter.AddScrollableList(shell, parent, height)
+  local scroll = options.noScrolling and parent or (parent and parent.type == "ScrollFrame" and parent or Adapter.AddScrollableList(shell, parent, height))
   if not scroll then return nil end
   local definitions = columns or {}
   local desiredWidth = 0

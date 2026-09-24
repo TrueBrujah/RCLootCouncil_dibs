@@ -79,11 +79,10 @@ local function normalizeSubCategoryKey(value)
 end
 
 local function getSubCategorySettings()
-  local db = Dibs.GetDB and Dibs.GetDB() or {}
-  db.settings = db.settings or {}
-  db.settings.ejKnownSubCategories = db.settings.ejKnownSubCategories or {}
-  db.settings.ejBlockedSubCategories = db.settings.ejBlockedSubCategories or {}
-  return db.settings.ejKnownSubCategories, db.settings.ejBlockedSubCategories
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
+  settings.ejKnownSubCategories = settings.ejKnownSubCategories or {}
+  settings.ejBlockedSubCategories = settings.ejBlockedSubCategories or {}
+  return settings.ejKnownSubCategories, settings.ejBlockedSubCategories
 end
 
 local function canModifyDibsSettings(actor)

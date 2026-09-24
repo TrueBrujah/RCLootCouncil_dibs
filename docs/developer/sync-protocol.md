@@ -1,6 +1,17 @@
 # Synchronization protocol
 
-`Dibs.Sync` uses addon prefix `DIBS`, protocol version `Dibs.PROTOCOL_VERSION`, and guild-scoped envelopes. AceComm/AceSerializer is preferred; the fallback compact payload is `DIBS1:<TYPE>[:<requestId>:<revision>]`. The legacy request path and the V2 canonical-ledger path are separate: compact or legacy traffic never claims a successful canonical commit.
+`Dibs.Sync` uses addon prefix `DIBS`, protocol version `Dibs.PROTOCOL_VERSION`, addon version `Dibs.VERSION`, and guild-scoped envelopes. AceComm/AceSerializer is preferred; the fallback compact payload is `DIBS1:<TYPE>[:<requestId>:<revision>]`. The legacy request path and the V2 canonical-ledger path are separate: compact or legacy traffic never claims a successful canonical commit.
+
+## Addon version compatibility
+
+V2 envelopes include `addonVersion`. Clients are compatible only when their
+semantic-version `major.minor` family matches: `0.6.2`, `0.6.4`, and
+`0.6.5` are compatible with one another. A different family, such as
+`0.7.x`, is rejected with `ADDON_UPDATE_REQUIRED` before any sync payload is
+applied. The last verified mismatch is retained for Officer UI and the debug
+report. A legacy peer that does not yet send `addonVersion` remains observable
+as unknown so an upgrade can be planned without treating an unverified value
+as a compatible claim.
 
 ## Message types
 

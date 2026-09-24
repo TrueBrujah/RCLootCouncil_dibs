@@ -10,6 +10,7 @@ local Dibs = _G.Dibs
 Dibs.HealthUI = Dibs.HealthUI or {}
 
 local HealthUI = Dibs.HealthUI
+HealthUI.ANOMALY_EXPORT_PREFIX = "DIBS-HEALTH-1|"
 
 local function isAdmin()
   local role = Dibs.Permissions and Dibs.Permissions.GetGuildRole
@@ -130,6 +131,48 @@ function HealthUI.Evaluate(options)
     report.status = "DEGRADED"
   end
   return report
+end
+
+function HealthUI.ScanAnomalies(options)
+  options = type(options) == "table" and options or {}
+  local allowed = isAdmin()
+  if not allowed and options.allowPlayer ~= true then return { status = "DENIED", anomalies = {} } end
+  local db = safeCall(Dibs.GetDB) or {}
+  local seasons = db.seasons or {}
+  local anomalies = {}
+  for id, transaction in pairs(db.ledger and db.ledger.transactions or {}) do
+    if type(transaction) == "table" and transaction.seasonId and not seasons[transaction.seasonId] then
+      anomalies[#anomalies + 1] = { id = "ledger-season-" .. tostring(id), category = "INVALID_SEASON_REFERENCE", recordId = tostring(id), seasonId = transaction.seasonId, action = "REVIEW_REQUIRED" }
+    end
+  end
+  for index, acquisition in ipairs(db.preDibs and db.preDibs.acquisitions or {}) do
+    if type(acquisition) ~= "table" or not acquisition.acquisitionId then
+      anomalies[#anomalies + 1] = { id = "vault-identity-" .. tostring(index), category = "INCOMPLETE_ACQUISITION", recordId = tostring(index), action = "REVIEW_REQUIRED" }
+    end
+  end
+  table.sort(anomalies, function(a, b) return a.id < b.id end)
+  return { status = #anomalies == 0 and "HEALTHY" or "REVIEW_REQUIRED", anomalies = anomalies, count = #anomalies }
+end
+
+function HealthUI.BuildCorrectionPreview(anomalyId, options)
+  local result = HealthUI.ScanAnomalies(options)
+  if result.status == "DENIED" then return result end
+  for _, anomaly in ipairs(result.anomalies) do
+    if anomaly.id == anomalyId then
+      return { status = "PREVIEW", anomaly = anomaly, backupRequired = true, mutation = "NONE", reason = "Append-only data requires an explicit Officer decision before correction." }
+    end
+  end
+  return { status = "NOT_FOUND", anomalyId = anomalyId }
+end
+
+function HealthUI.ExportAnomalies(options)
+  local report = HealthUI.ScanAnomalies(options)
+  if report.status == "DENIED" then return nil, "GUILD_ADMIN_REQUIRED" end
+  local encoder = Dibs.ImportExport and Dibs.ImportExport.Encode
+  if type(encoder) ~= "function" then return nil, "ENCODER_UNAVAILABLE" end
+  local encoded, reason = encoder({ format = "DIBS_DATA_HEALTH", version = 1, createdAt = time(), anomalies = report.anomalies })
+  if not encoded then return nil, reason end
+  return HealthUI.ANOMALY_EXPORT_PREFIX .. encoded:sub(#Dibs.ImportExport.PACKAGE_PREFIX + 1), report
 end
 
 HealthUI.GetReport = HealthUI.Evaluate

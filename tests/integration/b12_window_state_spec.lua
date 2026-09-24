@@ -30,7 +30,7 @@ describe("B12a window state", function()
     parent.GetHeight = function() return 1080 end
     local frame = _G.CreateFrame("Frame", nil, parent)
     frame._point = { "BOTTOMLEFT", parent, "BOTTOMLEFT", -2000, 2000 }
-    frame.GetPoint = function(self) return unpack(self._point) end
+    frame.GetPoint = function(self) return self._point[1], self._point[2], self._point[3], self._point[4], self._point[5] end
     frame.ClearAllPoints = function(self) self._cleared = true end
     frame.SetPoint = function(self, ...) self._point = { ... } end
     frame.GetLeft = function() return -2000 end

@@ -72,16 +72,44 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.6.4-dev"
+Dibs.VERSION = "0.6.5"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
 Dibs.SAVED_VARIABLE_NAME = "RCLootCouncil_dibsDB"
 
 _G.RCLootCouncil_dibsLocalDB = _G.RCLootCouncil_dibsLocalDB or {}
+local deepcopy
+local function copyLocalValue(value, seen)
+  if type(value) ~= "table" then return value end
+  seen = seen or {}
+  if seen[value] then return seen[value] end
+  local result = {}
+  seen[value] = result
+  for key, item in pairs(value) do result[copyLocalValue(key, seen)] = copyLocalValue(item, seen) end
+  return result
+end
+
 function Dibs.GetLocalDB()
   _G.RCLootCouncil_dibsLocalDB = _G.RCLootCouncil_dibsLocalDB or {}
-  return _G.RCLootCouncil_dibsLocalDB
+  local localDB = _G.RCLootCouncil_dibsLocalDB
+  local legacy = Dibs.db and Dibs.db.settings
+  local settings = localDB.settings
+  if type(settings) ~= "table" then settings = {}; localDB.settings = settings end
+  if type(legacy) == "table" then
+    for _, key in ipairs({ "language", "debugLevels", "developerModeEnabled", "ejKnownSubCategories", "ejBlockedSubCategories" }) do
+      if settings[key] == nil and legacy[key] ~= nil then settings[key] = copyLocalValue(legacy[key]) end
+      legacy[key] = nil
+    end
+  end
+  if settings.language == nil then settings.language = "AUTO" end
+  if type(settings.debugLevels) ~= "table" then settings.debugLevels = { all = 1 } end
+  if settings.developerModeEnabled == nil then settings.developerModeEnabled = false end
+  return localDB
+end
+
+function Dibs.GetLocalSettings()
+  return Dibs.GetLocalDB().settings
 end
 
 if Dibs ~= RCLootCouncil_dibs then
@@ -89,7 +117,7 @@ if Dibs ~= RCLootCouncil_dibs then
   _G.RCLootCouncil_dibs = Dibs
 end
 
-local function deepcopy(value, seen)
+deepcopy = function(value, seen)
   if type(value) ~= "table" then
     return value
   end
@@ -241,8 +269,6 @@ local defaultDB = {
     v2 = { schema = 1, protocolState = "LEGACY_LOCAL", requestIndex = {}, tombstones = {}, replay = {}, peers = {} },
   },
   settings = {
-    language = "AUTO",
-    debugLevels = { all = 1 },
     defaultAllocation = 1,
     officerMaxRankIndex = 1,
     officerRankIndices = {},
@@ -252,7 +278,6 @@ local defaultDB = {
     preDibOfficerAnnouncementChannel = "OFFICER",
     preDibAnnouncementTemplate = "[Dibs] %player requested %item (%difficulty) - %date %time",
     raidReminderTemplate = "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]",
-    developerModeEnabled = false,
     defaultSyncInterval = 5,
     raidEntryDibPromptsEnabled = false,
     raidReminderMessage = "[Dibs] Review your eligible Pre-Dibs before the encounter.",
@@ -1117,7 +1142,7 @@ function Dibs.Message(text)
 end
 
 function Dibs.DebugEnabled(module, level)
-  local settings = Dibs.GetDB and Dibs.GetDB().settings or {}
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
   local levels = settings.debugLevels or { all = 1 }
   local threshold = tonumber(levels[module])
   if threshold == nil then threshold = tonumber(levels.all) or 1 end
@@ -1131,14 +1156,14 @@ function Dibs.SetDebugLevel(module, level, actor)
   end
   module = string.lower(tostring(module or "all"))
   level = math.max(0, math.min(5, tonumber(level) or 0))
-  local settings = Dibs.GetDB().settings
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
   settings.debugLevels = settings.debugLevels or {}
   settings.debugLevels[module] = level
   return level, nil
 end
 
 function Dibs.GetDebugLevels()
-  return Dibs.GetDB().settings.debugLevels or { all = 1 }
+  return (Dibs.GetLocalSettings and Dibs.GetLocalSettings().debugLevels) or { all = 1 }
 end
 
 function Dibs.BuildDebugReport()
@@ -1158,6 +1183,9 @@ function Dibs.BuildDebugReport()
   local vote = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetVotingIntegrationStatus and Dibs.RCLootCouncil.GetVotingIntegrationStatus() or {}
   local projection = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetConfigProjectionStatus and Dibs.RCLootCouncil.GetConfigProjectionStatus() or {}
   local projectionDefault = projection.default or {}
+  local syncStatus = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
+  local mismatch = syncStatus.lastProtocolMismatch
+  local addonMismatch = syncStatus.lastAddonVersionMismatch
   local additionalCount = 0
   for _ in pairs(projection.additional or {}) do additionalCount = additionalCount + 1 end
   local lines = {
@@ -1172,6 +1200,9 @@ function Dibs.BuildDebugReport()
     "Config projection: addon=" .. tostring(projection.addonFound == true) .. " profiles=" .. tostring(projection.profileCount or 0) .. " defaultButtons=" .. tostring(projectionDefault.activeButtons or "none") .. " dibButton=" .. tostring(projectionDefault.buttonDibIndex or "none") .. " dibResponse=" .. tostring(projectionDefault.responseDibIndex or "none") .. " additionalSets=" .. tostring(additionalCount),
     "Voting frame: module=" .. tostring(vote.moduleFound) .. " AddColumn=" .. tostring(vote.addColumn) .. " scrollCols=" .. tostring(vote.scrollColumns) .. " count=" .. tostring(vote.scrollColumnCount) .. " hasDibs=" .. tostring(vote.scrollHasDibs) .. " renderedDibs=" .. tostring(vote.renderedHasDibs) .. " DibsColumn=" .. tostring(vote.dibsColumnInstalled),
     "Season: " .. tostring(Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or "none"),
+    "Synchronization: governance=" .. tostring(syncStatus.governanceAdopted == true) .. " policy=" .. tostring(syncStatus.operationalPolicyAdopted == true) .. " seasonCatalogRevision=" .. tostring(syncStatus.seasonCatalogRevision or 0) .. " pendingAwards=" .. tostring(syncStatus.pendingAwardProposals or 0),
+    "Protocol mismatch: " .. (mismatch and ("sender=" .. tostring(mismatch.sender) .. " local=" .. tostring(mismatch.localMajor) .. " remote=" .. tostring(mismatch.remoteMajor)) or "none"),
+    "Addon version mismatch: " .. (addonMismatch and ("sender=" .. tostring(addonMismatch.sender) .. " local=" .. tostring(addonMismatch.localVersion) .. " remote=" .. tostring(addonMismatch.remoteVersion) .. " reason=" .. tostring(addonMismatch.reasonCode)) or "none"),
     "Raid Dibs: " .. (clubId and ("available clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId)) or "unavailable"),
     "Debug levels: all=" .. tostring(levels.all or 1) .. " announce=" .. tostring(levels.announce or "inherit") .. " sync=" .. tostring(levels.sync or "inherit") .. " ui=" .. tostring(levels.ui or "inherit") .. " encounter_journal=" .. tostring(levels.encounter_journal or "inherit"),
   }

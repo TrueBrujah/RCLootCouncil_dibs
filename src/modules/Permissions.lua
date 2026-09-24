@@ -81,6 +81,17 @@ local ADMIN_ACTIONS = {
   ["eligibility.exception.create"] = true,
 }
 
+local GM_ONLY_ACTIONS = {
+  ["settings.modify"] = true,
+  ["installation.mode.set"] = true,
+  ["admin.list"] = true,
+  ["admin.appoint"] = true,
+  ["admin.revoke"] = true,
+  ["backup.restore"] = true,
+  ["data.import"] = true,
+  ["profile.manage"] = true,
+}
+
 local function sameIdentity(first, second)
   return first ~= nil and second ~= nil and string.lower(tostring(first)) == string.lower(tostring(second))
 end
@@ -245,6 +256,12 @@ function Dibs.Permissions.Evaluate(actionId, actor)
   if ADMIN_ACTIONS[actionId] then
     if isLocal and Dibs.Permissions.IsGM() then
       return { allowed = true, authority = "guild", availability = "local", actionId = actionId, actorId = actorId, role = "gm", reasonCode = "GUILD_MASTER", diagnostic = text("AUTHORITY_STANDALONE_GUILD_MASTER", "Authorized as guild master.") }
+    end
+    if GM_ONLY_ACTIONS[actionId] then
+      if isLocal and Dibs.Permissions.IsOfficer() then
+        return { allowed = false, authority = "guild", availability = "local", actionId = actionId, actorId = actorId, role = "officer", reasonCode = "GUILD_MASTER_REQUIRED", diagnostic = text("AUTHORITY_GUILD_MASTER_REQUIRED", "Only the guild master may change this configuration.") }
+      end
+      return { allowed = false, authority = "guild", availability = "local", actionId = actionId, actorId = actorId, role = "player", reasonCode = "GUILD_ADMIN_REQUIRED", diagnostic = text("AUTHORITY_STANDALONE_NOT_AUTHORIZED", "Only the guild master or an officer may perform this Dibs action.") }
     end
     if isLocal and Dibs.Permissions.IsOfficer() then
       return { allowed = true, authority = "guild", availability = "local", actionId = actionId, actorId = actorId, role = "officer", reasonCode = "GUILD_OFFICER", diagnostic = text("AUTHORITY_GUILD_OFFICER", "Authorized as guild officer.") }

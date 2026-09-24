@@ -82,11 +82,11 @@ end
 ---@param channel string|nil WoW chat channel.
 ---@param target string|nil Whisper target.
 ---@return boolean sent
-function Adapter.SendComm(prefix, message, channel, target)
+function Adapter.SendComm(prefix, message, channel, target, priority)
   local comm = Adapter.libs.comm
   local payload = Adapter.Serialize(message)
   if not comm or not payload or type(aceSendCommMessage) ~= "function" then return false end
-  local ok, sent = pcall(aceSendCommMessage, Adapter, prefix, payload, channel, target)
+  local ok, sent = pcall(aceSendCommMessage, Adapter, prefix, payload, channel, target, priority or "BULK")
   return ok and sent ~= false
 end
 

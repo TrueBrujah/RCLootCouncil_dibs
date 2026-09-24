@@ -16,12 +16,11 @@ local Dibs = _G.Dibs
 Dibs.DeveloperMode = Dibs.DeveloperMode or {}
 
 local function ensureDB()
-  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
-  db.settings = db.settings or {}
-  if db.settings.developerModeEnabled == nil then
-    db.settings.developerModeEnabled = false
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
+  if settings.developerModeEnabled == nil then
+    settings.developerModeEnabled = false
   end
-  return db
+  return settings
 end
 
 local function trim(value)
@@ -33,14 +32,14 @@ local function devMessage(text)
 end
 
 function Dibs.DeveloperMode.IsEnabled()
-  local db = ensureDB()
-  return db.settings.developerModeEnabled == true
+  local settings = ensureDB()
+  return settings.developerModeEnabled == true
 end
 
 function Dibs.DeveloperMode.SetEnabled(enabled)
-  local db = ensureDB()
-  db.settings.developerModeEnabled = enabled == true
-  return db.settings.developerModeEnabled
+  local settings = ensureDB()
+  settings.developerModeEnabled = enabled == true
+  return settings.developerModeEnabled
 end
 
 function Dibs.DeveloperMode.GetStatusText()

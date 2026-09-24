@@ -18,7 +18,7 @@ local Governance = Dibs.Governance
 local SCHEMA = 1
 local GENESIS_HASH = "GENESIS"
 local AUTHORITY_SCHEMA = 1
-local MAX_AUTHORITY_AUDIT, MAX_PROPOSALS, MAX_ORPHANS = 100, 100, 100
+local MAX_AUTHORITY_AUDIT, MAX_PROPOSALS, MAX_ORPHANS, MAX_RELAY_ATTEMPTS = 100, 100, 100, 5
 
 local function rejectSandbox()
   if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
@@ -76,6 +76,16 @@ local function authorityHash(kind, value)
   local text, total = canonicalText({ kind = kind, value = value }), 0
   for index = 1, #text do total = (total * 131 + text:byte(index)) % 2147483647 end
   return string.format("A5-%08x", total)
+end
+
+local function proposalContent(proposal)
+  return {
+    schema = proposal.schema, recordClass = proposal.recordClass, proposalId = proposal.proposalId,
+    status = proposal.status, guildKey = proposal.guildKey, playerSnapshot = proposal.playerSnapshot,
+    itemID = proposal.itemID, itemLink = proposal.itemLink, awardRef = proposal.awardRef,
+    evidenceId = proposal.evidenceId, source = proposal.source, context = proposal.context,
+    actorSnapshot = proposal.actorSnapshot, createdAt = proposal.createdAt, authorityState = proposal.authorityState,
+  }
 end
 
 local function trim(value)
@@ -406,6 +416,37 @@ function Governance.EnableV2(actor, writers)
   return Governance.Change(actor, { reason = "B06_V2_ENFORCED", future = { cutover = { schema = AUTHORITY_SCHEMA, state = "V2_ENFORCED", writers = copy(writers) } } })
 end
 
+function Governance.ActivateV2(actor, writers)
+  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+  if not baseline then
+    if not (Dibs.LegacyBaseline and Dibs.LegacyBaseline.FinalizeBaseline) then return false, "BASELINE_REQUIRED" end
+    local approved, approvalReason = Dibs.LegacyBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = true })
+    if not approved then return false, approvalReason or "BASELINE_REQUIRED" end
+    baseline = approved
+  end
+  local authority = Governance.GetAuthorityState()
+  if authority.state == "LEGACY_LOCAL" then
+    local current, currentReason = currentGMSnapshot(actor)
+    if not current then return false, currentReason or "CURRENT_GUILD_MASTER_REQUIRED" end
+    local prepared, prepareReason = Governance.Change(actor, {
+      reason = "B06_V2_PREPARE",
+      future = { authority = {
+        schema = AUTHORITY_SCHEMA, state = "ACTIVE", coordinator = { memberKey = current.memberKey, displayName = current.displayName },
+        ledgerEpoch = 1, protocolState = "CUTOVER_PREPARED",
+        transition = { kind = "INITIAL", baselineHash = baseline.legacyBaselineHash },
+      } },
+    })
+    if not prepared then return false, prepareReason end
+    authority = Governance.GetAuthorityState()
+  end
+  if authority.state ~= "ACTIVE" then return false, "AUTHORITY_ACTIVE_REQUIRED" end
+  if Governance.IsV2Enforced() then return true, "V2_ALREADY_ENFORCED" end
+  local selectedWriters = type(writers) == "table" and writers or { authority.coordinator and authority.coordinator.displayName }
+  local enabled, enableReason = Governance.EnableV2(actor, selectedWriters)
+  if not enabled then return false, enableReason end
+  return true, "V2_ENFORCED"
+end
+
 function Governance.GetDibUseGate()
   local authority = authorityState(ensureState())
   if authority.state == "COORDINATOR_UNAVAILABLE" or authority.state == "RECOVERY_PENDING" or authority.state == "HANDOFF_CLOSING" then
@@ -470,11 +511,99 @@ function Governance.RecordAwardProposal(actor, details)
     guildKey = Dibs.GetGuildKey(), playerSnapshot = target, itemID = projection.itemID, itemLink = projection.itemLink, awardRef = projection.awardRef,
     evidenceId = projection.evidenceId, source = projection.source, context = projection.context, actorSnapshot = actorSnapshot,
     createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(), authorityState = authority.state }
-  proposal.contentHash = authorityHash("PROPOSAL", proposal)
+  proposal.contentHash = authorityHash("PROPOSAL", proposalContent(proposal))
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
   authority.proposals[proposalId] = proposal
   boundedInsert(authority.auditLog, { action = "AWARD_PROPOSAL", proposalId = proposalId, timestamp = proposal.createdAt }, MAX_AUTHORITY_AUDIT)
+  -- Relay to the current coordinator so a non-coordinator's award is not
+  -- silently stranded (see specs/017-guild-sync-reliability). Best-effort:
+  -- failure here leaves the proposal PENDING_RECONCILIATION locally and is
+  -- retried by the caller/heartbeat, never blocks local recording.
+  if authority.coordinator and authority.coordinator.memberKey ~= actorSnapshot.memberKey then
+    proposal.relayStatus, proposal.relayAttempts, proposal.coordinatorMemberKey = "RELAY_PENDING", 0, authority.coordinator.memberKey
+    if Dibs.Sync and Dibs.Sync.RelayAwardProposal then Dibs.Sync.RelayAwardProposal(copy(proposal)) end
+  end
   return copy(proposal), "PENDING_RECONCILIATION"
+end
+
+function Governance.GetRelayPendingProposals()
+  local values = {}
+  for _, proposal in pairs(authorityState(ensureState()).proposals) do
+    if proposal.relayStatus == "RELAY_PENDING" then values[#values + 1] = copy(proposal) end
+  end
+  table.sort(values, function(a, b) return a.proposalId < b.proposalId end)
+  return values
+end
+
+function Governance.NoteProposalRelayAttempt(proposalId)
+  local authority = authorityState(ensureState())
+  local proposal = authority.proposals[proposalId]
+  if not proposal or proposal.relayStatus ~= "RELAY_PENDING" then return nil, "PROPOSAL_NOT_PENDING" end
+  proposal.relayAttempts = (tonumber(proposal.relayAttempts) or 0) + 1
+  if proposal.relayAttempts >= MAX_RELAY_ATTEMPTS then proposal.relayStatus = "RELAY_ATTEMPTS_EXHAUSTED" end
+  return proposal.relayAttempts, proposal.relayStatus
+end
+
+function Governance.AckProposalRelay(proposalId)
+  local authority = authorityState(ensureState())
+  local proposal = authority.proposals[proposalId]
+  if not proposal then return false, "PROPOSAL_NOT_FOUND" end
+  proposal.relayStatus = "RELAY_ACKED"
+  return true
+end
+
+function Governance.MarkAwardProposalCommitted(proposalId, commit)
+  local proposal = authorityState(ensureState()).proposals[proposalId]
+  if not proposal then return false, "PROPOSAL_NOT_FOUND" end
+  proposal.status, proposal.relayStatus = "COMMITTED", "COMMITTED"
+  proposal.commitHash = type(commit) == "table" and commit.commitHash or proposal.commitHash
+  proposal.committedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  return true
+end
+
+---@param proposal table Award proposal payload received from a non-coordinator officer over Sync.
+---@param senderDisplayName string|nil Sender's display name, for audit only.
+---@return boolean accepted Whether the coordinator accepted (or already held) the proposal.
+---@return string reasonCode Outcome reason.
+function Governance.ReceiveRelayedProposal(proposal, senderDisplayName)
+  if type(proposal) ~= "table" or type(proposal.proposalId) ~= "string" or proposal.proposalId == "" then
+    return false, "INVALID_PROPOSAL"
+  end
+  if proposal.schema ~= AUTHORITY_SCHEMA or proposal.recordClass ~= "AWARD_PROPOSAL" or proposal.status ~= "PENDING_RECONCILIATION"
+    or proposal.guildKey ~= Dibs.GetGuildKey() or type(proposal.contentHash) ~= "string"
+    or proposal.contentHash ~= authorityHash("PROPOSAL", proposalContent(proposal)) then
+    return false, "PROPOSAL_HASH_MISMATCH"
+  end
+  if not Dibs.Identity or type(Dibs.Identity.ResolveRosterMember) ~= "function" then return false, "ROSTER_UNAVAILABLE" end
+  local sender = Dibs.Identity.ResolveRosterMember(senderDisplayName)
+  if sender.status ~= "RESOLVED" then return false, sender.status end
+  if sender.role ~= "gm" and sender.role ~= "officer" then return false, "PROPOSAL_SENDER_AUTHORITY_REQUIRED" end
+  if type(proposal.actorSnapshot) ~= "table" or sender.memberKey ~= proposal.actorSnapshot.memberKey then
+    return false, "PROPOSAL_SENDER_MISMATCH"
+  end
+  local authority = authorityState(ensureState())
+  local localSnapshot, localReason = snapshot(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
+  if not localSnapshot then return false, localReason end
+  if not authority.coordinator or authority.coordinator.memberKey ~= localSnapshot.memberKey then
+    return false, "CURRENT_COORDINATOR_REQUIRED"
+  end
+  if authority.proposals[proposal.proposalId] then return true, "IDEMPOTENT_PROPOSAL" end
+  if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return false, "PROPOSAL_LIMIT_EXCEEDED" end
+  local stored = copy(proposal)
+  stored.status, stored.relayStatus = "PENDING_RECONCILIATION", nil
+  stored.receivedFrom, stored.receivedAt = trim(senderDisplayName), (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  authority.proposals[proposal.proposalId] = stored
+  boundedInsert(authority.auditLog, { action = "AWARD_PROPOSAL_RELAYED", proposalId = proposal.proposalId, timestamp = stored.receivedAt }, MAX_AUTHORITY_AUDIT)
+  return true, "PROPOSAL_ACCEPTED"
+end
+
+function Governance.GetPendingCoordinatorProposals()
+  local values = {}
+  for _, proposal in pairs(authorityState(ensureState()).proposals) do
+    if proposal.status == "PENDING_RECONCILIATION" then values[#values + 1] = copy(proposal) end
+  end
+  table.sort(values, function(a, b) return a.proposalId < b.proposalId end)
+  return values
 end
 
 function Governance.GetAwardProposals()

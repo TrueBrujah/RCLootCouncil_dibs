@@ -84,7 +84,7 @@ describe("SavedVariables validation and recovery", function()
     assert_equal("RECOVERABLE_INVALID", dibs.GetPersistenceStatus().state)
     assert_true(hasQuarantine(root, "guilds[realm:testguild].settings", "not-a-table"))
     assert_equal("season-legacy", db.seasons["season-legacy"].id)
-    assert_not_nil(db.settings.debugLevels)
+    assert_not_nil(dibs.GetLocalSettings().debugLevels)
   end)
 
   it("quarantines malformed ledger data rather than silently dropping the original", function()

@@ -1,4 +1,4 @@
-# RCLootCouncil_dibs 0.6.4-dev
+# RCLootCouncil_dibs 0.6.5
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -11,11 +11,11 @@ guild Dibs ledger, reservations, permissions, and audit history.
 
 ## Downloads
 
-- [Stable release v0.6.2](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.6.2)
+- [Stable release v0.6.5](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.6.5)
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
-Each release includes a WoW-ready ZIP and a SHA-256 checksum. The 0.6.2 build
-is the current stable publication; 0.6.4-dev is the current development build.
+Each release includes a WoW-ready ZIP and a SHA-256 checksum. The 0.6.5 build
+is the current stable publication.
 Live Retail validation remains an operational check documented in the [B12
 Retail evidence record](docs/audits/B12_Retail_Validation_Evidence.md). Two-client
 validation is conditional and is not required for the B12 presentation-only scope.
@@ -69,7 +69,7 @@ delta, request reference, and canonical event/reference.
 
 ### Installation
 
-1. Download the stable 0.6.2 ZIP, or the current 0.6.4-dev artifact when testing the feature.
+1. Download the stable 0.6.5 ZIP.
 2. Extract it into `World of Warcraft/_retail_/Interface/AddOns/`.
 3. Confirm that the extracted folder is named `RCLootCouncil_dibs` and contains
    `RCLootCouncil_dibs.toc` directly inside it.
