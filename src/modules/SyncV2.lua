@@ -13,7 +13,7 @@ local Sync = Dibs.Sync
 local MAJOR, MINOR = 2, 0
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX, MAX_PROTOCOL_MISMATCHES = 256, 8, 16, 8192, 500, 10
 local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 30, 60, 3
-local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
+local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
@@ -27,6 +27,7 @@ local function ensure()
   state.v2 = state.v2 or { schema = 1, protocolState = "LEGACY_LOCAL", requestIndex = {}, tombstones = {}, replay = {}, peers = {} }
   state.v2.requestIndex = state.v2.requestIndex or {}; state.v2.tombstones = state.v2.tombstones or {}
   state.v2.replay = state.v2.replay or {}; state.v2.peers = state.v2.peers or {}
+  state.v2.transferAcks = state.v2.transferAcks or {}
   state.v2.vaultPending = state.v2.vaultPending or {}; state.v2.protocolMismatches = state.v2.protocolMismatches or {}
   state.v2.addonVersionMismatches = state.v2.addonVersionMismatches or {}
   Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.v2Transfers = Dibs.runtime.v2Transfers or {}
@@ -209,13 +210,15 @@ function Sync.FormatSyncProbeReport(probe)
   local report = probe and probe.report or probe
   if type(report) ~= "table" then return "No synchronization probe response." end
   local governance = report.governance or {}; local authority = report.authority or {}; local ledger = report.ledger or {}
+  local transferAck = probe and probe.transferAck
+  local suffix = transferAck and string.format(" baselineAck=%s/%s", tostring(transferAck.result), tostring(transferAck.reasonCode or "none")) or ""
   return string.format(
     "%s role=%s protocol=%s behind=%s reason=%s governance=%s/%s baseline=%s authority=%s coordinator=%s policy=%s catalog=%s ledger=%s/%s epoch=%s",
     tostring(report.displayName or "unknown"), tostring(report.role or "unknown"), tostring(report.protocolState or "unknown"),
     tostring(report.syncBehind == true), tostring(report.syncReason or "none"), tostring(governance.revision or 0),
     tostring(governance.hash or "none"), tostring(report.baselineHash or "none"), tostring(authority.state or "unknown"),
     tostring(authority.coordinatorName or authority.coordinatorMemberKey or "none"), tostring(report.operationalPolicyRevision or 0),
-    tostring(report.seasonCatalogRevision or 0), tostring(ledger.revision or 0), tostring(ledger.rootHash or "none"), tostring(ledger.epoch or "none"))
+    tostring(report.seasonCatalogRevision or 0), tostring(ledger.revision or 0), tostring(ledger.rootHash or "none"), tostring(ledger.epoch or "none")) .. suffix
 end
 
 function Sync.GetStatus()
@@ -621,6 +624,12 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   return Sync.Send({ type = "TRANSFER_END", transferId = transferId }, "WHISPER", target)
 end
 
+local function sendTransferAck(target, transfer, accepted, reason)
+  if not transfer or transfer.entityType ~= "LEGACY_BASELINE" then return end
+  Sync.Send({ type = "TRANSFER_ACK", transferId = transfer.transferId, entityType = transfer.entityType,
+    entityId = transfer.entityId, result = accepted and "APPLIED" or "REJECTED", reasonCode = reason }, "WHISPER", target)
+end
+
 -- B05a evidence transport: the receiving side stages this as non-canonical
 -- runtime evidence. It never imports a ledger or finalizes a baseline itself.
 function Sync.SendLegacyRecoveryPackage(package, target)
@@ -760,6 +769,16 @@ function Sync.Receive(message, sender)
     peer.syncProbe = { requestId = message.requestId, receivedAt = time(), report = copy(message.report) }
     state.peers[resolved.memberKey] = peer
     return true, "SYNC_PROBE_ACCEPTED"
+  end
+  if message.type == "TRANSFER_ACK" then
+    if type(message.transferId) ~= "string" or message.entityType ~= "LEGACY_BASELINE"
+      or (message.result ~= "APPLIED" and message.result ~= "REJECTED") then
+      return false, "INVALID_TRANSFER_ACK"
+    end
+    peer.transferAck = { transferId = message.transferId, entityId = message.entityId,
+      result = message.result, reasonCode = message.reasonCode, receivedAt = time() }
+    state.peers[resolved.memberKey] = peer
+    return true, "TRANSFER_ACK_ACCEPTED"
   end
   if message.type == "HELLO" then
     if message.protocolState == "V2_ENFORCED" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
@@ -1118,7 +1137,15 @@ function Sync.OnAddonMessage(prefix, payload, channel, sender)
   Sync.TraceIncoming(prefix, channel, sender, message.type, #payload)
   local guildOnly = message.type == "HELLO" or message.type == "DIGEST" or message.type == "LEDGER_DIGEST" or message.type == "VAULT_DIGEST"
   if (guildOnly and channel ~= "GUILD") or (not guildOnly and channel ~= "WHISPER") then return false, "INVALID_TRANSPORT_CHANNEL" end
-  return Sync.Receive(message, sender)
+  local transfer = message.transferId and Dibs.runtime and Dibs.runtime.v2Transfers and Dibs.runtime.v2Transfers[message.transferId]
+  if message.type == "TRANSFER_BEGIN" and message.entityType == "LEGACY_BASELINE" then
+    transfer = { transferId = message.transferId, entityType = message.entityType, entityId = message.entityId }
+  end
+  local accepted, reason = Sync.Receive(message, sender)
+  if transfer and transfer.entityType == "LEGACY_BASELINE" and (message.type == "TRANSFER_BEGIN" or message.type == "TRANSFER_END") then
+    sendTransferAck(sender, transfer, accepted, reason)
+  end
+  return accepted, reason
 end
 function Sync.RegisterTransport()
   if not transportReady() then Sync.transportRegistered = false; status("SYNC_UNAVAILABLE"); return false end
