@@ -481,10 +481,12 @@ end
 function Sync.BuildGovernanceDigest()
   local record = Dibs.Governance and Dibs.Governance.GetCurrentRecord and Dibs.Governance.GetCurrentRecord()
   local state = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
   return {
     type = "DIGEST", entityType = "GOVERNANCE", entityId = tostring(state.revision or 0),
     revision = tonumber(state.revision) or 0, contentHash = state.hash or "GENESIS",
-    parentHash = record and record.parentHash or nil, protocolState = Sync.GetProtocolState(),
+    parentHash = record and record.parentHash or nil, baselineHash = baseline.legacyBaselineHash,
+    protocolState = Sync.GetProtocolState(),
   }
 end
 function Sync.BuildOperationalPolicyDigest()
@@ -855,6 +857,13 @@ function Sync.Receive(message, sender)
       return true, "GOVERNANCE_DETAIL_REQUESTED"
     end
     if tonumber(message.revision) == (tonumber(current.revision) or 0) and message.contentHash ~= current.hash then return false, "GOVERNANCE_CONFLICT" end
+    local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+    if message.baselineHash and baseline.legacyBaselineHash ~= message.baselineHash then
+      Sync.Send({ type = "DETAIL_FETCH", requests = { {
+        entityType = "LEGACY_BASELINE", entityId = message.baselineHash, revision = 1, contentHash = message.baselineHash,
+      } } }, "WHISPER", resolved.displayName)
+      return true, "LEGACY_BASELINE_REQUESTED"
+    end
     return true, "GOVERNANCE_CURRENT"
   end
   if message.type == "DIGEST" and message.entityType == "OPERATIONAL_POLICY" then
@@ -938,6 +947,11 @@ function Sync.Receive(message, sender)
             if not nextRecord then break end
             Sync.SendDetail("GOVERNANCE", tostring(nextRecord.governanceRevision), nextRecord.governanceRevision, nextRecord.contentHash, nextRecord, resolved.displayName)
           end
+        end
+      elseif requested.entityType == "LEGACY_BASELINE" and localRole() == "gm" then
+        local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+        if baseline and baseline.legacyBaselineHash and (not requested.contentHash or requested.contentHash == baseline.legacyBaselineHash) then
+          Sync.SendDetail("LEGACY_BASELINE", baseline.legacyBaselineHash, 1, baseline.legacyBaselineHash, baseline, resolved.displayName)
         end
       elseif requested.entityType == "OPERATIONAL_POLICY" and Dibs.OperationalPolicy then
         local allowed = Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(nil)
