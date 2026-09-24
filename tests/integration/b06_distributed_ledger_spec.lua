@@ -99,8 +99,9 @@ describe("B06 coordinator distributed ledger", function()
 
   it("requests a bounded batch when catching up multiple canonical commits", function()
     local coordinator = activateV2()
-    local saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
     local season = coordinator.GetCurrentSeasonId()
+    assert_not_nil(coordinator.Ledger.Grant("Player-Realm", 2, "B06 batch top-up", "test", season))
+    local saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
     for sequence = 1, 3 do
       local commit = coordinator.Ledger.CommitDibUse(nil, {
         transactionId = "b06-batch-" .. tostring(sequence), playerName = "Player-Realm",
@@ -108,9 +109,9 @@ describe("B06 coordinator distributed ledger", function()
       })
       assert_true(commit.accepted, tostring(commit.reasonCode))
     end
-    local follower = load("Officer-Realm", saved)
     local digest = coordinator.Sync.BuildLedgerDigest()
     local envelope = assert(coordinator.Sync.BuildEnvelope(digest))
+    local follower = load("Officer-Realm", saved)
     local accepted, reason = follower.Sync.Receive(envelope, "Coordinator-Realm")
     assert_true(accepted, tostring(reason))
     assert_equal("LEDGER_DETAIL_REQUESTED", reason)
@@ -122,8 +123,8 @@ describe("B06 coordinator distributed ledger", function()
     end
     assert_not_nil(request)
     assert_equal(3, #request.requests)
-    assert_equal("1:2", request.requests[1].entityId)
-    assert_equal("1:4", request.requests[3].entityId)
+    assert_equal("7:1", request.requests[1].entityId)
+    assert_equal("7:3", request.requests[3].entityId)
   end)
 
   it("serializes competing proposals against the coordinator's current balance and blocks local bypass", function()
