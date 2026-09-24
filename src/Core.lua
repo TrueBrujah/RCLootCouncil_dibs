@@ -1367,7 +1367,7 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs sync probe|report <player> | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs sync probe|report|repair <player> | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
