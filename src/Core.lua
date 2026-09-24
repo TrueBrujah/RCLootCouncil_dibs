@@ -1313,14 +1313,18 @@ function Dibs.HandleSlashCommand(msg)
 
   if action == "sync" then
     local mode, target = string.lower(args[2] or ""), args[3]
-    if (mode ~= "probe" and mode ~= "report") or not target then
-      Dibs.Message("Usage: /dibs sync probe|report <player>")
+    if (mode ~= "probe" and mode ~= "report" and mode ~= "repair") or not target then
+      Dibs.Message("Usage: /dibs sync probe|report|repair <player>")
       return
     end
     if mode == "probe" then
       local sent, reason = false, "SYNC_UNAVAILABLE"
       if Dibs.Sync and Dibs.Sync.ProbePeer then sent, reason = Dibs.Sync.ProbePeer(target) end
       Dibs.Message(sent and ("Sync probe sent to " .. tostring(target) .. ".") or ("Sync probe failed: " .. tostring(reason)))
+    elseif mode == "repair" then
+      local sent, reason = false, "SYNC_UNAVAILABLE"
+      if Dibs.Sync and Dibs.Sync.RepairPeer then sent, reason = Dibs.Sync.RepairPeer(target) end
+      Dibs.Message(sent and ("Sync baseline repair sent to " .. tostring(target) .. ".") or ("Sync repair failed: " .. tostring(reason)))
     else
       local probe = Dibs.Sync and Dibs.Sync.GetPeerSyncProbe and Dibs.Sync.GetPeerSyncProbe(target)
       local report = Dibs.Sync and Dibs.Sync.FormatSyncProbeReport and Dibs.Sync.FormatSyncProbeReport(probe) or "Synchronization probe unavailable."

@@ -193,6 +193,13 @@ function Sync.ProbePeer(target)
   if not snapshot or (localRole() ~= "gm" and localRole() ~= "officer") then return false, "OFFICER_REQUIRED" end
   return Sync.Send({ type = "SYNC_PROBE", requestId = Dibs.NewId("syncprobe") }, "WHISPER", target)
 end
+function Sync.RepairPeer(target)
+  if not target or target == "" then return false, "INVALID_WHISPER_TARGET" end
+  if localRole() ~= "gm" then return false, "GUILD_MASTER_REQUIRED" end
+  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+  if not baseline or not baseline.legacyBaselineHash then return false, "BASELINE_UNAVAILABLE" end
+  return Sync.SendDetail("LEGACY_BASELINE", baseline.legacyBaselineHash, 1, baseline.legacyBaselineHash, baseline, target)
+end
 function Sync.GetPeerSyncProbe(target)
   local resolved = member(target)
   local peer = resolved and ensure().peers[resolved.memberKey]
