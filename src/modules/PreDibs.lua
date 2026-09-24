@@ -361,6 +361,10 @@ local function announcePreDib(request)
   end
 end
 
+local function announceRequestIndex()
+  if Dibs.Sync and Dibs.Sync.AnnounceRequestIndex then Dibs.Sync.AnnounceRequestIndex() end
+end
+
 local function isRequestActive(request)
   return request.status ~= "fulfilled" and request.status ~= "cancelled" and request.status ~= "invalidated"
 end
@@ -538,6 +542,7 @@ function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId)
   }
 
   table.insert(Dibs.db.preDibs.requests, request)
+  announceRequestIndex()
   return request
 end
 
@@ -580,6 +585,7 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
       existing.revision = (tonumber(existing.revision) or 1) + 1
       existing.source = source or existing.source or "public"
       announcePreDib(existing)
+      announceRequestIndex()
     end
     return existing
   end
@@ -605,6 +611,7 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
 
   table.insert(Dibs.db.preDibs.requests, request)
   announcePreDib(request)
+  announceRequestIndex()
   return request
 end
 
@@ -670,6 +677,7 @@ function Dibs.PreDibs.UpdateStatus(requestId, status)
       elseif status == "cancelled" and request.cancelledAt == nil then
         request.cancelledAt = request.updatedAt
       end
+      announceRequestIndex()
       if Dibs.Notifications and Dibs.Notifications.Notify then
         local kind = status == "confirmed" and "PREDIB_CONFIRMED"
           or status == "cancelled" and "PREDIB_CANCELLED"
@@ -768,6 +776,7 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName)
       for key, value in pairs(incoming) do
         if key ~= "playerName" and key ~= "itemID" and key ~= "seasonId" and key ~= "modeAtCreation" and key ~= "createdAt" and key ~= "delivery" then existing[key] = value end
       end
+      announceRequestIndex()
       return existing
     end
   end
@@ -775,6 +784,7 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName)
   record.revision = revision
   record.delivery = { state = "PENDING" }
   table.insert(Dibs.db.preDibs.requests, record)
+  announceRequestIndex()
   return record
 end
 

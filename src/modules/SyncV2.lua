@@ -364,8 +364,15 @@ end
 function Sync.ClearSyncBehind()
   local state = ensure(); state.syncBehind, state.reason = false, nil; return status("SYNC_READY")
 end
-local function requestAwardCommit(target, epoch, sequence, contentHash)
-  return Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "AWARD_COMMIT", entityId = tostring(epoch) .. ":" .. tostring(sequence), revision = sequence, contentHash = contentHash } } }, "WHISPER", target)
+local function requestAwardCommitBatch(target, epoch, firstSequence, lastSequence)
+  local requests = {}
+  local finalSequence = math.min(tonumber(lastSequence) or firstSequence, firstSequence + 31)
+  for sequence = firstSequence, finalSequence do
+    requests[#requests + 1] = { entityType = "AWARD_COMMIT", entityId = tostring(epoch) .. ":" .. tostring(sequence), revision = sequence }
+  end
+  if #requests == 0 then return false, firstSequence - 1 end
+  local sent, reason = Sync.Send({ type = "DETAIL_FETCH", requests = requests }, "WHISPER", target)
+  return sent, sent and finalSequence or (firstSequence - 1), reason
 end
 local function rememberVaultRequests(requests, target)
   local state = ensure()
@@ -410,11 +417,17 @@ local function clearResolvedLedgerGap(sender)
   if tonumber(current.epoch) ~= tonumber(target.epoch) then return false end
   local localLast = tonumber(current.nextSeq or 1) - 1
   if localLast < tonumber(target.lastSeq) then
-    requestAwardCommit(sender, target.epoch, localLast + 1, target.rootHash)
+    local requestedThrough = tonumber(state.ledgerRequestedThrough) or 0
+    if localLast >= requestedThrough then
+      local sent, through = requestAwardCommitBatch(sender, target.epoch, localLast + 1, target.lastSeq)
+      if sent then state.ledgerRequestedThrough = through end
+    end
     return false
   end
   if localLast == tonumber(target.lastSeq) and current.rootHash == target.rootHash then
     state.ledgerTarget = nil
+    state.ledgerRequestedThrough = nil
+    Sync.AnnounceLedgerDigest()
     if state.syncBehind and state.reason == "LEDGER_GAP" then Sync.ClearSyncBehind() end
     return true
   end
@@ -504,6 +517,9 @@ function Sync.BuildRequestIndex()
 end
 function Sync.BuildManifest()
   return { type = "DIGEST", entityType = "PREDIB_INDEX", entityId = "current", revision = 1, contentHash = hash(Sync.BuildRequestIndex()), index = Sync.BuildRequestIndex(), protocolState = Sync.GetProtocolState() }
+end
+function Sync.AnnounceRequestIndex()
+  return Sync.Send(Sync.BuildManifest(), "GUILD")
 end
 function Sync.BuildLedgerDigest()
   if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
@@ -721,6 +737,12 @@ function Sync.AnnounceAwardCommit(commit)
   return Sync.Send({ type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = tostring(commit.ledgerEpoch), revision = commit.sequence,
     contentHash = commit.commitHash, ledgerEpoch = commit.ledgerEpoch, lastSeq = commit.sequence, rootHash = commit.commitHash }, "GUILD")
 end
+function Sync.AnnounceLedgerDigest()
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced())
+    or not authority or authority.state ~= "ACTIVE" then return false, "V2_AUTHORITY_UNAVAILABLE" end
+  return Sync.Send(Sync.BuildLedgerDigest(), "GUILD")
+end
 
 local function applyRequest(payload, transfer, sender)
   if type(payload) ~= "table" or payload.requestId ~= transfer.entityId or tonumber(payload.revision) ~= tonumber(transfer.revision) then return false, "ENTITY_IDENTITY_MISMATCH" end
@@ -901,14 +923,19 @@ function Sync.Receive(message, sender)
     end
     if not finiteInteger(message.ledgerEpoch) or not finiteInteger(message.lastSeq) or type(message.rootHash) ~= "string" then return false, "INVALID_LEDGER_DIGEST" end
     local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
-    if not authority or authority.state ~= "ACTIVE" or not authority.coordinator or authority.coordinator.memberKey ~= resolved.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+    if not authority or authority.state ~= "ACTIVE" or not authority.coordinator then return false, "AUTHORITY_UNAVAILABLE" end
     local localState = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState() or {}
     if tonumber(message.ledgerEpoch) ~= tonumber(localState.epoch) then return false, "STALE_EPOCH" end
+    if authority.coordinator.memberKey ~= resolved.memberKey then return true, "LEDGER_STATUS_ONLY" end
     local localLast = tonumber(localState.nextSeq or 1) - 1
     if tonumber(message.lastSeq) > localLast then
       local state = ensure(); state.ledgerTarget = { epoch = message.ledgerEpoch, lastSeq = message.lastSeq, rootHash = message.rootHash }
       Sync.MarkSyncBehind("LEDGER_GAP")
-      requestAwardCommit(resolved.displayName, message.ledgerEpoch, localLast + 1, message.contentHash)
+      local requestedThrough = tonumber(state.ledgerRequestedThrough) or 0
+      if localLast >= requestedThrough then
+        local sent, through = requestAwardCommitBatch(resolved.displayName, message.ledgerEpoch, localLast + 1, message.lastSeq)
+        if sent then state.ledgerRequestedThrough = through end
+      end
       return true, "LEDGER_DETAIL_REQUESTED"
     end
     if tonumber(message.lastSeq) == localLast and message.rootHash ~= localState.rootHash then return false, "CANONICAL_ROOT_CONFLICT" end
@@ -1251,8 +1278,8 @@ function Sync.OnLifecycle(reason)
   local localMember = localSnapshot()
   local authorityState = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
   if Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()
-    and authorityState and authorityState.state == "ACTIVE" and localMember and authorityState.coordinator and authorityState.coordinator.memberKey == localMember.memberKey then
-    Sync.Send(Sync.BuildLedgerDigest(), "GUILD")
+    and authorityState and authorityState.state == "ACTIVE" and localMember then
+    Sync.AnnounceLedgerDigest()
   end
   Sync.RetryPendingAwardProposals()
   scheduleHeartbeat()

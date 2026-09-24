@@ -25,6 +25,23 @@ describe("Pre-Dib lifecycle", function()
     assert_equal("cancelled", dibs.PreDibs.GetHistory()[1].status)
   end)
 
+  it("announces a changed request index immediately", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true } })
+    local sentBefore = #dibs.Ace3.libs.comm.sent
+    local request = dibs.PreDibs.Create("Tester-Realm", 21021, "Sync item", dibs.GetCurrentSeasonId())
+    assert_not_nil(request)
+
+    local announced = false
+    for index = sentBefore + 1, #dibs.Ace3.libs.comm.sent do
+      local sent = dibs.Ace3.libs.comm.sent[index]
+      local message = dibs.Ace3.Deserialize(sent.payload)
+      if sent.channel == "GUILD" and message and message.type == "DIGEST" and message.entityType == "PREDIB_INDEX" then
+        announced = true
+      end
+    end
+    assert_true(announced)
+  end)
+
   it("allows a player to cancel only their own active request", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local own = dibs.PreDibs.CreatePublic("Tester-Realm", 21005, "Own item", dibs.GetCurrentSeasonId(), "test")

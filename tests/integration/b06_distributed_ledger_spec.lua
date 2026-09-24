@@ -71,6 +71,61 @@ describe("B06 coordinator distributed ledger", function()
     assert_false(rejected.accepted); assert_equal("PREVIOUS_HASH_MISMATCH", rejected.reasonCode); assert_equal(count, #follower.Ledger.GetAllTransactions())
   end)
 
+  it("publishes follower ledger revision for peer synchronization status", function()
+    local coordinator = activateV2()
+    local saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
+    local follower = load("Officer-Realm", saved)
+    local sentBefore = #follower.Ace3.libs.comm.sent
+
+    follower.Sync.OnLifecycle("TEST")
+    local digest
+    for index = sentBefore + 1, #follower.Ace3.libs.comm.sent do
+      local message = follower.Ace3.Deserialize(follower.Ace3.libs.comm.sent[index].payload)
+      if message and message.type == "LEDGER_DIGEST" then digest = message end
+    end
+    assert_not_nil(digest)
+
+    local envelope = assert(coordinator.Sync.BuildEnvelope(digest))
+    envelope.senderNameRealm, envelope.senderMemberKey = "Officer-Realm", "officer-realm"
+    local accepted, reason = coordinator.Sync.Receive(envelope, "Officer-Realm")
+    assert_true(accepted, tostring(reason))
+    assert_equal("LEDGER_STATUS_ONLY", reason)
+    local peerLedgerRevision
+    for _, peer in ipairs(coordinator.Sync.GetPeerStatuses()) do
+      if peer.playerName == "Officer-Realm" then peerLedgerRevision = peer.ledgerRevision end
+    end
+    assert_equal(digest.lastSeq, peerLedgerRevision)
+  end)
+
+  it("requests a bounded batch when catching up multiple canonical commits", function()
+    local coordinator = activateV2()
+    local saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
+    local season = coordinator.GetCurrentSeasonId()
+    for sequence = 1, 3 do
+      local commit = coordinator.Ledger.CommitDibUse(nil, {
+        transactionId = "b06-batch-" .. tostring(sequence), playerName = "Player-Realm",
+        seasonId = season, amount = 1, itemID = sequence, source = "b06-batch",
+      })
+      assert_true(commit.accepted, tostring(commit.reasonCode))
+    end
+    local follower = load("Officer-Realm", saved)
+    local digest = coordinator.Sync.BuildLedgerDigest()
+    local envelope = assert(coordinator.Sync.BuildEnvelope(digest))
+    local accepted, reason = follower.Sync.Receive(envelope, "Coordinator-Realm")
+    assert_true(accepted, tostring(reason))
+    assert_equal("LEDGER_DETAIL_REQUESTED", reason)
+
+    local request
+    for _, sent in ipairs(follower.Ace3.libs.comm.sent) do
+      local message = follower.Ace3.Deserialize(sent.payload)
+      if message and message.type == "DETAIL_FETCH" then request = message end
+    end
+    assert_not_nil(request)
+    assert_equal(3, #request.requests)
+    assert_equal("1:2", request.requests[1].entityId)
+    assert_equal("1:4", request.requests[3].entityId)
+  end)
+
   it("serializes competing proposals against the coordinator's current balance and blocks local bypass", function()
     local dibs = activateV2(); local season = dibs.GetCurrentSeasonId()
     local first = dibs.Ledger.CommitDibUse(nil, { transactionId = "b06-race-1", playerName = "Player-Realm", seasonId = season, amount = 1, itemID = 1, source = "b06" })
