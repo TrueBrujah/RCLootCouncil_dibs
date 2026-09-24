@@ -302,6 +302,20 @@ function Sync.GetPeerStatuses()
       local remotePredib = peer and peer.entities and peer.entities.PREDIB_INDEX or {}
       local remoteVault = peer and peer.entities and peer.entities.VAULT_INDEX or {}
       local remoteLedger = peer and peer.entities and peer.entities.LEDGER or {}
+      local localMember = localSnapshot() or {}
+      local localBaseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+      local baselineStatus = "Unknown"
+      if memberKey == localMember.memberKey then
+        baselineStatus = localBaseline.legacyBaselineHash and "Present" or "Missing"
+      elseif peer and peer.baselineHash then
+        baselineStatus = "Present"
+      elseif peer and peer.transferAck and peer.transferAck.result == "APPLIED" then
+        baselineStatus = "Applying"
+      elseif peer and peer.transferAck and peer.transferAck.result == "REJECTED" then
+        baselineStatus = "Rejected/" .. tostring(peer.transferAck.reasonCode or "unknown")
+      elseif peer and peer.syncProbe then
+        baselineStatus = "Missing"
+      end
       rows[#rows + 1] = {
         playerName = resolved and resolved.displayName or name,
         rankIndex = tonumber(rankIndex) or 0,
@@ -312,6 +326,7 @@ function Sync.GetPeerStatuses()
         compatibility = compatibility == true and "Compatible" or (compatibility == false and "Update required" or "Unknown"),
         compatibilityReason = compatibilityReason,
         syncStatus = syncStatus,
+        baselineStatus = baselineStatus,
         seasonCatalogRevision = tonumber(remoteCatalog.revision) or 0,
         policyRevision = tonumber(remotePolicy.revision) or 0,
         governanceRevision = tonumber(remoteGovernance.revision) or 0,
@@ -770,6 +785,7 @@ function Sync.Receive(message, sender)
   if message.type == "SYNC_PROBE_RESPONSE" then
     if type(message.requestId) ~= "string" or type(message.report) ~= "table" then return false, "INVALID_SYNC_PROBE_RESPONSE" end
     peer.syncProbe = { requestId = message.requestId, receivedAt = time(), report = copy(message.report) }
+    peer.baselineHash = message.report.baselineHash
     state.peers[resolved.memberKey] = peer
     return true, "SYNC_PROBE_ACCEPTED"
   end
