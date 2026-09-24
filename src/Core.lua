@@ -1108,7 +1108,11 @@ function Dibs.GetPlayerName()
   end
   name = name or (type(UnitName) == "function" and UnitName("player"))
   if not name then return "UnknownPlayer" end
-  realm = realm or (type(GetRealmName) == "function" and GetRealmName())
+  -- UnitFullName("player") always reports an empty realm for the local unit (you are
+  -- trivially "same realm" as yourself); fall back to GetRealmName() in that case too.
+  if not realm or realm == "" then
+    realm = type(GetRealmName) == "function" and GetRealmName() or nil
+  end
   if realm and realm ~= "" and not tostring(name):find("-", 1, true) then
     return tostring(name) .. "-" .. tostring(realm)
   end
