@@ -56,3 +56,11 @@ Expected: all tests pass (0 failed), including the new specs above.
 - Automated validation is complete. The remaining release gate is T026: a real
 	one-guild, two-raid-group Retail session covering relay, season propagation,
 	and status banners.
+- 2026-09-24: T026 partial Retail evidence — two real clients (Firebutt-Durotan,
+	Huudada-Durotan) confirmed `V2_ENFORCED` protocol state, `Local baseline: Present`
+	on both, and converged `Baseline: Present` / `Governance: 3` in the Officer Sync
+	tab. This surfaced and fixed a real `BASELINE_HASH_MISMATCH` regression in
+	`ApplyApprovedBaseline` (gmApproval was stamped onto the baseline after the hash
+	was computed, so every distributed baseline failed verification). Still needed:
+	award-proposal relay across two simultaneous raid groups, season catalog
+	propagation, and status-banner checks.

@@ -67,6 +67,7 @@
 - [X] T024 Run the full Fengari suite (`tests/run.lua` over every `*_spec.lua`) and `get_errors` diagnostics across all touched files; fix any regressions.
 - [X] T025 Update `specs/017-guild-sync-reliability/checklists/requirements.md` notes if scope changed, and deploy via `scripts/deploy.ps1` for local Retail smoke testing.
 - [ ] T026 Perform one-guild, two-raid-group Retail validation session (manual, requires real WoW clients) confirming award-proposal relay, season propagation, and status banners; record evidence before marking this task complete.
+  - 2026-09-24 partial evidence: two real Retail clients (Firebutt-Durotan, Huudada-Durotan) confirmed `Protocol: V2_ENFORCED`, `Local baseline: Present` on both, and `Baseline: Present` / `Governance: 3` converged in the Officer Sync tab after fixing a `BASELINE_HASH_MISMATCH` regression (see commit `c94a714`). Award-proposal relay across two simultaneous raid groups, season catalog propagation, and status banners still need to be exercised before this task is complete.
 
 ## Dependencies
 
