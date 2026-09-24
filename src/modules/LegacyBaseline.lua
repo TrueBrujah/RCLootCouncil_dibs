@@ -43,6 +43,14 @@ end
 local function hash(value)
   return Dibs.Sync and Dibs.Sync.CalculateContentHash and Dibs.Sync.CalculateContentHash(value) or nil
 end
+local function hashMatches(value, expected)
+  local current = hash(value)
+  if current == expected then return true end
+  if type(current) ~= "string" or type(expected) ~= "string" then return false end
+  local currentSuffix = current:match("^D3%-V2%-(.+)$")
+  local legacySuffix = expected:match("^D3%-V3%-(.+)$")
+  return currentSuffix ~= nil and legacySuffix ~= nil and currentSuffix == legacySuffix
+end
 local function now() return Dibs.GetTimestamp and Dibs.GetTimestamp() or time() end
 
 local function dataOnly(value, depth, seen)
@@ -358,7 +366,7 @@ function M.ApplyApprovedBaseline(baseline)
   if type(baseline) ~= "table" or type(baseline.legacyBaselineHash) ~= "string" then return false, "INVALID_BASELINE" end
   local projection = copy(baseline)
   projection.legacyBaselineHash = nil
-  if M.CalculateLegacyBaselineHash(projection) ~= baseline.legacyBaselineHash then return false, "BASELINE_HASH_MISMATCH" end
+  if not hashMatches(projection, baseline.legacyBaselineHash) then return false, "BASELINE_HASH_MISMATCH" end
   local state = ensure()
   if state.baseline and state.baseline.legacyBaselineHash ~= baseline.legacyBaselineHash then return false, "BASELINE_CONFLICT" end
   state.baseline, state.status = copy(baseline), "BASELINE_APPROVED"
