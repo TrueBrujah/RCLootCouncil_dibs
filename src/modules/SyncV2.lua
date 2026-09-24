@@ -204,7 +204,10 @@ end
 function Sync.GetPeerSyncProbe(target)
   local resolved = member(target)
   local peer = resolved and ensure().peers[resolved.memberKey]
-  return peer and copy(peer.syncProbe) or nil
+  if not peer or not peer.syncProbe then return nil end
+  local probe = copy(peer.syncProbe)
+  probe.transferAck = copy(peer.transferAck)
+  return probe
 end
 function Sync.FormatSyncProbeReport(probe)
   local report = probe and probe.report or probe
