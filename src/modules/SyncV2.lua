@@ -313,7 +313,9 @@ function Sync.GetPeerStatuses()
         baselineStatus = localBaseline.legacyBaselineHash and "Present" or "Missing"
       elseif peer and peer.baselineHash then
         baselineStatus = "Present"
-      elseif peer and peer.transferAck and (peer.transferAck.result == "STARTED" or peer.transferAck.result == "APPLIED") then
+      elseif peer and peer.transferAck and peer.transferAck.result == "APPLIED" then
+        baselineStatus = "Present"
+      elseif peer and peer.transferAck and peer.transferAck.result == "STARTED" then
         local receivedChunks = tonumber(peer.transferAck.receivedChunks) or 0
         local chunkCount = tonumber(peer.transferAck.chunkCount) or 0
         baselineStatus = chunkCount > 0 and string.format("Applying %d/%d", receivedChunks, chunkCount) or "Applying"

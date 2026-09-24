@@ -357,7 +357,8 @@ function M.CalculateLegacyBaselineHash(content) return hash(content) end
 function M.ApplyApprovedBaseline(baseline)
   if type(baseline) ~= "table" or type(baseline.legacyBaselineHash) ~= "string" then return false, "INVALID_BASELINE" end
   local projection = copy(baseline)
-  projection.legacyBaselineHash = nil
+  -- gmApproval is stamped onto the baseline after buildBaseline() computes the hash; exclude it here too.
+  projection.legacyBaselineHash, projection.gmApproval = nil, nil
   if M.CalculateLegacyBaselineHash(projection) ~= baseline.legacyBaselineHash then return false, "BASELINE_HASH_MISMATCH" end
   local state = ensure()
   if state.baseline and state.baseline.legacyBaselineHash ~= baseline.legacyBaselineHash then return false, "BASELINE_CONFLICT" end
