@@ -1952,6 +1952,33 @@ local function renderInstallationPage(shell, parent, frame)
     end, 160)
   elseif status.state == "COORDINATOR_UNAVAILABLE" or status.state == "RECOVERY_REQUIRED" or status.state == "BLOCKED" then
     Dibs.AceGUI.AddLabel(shell, parent, "Open Synchronization to review coordinator recovery.", true)
+  elseif status.state == "READY" then
+    local report = Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate() or { checks = {}, blockingCount = 0 }
+    local outstanding = {}
+    for _, item in ipairs(report.checks or {}) do
+      if item.required and item.state ~= "ready" and item.state ~= "skipped" then outstanding[#outstanding + 1] = item end
+    end
+    if #outstanding > 0 then
+      Dibs.AceGUI.AddHeading(shell, parent, "Next steps",
+        "The guild ledger is active. Review these settings before Dibs is ready for a raid.")
+      local routeFor = {
+        season = "seasons", policy = "ranks", rank_rules = "ranks", authority = "settings",
+        installation = "settings", rclootcouncil = "integration", channels = "announcements", loot_types = "lootTypes",
+      }
+      for _, item in ipairs(outstanding) do
+        local group = Dibs.AceGUI.AddInlineGroup(shell, parent)
+        Dibs.AceGUI.AddLabel(shell, group, tostring(item.remediation or item.impact or item.id), false)
+        local route = routeFor[item.id]
+        Dibs.AceGUI.AddButton(shell, group, route and "Open" or "Refresh", function()
+          if route then frame:ActivateRoute(route) else frame:Refresh() end
+        end, 70)
+      end
+    else
+      Dibs.AceGUI.AddLabel(shell, parent, "Dibs is ready for a raid. See Setup Assistant for the full readiness checklist.", true)
+    end
+    Dibs.AceGUI.AddButton(shell, parent, "Open Setup Assistant", function()
+      frame:ActivateRoute("setup")
+    end, 170)
   end
 
   Dibs.AceGUI.AddButton(shell, parent, frame.installationShowTechnical and "Hide technical details" or "Show technical details", function()

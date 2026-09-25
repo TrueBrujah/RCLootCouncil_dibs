@@ -154,3 +154,33 @@ describe("P0 regression: Governance.ActivateV2 never silently acknowledges incom
     assert_true(dibs.Governance.IsV2Enforced())
   end)
 end)
+
+describe("Guild Setup next steps after activation", function()
+  local function findLatestWidget(predicate)
+    for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
+      local widget = _G.__dibsAceWidgets[index]
+      if predicate(widget) then return widget end
+    end
+  end
+
+  local function clickLatestButton(text)
+    local widget = findLatestWidget(function(candidate) return candidate.kind == "Button" and candidate.text == text end)
+    assert_not_nil(widget, "Button not found: " .. text)
+    widget.callbacks.OnClick(widget, "OnClick")
+    return widget
+  end
+
+  it("links a ready guild to the Setup Assistant readiness checklist", function()
+    local dibs = load("Tester-Realm", true)
+    local result = dibs.Installation.Initialize(nil)
+    assert_true(result.ok, tostring(result.reasonCode))
+    assert_equal("READY", result.status.state)
+
+    local frame = dibs.OfficerUI.CreateWindow("installation")
+    frame:ActivateRoute("installation")
+    assert_not_nil(findLatestWidget(function(widget) return widget.kind == "Button" and widget.text == "Open Setup Assistant" end))
+
+    clickLatestButton("Open Setup Assistant")
+    assert_equal("setup", frame.activeTab)
+  end)
+end)
