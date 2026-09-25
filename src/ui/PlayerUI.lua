@@ -361,6 +361,14 @@ local function hasReason(result, code)
   return type(result.reasonCodes) == "table" and result.reasonCodes[code] == true
 end
 
+---@doc.id player.status
+---@doc.category setup
+---@doc.since 0.6.5
+---@doc.audience player
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_PLAYER_STATUS
+---@doc.label-key DOC_PLAYER_STATUS_LABEL
 function Dibs.PlayerUI.GetStatusPresentation(result)
   result = type(result) == "table" and result or {}
   if hasReason(result, "RECOVERY_PENDING") then
@@ -768,10 +776,10 @@ local function createLegacyAceWindow()
       end
     if #rows == 0 then rows[1] = { "No matching history." } end
       self.aceHistoryScroll = Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Date", width = 145, tooltip = "When the ledger entry was recorded." },
-        { title = "Action", width = 150, tooltip = "The ledger operation." },
-        { title = "Amount", width = 70, tooltip = "Dibs gained or spent." },
-        { title = "Reason", width = 170, tooltip = "Why the entry was created." },
+        { title = "Date", width = 145, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+        { title = "Action", width = 150, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+        { title = "Amount", width = 70, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+        { title = "Reason", width = 170, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
       }, rows, 320, function(row)
         if not row.transaction then return nil end
         return {
@@ -808,14 +816,15 @@ local function createLegacyAceWindow()
       local integrationView = Dibs.PlayerUI.GetStatusPresentation(integrationState)
       local integrationBadge = Dibs.Midnight.AddStatusBadge(shell, tabs, integrationView.tone, "RCLootCouncil: " .. integrationView.label)
       Dibs.AceGUI.AddLabel(shell, tabs, integrationView.explanation, true)
-      Dibs.AceGUI.AddTooltip(integrationBadge, "RCLootCouncil status", tostring(integration.reasonCode or "No additional diagnostic detail."))
+      Dibs.AceGUI.AddTooltip(integrationBadge, "RCLootCouncil status", helpText.UI_HELP_PLAYER_STATUS)
     end
     if Dibs.Readiness and type(Dibs.Readiness.Evaluate) == "function" then
       local readiness = Dibs.Readiness.Evaluate({ allowPlayer = true })
       local readinessView = Dibs.PlayerUI.GetStatusPresentation(readiness)
       Dibs.Midnight.AddStatusBadge(shell, tabs, readinessView.tone, "Raid readiness: " .. readinessView.label)
-      Dibs.AceGUI.AddLabel(shell, tabs, readinessView.explanation ..
+      local readinessExplanation = Dibs.AceGUI.AddLabel(shell, tabs, readinessView.explanation ..
         " Live Dibs consumption: " .. (readiness and readiness.liveConsumptionAllowed and "allowed after revalidation" or "blocked or unavailable"), true)
+      Dibs.AceGUI.AddTooltip(readinessExplanation, "Raid readiness", helpText.UI_HELP_PLAYER_READINESS)
     end
     Dibs.AceGUI.AddTable(shell, tabs, {
       { title = "Metric", width = 180, tooltip = "Summary field." },

@@ -74,6 +74,14 @@ end
 
 ---@param actor string|nil Optional actor override; defaults to the local player.
 ---@return table status Normalized installation/readiness projection.
+---@doc.id guild.ledger.status
+---@doc.category setup
+---@doc.since 0.6.5
+---@doc.audience officer,gm,developer
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_GUILD_LEDGER_STATUS
+---@doc.label-key DOC_GUILD_LEDGER_STATUS_LABEL
 function Installation.GetStatus(actor)
   local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or { status = "POLICY_UNINITIALIZED" }
   local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or { state = "LEGACY_LOCAL" }

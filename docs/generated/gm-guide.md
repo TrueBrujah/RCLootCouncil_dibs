@@ -5,6 +5,28 @@ DO NOT EDIT MANUALLY.
 
 Addon version: 0.6.5
 
+## Guild Ledger status
+
+- **ID:** `guild.ledger.status`
+- **Category:** `setup`
+- **Audience:** developer, gm, officer
+
+**English:** Shows whether the shared guild ledger needs setup, historical review, or recovery, or is active. Initialization remains a Guild Master-authorized action.
+**Francais:** Indique si le registre partage doit etre configure, si les donnees historiques doivent etre examinees, s'il faut une recuperation ou s'il est actif. Son initialisation exige l'autorite du maitre de guilde.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+
+## Dibs season
+
+- **ID:** `guild.season`
+- **Category:** `governance`
+- **Audience:** gm, officer
+
+**English:** A season scopes the active Dibs balance and guild rules. Activating another season does not rewrite earlier history.
+**Francais:** Une saison determine le solde Dibs actif et les regles de guilde. Activer une autre saison ne reecrit pas l'historique anterieur.
+
+Scope: `guild-season` | Audit: `false` | Reason required: `false`
+
 ## Guild Setup
 
 - **ID:** `guild.setup`
@@ -15,7 +37,6 @@ Addon version: 0.6.5
 **Francais:** Parcours reserve au maitre de guilde pour examiner les donnees Dibs existantes et activer le registre partage de la guilde. Ouvrir la page ne l'initialise pas.
 
 Scope: `guild` | Audit: `true` | Reason required: `false`
-Source: [src/modules/Installation.lua:263](../../src/modules/Installation.lua#L263) - `Installation.Initialize`
 
 ## Manual Dibs Adjustment
 
@@ -28,7 +49,29 @@ Source: [src/modules/Installation.lua:263](../../src/modules/Installation.lua#L2
 
 Scope: `guild-season` | Audit: `true` | Reason required: `true`
 Permission: `ledger.adjust`
-Source: [src/modules/ProtectedActions.lua:222](../../src/modules/ProtectedActions.lua#L222) - `executeLedgerAdjust`
+
+## Adjustment reason
+
+- **ID:** `ledger.adjust.reason`
+- **Category:** `ledger`
+- **Audience:** gm, officer
+
+**English:** The recorded explanation for this action. Administrative changes require a meaningful reason.
+**Francais:** Explication conservee avec cette action. Les changements administratifs exigent une raison pertinente.
+
+Scope: `guild-season` | Audit: `true` | Reason required: `true`
+Permission: `ledger.adjust`
+
+## Dibs audit history
+
+- **ID:** `ledger.audit.history`
+- **Category:** `ledger`
+- **Audience:** gm, officer, player
+
+**English:** Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.
+**Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
+
+Scope: `guild-season` | Audit: `false` | Reason required: `false`
 
 ## Dib Balance
 
@@ -40,7 +83,61 @@ Source: [src/modules/ProtectedActions.lua:222](../../src/modules/ProtectedAction
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:641](../../src/modules/Ledger.lua#L641) - `Ledger.GetBalance`
+
+## Loot eligibility
+
+- **ID:** `loot.eligibility`
+- **Category:** `governance`
+- **Audience:** gm, officer, player
+
+**English:** Shows whether a loot category may use Dibs under the active guild policy, and why a category is blocked or needs review.
+**Francais:** Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier.
+
+Scope: `guild-season` | Audit: `false` | Reason required: `false`
+
+## Request audit timeline
+
+- **ID:** `officer.audit.timeline`
+- **Category:** `ledger`
+- **Audience:** gm, officer, player
+
+**English:** Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.
+**Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+
+## Officer review requests
+
+- **ID:** `officer.review.requests`
+- **Category:** `ledger`
+- **Audience:** gm, officer
+
+**English:** Shows player reports and their attached Dibs or RCLootCouncil evidence. Opening a request is read-only; Officer resolutions retain an audit reason.
+**Francais:** Affiche les signalements des joueurs et leurs preuves Dibs ou RCLootCouncil. Ouvrir une demande est en lecture seule; les decisions des officiers conservent une raison d'audit.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+
+## Player raid readiness
+
+- **ID:** `player.readiness`
+- **Category:** `setup`
+- **Audience:** gm, officer, player
+
+**English:** Summarizes whether current guild setup and context are ready for live loot. An unavailable check is not a personal penalty; contact an Officer if the state remains blocked.
+**Francais:** Resume si la configuration de guilde et le contexte actuel sont prets pour le butin en direct. Un controle indisponible n'est pas une penalite personnelle; contactez un officier si l'etat reste bloque.
+
+Scope: `player` | Audit: `false` | Reason required: `false`
+
+## Announcement channels
+
+- **ID:** `predibs.announcement.channels`
+- **Category:** `predibs`
+- **Audience:** gm, officer
+
+**English:** Choose destinations for public Pre-Dib notices and Officer-only notices. Availability depends on this character joining the configured channel; test it before live use.
+**Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
 
 ## Encounter Mode
 
@@ -52,7 +149,6 @@ Source: [src/modules/Ledger.lua:641](../../src/modules/Ledger.lua#L641) - `Ledge
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:456](../../src/modules/PreDibs.lua#L456) - `Dibs.PreDibs.ValidatePublicRequest`
 
 ## Pre-Dib Request
 
@@ -64,7 +160,6 @@ Source: [src/modules/PreDibs.lua:456](../../src/modules/PreDibs.lua#L456) - `Dib
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:574](../../src/modules/PreDibs.lua#L574) - `Dibs.PreDibs.CreatePublic`
 
 ## Rank Allocation
 
@@ -77,7 +172,39 @@ Source: [src/modules/PreDibs.lua:574](../../src/modules/PreDibs.lua#L574) - `Dib
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
 Permission: `rank.set`
-Source: [src/modules/ProtectedActions.lua:154](../../src/modules/ProtectedActions.lua#L154) - `executeRankSet`
+
+## RCLootCouncil history review
+
+- **ID:** `rclootcouncil.history.reconciliation`
+- **Category:** `ledger`
+- **Audience:** developer, gm, officer
+
+**English:** Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.
+**Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
+
+Scope: `guild-season` | Audit: `false` | Reason required: `false`
+
+## RCLootCouncil response mapping
+
+- **ID:** `rclootcouncil.response.mapping`
+- **Category:** `ledger`
+- **Audience:** gm, officer
+
+**English:** Maps a RCLootCouncil response to Dibs meaning. Review the mapping with your guild before live loot; this does not change RCLootCouncil history.
+**Francais:** Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+
+## Setup Assistant readiness
+
+- **ID:** `setup.assistant.readiness`
+- **Category:** `setup`
+- **Audience:** gm, officer
+
+**English:** Checks whether this guild's configuration is operational for a raid and lists blockers with the next safe action.
+**Francais:** Verifie si la configuration actuelle de la guilde convient au raid et liste les blocages avec la prochaine action sure.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
 
 ## Historical Reconciliation
 
@@ -89,7 +216,6 @@ Source: [src/modules/ProtectedActions.lua:154](../../src/modules/ProtectedAction
 **Francais:** Examinez les entrees Dibs historiques detectees avant que le maitre de guilde initialise le registre partage. Laissez les preuves incertaines sans decision.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Installation.lua:164](../../src/modules/Installation.lua#L164) - `Installation.GetReconciliationView`
 
 ## Coordinator
 
@@ -101,7 +227,28 @@ Source: [src/modules/Installation.lua:164](../../src/modules/Installation.lua#L1
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Governance.lua:416](../../src/modules/Governance.lua#L416) - `Governance.GetAuthorityState`
+
+## Synchronization peer status
+
+- **ID:** `sync.peer.status`
+- **Category:** `synchronization`
+- **Audience:** gm, officer
+
+**English:** Peer status is based on the latest response observed by this client; an offline or unresponsive member may show stale synchronization details.
+**Francais:** L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+
+## Raid reminder
+
+- **ID:** `sync.raid.reminder`
+- **Category:** `synchronization`
+- **Audience:** gm, officer
+
+**English:** Sends the configured reminder to the current raid chat. Guild permission and raid-chat availability are required; this does not record a loot award or change Dibs.
+**Francais:** Envoie le rappel configure dans le canal du raid actuel. Une autorisation de guilde et un canal disponible sont requis; cela n'enregistre aucun gain et ne modifie pas les Dibs.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
 
 ## Synchronization
 
@@ -113,4 +260,3 @@ Source: [src/modules/Governance.lua:416](../../src/modules/Governance.lua#L416) 
 **Francais:** Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:239](../../src/modules/SyncV2.lua#L239) - `Sync.GetStatus`

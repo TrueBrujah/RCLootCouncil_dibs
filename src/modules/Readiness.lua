@@ -188,6 +188,14 @@ end
 
 ---@param options table|nil Probe options and optional actor context.
 ---@return table result Ready/degraded/blocked/unavailable report with reason codes.
+---@doc.id player.readiness
+---@doc.category setup
+---@doc.since 0.6.5
+---@doc.audience player,officer,gm
+---@doc.scope player
+---@doc.audit false
+---@doc.help-key UI_HELP_PLAYER_READINESS
+---@doc.label-key DOC_PLAYER_READINESS_LABEL
 function Readiness.Evaluate(options)
   options = type(options) == "table" and options or {}
   local checkedAt = now()

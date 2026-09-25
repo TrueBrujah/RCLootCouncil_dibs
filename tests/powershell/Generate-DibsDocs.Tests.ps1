@@ -133,6 +133,30 @@ Describe 'DIBS source-driven documentation foundation' {
     $outputs['docs/generated/officer-guide.md'] | Should Not Match 'fixture.sample'
   }
 
+  It 'applies output-profile provenance policy without dropping normalized traceability' {
+    $root = New-DibsDocFixture -Id 'sync.status' -Audience 'player,officer,gm'
+    $model = Get-FixtureModel $root
+    $concept = $model.Concepts[0]
+    $concept.sourceFile | Should Be 'src/modules/Fixture.lua'
+    $concept.sourceLine | Should Be 10
+    $concept.symbol | Should Be 'Fixture.Run'
+
+    $outputs = New-DibsDocumentationOutputs $model
+    foreach ($path in @('docs/generated/player-guide.md', 'docs/generated/officer-guide.md', 'docs/generated/gm-guide.md')) {
+      $outputs[$path] | Should Not Match 'Fixture.lua|Fixture.Run|Source:'
+    }
+    $outputs['docs/generated/player-guide.md'] | Should Match 'sync.status'
+    $outputs['docs/generated/developer-reference.md'] | Should Match 'sync.status'
+    $outputs['docs/generated/developer-reference.md'] | Should Match 'Fixture.lua'
+    $outputs['docs/generated/developer-reference.md'] | Should Match 'Fixture.Run'
+    $outputs['docs/generated/ui-reference.md'] | Should Match 'Fixture.lua'
+    $outputs['docs/generated/ui-reference.md'] | Should Match 'Fixture.Run'
+    $outputs['docs/generated/documentation.csv'] | Should Match 'src/modules/Fixture.lua'
+    $outputs['docs/generated/documentation.csv'] | Should Match 'Fixture.Run'
+    $outputs['docs/generated/documentation.json'] | Should Match 'src/modules/Fixture.lua'
+    $outputs['docs/generated/documentation.json'] | Should Match 'Fixture.Run'
+  }
+
   It 'includes operational concepts in Officer documentation' {
     $root = New-DibsDocFixture -Id 'ledger.adjust' -Audience 'officer,gm' -ExtraDocTags @('---@doc.permission fixture.permission')
     $model = Get-FixtureModel $root
@@ -261,6 +285,51 @@ Describe 'DIBS source-driven documentation foundation' {
       ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) | Should Be $false
       ([System.Text.UTF8Encoding]::new($false, $true).GetString($bytes).Contains("`r")) | Should Be $false
     }
+  }
+
+  It 'validates the Phase 2 catalog, localized help, and orphan references' {
+    $model = Get-DibsDocumentationModel -Root $repositoryRoot
+    $summary = Get-DibsValidationSummary $model
+    $model.Concepts.Count | Should Be 26
+    @($model.Concepts | Select-Object -ExpandProperty id -Unique).Count | Should Be 26
+    $summary.Errors | Should Be 0
+    $summary.Warnings | Should Be 0
+    foreach ($concept in $model.Concepts) {
+      $concept.shortHelp.enUS | Should Not BeNullOrEmpty
+      $concept.shortHelp.frFR | Should Not BeNullOrEmpty
+      $concept.label.enUS | Should Not BeNullOrEmpty
+      $concept.label.frFR | Should Not BeNullOrEmpty
+    }
+  }
+
+  It 'keeps technical relay documentation out of Player output' {
+    $model = Get-DibsDocumentationModel -Root $repositoryRoot
+    $outputs = New-DibsDocumentationOutputs $model
+    $outputs['docs/generated/player-guide.md'] | Should Match 'player.status'
+    $outputs['docs/generated/player-guide.md'] | Should Not Match 'sync.raid.relay|sync.raid.reminder|UI_HELP_RAID_RELAY'
+    $outputs['docs/generated/officer-guide.md'] | Should Match 'sync.raid.reminder'
+    $outputs['docs/generated/developer-reference.md'] | Should Match 'sync.raid.relay'
+  }
+
+  It 'records an explicit disposition for each Phase 2 matrix gap' {
+    $matrixPath = Join-Path $repositoryRoot 'docs/audits/UI_Help_Documentation_Matrix.md'
+    $matrixText = [System.IO.File]::ReadAllText($matrixPath)
+    $matrixRows = @($matrixText.Split([string[]]@('## Canonical Terminology Inventory'), [System.StringSplitOptions]::None)[0] -split "`r?`n")
+    $expected = [ordered]@{
+      'Player RCLootCouncil status' = 'ADD_DOC_CONCEPT'
+      'Officer review requests' = 'ADD_HELP'
+      'RCLootCouncil historical reconciliation' = 'ADD_HELP'
+      'Announcements' = 'ADD_HELP'
+      'Player raid readiness' = 'ADD_DOC_CONCEPT'
+      'Ledger and audit history columns' = 'ADD_HELP'
+      'Raid Relay' = 'ADD_HELP'
+    }
+    foreach ($entry in $expected.GetEnumerator()) {
+      $row = @($matrixRows | Where-Object { $_.StartsWith('| ' + $entry.Key + ' |') })
+      $row.Count | Should Be 1
+      (($row[0] -split '\|')[-2]).Trim() | Should Be $entry.Value
+    }
+    @($matrixRows | Where-Object { $_ -match '^\|.*\| MISSING \|$' }).Count | Should Be 0
   }
 
   It 'starts generated Markdown with the required no-edit warning' {

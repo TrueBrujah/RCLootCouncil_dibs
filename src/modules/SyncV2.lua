@@ -257,6 +257,14 @@ function Sync.GetSynchronizationStatus()
     lastAddonVersionMismatch = copy(ensure().addonVersionMismatches[#ensure().addonVersionMismatches]),
   }
 end
+---@doc.id sync.peer.status
+---@doc.category synchronization
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_SYNC_PEER
+---@doc.label-key DOC_SYNC_PEER_STATUS_LABEL
 function Sync.GetPeerStatuses()
   local state, rows, now = ensure(), {}, time()
   local roster = {}

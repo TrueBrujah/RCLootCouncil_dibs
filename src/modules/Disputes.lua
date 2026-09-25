@@ -603,6 +603,14 @@ end
 ---@param options table|nil Filter/pagination options.
 ---@return table[] requests Permission-filtered officer queue.
 ---@return string|nil reasonCode
+---@doc.id officer.review.requests
+---@doc.category ledger
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_REVIEW_REQUESTS
+---@doc.label-key DOC_REVIEW_REQUESTS_LABEL
 function Disputes.ListForOfficer(actor, options)
   options = type(options) == "table" and options or {}
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
@@ -1133,6 +1141,14 @@ function Disputes.BuildOfficerView(request)
   return result
 end
 
+---@doc.id officer.audit.timeline
+---@doc.category ledger
+---@doc.since 0.6.5
+---@doc.audience player,officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_AUDIT_HISTORY
+---@doc.label-key DOC_AUDIT_TIMELINE_LABEL
 function Disputes.GetTimeline(requestId, actor)
   local request, officer = canReadRequest(requestId, actor)
   if not request then return {}, officer end

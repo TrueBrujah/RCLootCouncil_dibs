@@ -4,11 +4,11 @@
 
 This audit reviewed localized help and role documentation for Player, Officer, Guild Master, and Developer UI surfaces. The inventory is recorded in [UI_Help_Documentation_Matrix.md](UI_Help_Documentation_Matrix.md).
 
-The matrix contains 35 reviewed UI concept groups: 26 improved, 7 with follow-up gaps, 1 already consistent, and 1 intentionally technical-only. The 81 help-related localization keys in enUS and frFR are paired with no missing keys. Tooltips were kept concise and focused on meaning, authority, scope, consequence, or next action; longer workflows remain in the role guides.
+The matrix contains 35 reviewed UI concept groups: 33 improved or explicitly resolved, no open gaps, 1 already consistent, and 1 intentionally technical-only. The Phase 2 catalog contains 26 source-annotated concepts with complete enUS/frFR help and labels. Tooltips remain concise and focused on meaning, authority, scope, consequence, or next action; longer workflows remain in the role guides.
 
-No ledger, governance, permission, SyncV2 protocol, RCLootCouncil decision, SavedVariables schema, or loot-calculation behavior was intentionally changed as part of the help audit.
+No ledger, governance, permission, SyncV2 protocol, RCLootCouncil decision, SavedVariables schema, or loot-calculation behavior was changed. Phase 2 adds documentation annotations, localized help, and presentation descriptions only.
 
-## Twenty Major Improvements
+## Phase 1 Improvements Retained
 
 1. Clarified that a player's balance belongs to the current guild and active season, and distinguished requests from finalized awards or authorized adjustments.
 2. Explained that submitting a Pre-Dib expresses interest; it neither awards loot nor spends Dibs.
@@ -31,35 +31,38 @@ No ledger, governance, permission, SyncV2 protocol, RCLootCouncil decision, Save
 19. Separated RCLootCouncil response presentation mapping from Dibs policy eligibility.
 20. Improved operational guidance for backups and restore confirmation, profile scope, import/export sensitivity, the local-only Developer Sandbox, and bounded in-memory debug logs.
 
-## Open Gaps
+## Phase 2 Dispositions
 
-The matrix keeps these seven areas visible rather than treating them as complete:
+- Player RCLootCouncil status: `ADD_DOC_CONCEPT`; `player.status` is attached to `Dibs.PlayerUI.GetStatusPresentation`, and localized optional-integration help is attached to the status badge.
+- Officer review requests: `ADD_HELP`; localized help is wired to the Officer queue heading and columns.
+- RCLootCouncil history reconciliation: `ADD_HELP`; localized help covers status, winner, classification, evidence, and review columns while the section explains read-only preview.
+- Announcements: `ADD_HELP`; public and Officer channel controls use localized help, and the raid reminder setting/send action have their own localized explanation.
+- Player raid readiness: `ADD_DOC_CONCEPT`; `player.readiness` is attached to the evaluator and the player explanation uses readiness help.
+- Ledger and audit history: `ADD_HELP`; a shared localized audit description is used in Player, Officer, and log tables.
+- Raid Relay: `ADD_HELP` for the actual Officer/GM raid-reminder control. The separate guild-state broadcast remains Developer-only; source contains no award proposal/confirm or one-debit UI.
 
-- Player-facing explanation and next action for optional RCLootCouncil status.
-- Officer review-request column help and player next-action guidance.
-- Historical RCLootCouncil reconciliation preview/finalize and evidence-column help.
-- Announcement channel and audience scope.
-- Player raid-readiness field help and consistent next steps.
-- Consistent localized help for ledger and audit-history columns.
-- Raid Relay authority, one-debit effect, and unavailable-state help.
+Legacy key decisions: `UI_HELP_ENCOUNTER` is `REMOVE` because it has no current consumer; Encounter mode and historical encounter evidence already use `UI_HELP_PREDIB_MODE` and `UI_HELP_ENCOUNTER_EVIDENCE`. `UI_HELP_REASON` is `REUSE` at `Ledger.AdminAdjust`; `UI_HELP_SETUP_ASSISTANT` is `REUSE` at `SetupAssistant.Evaluate`.
 
-Data health already has adequate introductory guidance and remains `OK`. Protocol implementation terms remain `TECHNICAL_ONLY` in diagnostics; they should not leak into normal player help.
+Data health remains `OK`. Protocol implementation terms remain `TECHNICAL_ONLY` and are excluded from normal Player documentation.
 
 ## Documentation Alignment
 
 - Player help and role guidance were aligned across the English and French Player Guides, especially balance scope, Pre-Dib ownership, and read-only player capabilities.
 - Officer and GM guides were aligned in English and French around setup authority, audited adjustments, review workflows, and related operations.
 - Developer Sync protocol documentation now distinguishes normal UI terminology from technical state and implementation terminology.
-- The matrix maps each reviewed concept to the relevant role documentation and records the seven follow-up gaps.
+- The matrix maps reviewed concepts to role documentation, records all seven Phase 2 dispositions, and documents the three legacy-key decisions.
 
 ## Validation
 
-- `tests/unit/ui_help_content_spec.lua`: 10 passed, 0 failed.
-- Full Fengari suite: 653 passed, 1 failed across 140 files. The failure is `tests/integration/predibs_sync_recovery_spec.lua:50`, “uses AceComm registration and AceTimer for one bounded anti-entropy heartbeat” (`expected 1, got 2`). Running that spec alone reproduces the same failure; it is the previously documented timer-count issue and is unrelated to UI-help content.
-- Locale parity: 81 help-related keys in enUS and 81 in frFR; no unmatched keys.
-- `git diff --check`: passed.
-- The editor diagnostics still return `undefined field 'L' on class 'Dibs'` entries for PlayerUI locations whose current source now uses the local `helpText` alias. A source search confirms the direct help-key accesses were removed, but the diagnostics did not refresh after the rewrite; treat PlayerUI static analysis as unresolved until the editor analysis cache is refreshed and checked again.
+- Documentation validation: 26 concepts, 0 errors, 0 warnings, 0 locale gaps, and 0 duplicate IDs.
+- Pester 3.4.0 under Windows PowerShell 5.1: 25 passed, 0 failed; under PowerShell 7.6.6: 25 passed, 0 failed.
+- Cross-version temporary generation and SHA-256 comparison: 8/8 generated artifacts match.
+- `-Generate` and `-Check`: passed; all eight generated artifacts are current.
+- Focused Fengari UI-help, relay, options, and Player UI run before the last test addition: 18 passed, 0 failed. Final UI-help spec including Phase 2 bilingual assertions: 11 passed, 0 failed.
+- Full Fengari suite: 654 passed, 1 failed across 140 files. The only failure is `tests/integration/predibs_sync_recovery_spec.lua:50`, “uses AceComm registration and AceTimer for one bounded anti-entropy heartbeat” (`expected 1, got 2`). This is the known timer-count issue and was not changed.
+- `git diff --check`: passed; Git emitted only its existing LF-to-CRLF working-copy notices.
+- The editor diagnostics provider continues to report a stale unclosed-function error at the `player.status` annotation in `PlayerUI.lua`; the current source is syntactically accepted by focused and full Fengari runs. Refresh the editor analysis cache before treating that diagnostic as resolved.
 
 ## Follow-Up
 
-Address the seven gaps above in a future documentation pass, prioritizing player readiness/status and destructive or authority-sensitive Officer workflows. Refresh the PlayerUI diagnostics before treating the static-analysis gate as clean.
+Phase 3 should validate these concise descriptions in the retail client with Player, Officer, and GM accounts, then review newly added UI concepts when the corresponding controls or authority boundaries change. Do not broaden this inventory into a full documentation migration without a separately approved scope.

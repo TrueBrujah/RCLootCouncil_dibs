@@ -475,7 +475,12 @@ function Get-DibsDocumentationModel {
 }
 
 function ConvertTo-DibsMarkdownRole {
-  param([object[]]$Concepts, [string]$Role, [string]$Title)
+  param(
+    [object[]]$Concepts,
+    [string]$Role,
+    [string]$Title,
+    [ValidateSet('user-facing', 'technical')][string]$OutputProfile
+  )
   $builder = [System.Text.StringBuilder]::new()
   [void]$builder.AppendLine('THIS FILE IS GENERATED.')
   [void]$builder.AppendLine('DO NOT EDIT MANUALLY.')
@@ -484,7 +489,13 @@ function ConvertTo-DibsMarkdownRole {
   [void]$builder.AppendLine()
   [void]$builder.AppendLine("Addon version: $script:OutputVersion")
   [void]$builder.AppendLine()
-  $visible = @($Concepts | Where-Object { $_.audience -contains $Role })
+  $visible = @(
+    if ($OutputProfile -eq 'technical') {
+      $Concepts
+    } else {
+      $Concepts | Where-Object { $_.audience -contains $Role }
+    }
+  )
   foreach ($concept in $visible) {
     $heading = if ($concept.label.enUS) { $concept.label.enUS } else { $concept.id }
     [void]$builder.AppendLine("## $heading")
@@ -507,8 +518,10 @@ function ConvertTo-DibsMarkdownRole {
     [void]$builder.AppendLine()
     [void]$builder.AppendLine("Scope: ``$($concept.scope)`` | Audit: ``$($concept.audit.ToString().ToLowerInvariant())`` | Reason required: ``$($concept.reasonRequired.ToString().ToLowerInvariant())``")
     if ($concept.permissions.Count -gt 0) { [void]$builder.AppendLine("Permission: ``$($concept.permissions -join ', ')``") }
-    $sourceLink = "../../$($concept.sourceFile)#L$($concept.sourceLine)"
-    [void]$builder.AppendLine("Source: [$($concept.sourceFile):$($concept.sourceLine)]($sourceLink) - ``$($concept.symbol)``")
+    if ($OutputProfile -eq 'technical') {
+      $sourceLink = "../../$($concept.sourceFile)#L$($concept.sourceLine)"
+      [void]$builder.AppendLine("Source: [$($concept.sourceFile):$($concept.sourceLine)]($sourceLink) - ``$($concept.symbol)``")
+    }
     [void]$builder.AppendLine()
   }
   if ($visible.Count -eq 0) { [void]$builder.AppendLine('_No concepts are published for this audience in the current pilot._') }
@@ -758,10 +771,10 @@ function New-DibsDocumentationOutputs {
   $script:OutputVersion = $Model.AddonVersion
   $concepts = @($Model.Concepts)
   $outputs = [ordered]@{
-    'docs/generated/player-guide.md' = ConvertTo-DibsMarkdownRole $concepts 'player' 'Player Documentation Reference'
-    'docs/generated/officer-guide.md' = ConvertTo-DibsMarkdownRole $concepts 'officer' 'Officer Documentation Reference'
-    'docs/generated/gm-guide.md' = ConvertTo-DibsMarkdownRole $concepts 'gm' 'Guild Master Documentation Reference'
-    'docs/generated/developer-reference.md' = ConvertTo-DibsMarkdownRole $concepts 'developer' 'Developer Documentation Reference'
+    'docs/generated/player-guide.md' = ConvertTo-DibsMarkdownRole $concepts 'player' 'Player Documentation Reference' 'user-facing'
+    'docs/generated/officer-guide.md' = ConvertTo-DibsMarkdownRole $concepts 'officer' 'Officer Documentation Reference' 'user-facing'
+    'docs/generated/gm-guide.md' = ConvertTo-DibsMarkdownRole $concepts 'gm' 'Guild Master Documentation Reference' 'user-facing'
+    'docs/generated/developer-reference.md' = ConvertTo-DibsMarkdownRole $concepts 'developer' 'Developer Documentation Reference' 'technical'
     'docs/generated/ui-reference.md' = ConvertTo-DibsUIReference $concepts
     'docs/generated/terminology.md' = ConvertTo-DibsTerminology $concepts
     'docs/generated/documentation.csv' = ConvertTo-DibsCsv $concepts

@@ -297,6 +297,7 @@ function Dibs.LogsUI.Open(title, lines)
 end
 
 function Dibs.LogsUI.OpenPlayerHistory()
+  local helpText = Dibs.L or {}
   local rows = {}
   for _, tx in ipairs(Dibs.PlayerUI.GetHistory()) do
     rows[#rows + 1] = {
@@ -308,10 +309,10 @@ function Dibs.LogsUI.OpenPlayerHistory()
   end
   if #rows == 0 then rows[1] = { "", "No history entries", "", "" } end
   return openTable("Player History", {
-    { title = "Date", width = 150, tooltip = "When the ledger entry was recorded." },
-    { title = "Action", width = 150, tooltip = "The ledger operation." },
-    { title = "Amount", width = 80, align = "RIGHT", tooltip = "Dibs gained or spent." },
-    { title = "Reason", width = 360, tooltip = "Why the entry was created." },
+    { title = "Date", width = 150, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+    { title = "Action", width = 150, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+    { title = "Amount", width = 80, align = "RIGHT", tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+    { title = "Reason", width = 360, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
   }, rows, 900, 560)
 end
 

@@ -63,6 +63,14 @@ function Dibs.RaidRelay.GetLocalState()
   }
 end
 
+---@doc.id sync.raid.relay
+---@doc.category synchronization
+---@doc.since 0.6.5
+---@doc.audience developer
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_RAID_RELAY
+---@doc.label-key DOC_RAID_RELAY_LABEL
 function Dibs.RaidRelay.Broadcast(channel)
   if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
     return emptyState(), false, "MIXED_PROVIDER_REJECTED"
@@ -86,6 +94,14 @@ function Dibs.RaidRelay.Broadcast(channel)
   return state, helloSent == true and manifestSent == true
 end
 
+---@doc.id sync.raid.reminder
+---@doc.category synchronization
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_RAID_REMINDER
+---@doc.label-key DOC_RAID_REMINDER_LABEL
 function Dibs.RaidRelay.SendReminder(message)
   if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
     return false, "MIXED_PROVIDER_REJECTED"

@@ -95,6 +95,14 @@ local function addReadinessChecks(report, readiness)
   return seen
 end
 
+---@doc.id setup.assistant.readiness
+---@doc.category setup
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_SETUP_ASSISTANT
+---@doc.label-key DOC_SETUP_ASSISTANT_LABEL
 function SetupAssistant.Evaluate(options)
   options = type(options) == "table" and options or {}
   local actorRole = role()

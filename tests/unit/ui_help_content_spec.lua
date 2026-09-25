@@ -40,6 +40,26 @@ describe("localized UI help content", function()
     end
   end)
 
+  it("provides Phase 2 status, review, history, and reminder help in both locales", function()
+    local english, french = loadHelpCatalogs()
+    local keys = {
+      "UI_HELP_PLAYER_STATUS", "UI_HELP_PLAYER_READINESS", "UI_HELP_REVIEW_REQUESTS",
+      "UI_HELP_RC_HISTORY", "UI_HELP_RC_HISTORY_STATUS", "UI_HELP_RC_HISTORY_WINNER",
+      "UI_HELP_RC_HISTORY_CLASSIFICATION", "UI_HELP_RC_HISTORY_EVIDENCE", "UI_HELP_RC_HISTORY_REVIEW",
+      "UI_HELP_ANNOUNCEMENT_CHANNELS", "UI_HELP_AUDIT_HISTORY", "UI_HELP_RAID_REMINDER",
+    }
+    for _, key in ipairs(keys) do
+      assert_true(type(english[key]) == "string" and english[key] ~= "", key .. " must have enUS help")
+      assert_true(type(french[key]) == "string" and french[key] ~= "", key .. " must have frFR help")
+    end
+    assert_true(hasText(english.UI_HELP_PLAYER_STATUS, "optional"))
+    assert_true(hasText(french.UI_HELP_PLAYER_STATUS, "optionnel"))
+    assert_true(hasText(english.UI_HELP_REVIEW_REQUESTS, "read-only"))
+    assert_true(hasText(french.UI_HELP_REVIEW_REQUESTS, "lecture seule"))
+    assert_true(hasText(english.UI_HELP_RAID_REMINDER, "current raid chat"))
+    assert_true(hasText(french.UI_HELP_RAID_REMINDER, "canal du raid actuel"))
+  end)
+
   it("keeps critical Rank Allocation help distinct from its label", function()
     local english, french = loadHelpCatalogs()
     assert_true(english.UI_HELP_RANK_ALLOCATION ~= "Rank Allocation")

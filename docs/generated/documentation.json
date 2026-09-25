@@ -3,6 +3,93 @@
   "addonVersion": "0.6.5",
   "concepts": [
     {
+      "id": "guild.ledger.status",
+      "module": "Installation",
+      "category": "setup",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "developer",
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_GUILD_LEDGER_STATUS_LABEL",
+        "shortHelp": "UI_HELP_GUILD_LEDGER_STATUS",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Guild Ledger status",
+          "frFR": "Etat du registre Dibs de guilde"
+        },
+        "shortHelp": {
+          "enUS": "Shows whether the shared guild ledger needs setup, historical review, or recovery, or is active. Initialization remains a Guild Master-authorized action.",
+          "frFR": "Indique si le registre partage doit etre configure, si les donnees historiques doivent etre examinees, s'il faut une recuperation ou s'il est actif. Son initialisation exige l'autorite du maitre de guilde."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Installation.lua",
+        "line": 85,
+        "symbol": "Installation.GetStatus"
+      }
+    },
+    {
+      "id": "guild.season",
+      "module": "Seasons",
+      "category": "governance",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_SEASON_LABEL",
+        "shortHelp": "UI_HELP_SEASON",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Dibs season",
+          "frFR": "Saison Dibs"
+        },
+        "shortHelp": {
+          "enUS": "A season scopes the active Dibs balance and guild rules. Activating another season does not rewrite earlier history.",
+          "frFR": "Une saison determine le solde Dibs actif et les regles de guilde. Activer une autre saison ne reecrit pas l'historique anterieur."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Seasons.lua",
+        "line": 159,
+        "symbol": "Dibs.Seasons.Create"
+      }
+    },
+    {
       "id": "guild.setup",
       "module": "Installation",
       "category": "setup",
@@ -41,7 +128,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 263,
+        "line": 271,
         "symbol": "Installation.Initialize"
       }
     },
@@ -91,6 +178,95 @@
       }
     },
     {
+      "id": "ledger.adjust.reason",
+      "module": "Ledger",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [
+        "ledger.adjust"
+      ],
+      "scope": "guild-season",
+      "audit": true,
+      "reasonRequired": true,
+      "helpKeys": {
+        "label": "DOC_ADJUSTMENT_REASON_LABEL",
+        "shortHelp": "UI_HELP_REASON",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Adjustment reason",
+          "frFR": "Raison de l'ajustement"
+        },
+        "shortHelp": {
+          "enUS": "The recorded explanation for this action. Administrative changes require a meaningful reason.",
+          "frFR": "Explication conservee avec cette action. Les changements administratifs exigent une raison pertinente."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Ledger.lua",
+        "line": 580,
+        "symbol": "Ledger.AdminAdjust"
+      }
+    },
+    {
+      "id": "ledger.audit.history",
+      "module": "Ledger",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_AUDIT_HISTORY_LABEL",
+        "shortHelp": "UI_HELP_AUDIT_HISTORY",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Dibs audit history",
+          "frFR": "Historique d'audit Dibs"
+        },
+        "shortHelp": {
+          "enUS": "Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.",
+          "frFR": "Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Ledger.lua",
+        "line": 685,
+        "symbol": "Ledger.GetHistory"
+      }
+    },
+    {
       "id": "ledger.balance",
       "module": "Ledger",
       "category": "ledger",
@@ -130,8 +306,268 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 641,
+        "line": 651,
         "symbol": "Ledger.GetBalance"
+      }
+    },
+    {
+      "id": "loot.eligibility",
+      "module": "OfficerUI",
+      "category": "governance",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_LOOT_ELIGIBILITY_LABEL",
+        "shortHelp": "UI_HELP_LOOT_ELIGIBILITY",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Loot eligibility",
+          "frFR": "Eligibilite du butin"
+        },
+        "shortHelp": {
+          "enUS": "Shows whether a loot category may use Dibs under the active guild policy, and why a category is blocked or needs review.",
+          "frFR": "Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/ui/OfficerUI.lua",
+        "line": 400,
+        "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
+      }
+    },
+    {
+      "id": "officer.audit.timeline",
+      "module": "Disputes",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_AUDIT_TIMELINE_LABEL",
+        "shortHelp": "UI_HELP_AUDIT_HISTORY",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Request audit timeline",
+          "frFR": "Chronologie d'audit des demandes"
+        },
+        "shortHelp": {
+          "enUS": "Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.",
+          "frFR": "Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Disputes.lua",
+        "line": 1152,
+        "symbol": "Disputes.GetTimeline"
+      }
+    },
+    {
+      "id": "officer.review.requests",
+      "module": "Disputes",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_REVIEW_REQUESTS_LABEL",
+        "shortHelp": "UI_HELP_REVIEW_REQUESTS",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Officer review requests",
+          "frFR": "Demandes de revue des officiers"
+        },
+        "shortHelp": {
+          "enUS": "Shows player reports and their attached Dibs or RCLootCouncil evidence. Opening a request is read-only; Officer resolutions retain an audit reason.",
+          "frFR": "Affiche les signalements des joueurs et leurs preuves Dibs ou RCLootCouncil. Ouvrir une demande est en lecture seule; les decisions des officiers conservent une raison d'audit."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Disputes.lua",
+        "line": 614,
+        "symbol": "Disputes.ListForOfficer"
+      }
+    },
+    {
+      "id": "player.readiness",
+      "module": "Readiness",
+      "category": "setup",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "player",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_PLAYER_READINESS_LABEL",
+        "shortHelp": "UI_HELP_PLAYER_READINESS",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Player raid readiness",
+          "frFR": "Readiness du joueur"
+        },
+        "shortHelp": {
+          "enUS": "Summarizes whether current guild setup and context are ready for live loot. An unavailable check is not a personal penalty; contact an Officer if the state remains blocked.",
+          "frFR": "Resume si la configuration de guilde et le contexte actuel sont prets pour le butin en direct. Un controle indisponible n'est pas une penalite personnelle; contactez un officier si l'etat reste bloque."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Readiness.lua",
+        "line": 199,
+        "symbol": "Readiness.Evaluate"
+      }
+    },
+    {
+      "id": "player.status",
+      "module": "PlayerUI",
+      "category": "setup",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_PLAYER_STATUS_LABEL",
+        "shortHelp": "UI_HELP_PLAYER_STATUS",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Guild Dibs status",
+          "frFR": "Etat Dibs de guilde"
+        },
+        "shortHelp": {
+          "enUS": "Explains whether your personal Dibs information is available. If features are limited or unavailable, retry later or contact an Officer; RCLootCouncil is optional and Standalone mode can remain available.",
+          "frFR": "Indique si vos informations Dibs personnelles sont disponibles. Si certaines fonctions sont limitees ou indisponibles, reessayez plus tard ou contactez un officier; RCLootCouncil est optionnel et le mode Standalone peut rester disponible."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/ui/PlayerUI.lua",
+        "line": 372,
+        "symbol": "Dibs.PlayerUI.GetStatusPresentation"
+      }
+    },
+    {
+      "id": "predibs.announcement.channels",
+      "module": "PreDibs",
+      "category": "predibs",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_ANNOUNCEMENT_CHANNELS_LABEL",
+        "shortHelp": "UI_HELP_ANNOUNCEMENT_CHANNELS",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Announcement channels",
+          "frFR": "Canaux d'annonce"
+        },
+        "shortHelp": {
+          "enUS": "Choose destinations for public Pre-Dib notices and Officer-only notices. Availability depends on this character joining the configured channel; test it before live use.",
+          "frFR": "Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/PreDibs.lua",
+        "line": 477,
+        "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
     {
@@ -218,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 574,
+        "line": 582,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },
@@ -268,6 +704,136 @@
       }
     },
     {
+      "id": "rclootcouncil.history.reconciliation",
+      "module": "RCLootCouncil",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "developer",
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_RC_HISTORY_RECONCILIATION_LABEL",
+        "shortHelp": "UI_HELP_RC_HISTORY",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "RCLootCouncil history review",
+          "frFR": "Revue de l'historique RCLootCouncil"
+        },
+        "shortHelp": {
+          "enUS": "Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.",
+          "frFR": "Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/integrations/RCLootCouncil.lua",
+        "line": 3416,
+        "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
+      }
+    },
+    {
+      "id": "rclootcouncil.response.mapping",
+      "module": "RCLootCouncilOptions",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_RC_MAPPING_LABEL",
+        "shortHelp": "UI_HELP_RC_MAPPING",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "RCLootCouncil response mapping",
+          "frFR": "Correspondance des reponses RCLootCouncil"
+        },
+        "shortHelp": {
+          "enUS": "Maps a RCLootCouncil response to Dibs meaning. Review the mapping with your guild before live loot; this does not change RCLootCouncil history.",
+          "frFR": "Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/integrations/RCLootCouncilOptions.lua",
+        "line": 245,
+        "symbol": "buildButtonSetMappingText"
+      }
+    },
+    {
+      "id": "setup.assistant.readiness",
+      "module": "SetupAssistant",
+      "category": "setup",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_SETUP_ASSISTANT_LABEL",
+        "shortHelp": "UI_HELP_SETUP_ASSISTANT",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Setup Assistant readiness",
+          "frFR": "Readiness de l'assistant de configuration"
+        },
+        "shortHelp": {
+          "enUS": "Checks whether this guild's configuration is operational for a raid and lists blockers with the next safe action.",
+          "frFR": "Verifie si la configuration actuelle de la guilde convient au raid et liste les blocages avec la prochaine action sure."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/ui/SetupAssistant.lua",
+        "line": 106,
+        "symbol": "SetupAssistant.Evaluate"
+      }
+    },
+    {
       "id": "setup.reconciliation",
       "module": "Installation",
       "category": "setup",
@@ -307,7 +873,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 164,
+        "line": 172,
         "symbol": "Installation.GetReconciliationView"
       }
     },
@@ -356,6 +922,49 @@
       }
     },
     {
+      "id": "sync.peer.status",
+      "module": "SyncV2",
+      "category": "synchronization",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_SYNC_PEER_STATUS_LABEL",
+        "shortHelp": "UI_HELP_SYNC_PEER",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Synchronization peer status",
+          "frFR": "Etat de synchronisation des membres"
+        },
+        "shortHelp": {
+          "enUS": "Peer status is based on the latest response observed by this client; an offline or unresponsive member may show stale synchronization details.",
+          "frFR": "L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/SyncV2.lua",
+        "line": 268,
+        "symbol": "Sync.GetPeerStatuses"
+      }
+    },
+    {
       "id": "sync.protocol.state",
       "module": "SyncV2",
       "category": "protocol",
@@ -393,8 +1002,93 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 478,
+        "line": 486,
         "symbol": "Sync.SetProtocolState"
+      }
+    },
+    {
+      "id": "sync.raid.relay",
+      "module": "RaidRelay",
+      "category": "synchronization",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "developer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_RAID_RELAY_LABEL",
+        "shortHelp": "UI_HELP_RAID_RELAY",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Raid Relay service",
+          "frFR": "Service Raid Relay"
+        },
+        "shortHelp": {
+          "enUS": "This service uses guild synchronization for bounded Dibs state and raid reminders. It does not transfer loot, votes, live candidates, or ledger ownership.",
+          "frFR": "Ce service utilise la synchronisation de guilde pour l'etat Dibs borne et les rappels de raid. Il ne transfere ni butin, ni votes, ni candidats en direct, ni propriete du registre."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/RaidRelay.lua",
+        "line": 74,
+        "symbol": "Dibs.RaidRelay.Broadcast"
+      }
+    },
+    {
+      "id": "sync.raid.reminder",
+      "module": "RaidRelay",
+      "category": "synchronization",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_RAID_REMINDER_LABEL",
+        "shortHelp": "UI_HELP_RAID_REMINDER",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Raid reminder",
+          "frFR": "Rappel de raid"
+        },
+        "shortHelp": {
+          "enUS": "Sends the configured reminder to the current raid chat. Guild permission and raid-chat availability are required; this does not record a loot award or change Dibs.",
+          "frFR": "Envoie le rappel configure dans le canal du raid actuel. Une autorisation de guilde et un canal disponible sont requis; cela n'enregistre aucun gain et ne modifie pas les Dibs."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/RaidRelay.lua",
+        "line": 105,
+        "symbol": "Dibs.RaidRelay.SendReminder"
       }
     },
     {

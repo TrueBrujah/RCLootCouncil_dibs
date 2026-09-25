@@ -389,6 +389,14 @@ end
 ---@param seasonId string|number|nil Season scope.
 ---@param options table|nil Expansion and unsaved draft options.
 ---@return table projection Recommended-first eligibility presentation.
+---@doc.id loot.eligibility
+---@doc.category governance
+---@doc.since 0.6.5
+---@doc.audience player,officer,gm
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_LOOT_ELIGIBILITY
+---@doc.label-key DOC_LOOT_ELIGIBILITY_LABEL
 function Dibs.OfficerUI.GetEligibilityProjection(seasonId, options)
   options = type(options) == "table" and options or {}
   if not canViewOfficerData() then return { hidden = true, categories = {}, byFamily = {} } end
@@ -3784,6 +3792,7 @@ local function createAceWindow(initialRoute)
       -- keep it inside its own scrollable content area instead of letting the
       -- TreeGroup clip the resolution actions below the fold.
       local requestPageRoot = tabs
+      local helpText = Dibs.L or {}
       local requestChildrenBefore = #(requestPageRoot.children or {})
       local requestRenderComplete = false
       local function finishRequestRender(requestCount)
@@ -3801,7 +3810,7 @@ local function createAceWindow(initialRoute)
         .. " REQUEST_COUNT=pending SELECTED_REQUEST=" .. tostring(self.disputeSelectedId or "nil")
         .. " CHILD_COUNT_BEFORE=" .. tostring(requestChildrenBefore))
       local tabs = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
-      Dibs.AceGUI.AddHeader(shell, tabs, "Officer review requests", "Review player reports with the attached Dibs and RCLootCouncil evidence. Every resolution records an auditable reason.")
+      Dibs.AceGUI.AddHeader(shell, tabs, "Officer review requests", helpText.UI_HELP_REVIEW_REQUESTS)
       local statusChoices = { [""] = "All statuses" }
       for key, value in pairs(Dibs.Disputes and Dibs.Disputes.GetStatuses and Dibs.Disputes.GetStatuses() or {}) do
         statusChoices[value] = value
@@ -3858,10 +3867,10 @@ local function createAceWindow(initialRoute)
       end
       if #requestRows == 0 then requestRows[1] = { "", "No requests", "", "" } end
       Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Date", width = 145, tooltip = "When the player submitted the request." },
-        { title = "Player", width = 125, tooltip = "Character that submitted the request." },
-        { title = "Item / Request", width = 220, tooltip = "Item or request being reviewed." },
-        { title = "Status", width = 135, tooltip = "Current review status." },
+        { title = "Date", width = 145, tooltip = helpText.UI_HELP_REVIEW_REQUESTS },
+        { title = "Player", width = 125, tooltip = helpText.UI_HELP_REVIEW_REQUESTS },
+        { title = "Item / Request", width = 220, tooltip = helpText.UI_HELP_REVIEW_REQUESTS },
+        { title = "Status", width = 135, tooltip = helpText.UI_HELP_REVIEW_REQUESTS },
       }, requestRows, 270, nil, {
         allowTableSort = false,
         onRowClick = function(row)
@@ -4300,10 +4309,10 @@ local function createAceWindow(initialRoute)
             end, 190)
             if self.disputeHistoryExpanded then
               Dibs.AceGUI.AddTable(shell, tabs, {
-                { title = "Date", width = 130, tooltip = "Audit event time." },
-                { title = "Actor", width = 140, tooltip = "Actor identity is officer-only." },
-                { title = "Action", width = 150, tooltip = "Recorded action." },
-                { title = "Reason", width = 300, tooltip = "Recorded justification." },
+                { title = "Date", width = 130, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+                { title = "Actor", width = 140, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+                { title = "Action", width = 150, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
+                { title = "Reason", width = 300, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
               }, timelineRows, 190)
             end
           end
@@ -4314,8 +4323,9 @@ local function createAceWindow(initialRoute)
     end
 
     if self.activeTab == "history" or self.activeTab == "reconciliation" then
+      local helpText = Dibs.L or {}
       local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
-      Dibs.AceGUI.AddHeader(shell, scroll, "RCLootCouncil History", "Search read-only award evidence first. Confirmation and rejection use the existing protected reconciliation service.")
+      Dibs.AceGUI.AddHeader(shell, scroll, "RCLootCouncil History", helpText.UI_HELP_RC_HISTORY)
       local rcStatus = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
       if not Dibs.RCLootCouncil or type(Dibs.RCLootCouncil.GetHistoryRows) ~= "function" then
         Dibs.AceGUI.AddLabel(shell, scroll, "History reconciliation is unavailable until RCLootCouncil exposes its read-only history.", true)
@@ -4420,14 +4430,14 @@ local function createAceWindow(initialRoute)
       if #candidateRows == 0 then candidateRows[1] = { "", "No history rows", "", "", "", "", "" } end
       Dibs.AceGUI.AddTable(shell, scroll, {
         { title = "Date / time", width = 180, tooltip = "Original RCLootCouncil award date and time." },
-        { title = "Status", width = 100, tooltip = "Human-readable reconciliation state." },
-        { title = "Winner", width = 120, tooltip = "Character recorded as the awarded player." },
+        { title = "Status", width = 100, tooltip = helpText.UI_HELP_RC_HISTORY_STATUS },
+        { title = "Winner", width = 120, tooltip = helpText.UI_HELP_RC_HISTORY_WINNER },
         { title = "Item", width = 170, tooltip = "Read-only RCLootCouncil item evidence." },
         { title = "Difficulty", width = 95, tooltip = "Recorded raid difficulty." },
         { title = "Encounter", width = 150, tooltip = (Dibs.L and Dibs.L.UI_HELP_ENCOUNTER_EVIDENCE) or "Raid instance and boss recorded for this award." },
-        { title = "Classification", width = 125, tooltip = "Reconciliation classification." },
-        { title = "Evidence", width = 180, tooltip = "Concise evidence result; technical details are secondary." },
-        { title = "Review", width = 90, tooltip = "Open candidate details." },
+        { title = "Classification", width = 125, tooltip = helpText.UI_HELP_RC_HISTORY_CLASSIFICATION },
+        { title = "Evidence", width = 180, tooltip = helpText.UI_HELP_RC_HISTORY_EVIDENCE },
+        { title = "Review", width = 90, tooltip = helpText.UI_HELP_RC_HISTORY_REVIEW },
       }, candidateRows, 250, function(row)
         if not row.candidate then return nil end
         return { text = "Review", callback = function()
@@ -4476,6 +4486,7 @@ local function createAceWindow(initialRoute)
     end
 
     if self.activeTab == "announcements" then
+      local helpText = Dibs.L or {}
       local templates = Dibs.PreDibs.GetAnnouncementTemplates()
       local announcementSettings = Dibs.PreDibs.GetAnnouncementSettings()
       local updatePreview = function()
@@ -4496,7 +4507,7 @@ local function createAceWindow(initialRoute)
           self.announcementPreview:SetText("Pre-Dib: " .. preDib .. "\nReminder: " .. reminder)
         end
       end
-      Dibs.AceGUI.AddLabel(shell, tabs, "Announcement templates and facts", true)
+      Dibs.AceGUI.AddLabel(shell, tabs, helpText.UI_HELP_ANNOUNCEMENT_CHANNELS, true)
       Dibs.AceGUI.AddLabel(shell, tabs, "Variables: %player %item %itemID %difficulty %mode %status %season %date %time %requestID %source %channel", true)
       self.preDibTemplateInput = Dibs.AceGUI.AddEditBox(shell, tabs, "Pre-Dib announcement", function(value)
         local currentTemplates = Dibs.PreDibs.GetAnnouncementTemplates()
@@ -4515,11 +4526,13 @@ local function createAceWindow(initialRoute)
         Dibs.PreDibs.SetAnnouncementChannels(value, announcementState.officerChannel)
       end, 180)
       Dibs.AceGUI.SetValue(self.publicAnnouncementChannel, announcementSettings.publicChannel)
+      Dibs.AceGUI.AddTooltip(self.publicAnnouncementChannel, "Public announcement channel", helpText.UI_HELP_ANNOUNCEMENT_CHANNELS)
       self.officerAnnouncementChannel = Dibs.AceGUI.AddDropdown(shell, tabs, "Officer pre-dib announce channel", ANNOUNCEMENT_CHANNEL_VALUES, function(value)
         local announcementState = Dibs.PreDibs.GetAnnouncementSettings()
         Dibs.PreDibs.SetAnnouncementChannels(announcementState.publicChannel, value)
       end, 180)
       Dibs.AceGUI.SetValue(self.officerAnnouncementChannel, announcementSettings.officerChannel)
+      Dibs.AceGUI.AddTooltip(self.officerAnnouncementChannel, "Officer announcement channel", helpText.UI_HELP_ANNOUNCEMENT_CHANNELS)
       Dibs.AceGUI.AddButton(shell, tabs, "Test public channel", function()
         local settings = Dibs.PreDibs.GetAnnouncementSettings()
         local ok, reason = Dibs.PreDibs.SendTestAnnouncement(settings.publicChannel, "Public")

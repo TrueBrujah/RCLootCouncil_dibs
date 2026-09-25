@@ -567,6 +567,16 @@ local function commitCanonicalAdminAdjustment(playerName, amount, reason, source
   if Dibs.Sync and Dibs.Sync.AnnounceAwardCommit then Dibs.Sync.AnnounceAwardCommit(copy(commit)) end
   return { accepted = true, reasonCode = "CANONICAL_COMMITTED", value = copy(tx) }
 end
+---@doc.id ledger.adjust.reason
+---@doc.category ledger
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.permission ledger.adjust
+---@doc.scope guild-season
+---@doc.audit true
+---@doc.reason-required true
+---@doc.help-key UI_HELP_REASON
+---@doc.label-key DOC_ADJUSTMENT_REASON_LABEL
 function Ledger.AdminAdjust(playerName, amount, reason, source, seasonId, audit)
   local numeric = tonumber(amount); if not finiteInteger(numeric) or numeric == 0 then return nil, "INVALID_AMOUNT" end
   if source == "MANUAL_ADMIN" and v2Enforced() then
@@ -664,6 +674,14 @@ local function sortTransactions(list)
     return first == second and tostring(a.transactionId) < tostring(b.transactionId) or first < second
   end)
 end
+---@doc.id ledger.audit.history
+---@doc.category ledger
+---@doc.since 0.6.5
+---@doc.audience player,officer,gm
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_AUDIT_HISTORY
+---@doc.label-key DOC_AUDIT_HISTORY_LABEL
 function Ledger.GetHistory(playerName, seasonId)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil

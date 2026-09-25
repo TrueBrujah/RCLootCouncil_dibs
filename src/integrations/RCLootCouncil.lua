@@ -3405,6 +3405,14 @@ end
 
 ---@param options table|nil Filter and pagination options.
 ---@return table[] rows Permission-filtered RC history candidates with precise timestamps.
+---@doc.id rclootcouncil.history.reconciliation
+---@doc.category ledger
+---@doc.since 0.6.5
+---@doc.audience officer,gm,developer
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_RC_HISTORY
+---@doc.label-key DOC_RC_HISTORY_RECONCILIATION_LABEL
 function Dibs.RCLootCouncil.GetHistoryRows(options)
   options = type(options) == "table" and options or {}
   if Dibs.Permissions and Dibs.Permissions.Can and not Dibs.Permissions.Can("history.confirm", options.actor) then

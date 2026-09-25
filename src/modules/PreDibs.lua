@@ -466,6 +466,14 @@ function Dibs.PreDibs.ValidatePublicRequest(itemID, seasonId, context)
   return true, nil, policy, validation
 end
 
+---@doc.id predibs.announcement.channels
+---@doc.category predibs
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_ANNOUNCEMENT_CHANNELS
+---@doc.label-key DOC_ANNOUNCEMENT_CHANNELS_LABEL
 function Dibs.PreDibs.GetAnnouncementSettings()
   ensureState()
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()

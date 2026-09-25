@@ -234,6 +234,14 @@ local function getDibTypeLabel(value)
   return tostring(value)
 end
 
+---@doc.id rclootcouncil.response.mapping
+---@doc.category ledger
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_RC_MAPPING
+---@doc.label-key DOC_RC_MAPPING_LABEL
 local function buildButtonSetMappingText()
   local lines = {
     helpText.UI_HELP_RC_MAPPING,
@@ -1108,6 +1116,7 @@ local optionsTable = {
               type = "input",
               width = "full",
               name = "Raid reminder message",
+              desc = helpText.UI_HELP_RAID_REMINDER,
               get = function()
                 if Dibs.PreDibs and Dibs.PreDibs.GetAnnouncementTemplates then
                   return Dibs.PreDibs.GetAnnouncementTemplates().reminder
@@ -1127,6 +1136,7 @@ local optionsTable = {
               order = 5,
               type = "execute",
               name = "Send raid reminder",
+              desc = helpText.UI_HELP_RAID_REMINDER,
               func = function()
                 local ok, reason = false, "REMINDER_UNAVAILABLE"
                 if Dibs.RaidRelay and Dibs.RaidRelay.SendReminder then

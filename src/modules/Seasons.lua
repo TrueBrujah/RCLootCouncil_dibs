@@ -148,6 +148,14 @@ ensureState = function()
   end
 end
 
+---@doc.id guild.season
+---@doc.category governance
+---@doc.since 0.6.5
+---@doc.audience officer,gm
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_SEASON
+---@doc.label-key DOC_SEASON_LABEL
 function Dibs.Seasons.Create(name)
   ensureState()
 
