@@ -541,7 +541,7 @@ function Adapter.SetValue(widget, value)
 end
 
 function Adapter.AddTooltip(widget, title, description)
-  local frame = widget and widget.frame
+  local frame = widget and (widget.frame or widget)
   if not frame or type(frame.SetScript) ~= "function" or not GameTooltip or type(GameTooltip.SetOwner) ~= "function" then
     return widget
   end

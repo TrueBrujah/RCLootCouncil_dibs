@@ -18,6 +18,7 @@ Related docs: docs/player/README.md.
 
 local Dibs = _G.Dibs
 Dibs.PlayerUI = Dibs.PlayerUI or {}
+local helpText = Dibs.L or {}
 
 local function setControlText(control, text)
   if not control then
@@ -487,10 +488,10 @@ end
 function Dibs.PlayerUI.GetVaultAcquisitionPresentation(record)
   record = type(record) == "table" and record or {}
   local status = tostring(record.verificationState or "UNVERIFIED")
-  local label = Dibs.L and Dibs.L["VAULT_STATUS_" .. status] or status
+  local label = helpText["VAULT_STATUS_" .. status] or status
   local explanation = record.evidenceState == "COMPLETE"
-    and ((Dibs.L and Dibs.L.VAULT_EVIDENCE_COMPLETE) or "The stored Great Vault evidence is complete.")
-    or (Dibs.L and Dibs.L.VAULT_REASON_EVIDENCE_UNCERTAIN or "Great Vault evidence needs review.")
+    and (helpText.VAULT_EVIDENCE_COMPLETE or "The stored Great Vault evidence is complete.")
+    or (helpText.VAULT_REASON_EVIDENCE_UNCERTAIN or "Great Vault evidence needs review.")
   return { label = label, explanation = explanation, verificationState = status, source = record.source,
     resetId = record.resetId, syncState = record.syncState }
 end
@@ -584,7 +585,7 @@ local function createLegacyAceWindow()
       -- Keep the report form, request list and details in one bounded page so
       -- the lower controls remain reachable on smaller screens.
       local tabs = Dibs.AceGUI.AddScrollableList(shell, tabs, 535) or tabs
-      Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Player reports and request history.")
+      Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", helpText.UI_HELP_PLAYER_OVERVIEW)
       local toolbar = Dibs.AceGUI.AddInlineGroup(shell, tabs)
       Dibs.AceGUI.AddButton(shell, toolbar, "Open shared options", function() Dibs.RCOptions.Open() end, 170)
       Dibs.AceGUI.AddHeader(shell, tabs, "Report a problem", "Report a Dibs or loot history problem and follow its resolution.")
@@ -667,11 +668,11 @@ local function createLegacyAceWindow()
         end
       end
       Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Date", width = 145, tooltip = "When you submitted the request." },
-        { title = "Request", width = 160, tooltip = "Your request identifier." },
-        { title = "Status", width = 180, tooltip = "Current Officer review status." },
-        { title = "Next step", width = 220, tooltip = "What you can do next." },
-        { title = "Action", width = 80, tooltip = "Open details." },
+        { title = "Date", width = 145, tooltip = helpText.UI_HELP_DATE },
+        { title = "Request", width = 160, tooltip = helpText.UI_HELP_REQUEST_ID },
+        { title = "Status", width = 180, tooltip = helpText.UI_HELP_REQUEST_STATUS },
+        { title = "Next step", width = 220, tooltip = helpText.UI_HELP_NEXT_STEP },
+        { title = "Action", width = 80, tooltip = helpText.UI_HELP_ACTION },
       }, requestRows, 230, function(row)
         if not row.request then return nil end
         return {
@@ -714,17 +715,17 @@ local function createLegacyAceWindow()
           end
           if #timelineRows > 0 then
             Dibs.AceGUI.AddTable(shell, tabs, {
-              { title = "Date", width = 145, tooltip = "When the event was recorded." },
-              { title = "Event", width = 160, tooltip = "Request history event." },
-              { title = "Status", width = 140, tooltip = "Status after the event." },
-              { title = "Details", width = 260, tooltip = "Player-visible explanation." },
+              { title = "Date", width = 145, tooltip = helpText.UI_HELP_DATE },
+              { title = "Event", width = 160, tooltip = helpText.UI_HELP_EVENT },
+              { title = "Status", width = 140, tooltip = helpText.UI_HELP_REQUEST_STATUS },
+              { title = "Details", width = 260, tooltip = helpText.UI_HELP_DETAILS },
             }, timelineRows, 170)
           end
         end
       end
       return
     end
-    Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", "Player controls and personal history.")
+    Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", helpText.UI_HELP_PLAYER_OVERVIEW)
     local toolbar = Dibs.AceGUI.AddInlineGroup(shell, tabs)
     Dibs.AceGUI.AddButton(shell, toolbar, "Open shared options", function() Dibs.RCOptions.Open() end, 170)
     if self.playerTab == "history" then
@@ -745,7 +746,7 @@ local function createLegacyAceWindow()
         self.historyPage = 1
         self:Refresh()
       end, 110)
-      Dibs.AceGUI.AddTooltip(modeButton, "History scope", self.historyMode == "all" and "Showing all seasons." or "Showing only the current season.")
+      Dibs.AceGUI.AddTooltip(modeButton, "History scope", helpText.UI_HELP_HISTORY_SCOPE)
       Dibs.AceGUI.AddButton(shell, tabs, "Clear", function()
         self.historyQuery = ""
         self.historyPage = 1
@@ -911,8 +912,10 @@ local function createLegacyAceWindow()
       }
     end)
     self.preDibInput = Dibs.AceGUI.AddEditBox(shell, tabs, "Public pre-dib (item ID or link)", nil, 260)
+    Dibs.AceGUI.AddTooltip(self.preDibInput, "Pre-Dib", helpText.UI_HELP_PREDIB_FIELD)
     setControlText(self.preDibInput, self.preDibValue or "")
     self.preDibButton = Dibs.AceGUI.AddButton(shell, tabs, "I want to DIB this", submitFromInput, 170)
+    Dibs.AceGUI.AddTooltip(self.preDibButton, "Pre-Dib", helpText.UI_HELP_PREDIB_SUBMIT)
     local publicEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() or false
     Dibs.AceGUI.SetDisabled(self.preDibButton, not publicEnabled)
     self.preDibStatus = Dibs.AceGUI.AddLabel(shell, tabs, self.preDibStatusText or (publicEnabled and "Public pre-dibs enabled." or "Public pre-dibs disabled by officers."), true)
@@ -965,12 +968,14 @@ local function createAceWindow()
   end
 
   local function addRequestAction(parent, view)
-    Dibs.AceGUI.AddHeader(shell, parent, "Request a Pre-Dib", "Reserve an item before it drops when public Pre-Dibs are enabled.")
+    Dibs.AceGUI.AddHeader(shell, parent, "Request a Pre-Dib", helpText.UI_HELP_PREDIB)
     frame.preDibInput = Dibs.AceGUI.AddEditBox(shell, parent, "Item ID or item link", function(value)
       frame.preDibValue = value or ""
     end, 300)
+    Dibs.AceGUI.AddTooltip(frame.preDibInput, "Pre-Dib", helpText.UI_HELP_PREDIB_FIELD)
     setControlText(frame.preDibInput, frame.preDibValue)
     local submit = Dibs.AceGUI.AddButton(shell, parent, "Submit request", submitFromInput, 150)
+    Dibs.AceGUI.AddTooltip(submit, "Pre-Dib", helpText.UI_HELP_PREDIB_SUBMIT)
     local publicEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() or false
     Dibs.AceGUI.SetDisabled(submit, not publicEnabled)
     Dibs.AceGUI.AddLabel(shell, parent, frame.preDibStatusText or (publicEnabled
@@ -1050,10 +1055,10 @@ local function createAceWindow()
 
     Dibs.AceGUI.AddHeading(shell, tabs, "My Dibs", "Your balance, active requests, and current guild status.")
     Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Balance", width = 130 },
-      { title = "Season", width = 230 },
-      { title = "Active Pre-Dibs", width = 150 },
-      { title = "Requests", width = 110 },
+      { title = "Balance", width = 130, tooltip = helpText.UI_HELP_DIB_BALANCE },
+      { title = "Season", width = 230, tooltip = helpText.UI_HELP_SEASON },
+      { title = "Active Pre-Dibs", width = 150, tooltip = helpText.UI_HELP_PREDIB },
+      { title = "Requests", width = 110, tooltip = helpText.UI_HELP_REQUEST_STATUS },
     }, {{ tostring(view.balance), view.seasonName, tostring(#view.activePreDibs), tostring(view.pendingRequests) }}, 90)
     Dibs.AceGUI.AddHeader(shell, tabs, view.status.label, view.status.explanation)
     local activeRows = {}
@@ -1065,11 +1070,11 @@ local function createAceWindow()
     end
     if #activeRows == 0 then activeRows[1] = { "", view.empty.activePreDibs, "", "", "" } end
     Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Date", width = 145 },
-      { title = "Item", width = 250 },
-      { title = "Status", width = 120 },
-      { title = "Difficulty", width = 100 },
-      { title = "Action", width = 90 },
+      { title = "Date", width = 145, tooltip = helpText.UI_HELP_DATE },
+      { title = "Item", width = 250, tooltip = helpText.UI_HELP_ITEM },
+      { title = "Status", width = 120, tooltip = helpText.UI_HELP_REQUEST_STATUS },
+      { title = "Difficulty", width = 100, tooltip = helpText.UI_HELP_DIFFICULTY },
+      { title = "Action", width = 90, tooltip = helpText.UI_HELP_ACTION },
     }, activeRows, 170, function(row)
       if not row.request then return nil end
       return {
@@ -1224,6 +1229,12 @@ function Dibs.PlayerUI.CreateWindow()
   frame.searchBox = searchBox
   frame.preDibInput = preDibInput
   frame.preDibButton = preDibButton
+  Dibs.AceGUI.AddTooltip(summaryText, "Dibs summary", helpText.UI_HELP_PLAYER_OVERVIEW)
+  Dibs.AceGUI.AddTooltip(preDibLabel, "Pre-Dib", helpText.UI_HELP_PREDIB)
+  Dibs.AceGUI.AddTooltip(preDibInput, "Pre-Dib", helpText.UI_HELP_PREDIB_FIELD)
+  Dibs.AceGUI.AddTooltip(preDibButton, "Pre-Dib", helpText.UI_HELP_PREDIB_SUBMIT)
+  Dibs.AceGUI.AddTooltip(searchBox, "History", helpText.UI_HELP_DETAILS)
+  Dibs.AceGUI.AddTooltip(modeButton, "History scope", helpText.UI_HELP_HISTORY_SCOPE)
   frame.preDibStatus = preDibStatus
   frame.devItemText = devItemText
   frame.devRequestButton = devRequestButton

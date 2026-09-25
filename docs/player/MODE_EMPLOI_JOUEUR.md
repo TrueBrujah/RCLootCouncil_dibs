@@ -13,7 +13,7 @@ Dibs ne fait pas les choses suivantes :
 - il ne remplace pas le vote RCLootCouncil ;
 - il ne garantit pas qu'un joueur gagnera un objet ;
 - il ne depense pas un Dib lors de la creation d'une demande ;
-- il ne permet pas a un joueur de modifier le ledger ou les regles ;
+- il ne permet pas a un joueur de modifier le registre Dibs de guilde ou les regles ;
 - il ne partage pas les votes, candidats ou reponses live avec un autre raid.
 
 > **Attention :** un Master Looter RCLootCouncil n'a pas automatiquement les
@@ -156,9 +156,13 @@ Le solde est calcule a partir des transactions du ledger pour la saison active.
 L'historique indique notamment le type d'operation, la quantite, la raison, la
 date et la reference du gain quand elle existe.
 
-Une correction ne supprime pas la transaction originale : elle ajoute une
-nouvelle operation auditee. Ne comparez donc pas seulement le solde ; ouvrez
-l'historique lorsque le resultat semble inattendu.
+La fenetre Joueur est en lecture seule pour les soldes et les regles de guilde.
+Vous pouvez envoyer ou annuler vos propres demandes Pre-Dib; un GM ou un
+Officer autorise doit effectuer toute correction de solde.
+
+Une correction ne supprime pas l'operation originale : elle ajoute une nouvelle
+operation auditee. Ne comparez donc pas seulement le solde; ouvrez l'historique
+lorsque le resultat semble inattendu.
 
 ## 5. Quand un Dib est-il depense ?
 

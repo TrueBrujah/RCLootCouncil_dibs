@@ -40,4 +40,15 @@ Each raid can maintain its own encounter context. Sync never moves an item, a
 live RC candidate list, a vote, or an RC response between raids
 (`DIBS-RULE-012`).
 
+## UI terminology and technical state
+
+Player and standard Officer guidance uses **Guild Ledger** for the shared
+canonical Dibs record and **Synchronization** for the user-visible exchange
+status. The technical-details view may expose `V2_ENFORCED`, `ledgerEpoch`,
+`legacyBaselineHash`, and `SyncV2`; these are diagnostic identifiers, not
+configuration steps a guild member must understand. `SYNC_BEHIND` means the
+client has not caught up and must not be presented as ready for canonical
+updates. Guild Setup and Setup Assistant should pair any blocked/unavailable
+state with its operational consequence and next action.
+
 See [events.md](events.md) and [combat-safety.md](combat-safety.md) for transport/event boundaries.

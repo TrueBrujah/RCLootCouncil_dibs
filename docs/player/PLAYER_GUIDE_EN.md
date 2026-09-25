@@ -46,9 +46,13 @@ loot voting and award finalization.
 
 ## Balance and history
 
-Your balance is calculated from ledger transactions for the active season. The
-history can include grants, uses, refunds, adjustments, reasons, timestamps,
-and award references. A rank change does not rewrite older transactions.
+Your balance reflects recorded Dibs changes for the current guild and active
+season. Dibs history can show grants, uses, refunds, adjustments, reasons,
+timestamps, and award references. A rank change does not rewrite older history.
+
+The Player window is read-only for balances and guild rules. You can submit or
+cancel your own Pre-Dib requests, but a GM or authorized Officer must handle a
+balance correction.
 
 A correction never silently deletes the original event. It appends a new,
 audited transaction linked to the original one.

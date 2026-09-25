@@ -37,6 +37,7 @@ end
 
 function Dibs.DebugLogs.Open(actor)
   actor = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
+  local helpText = Dibs.L or {}
   if not canViewDebugLogs(actor) then return false, "GUILD_ADMIN_REQUIRED" end
   if not Dibs.AceGUI or not Dibs.AceGUI.CreateWindow then return false end
   local shell = Dibs.AceGUI.CreateWindow("Dibs Debug Logs", 900, 650, { "CENTER", 0, 0 })
@@ -62,10 +63,10 @@ function Dibs.DebugLogs.Open(actor)
           Dibs.Message("Readiness report unavailable: " .. tostring(reason))
         end
       end, 180)
-      Dibs.AceGUI.AddTooltip(report, "Readiness report", "Opens bounded Officer diagnostics in a selectable window without live candidates, votes or private loot state.")
+      Dibs.AceGUI.AddTooltip(report, "Readiness report", helpText.UI_HELP_READINESS_REPORT)
     end
     local searchBox = Dibs.AceGUI.AddEditBox(shell, tabs, "Search", function(value) query = value; refresh() end, 420)
-    Dibs.AceGUI.AddTooltip(searchBox, "Search logs", "Search module names, severity labels and message text.")
+    Dibs.AceGUI.AddTooltip(searchBox, "Search logs", helpText.UI_HELP_SEARCH_DIAGNOSTICS)
     local sort = Dibs.AceGUI.AddDropdown(shell, tabs, "Sort by", { timestamp = "Time", module = "Module", level = "Severity" }, function(value) sortKey = value; refresh() end, 180)
     Dibs.AceGUI.SetValue(sort, sortKey)
     Dibs.AceGUI.AddButton(shell, tabs, descending and "Descending" or "Ascending", function() descending = not descending; refresh() end, 120)
@@ -79,7 +80,7 @@ function Dibs.DebugLogs.Open(actor)
     if #rows == 0 then rows[1] = "No matching debug logs." end
     Dibs.AceGUI.AddSelectableText(shell, tabs, "Log entries", table.concat(rows, "\n"), 820, 300)
     local clear = Dibs.AceGUI.AddButton(shell, tabs, "Clear logs", function() Dibs.DebugLogs.Clear(actor); refresh() end, 130)
-    Dibs.AceGUI.AddTooltip(clear, "Clear logs", "Deletes the in-memory diagnostic log. This does not change the Dibs ledger.")
+    Dibs.AceGUI.AddTooltip(clear, "Clear logs", helpText.UI_HELP_CLEAR_DIAGNOSTICS)
   end
   refresh()
   shell.window:Show()

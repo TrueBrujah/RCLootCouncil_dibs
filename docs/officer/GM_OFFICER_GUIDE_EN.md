@@ -152,6 +152,11 @@ Corrections, refunds, revokes, historical imports, and adjustments are
 append-only. They add linked transactions and retain actor, timestamp, reason,
 before/after values, delta, request reference, and canonical evidence.
 
+In **Dibs Administration**, choose the guild member and current-season action.
+Add and Remove require a reason and explicit confirmation; the audit record
+retains the acting Officer/GM, target, previous balance, resulting balance, and
+reason. The original history is never edited or deleted.
+
 Use **RC History** for historical RCLootCouncil evidence:
 
 1. Select the target season.

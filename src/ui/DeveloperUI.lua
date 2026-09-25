@@ -1,4 +1,5 @@
 local Dibs = _G.Dibs
+local helpText = Dibs.L or {}
 Dibs.DeveloperUI = Dibs.DeveloperUI or {}
 local DeveloperUI = Dibs.DeveloperUI
 
@@ -27,7 +28,7 @@ function DeveloperUI.Open()
   local function refresh()
     Dibs.AceGUI.Clear(page)
     local projection = DeveloperUI.GetProjection()
-    Dibs.AceGUI.AddHeading(shell, page, "Developer Sandbox", "Local simulation only; production data and authority are untouched.")
+    Dibs.AceGUI.AddHeading(shell, page, "Developer Sandbox", helpText.UI_HELP_DEVELOPER_SANDBOX)
     if Dibs.Midnight and Dibs.Midnight.AddSandboxBanner then
       Dibs.Midnight.AddSandboxBanner(shell, page, projection)
     end

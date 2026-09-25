@@ -14,6 +14,7 @@ Related docs: docs/developer/rclc-integration.md.
 ]]
 
 local Dibs = _G.Dibs
+local helpText = Dibs.L or {}
 Dibs.RCOptions = Dibs.RCOptions or {}
 
 local OPTIONS_APP_NAME = "RCLootCouncil_dibs"
@@ -235,8 +236,8 @@ end
 
 local function buildButtonSetMappingText()
   local lines = {
-    "RCLootCouncil button sets choose where the Dibs response is displayed; Dibs eligibility remains semantic.",
-    "Curio = TOKEN  |  Tier Set class token = TOKEN_SET  |  Catalyst = personal and always blocked.",
+    helpText.UI_HELP_RC_MAPPING,
+    helpText.UI_HELP_RC_MAPPING_EXAMPLES,
   }
   for _, definition in ipairs(RCLC_BUTTON_SET_DEFINITIONS) do
     local target = definition.dibsType and (" -> " .. definition.dibsType) or ""
@@ -1205,6 +1206,7 @@ local optionsTable = {
               order = 2,
               type = "select",
               name = "Active season request mode",
+              desc = helpText.UI_HELP_PREDIB_MODE,
               values = PRE_DIB_MODE_VALUES,
               get = function()
                 local policy = Dibs.PreDibs and Dibs.PreDibs.GetModePolicy and Dibs.PreDibs.GetModePolicy(getSelectedSeasonId()) or {}

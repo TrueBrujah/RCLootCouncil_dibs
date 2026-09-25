@@ -1885,12 +1885,12 @@ local function runInstallationAction(frame, action)
 end
 
 local function renderInstallationPage(shell, parent, frame)
+  local helpText = Dibs.L or {}
   local status = Dibs.Installation and Dibs.Installation.GetStatus and Dibs.Installation.GetStatus() or {
     state = "NOT_INITIALIZED", actor = {}, governance = {}, legacy = {}, baseline = {},
     coordinator = {}, compatibility = {}, sync = {}, protocol = {}, blockers = {}, warnings = {}, technical = {},
   }
-  Dibs.AceGUI.AddHeading(shell, parent, "Guild Setup",
-    "Initialize DIBS for this guild: governance, historical data review, and the canonical guild ledger.")
+  Dibs.AceGUI.AddHeading(shell, parent, "Guild Setup", helpText.UI_HELP_GUILD_SETUP)
   if not status.actor.isGM then
     if status.protocol.active then
       Dibs.AceGUI.AddLabel(shell, parent, "Guild Ledger: Active | Coordinator: " .. tostring(status.coordinator.candidate or "Unknown"), true)
@@ -1918,39 +1918,43 @@ local function renderInstallationPage(shell, parent, frame)
   end
 
   if status.state == "RECONCILIATION_REQUIRED" then
-    Dibs.AceGUI.AddHeading(shell, parent, "Existing data requires review",
-      "Review each item before the guild ledger can be initialized.")
+    Dibs.AceGUI.AddHeading(shell, parent, "Existing data requires review", helpText.UI_HELP_RECONCILIATION)
     if status.legacy.hasUncollectedEvidence then
-      Dibs.AceGUI.AddButton(shell, parent, "Scan existing Dibs data", function()
+      local scan = Dibs.AceGUI.AddButton(shell, parent, "Scan existing Dibs data", function()
         runInstallationAction(frame, function() return Dibs.Installation.Initialize(nil) end)
       end, 190)
+      Dibs.AceGUI.AddTooltip(scan, "Scan existing Dibs data", helpText.UI_HELP_RECONCILIATION_SCAN)
     else
       for _, row in ipairs(Dibs.Installation.GetReconciliationView()) do
         local group = Dibs.AceGUI.AddInlineGroup(shell, parent)
         Dibs.AceGUI.AddLabel(shell, group, string.format("%s | %s | %s | %s",
           tostring(row.identity), tostring(row.action), tostring(row.amount or ""), tostring(row.decision or "UNRESOLVED")), false)
         if not row.decision then
-          Dibs.AceGUI.AddButton(shell, group, "Include", function()
+          local include = Dibs.AceGUI.AddButton(shell, group, "Include", function()
             Dibs.LegacyBaseline.RecordDecision(nil, row.evidenceId, "INCLUDE", { reason = "Reviewed via Guild Setup" })
             frame:Refresh()
           end, 70)
-          Dibs.AceGUI.AddButton(shell, group, "Exclude", function()
+          Dibs.AceGUI.AddTooltip(include, "Include", helpText.UI_HELP_RECONCILIATION_INCLUDE)
+          local exclude = Dibs.AceGUI.AddButton(shell, group, "Exclude", function()
             Dibs.LegacyBaseline.RecordDecision(nil, row.evidenceId, "EXCLUDE", { reason = "Reviewed via Guild Setup" })
             frame:Refresh()
           end, 70)
+          Dibs.AceGUI.AddTooltip(exclude, "Exclude", helpText.UI_HELP_RECONCILIATION_EXCLUDE)
         end
       end
-      Dibs.AceGUI.AddButton(shell, parent, "Continue setup", function()
+      local continueSetup = Dibs.AceGUI.AddButton(shell, parent, "Continue setup", function()
         runInstallationAction(frame, function() return Dibs.Installation.Initialize(nil) end)
       end, 160)
+      Dibs.AceGUI.AddTooltip(continueSetup, "Continue setup", helpText.UI_HELP_CONTINUE_SETUP)
     end
   elseif status.state == "NOT_INITIALIZED" or status.state == "READY_TO_INITIALIZE" then
     for _, warning in ipairs(status.warnings or {}) do
       Dibs.AceGUI.AddLabel(shell, parent, "Warning: " .. tostring(warning), true)
     end
-    Dibs.AceGUI.AddButton(shell, parent, "Initialize DIBS", function()
+    local initialize = Dibs.AceGUI.AddButton(shell, parent, "Initialize DIBS", function()
       runInstallationAction(frame, function() return Dibs.Installation.Initialize(nil) end)
     end, 160)
+    Dibs.AceGUI.AddTooltip(initialize, "Initialize DIBS", helpText.UI_HELP_INITIALIZE_DIBS)
   elseif status.state == "COORDINATOR_UNAVAILABLE" or status.state == "RECOVERY_REQUIRED" or status.state == "BLOCKED" then
     Dibs.AceGUI.AddLabel(shell, parent, "Open Synchronization to review coordinator recovery.", true)
   elseif status.state == "READY" then
@@ -1982,10 +1986,11 @@ local function renderInstallationPage(shell, parent, frame)
     end, 170)
   end
 
-  Dibs.AceGUI.AddButton(shell, parent, frame.installationShowTechnical and "Hide technical details" or "Show technical details", function()
+  local technical = Dibs.AceGUI.AddButton(shell, parent, frame.installationShowTechnical and "Hide technical details" or "Show technical details", function()
     frame.installationShowTechnical = not frame.installationShowTechnical
     frame:Refresh()
   end, 180)
+  Dibs.AceGUI.AddTooltip(technical, "Technical details", helpText.UI_HELP_TECHNICAL_DETAILS)
   if frame.installationShowTechnical then
     Dibs.AceGUI.AddLabel(shell, parent,
       "Protocol State: " .. tostring(status.technical.protocolState) ..
@@ -2014,6 +2019,7 @@ local function wizardStepMarker(status)
 end
 
 local function renderWizardPage(shell, parent, frame)
+  local helpText = Dibs.L or {}
   if not canViewOfficerData() then
     Dibs.AceGUI.AddHeading(shell, parent, "Guided Setup")
     Dibs.AceGUI.AddLabel(shell, parent, "Officer access required.", true)
@@ -2021,7 +2027,7 @@ local function renderWizardPage(shell, parent, frame)
   end
   local status = Dibs.Wizard and Dibs.Wizard.GetStatus and Dibs.Wizard.GetStatus() or { steps = {}, overallState = "NEW_INSTALLATION", mode = "FIRST_TIME_SETUP" }
   Dibs.AceGUI.AddHeading(shell, parent, "DIBS Guided Setup",
-    "Configure DIBS step by step. This workflow navigates and reuses Guild Setup, Setup Assistant, and existing Officer pages; it validates nothing on its own.")
+    helpText.UI_HELP_WIZARD)
   Dibs.AceGUI.AddLabel(shell, parent, "Overall: " .. tostring(WIZARD_OVERALL_LABEL[status.overallState] or status.overallState), true)
 
   local total = #status.steps
@@ -2262,7 +2268,9 @@ local function createAceWindow(initialRoute)
     if not body or not footer then dibsAdminDialog.window:Hide(); dibsAdminDialog = nil; return false end
     body:SetFullWidth(true); body:SetLayout("List")
     footer:SetFullWidth(true); footer:SetLayout("Flow")
-    Dibs.AceGUI.AddHeading(dibsAdminDialog, body, delta > 0 and "Add 1 DIB" or "Remove 1 DIB")
+    local helpText = Dibs.L or {}
+    Dibs.AceGUI.AddHeading(dibsAdminDialog, body, delta > 0 and "Add 1 DIB" or "Remove 1 DIB",
+      delta > 0 and helpText.UI_HELP_DIBS_ADD or helpText.UI_HELP_DIBS_REMOVE)
     local previousBalance = tonumber(row.balance) or 0
     local resultingBalance = previousBalance + delta
     for _, detail in ipairs({
@@ -2278,6 +2286,7 @@ local function createAceWindow(initialRoute)
       reasonText = value or ""
       if confirm then Dibs.AceGUI.SetDisabled(confirm, trimText(reasonText) == "") end
     end, 440, 80)
+    Dibs.AceGUI.AddTooltip(reason, "Required reason", helpText.UI_HELP_DIBS_REASON)
     local message = Dibs.AceGUI.AddLabel(dibsAdminDialog, body, "", true)
     Dibs.AceGUI.AddButton(dibsAdminDialog, footer, "Cancel", function()
       if dibsAdminDialog and dibsAdminDialog.window then dibsAdminDialog.window:Hide() end
@@ -3282,11 +3291,12 @@ local function createAceWindow(initialRoute)
     end
 
     if self.activeTab == "sync" then
+      local helpText = Dibs.L or {}
       local projection = Dibs.OfficerUI.BuildSynchronizationProjection()
       local groupCount = type(GetNumGroupMembers) == "function" and tonumber(GetNumGroupMembers()) or 0
       local rosterScope = groupCount > 0 and ("Current group/raid (" .. tostring(groupCount) .. " members)") or "Guild roster (no group active)"
-      Dibs.AceGUI.AddHeading(shell, tabs, "Guild synchronization", "Shows the shared Dibs data scope and the latest addon handshake observed for the current group or raid.")
-      Dibs.AceGUI.AddLabel(shell, tabs,
+      Dibs.AceGUI.AddHeading(shell, tabs, "Guild synchronization", helpText.UI_HELP_SYNC_STATUS)
+      local syncSummary = Dibs.AceGUI.AddLabel(shell, tabs,
         "Transport: " .. tostring(projection.state.state or "unknown") ..
         " | Protocol: " .. tostring(projection.protocolState) ..
         " | Policy: " .. tostring(projection.policy) ..
@@ -3294,8 +3304,9 @@ local function createAceWindow(initialRoute)
         " | Pending award proposals: " .. tostring(projection.pendingAwardProposals) ..
         "\nLocal baseline: " .. tostring(projection.localBaselineStatus or "Unknown") ..
         "\nRoster scope: " .. rosterScope, true)
+      Dibs.AceGUI.AddTooltip(syncSummary, "Synchronization status", helpText.UI_HELP_SYNC_STATUS)
       Dibs.AceGUI.AddLabel(shell, tabs, "Synchronized: Pre-Dibs requests, guild policy, season catalog, vault acquisition summaries, and ledger digests when V2 enforcement is active. Live loot candidates, votes, responses, and item transfers are never synchronized.", true)
-      Dibs.AceGUI.AddButton(shell, tabs, "Announce presence", function()
+      local announce = Dibs.AceGUI.AddButton(shell, tabs, "Announce presence", function()
         local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
         if tonumber(catalog.catalogRevision) == 0 and Dibs.Seasons and Dibs.Seasons.PublishCatalog then
           Dibs.Seasons.PublishCatalog(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, "SYNC_BOOTSTRAP")
@@ -3307,6 +3318,7 @@ local function createAceWindow(initialRoute)
         end
         self:Refresh()
       end, 130)
+      Dibs.AceGUI.AddTooltip(announce, "Announce presence", helpText.UI_HELP_ANNOUNCE_PRESENCE)
       if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
         Dibs.AceGUI.AddLabel(shell, tabs, "Guild Ledger: Not enabled. Use Guild Setup to initialize DIBS for this guild.", true)
         Dibs.AceGUI.AddButton(shell, tabs, "Open Guild Setup", function()
@@ -3333,20 +3345,20 @@ local function createAceWindow(initialRoute)
         }
       end
       Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Player", width = 170, tooltip = "Guild member." },
-        { title = "Online", width = 75, tooltip = "Current guild roster presence." },
-        { title = "Addon", width = 100, tooltip = "Detected when the player answers a Dibs HELLO or sync message." },
-        { title = "Version", width = 90, tooltip = "Last Dibs addon version reported by the player." },
-        { title = "Compatibility", width = 110, tooltip = "Compatibility with this client version." },
-        { title = "Sync", width = 100, tooltip = "Whether the player has the same known synchronization revisions as this client." },
-        { title = "Baseline", width = 125, tooltip = "Baseline state reported by this client or observed through the latest probe." },
-        { title = "Catalog", width = 70, tooltip = "Season, rank rules, and guild configuration revision reported by this player." },
-        { title = "Policy", width = 65, tooltip = "Operational policy revision reported by this player." },
-        { title = "Governance", width = 80, tooltip = "Governance revision reported by this player." },
-        { title = "Requests", width = 70, tooltip = "Pre-Dibs request index revision reported by this player." },
-        { title = "Vault", width = 60, tooltip = "Vault acquisition index revision reported by this player." },
-        { title = "History", width = 65, tooltip = "Ledger revision reported by this player when V2 enforcement is active." },
-        { title = "Last response", width = 125, tooltip = "Last response received from this player." },
+        { title = "Player", width = 170, tooltip = helpText.UI_HELP_SYNC_PEER },
+        { title = "Online", width = 75, tooltip = helpText.UI_HELP_SYNC_ONLINE },
+        { title = "Addon", width = 100, tooltip = helpText.UI_HELP_SYNC_ADDON },
+        { title = "Version", width = 90, tooltip = helpText.UI_HELP_SYNC_VERSION },
+        { title = "Compatibility", width = 110, tooltip = helpText.UI_HELP_SYNC_COMPATIBILITY },
+        { title = "Sync", width = 100, tooltip = helpText.UI_HELP_SYNC_PEER },
+        { title = "Baseline", width = 125, tooltip = helpText.UI_HELP_EXISTING_DIBS_DATA },
+        { title = "Catalog", width = 70, tooltip = helpText.UI_HELP_SYNC_CATALOG },
+        { title = "Policy", width = 65, tooltip = helpText.UI_HELP_SYNC_POLICY },
+        { title = "Governance", width = 80, tooltip = helpText.UI_HELP_SYNC_GOVERNANCE },
+        { title = "Requests", width = 70, tooltip = helpText.UI_HELP_SYNC_REQUESTS },
+        { title = "Vault", width = 60, tooltip = helpText.UI_HELP_SYNC_VAULT },
+        { title = "History", width = 65, tooltip = helpText.UI_HELP_SYNC_HISTORY },
+        { title = "Last response", width = 125, tooltip = helpText.UI_HELP_SYNC_LAST_RESPONSE },
       }, rows, 430)
       return
     end
@@ -3665,7 +3677,7 @@ local function createAceWindow(initialRoute)
       local seasonId = currentId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
       self.eligibilityAdvanced = self.eligibilityAdvanced == true
       local eligibilityProjection = Dibs.OfficerUI.GetEligibilityProjection(seasonId, { expanded = self.eligibilityAdvanced })
-      Dibs.AceGUI.AddHeading(shell, scroll, "Protected loot eligibility", "Start with the Recommended preset. Customize advanced policy only when needed.")
+      Dibs.AceGUI.AddHeading(shell, scroll, "Protected loot eligibility", (Dibs.L and Dibs.L.UI_HELP_LOOT_ELIGIBILITY) or "Shows which loot categories may use Dibs under the active guild policy.")
       Dibs.AceGUI.AddLabel(shell, scroll, eligibilityProjection.preset.label .. ": " .. eligibilityProjection.preset.description, true)
       local categoryRows = {}
       for _, category in ipairs(eligibilityProjection.categories or {}) do
@@ -4412,7 +4424,7 @@ local function createAceWindow(initialRoute)
         { title = "Winner", width = 120, tooltip = "Character recorded as the awarded player." },
         { title = "Item", width = 170, tooltip = "Read-only RCLootCouncil item evidence." },
         { title = "Difficulty", width = 95, tooltip = "Recorded raid difficulty." },
-        { title = "Encounter", width = 150, tooltip = "Recorded instance and encounter." },
+        { title = "Encounter", width = 150, tooltip = (Dibs.L and Dibs.L.UI_HELP_ENCOUNTER_EVIDENCE) or "Raid instance and boss recorded for this award." },
         { title = "Classification", width = 125, tooltip = "Reconciliation classification." },
         { title = "Evidence", width = 180, tooltip = "Concise evidence result; technical details are secondary." },
         { title = "Review", width = 90, tooltip = "Open candidate details." },
@@ -4655,12 +4667,14 @@ local function createAceWindow(initialRoute)
     end
 
     if self.activeTab == "settings" then
+      local helpText = Dibs.L or {}
       local seasonValues = {}
       for _, season in ipairs(seasons) do seasonValues[season.id] = season.name end
       self.seasonDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, "Selected season", seasonValues, function(value)
         self.selectedSeasonId, self.inputBoundSeasonId = value, nil
         self:Refresh()
       end, 240)
+      Dibs.AceGUI.AddTooltip(self.seasonDropdown, "Selected season", helpText.UI_HELP_SEASON)
       Dibs.AceGUI.SetValue(self.seasonDropdown, currentId)
       Dibs.AceGUI.AddButton(shell, tabs, "Previous", function() selectSeason(-1) end, 80)
       Dibs.AceGUI.AddButton(shell, tabs, "Next", function() selectSeason(1) end, 60)
@@ -4695,7 +4709,8 @@ local function createAceWindow(initialRoute)
       end, 70)
       self.summaryText = Dibs.AceGUI.AddLabel(shell, tabs, Dibs.OfficerUI.BuildStatusText(current), true)
       self.statusText = Dibs.AceGUI.AddLabel(shell, tabs, self.statusMessage or "Ready", true)
-      Dibs.AceGUI.AddLabel(shell, tabs, "Rank allocations", true)
+      local rankHeading = Dibs.AceGUI.AddLabel(shell, tabs, "Rank allocations", true)
+      Dibs.AceGUI.AddTooltip(rankHeading, "Rank allocations", helpText.UI_HELP_RANK_ALLOCATION)
       local rules = Dibs.RankRules and Dibs.RankRules.GetRulesForSeason and Dibs.RankRules.GetRulesForSeason(currentId) or {}
       for index = 1, self.rankRowCount do
         local source = self.rankDrafts[index] or rules[index] or { rankIndex = index - 1, allocation = 1 }
@@ -4705,13 +4720,19 @@ local function createAceWindow(initialRoute)
         local ranks = {}
         for rank = 0, math.max(9, row.rankIndex) do ranks[rank] = buildRankLabel(rank) end
         row.rankDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, "Rank", ranks, function(value) row.rankIndex = tonumber(value) or 0 end, 210)
+        Dibs.AceGUI.AddTooltip(row.rankDropdown, "Rank", helpText.UI_HELP_RANK_ALLOCATION)
         Dibs.AceGUI.SetValue(row.rankDropdown, row.rankIndex)
         row.valueText = Dibs.AceGUI.AddLabel(shell, tabs, "Dibs: " .. tostring(row.allocation))
-        Dibs.AceGUI.AddButton(shell, tabs, "-", function() row.allocation = math.max(0, row.allocation - 1); self.rankDrafts[index] = row; self:Refresh() end, 28)
-        Dibs.AceGUI.AddButton(shell, tabs, "+", function() row.allocation = row.allocation + 1; self.rankDrafts[index] = row; self:Refresh() end, 28)
-        Dibs.AceGUI.AddButton(shell, tabs, "Set", function() applyRankRule(self, row) end, 50)
+        Dibs.AceGUI.AddTooltip(row.valueText, "Rank allocation", helpText.UI_HELP_RANK_ALLOCATION)
+        local decrease = Dibs.AceGUI.AddButton(shell, tabs, "-", function() row.allocation = math.max(0, row.allocation - 1); self.rankDrafts[index] = row; self:Refresh() end, 28)
+        Dibs.AceGUI.AddTooltip(decrease, "Decrease allocation", helpText.UI_HELP_RANK_ALLOCATION)
+        local increase = Dibs.AceGUI.AddButton(shell, tabs, "+", function() row.allocation = row.allocation + 1; self.rankDrafts[index] = row; self:Refresh() end, 28)
+        Dibs.AceGUI.AddTooltip(increase, "Increase allocation", helpText.UI_HELP_RANK_ALLOCATION)
+        local setRule = Dibs.AceGUI.AddButton(shell, tabs, "Set", function() applyRankRule(self, row) end, 50)
+        Dibs.AceGUI.AddTooltip(setRule, "Set rank rule", helpText.UI_HELP_RANK_RULE_SAVE)
       end
-      Dibs.AceGUI.AddButton(shell, tabs, "Add rank", function() self.rankRowCount = self.rankRowCount + 1; self:Refresh() end, 80)
+      local addRank = Dibs.AceGUI.AddButton(shell, tabs, "Add rank", function() self.rankRowCount = self.rankRowCount + 1; self:Refresh() end, 80)
+      Dibs.AceGUI.AddTooltip(addRank, "Add rank", helpText.UI_HELP_RANK_ALLOCATION)
       return
     end
 
@@ -4721,18 +4742,20 @@ local function createAceWindow(initialRoute)
       return
     end
     if self.activeTab == "dibsAdmin" then
-      Dibs.AceGUI.AddHeading(shell, tabs, "Dibs Administration", "Adjust a guild character's current-season balance. Every change requires a reason.")
+      local helpText = Dibs.L or {}
+      Dibs.AceGUI.AddHeading(shell, tabs, "Dibs Administration", helpText.UI_HELP_DIBS_ADMIN)
       local controls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
       self.dibsAdminSearch = Dibs.AceGUI.AddEditBox(shell, controls, "Search player", function(value)
         self.dibsAdminQuery = value or ""
         self:Refresh()
       end, 250)
+      Dibs.AceGUI.AddTooltip(self.dibsAdminSearch, "Search player", helpText.UI_HELP_DIBS_ADMIN)
       setControlText(self.dibsAdminSearch, self.dibsAdminQuery or "")
       Dibs.AceGUI.AddButton(shell, controls, "Clear", function()
         self.dibsAdminQuery = ""
         self:Refresh()
       end, 60)
-      Dibs.AceGUI.AddButton(shell, controls, "Refresh guild roster", function()
+      local refreshRoster = Dibs.AceGUI.AddButton(shell, controls, "Refresh guild roster", function()
         if type(_G.GuildRoster) ~= "function" then
           self.dibsAdminStatus = "Guild roster refresh is unavailable."
           self:Refresh()
@@ -4747,6 +4770,7 @@ local function createAceWindow(initialRoute)
         end
         self:Refresh()
       end, 150)
+      Dibs.AceGUI.AddTooltip(refreshRoster, "Refresh guild roster", helpText.UI_HELP_DIBS_ADMIN)
       if self.dibsAdminStatus and self.dibsAdminStatus ~= "" then
         Dibs.AceGUI.AddLabel(shell, tabs, self.dibsAdminStatus, true)
       end
@@ -4793,9 +4817,11 @@ local function createAceWindow(initialRoute)
         local add = Dibs.AceGUI.AddButton(shell, rowGroup, "ADD", function()
           openDibsAdminAdjustment(row, 1, currentId)
         end, 55)
+        Dibs.AceGUI.AddTooltip(add, "Add Dibs", helpText.UI_HELP_DIBS_ADD)
         local remove = Dibs.AceGUI.AddButton(shell, rowGroup, "REMOVE", function()
           openDibsAdminAdjustment(row, -1, currentId)
         end, 65)
+        Dibs.AceGUI.AddTooltip(remove, "Remove Dibs", helpText.UI_HELP_DIBS_REMOVE)
         Dibs.AceGUI.SetDisabled(add, not row.identityAvailable)
         Dibs.AceGUI.SetDisabled(remove, not row.identityAvailable)
       end

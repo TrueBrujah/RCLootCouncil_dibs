@@ -122,7 +122,9 @@ Utilisez **Seasons** pour :
 - archiver une ancienne saison ;
 - verifier l'identifiant et l'etat de la saison.
 
-Utilisez **Rank Rules** pour attribuer les allocations de depart ou periodiques.
+Utilisez **Rank Rules** pour definir l'allocation de chaque grade pour la saison
+selectionnee. Modifier la regle ne reecrit pas les anciennes transactions;
+verifiez separement le rapprochement des membres deja presents.
 
 Pour les operations de ledger :
 
@@ -132,6 +134,11 @@ Pour les operations de ledger :
 ```
 
 Chaque operation doit avoir une raison claire. Les corrections, remboursements et revocations ajoutent une nouvelle transaction ; elles ne modifient pas l'ancienne.
+
+Dans **Dibs Administration**, choisissez le personnage et l'action Add/Remove
+pour son solde de la saison active. Une raison et une confirmation sont
+obligatoires. L'historique conserve l'auteur, la cible, l'ancien solde, le
+nouveau solde et la raison; l'operation originale reste intacte.
 
 ## 6. Workflow Pre-Dibs
 
