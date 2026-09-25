@@ -194,3 +194,44 @@ function Dibs.RankRules.GetRankAllocation(seasonId, rankIndex)
   local rules = Dibs.RankRules.GetRulesForSeason(seasonId)
   return rules[tostring(normalizeRankIndex(rankIndex))]
 end
+
+-- Per-rank rollup over the existing reconciliation projection (Guided Setup
+-- Wizard rank step); adds no parallel rank-status engine.
+function Dibs.RankRules.GetRankConfigurationSummary(seasonId)
+  ensureState()
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local rules = Dibs.RankRules.GetRulesForSeason(targetSeason)
+  local roster = getGuildRosterMembers()
+  local byRank = {}
+  for _, member in ipairs(roster) do
+    local key = tostring(normalizeRankIndex(member.rankIndex))
+    byRank[key] = byRank[key] or { rankIndex = normalizeRankIndex(member.rankIndex), rankName = member.rankName, memberCount = 0 }
+    byRank[key].memberCount = byRank[key].memberCount + 1
+  end
+  local missingByRank = {}
+  for _, row in ipairs(Dibs.RankRules.GetAllocationReconciliation(targetSeason, roster)) do
+    if row.status == "MISSING" then
+      local key = tostring(normalizeRankIndex(row.rankIndex))
+      missingByRank[key] = (missingByRank[key] or 0) + 1
+    end
+  end
+  local rows = {}
+  for key, info in pairs(byRank) do
+    local rule = rules[key]
+    local status
+    if not rule then
+      status = "ACTION_REQUIRED"
+    elseif tonumber(rule.allocation) == 0 then
+      status = "OPTIONAL"
+    else
+      status = "READY"
+    end
+    rows[#rows + 1] = {
+      rankIndex = info.rankIndex, rankName = info.rankName, memberCount = info.memberCount,
+      configured = rule ~= nil, allocation = rule and rule.allocation or nil,
+      pendingReconciliation = missingByRank[key] or 0, status = status,
+    }
+  end
+  table.sort(rows, function(a, b) return a.rankIndex < b.rankIndex end)
+  return rows
+end

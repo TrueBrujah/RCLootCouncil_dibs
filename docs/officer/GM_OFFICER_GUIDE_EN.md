@@ -33,20 +33,31 @@ GM or Officer.
 
 1. Install the `RCLootCouncil_dibs` folder under `Interface/AddOns/`.
 2. Enable it and run `/reload`.
-3. Open `/dibs options` and open **Guild Setup** under Officer > System.
-4. As the Guild Master, follow the Guild Setup page: it reports Guild Governance,
-   Existing DIBS Data, Coordinator, Guild Compatibility, Synchronization, and
-   Guild Ledger readiness, and offers one **Initialize DIBS** action once every
-   prerequisite is satisfied. If existing Dibs history is detected, review each
-   item before the guild ledger can be initialized; nothing is decided for you.
-5. Create and activate a season before distributing Dibs.
-6. Configure rank allocations, policy, announcements, and modules.
-7. Run `/dibs readiness` and a dry-run before the first live raid.
+3. Open `/dibs options` and open **Guided Setup** under Officer > Overview.
+4. Follow the Guided Setup steps in order, or jump directly to any step or to
+   the first outstanding issue. Each step summarizes and links to an existing
+   Officer page (Guild Setup, Seasons, Rank Rules, Loot Rules, Pre-Dibs,
+   RCLootCouncil, Synchronization); the Wizard itself makes no configuration
+   decision for you and initializes nothing merely by being opened.
+5. Create and activate a season, configure rank allocations, policy,
+   announcements, and modules, either from within Guided Setup or directly on
+   their existing pages.
+6. Finish with the Wizard's **Readiness** step, or run `/dibs readiness` and a
+   dry-run, before the first live raid.
 
 A normal Guild Master does not need to run `/run` commands or call internal
-APIs to reach a working guild ledger; Guild Setup performs governance
-initialization, historical data review, and canonical ledger activation through
-the existing authoritative modules.
+APIs to reach a working guild ledger; Guided Setup, Guild Setup, and Setup
+Assistant all perform governance initialization, historical data review, and
+canonical ledger activation through the existing authoritative modules.
+
+**Three related but distinct pages** exist under Officer > Overview/System —
+use the one that matches what you're trying to do:
+
+| Page | Purpose |
+|---|---|
+| **Guided Setup** | Step-by-step workflow that navigates and summarizes the pages below in one guided order. Configures nothing directly; it is a navigation/status shell. |
+| **Setup Assistant** | Answers "is the current configuration operational and safe for a raid right now?" (season, rank rules, RCLootCouncil, live raid context). This is the Readiness Check; it can be run independently at any time and is reused as-is by Guided Setup's final step. |
+| **Guild Setup** | Governance/canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and the one-time guild ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
 
 ![Season, rank, and permissions setup](../assets/guides/screenshots/en/officer/officer-setup.png)
 

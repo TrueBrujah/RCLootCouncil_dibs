@@ -28,6 +28,7 @@ local TOC_FILES = {
   "modules/SyncV2.lua",
   "modules/LegacyBaseline.lua",
   "modules/Installation.lua",
+  "modules/Wizard.lua",
   "modules/RaidRelay.lua",
   "modules/RaidPrompts.lua",
   "modules/Readiness.lua",

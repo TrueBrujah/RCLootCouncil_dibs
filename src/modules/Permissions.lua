@@ -178,6 +178,28 @@ function Dibs.Permissions.IsOfficer()
   return false
 end
 
+-- Read-only roster enumeration reusing the existing rank-threshold check;
+-- introduces no second authorization model.
+function Dibs.Permissions.GetAuthorizedOfficers()
+  local results = {}
+  if type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then return results end
+  local okCount, memberCount = pcall(GetNumGuildMembers, true)
+  if not okCount then return results end
+  for index = 1, tonumber(memberCount) or 0 do
+    local ok, name, _, rankIndex = pcall(GetGuildRosterInfo, index)
+    if ok and type(name) == "string" and name ~= "" then
+      local normalizedRank = tonumber(rankIndex)
+      if normalizedRank == 0 then
+        results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "gm" }
+      elseif rankIsOfficer(normalizedRank) then
+        results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "officer" }
+      end
+    end
+  end
+  table.sort(results, function(a, b) return a.rankIndex < b.rankIndex end)
+  return results
+end
+
 function Dibs.Permissions.CanSendReminder()
   if type(IsInRaid) ~= "function" or IsInRaid() ~= true then return false, "REMINDER_REQUIRES_RAID" end
   if Dibs.Permissions.IsGM() or Dibs.Permissions.IsOfficer() then return true end

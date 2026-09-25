@@ -59,6 +59,7 @@ end
 
 local OFFICER_NAV_TREE = {
   { section = "OVERVIEW", text = "Dashboard", value = "overview" },
+  { section = "OVERVIEW", text = "Guided Setup", value = "wizard" },
   { section = "OVERVIEW", text = "Setup Assistant", value = "setup" },
   { section = "DIBS", text = "Automatic Dibs", value = "automaticDibs" },
   { section = "DIBS", text = "Dibs Administration", value = "dibsAdmin" },
@@ -1995,6 +1996,90 @@ local function renderInstallationPage(shell, parent, frame)
   end
 end
 
+local WIZARD_STEP_ROUTE = {
+  installation = "installation", guild = "settings", administration = "settings",
+  seasons = "seasons", rankRules = "ranks", dibsRules = "lootTypes", preDibs = "preDibs",
+  ledger = "installation", rclootcouncil = "integration", sync = "sync", readiness = "setup",
+}
+
+local WIZARD_OVERALL_LABEL = {
+  NEW_INSTALLATION = "New installation", MIGRATION_REQUIRED = "Existing data requires review",
+  BLOCKED = "Blocked", PARTIALLY_CONFIGURED = "Partially configured", READY_FOR_RAID = "Ready for raid",
+}
+
+local function wizardStepMarker(status)
+  if status == "READY" or status == "OPTIONAL" then return "OK" end
+  if status == "BLOCKED" then return "BLOCKED" end
+  return "!"
+end
+
+local function renderWizardPage(shell, parent, frame)
+  if not canViewOfficerData() then
+    Dibs.AceGUI.AddHeading(shell, parent, "Guided Setup")
+    Dibs.AceGUI.AddLabel(shell, parent, "Officer access required.", true)
+    return
+  end
+  local status = Dibs.Wizard and Dibs.Wizard.GetStatus and Dibs.Wizard.GetStatus() or { steps = {}, overallState = "NEW_INSTALLATION", mode = "FIRST_TIME_SETUP" }
+  Dibs.AceGUI.AddHeading(shell, parent, "DIBS Guided Setup",
+    "Configure DIBS step by step. This workflow navigates and reuses Guild Setup, Setup Assistant, and existing Officer pages; it validates nothing on its own.")
+  Dibs.AceGUI.AddLabel(shell, parent, "Overall: " .. tostring(WIZARD_OVERALL_LABEL[status.overallState] or status.overallState), true)
+
+  local total = #status.steps
+  local currentIndex = math.max(1, math.min(Dibs.Wizard.GetCurrentStepIndex(), total))
+  local current = status.steps[currentIndex]
+
+  local nav = Dibs.AceGUI.AddInlineGroup(shell, parent)
+  for index, step in ipairs(status.steps) do
+    local label = index .. " " .. step.label .. " [" .. wizardStepMarker(step.status) .. "]"
+    if index == currentIndex then label = "> " .. label end
+    Dibs.AceGUI.AddButton(shell, nav, label, function()
+      Dibs.Wizard.SetCurrentStepIndex(index)
+      frame:Refresh()
+    end, 150)
+  end
+
+  if current then
+    Dibs.AceGUI.AddHeading(shell, parent, currentIndex .. " of " .. total .. " — " .. current.label)
+    Dibs.AceGUI.AddLabel(shell, parent, "Status: " .. current.status, true)
+    Dibs.AceGUI.AddLabel(shell, parent, tostring(current.summary or ""), true)
+    if current.id == "review" then
+      for _, step in ipairs(status.steps) do
+        if step.id ~= "review" then
+          Dibs.AceGUI.AddLabel(shell, parent, string.format("[%s] %s - %s", wizardStepMarker(step.status), step.label, tostring(step.summary or "")), true)
+        end
+      end
+    end
+    local route = WIZARD_STEP_ROUTE[current.id]
+    if route then
+      Dibs.AceGUI.AddButton(shell, parent, "Open " .. current.label, function()
+        frame:ActivateRoute(route)
+      end, 160)
+    end
+  end
+
+  local controls = Dibs.AceGUI.AddInlineGroup(shell, parent)
+  Dibs.AceGUI.AddButton(shell, controls, "Back", function()
+    Dibs.Wizard.SetCurrentStepIndex(currentIndex - 1)
+    frame:Refresh()
+  end, 90)
+  Dibs.AceGUI.AddButton(shell, controls, "Next", function()
+    Dibs.Wizard.SetCurrentStepIndex(currentIndex + 1)
+    frame:Refresh()
+  end, 90)
+  local firstWarning
+  for index, step in ipairs(status.steps) do
+    if not firstWarning and (step.status == "ACTION_REQUIRED" or step.status == "WARNING" or step.status == "BLOCKED") then
+      firstWarning = index
+    end
+  end
+  if firstWarning then
+    Dibs.AceGUI.AddButton(shell, controls, "Jump to first issue", function()
+      Dibs.Wizard.SetCurrentStepIndex(firstWarning)
+      frame:Refresh()
+    end, 150)
+  end
+end
+
 local function createAceWindow(initialRoute)
   local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Officer", 980, 760, { "CENTER", 280, 0 }, "OfficerWindowPosition")
   if not shell then return nil end
@@ -3265,6 +3350,11 @@ local function createAceWindow(initialRoute)
 
     if self.activeTab == "overview" then
       renderDashboard(shell, tabs, self)
+      return
+    end
+
+    if self.activeTab == "wizard" then
+      renderWizardPage(shell, tabs, self)
       return
     end
 

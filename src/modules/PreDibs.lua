@@ -1226,3 +1226,23 @@ function Dibs.PreDibs.GetHistory()
   ensureState()
   return Dibs.db.preDibs.requests
 end
+
+-- Read-only Pre-Dibs summary for the Guided Setup Wizard; composes existing
+-- accessors only and mutates nothing.
+function Dibs.PreDibs.GetStatusSummary(seasonId)
+  ensureState()
+  local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
+  local policy = Dibs.PreDibs.GetModePolicy(targetSeason)
+  local activeCount, historyCount = 0, 0
+  for _, request in ipairs(Dibs.db.preDibs.requests) do
+    historyCount = historyCount + 1
+    if isRequestActive(request) then activeCount = activeCount + 1 end
+  end
+  return {
+    publicEnabled = Dibs.PreDibs.IsPublicEnabled(),
+    seasonId = targetSeason,
+    mode = policy and policy.mode or nil,
+    activeRequestCount = activeCount,
+    historyCount = historyCount,
+  }
+end
