@@ -1943,7 +1943,7 @@ local function renderInstallationPage(shell, parent, frame)
         runInstallationAction(frame, function() return Dibs.Installation.Initialize(nil) end)
       end, 160)
     end
-  elseif status.state == "READY_TO_INITIALIZE" then
+  elseif status.state == "NOT_INITIALIZED" or status.state == "READY_TO_INITIALIZE" then
     for _, warning in ipairs(status.warnings or {}) do
       Dibs.AceGUI.AddLabel(shell, parent, "Warning: " .. tostring(warning), true)
     end
