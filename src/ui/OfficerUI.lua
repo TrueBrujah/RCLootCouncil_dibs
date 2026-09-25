@@ -75,6 +75,7 @@ local OFFICER_NAV_TREE = {
   { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration", module = "rclootcouncil" },
   { section = "SYSTEM", text = "Settings", value = "settings" },
   { section = "SYSTEM", text = "Modules", value = "modules" },
+  { section = "SYSTEM", text = "Guild Setup", value = "installation" },
   { section = "SYSTEM", text = "Synchronization", value = "sync" },
   { section = "SYSTEM", text = "Diagnostics", value = "diagnostics" },
   { section = "DEVELOPER", text = "Developer", value = "developer" },
@@ -1864,6 +1865,109 @@ local function splitPipeLine(line, expected)
   return cells
 end
 
+local INSTALLATION_STATE_LABEL = {
+  NOT_INITIALIZED = "Not initialized",
+  RECONCILIATION_REQUIRED = "Existing data needs review",
+  READY_TO_INITIALIZE = "Ready to initialize",
+  READY = "Guild ledger active",
+  COORDINATOR_UNAVAILABLE = "Coordinator unreachable",
+  RECOVERY_REQUIRED = "Recovery required",
+  BLOCKED = "Blocked",
+}
+
+local function runInstallationAction(frame, action)
+  local result = action()
+  if result and result.status then
+    frame:SetStatus(result.ok and "Guild setup updated." or ("Setup: " .. tostring(result.reasonCode or "blocked")))
+  end
+  frame:Refresh()
+end
+
+local function renderInstallationPage(shell, parent, frame)
+  local status = Dibs.Installation and Dibs.Installation.GetStatus and Dibs.Installation.GetStatus() or {
+    state = "NOT_INITIALIZED", actor = {}, governance = {}, legacy = {}, baseline = {},
+    coordinator = {}, compatibility = {}, sync = {}, protocol = {}, blockers = {}, warnings = {}, technical = {},
+  }
+  Dibs.AceGUI.AddHeading(shell, parent, "Guild Setup",
+    "Initialize DIBS for this guild: governance, historical data review, and the canonical guild ledger.")
+  if not status.actor.isGM then
+    if status.protocol.active then
+      Dibs.AceGUI.AddLabel(shell, parent, "Guild Ledger: Active | Coordinator: " .. tostring(status.coordinator.candidate or "Unknown"), true)
+    else
+      Dibs.AceGUI.AddLabel(shell, parent, "DIBS has not yet been initialized for this guild.\nThe Guild Master must complete the initial setup.", true)
+    end
+    return
+  end
+
+  Dibs.AceGUI.AddLabel(shell, parent, "Status: " .. tostring(INSTALLATION_STATE_LABEL[status.state] or status.state), true)
+  local summaryRows = {
+    { "Guild Governance", status.governance.ready and "Ready" or "Needs initialization" },
+    { "Existing DIBS Data", status.legacy.hasUncollectedEvidence and "Not yet scanned"
+        or (status.legacy.reconciliationRequired and (tostring(status.legacy.openFindings) .. " item(s) need review"))
+        or (status.legacy.evidenceCount > 0 and "Reviewed" or "None detected") },
+    { "Coordinator", status.coordinator.candidate
+        and (tostring(status.coordinator.candidate) .. (status.coordinator.ready and " (Ready)" or " (Pending)"))
+        or "Unavailable" },
+    { "Guild Compatibility", status.compatibility.ready and "Ready" or ("Blocked: " .. tostring(status.compatibility.reasonCode or "unknown")) },
+    { "Synchronization", status.sync.ready and "Ready" or "Behind" },
+    { "Guild Ledger", status.protocol.active and "Active" or "Not enabled" },
+  }
+  for _, row in ipairs(summaryRows) do
+    Dibs.AceGUI.AddLabel(shell, parent, row[1] .. ": " .. row[2], true)
+  end
+
+  if status.state == "RECONCILIATION_REQUIRED" then
+    Dibs.AceGUI.AddHeading(shell, parent, "Existing data requires review",
+      "Review each item before the guild ledger can be initialized.")
+    if status.legacy.hasUncollectedEvidence then
+      Dibs.AceGUI.AddButton(shell, parent, "Scan existing Dibs data", function()
+        runInstallationAction(frame, function() return Dibs.Installation.Initialize(nil) end)
+      end, 190)
+    else
+      for _, row in ipairs(Dibs.Installation.GetReconciliationView()) do
+        local group = Dibs.AceGUI.AddInlineGroup(shell, parent)
+        Dibs.AceGUI.AddLabel(shell, group, string.format("%s | %s | %s | %s",
+          tostring(row.identity), tostring(row.action), tostring(row.amount or ""), tostring(row.decision or "UNRESOLVED")), false)
+        if not row.decision then
+          Dibs.AceGUI.AddButton(shell, group, "Include", function()
+            Dibs.LegacyBaseline.RecordDecision(nil, row.evidenceId, "INCLUDE", { reason = "Reviewed via Guild Setup" })
+            frame:Refresh()
+          end, 70)
+          Dibs.AceGUI.AddButton(shell, group, "Exclude", function()
+            Dibs.LegacyBaseline.RecordDecision(nil, row.evidenceId, "EXCLUDE", { reason = "Reviewed via Guild Setup" })
+            frame:Refresh()
+          end, 70)
+        end
+      end
+      Dibs.AceGUI.AddButton(shell, parent, "Continue setup", function()
+        runInstallationAction(frame, function() return Dibs.Installation.Initialize(nil) end)
+      end, 160)
+    end
+  elseif status.state == "READY_TO_INITIALIZE" then
+    for _, warning in ipairs(status.warnings or {}) do
+      Dibs.AceGUI.AddLabel(shell, parent, "Warning: " .. tostring(warning), true)
+    end
+    Dibs.AceGUI.AddButton(shell, parent, "Initialize DIBS", function()
+      runInstallationAction(frame, function() return Dibs.Installation.Initialize(nil) end)
+    end, 160)
+  elseif status.state == "COORDINATOR_UNAVAILABLE" or status.state == "RECOVERY_REQUIRED" or status.state == "BLOCKED" then
+    Dibs.AceGUI.AddLabel(shell, parent, "Open Synchronization to review coordinator recovery.", true)
+  end
+
+  Dibs.AceGUI.AddButton(shell, parent, frame.installationShowTechnical and "Hide technical details" or "Show technical details", function()
+    frame.installationShowTechnical = not frame.installationShowTechnical
+    frame:Refresh()
+  end, 180)
+  if frame.installationShowTechnical then
+    Dibs.AceGUI.AddLabel(shell, parent,
+      "Protocol State: " .. tostring(status.technical.protocolState) ..
+      "\nAuthority State: " .. tostring(status.technical.authorityState) ..
+      "\nLedger Epoch: " .. tostring(status.technical.ledgerEpoch) ..
+      "\nBaseline Hash: " .. tostring(status.technical.baselineHash) ..
+      "\nCoordinator: " .. tostring(status.technical.coordinatorMemberKey), true)
+  end
+end
+
 local function createAceWindow(initialRoute)
   local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Officer", 980, 760, { "CENTER", 280, 0 }, "OfficerWindowPosition")
   if not shell then return nil end
@@ -3050,6 +3154,11 @@ local function createAceWindow(initialRoute)
       end
       return
     end
+    if self.activeTab == "installation" then
+      renderInstallationPage(shell, tabs, self)
+      return
+    end
+
     if self.activeTab == "sync" then
       local projection = Dibs.OfficerUI.BuildSynchronizationProjection()
       local groupCount = type(GetNumGroupMembers) == "function" and tonumber(GetNumGroupMembers()) or 0
@@ -3076,14 +3185,10 @@ local function createAceWindow(initialRoute)
         end
         self:Refresh()
       end, 130)
-      if Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM()
-        and Dibs.Governance and Dibs.Governance.ActivateV2
-        and not (Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
-        Dibs.AceGUI.AddButton(shell, tabs, "Approve baseline and enable V2", function()
-          local ok, reason = Dibs.Governance.ActivateV2(nil)
-          if ok and Dibs.Sync and Dibs.Sync.AnnounceGovernance then Dibs.Sync.AnnounceGovernance() end
-          self:SetStatus(ok and "V2 Ledger is now enforced." or "V2 Ledger activation blocked: " .. tostring(reason or "unknown"))
-          self:Refresh()
+      if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Guild Ledger: Not enabled. Use Guild Setup to initialize DIBS for this guild.", true)
+        Dibs.AceGUI.AddButton(shell, tabs, "Open Guild Setup", function()
+          self:ActivateRoute("installation")
         end, 150)
       end
       local rows = {}

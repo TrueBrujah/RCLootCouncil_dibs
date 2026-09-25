@@ -33,10 +33,20 @@ GM or Officer.
 
 1. Install the `RCLootCouncil_dibs` folder under `Interface/AddOns/`.
 2. Enable it and run `/reload`.
-3. Open `/dibs options`.
-4. Create and activate a season before distributing Dibs.
-5. Configure rank allocations, policy, announcements, and modules.
-6. Run `/dibs readiness` and a dry-run before the first live raid.
+3. Open `/dibs options` and open **Guild Setup** under Officer > System.
+4. As the Guild Master, follow the Guild Setup page: it reports Guild Governance,
+   Existing DIBS Data, Coordinator, Guild Compatibility, Synchronization, and
+   Guild Ledger readiness, and offers one **Initialize DIBS** action once every
+   prerequisite is satisfied. If existing Dibs history is detected, review each
+   item before the guild ledger can be initialized; nothing is decided for you.
+5. Create and activate a season before distributing Dibs.
+6. Configure rank allocations, policy, announcements, and modules.
+7. Run `/dibs readiness` and a dry-run before the first live raid.
+
+A normal Guild Master does not need to run `/run` commands or call internal
+APIs to reach a working guild ledger; Guild Setup performs governance
+initialization, historical data review, and canonical ledger activation through
+the existing authoritative modules.
 
 ![Season, rank, and permissions setup](../assets/guides/screenshots/en/officer/officer-setup.png)
 
@@ -144,6 +154,12 @@ RCLootCouncil is an optional evidence provider, not the Dibs ledger authority.
 History is never rewritten, and confirmed transfers are idempotent.
 
 ## Multi-raid synchronization and recovery
+
+Guild Setup (Officer > System > Guild Setup) is the normal way to initialize
+the canonical guild ledger; it never requires understanding ledger epochs,
+baseline hashes, or internal protocol states. Those technical values remain
+available under its "Show technical details" disclosure and on the
+Synchronization page for diagnostics.
 
 Dibs synchronization shares guild-scoped Dibs state and recovery metadata. It
 does not share live candidates, votes, responses, or loot-session details between

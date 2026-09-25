@@ -31,6 +31,7 @@ Dibs.Identity = Dibs.Identity or {}
 Dibs.Governance = Dibs.Governance or {}
 Dibs.OperationalPolicy = Dibs.OperationalPolicy or {}
 Dibs.LegacyBaseline = Dibs.LegacyBaseline or {}
+Dibs.Installation = Dibs.Installation or {}
 Dibs.ProtectedActions = Dibs.ProtectedActions or {}
 Dibs.PreDibs = Dibs.PreDibs or {}
 Dibs.GreatVault = Dibs.GreatVault or {}

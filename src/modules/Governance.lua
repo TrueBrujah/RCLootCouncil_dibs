@@ -417,32 +417,45 @@ function Governance.EnableV2(actor, writers)
   return Governance.Change(actor, { reason = "B06_V2_ENFORCED", future = { cutover = { schema = AUTHORITY_SCHEMA, state = "V2_ENFORCED", writers = copy(writers) } } })
 end
 
-function Governance.ActivateV2(actor, writers)
+-- Extracted from ActivateV2 so the installation orchestrator (Dibs.Installation)
+-- can bootstrap authority without duplicating this validation.
+function Governance.EstablishInitialAuthority(actor, baselineHash)
+  local current, currentReason = currentGMSnapshot(actor)
+  if not current then return false, currentReason or "CURRENT_GUILD_MASTER_REQUIRED" end
+  if type(baselineHash) ~= "string" or baselineHash == "" then return false, "BASELINE_REQUIRED" end
+  return Governance.Change(actor, {
+    reason = "B06_V2_PREPARE",
+    future = { authority = {
+      schema = AUTHORITY_SCHEMA, state = "ACTIVE", coordinator = { memberKey = current.memberKey, displayName = current.displayName },
+      ledgerEpoch = 1, protocolState = "CUTOVER_PREPARED",
+      transition = { kind = "INITIAL", baselineHash = baselineHash },
+    } },
+  })
+end
+
+-- options.acknowledgeIncompleteEvidence must be explicitly supplied by a caller
+-- that has shown the GM the actual incomplete/unresolved evidence (P0 fix:
+-- this used to hardcode `true` and could silently freeze a known-partial
+-- legacy baseline without GM review). It never bypasses per-evidence decision
+-- requirements enforced by LegacyBaseline.FinalizeBaseline/RecordDecision.
+function Governance.ActivateV2(actor, options)
+  options = type(options) == "table" and options or {}
   local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
   if not baseline then
     if not (Dibs.LegacyBaseline and Dibs.LegacyBaseline.FinalizeBaseline) then return false, "BASELINE_REQUIRED" end
-    local approved, approvalReason = Dibs.LegacyBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = true })
+    local approved, approvalReason = Dibs.LegacyBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = options.acknowledgeIncompleteEvidence == true })
     if not approved then return false, approvalReason or "BASELINE_REQUIRED" end
     baseline = approved
   end
   local authority = Governance.GetAuthorityState()
   if authority.state == "LEGACY_LOCAL" then
-    local current, currentReason = currentGMSnapshot(actor)
-    if not current then return false, currentReason or "CURRENT_GUILD_MASTER_REQUIRED" end
-    local prepared, prepareReason = Governance.Change(actor, {
-      reason = "B06_V2_PREPARE",
-      future = { authority = {
-        schema = AUTHORITY_SCHEMA, state = "ACTIVE", coordinator = { memberKey = current.memberKey, displayName = current.displayName },
-        ledgerEpoch = 1, protocolState = "CUTOVER_PREPARED",
-        transition = { kind = "INITIAL", baselineHash = baseline.legacyBaselineHash },
-      } },
-    })
+    local prepared, prepareReason = Governance.EstablishInitialAuthority(actor, baseline.legacyBaselineHash)
     if not prepared then return false, prepareReason end
     authority = Governance.GetAuthorityState()
   end
   if authority.state ~= "ACTIVE" then return false, "AUTHORITY_ACTIVE_REQUIRED" end
   if Governance.IsV2Enforced() then return true, "V2_ALREADY_ENFORCED" end
-  local selectedWriters = type(writers) == "table" and writers or { authority.coordinator and authority.coordinator.displayName }
+  local selectedWriters = type(options.writers) == "table" and options.writers or { authority.coordinator and authority.coordinator.displayName }
   local enabled, enableReason = Governance.EnableV2(actor, selectedWriters)
   if not enabled then return false, enableReason end
   return true, "V2_ENFORCED"
