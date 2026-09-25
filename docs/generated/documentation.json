@@ -1,0 +1,447 @@
+{
+  "schemaVersion": 1,
+  "addonVersion": "0.6.5",
+  "concepts": [
+    {
+      "id": "guild.setup",
+      "module": "Installation",
+      "category": "setup",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "developer",
+        "gm"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": true,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_GUILD_SETUP_LABEL",
+        "shortHelp": "UI_HELP_GUILD_SETUP",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Guild Setup",
+          "frFR": "Configuration de guilde"
+        },
+        "shortHelp": {
+          "enUS": "Guild Master workflow for reviewing existing Dibs data and activating this guild's shared Dibs ledger. Opening the page does not initialize it.",
+          "frFR": "Parcours reserve au maitre de guilde pour examiner les donnees Dibs existantes et activer le registre partage de la guilde. Ouvrir la page ne l'initialise pas."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Installation.lua",
+        "line": 263,
+        "symbol": "Installation.Initialize"
+      }
+    },
+    {
+      "id": "ledger.adjust",
+      "module": "ProtectedActions",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.0",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [
+        "ledger.adjust"
+      ],
+      "scope": "guild-season",
+      "audit": true,
+      "reasonRequired": true,
+      "helpKeys": {
+        "label": "DOC_LEDGER_ADJUST_LABEL",
+        "shortHelp": "UI_HELP_DIBS_ADMIN",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Manual Dibs Adjustment",
+          "frFR": "Ajustement manuel des Dibs"
+        },
+        "shortHelp": {
+          "enUS": "Guild Master and authorized Officers can adjust a member's current-season balance. Each change records actor, target, reason, previous balance, and resulting balance in audit history.",
+          "frFR": "Le maitre de guilde et les officiers autorises peuvent ajuster le solde de la saison pour un membre. L'historique conserve l'auteur, la cible, la raison et les soldes avant/apres."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/ProtectedActions.lua",
+        "line": 222,
+        "symbol": "executeLedgerAdjust"
+      }
+    },
+    {
+      "id": "ledger.balance",
+      "module": "Ledger",
+      "category": "ledger",
+      "lifecycle": {
+        "since": "0.6.0",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_LEDGER_BALANCE_LABEL",
+        "shortHelp": "UI_HELP_DIB_BALANCE",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Dib Balance",
+          "frFR": "Solde de Dibs"
+        },
+        "shortHelp": {
+          "enUS": "Your available Dibs are scoped to this guild and season. A qualifying finalized award or authorized adjustment changes the balance.",
+          "frFR": "Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Ledger.lua",
+        "line": 641,
+        "symbol": "Ledger.GetBalance"
+      }
+    },
+    {
+      "id": "predibs.encounter.mode",
+      "module": "PreDibs",
+      "category": "predibs",
+      "lifecycle": {
+        "since": "0.6.0",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_PREDIB_ENCOUNTER_MODE_LABEL",
+        "shortHelp": "UI_HELP_PREDIB_MODE",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Encounter Mode",
+          "frFR": "Mode Encounter"
+        },
+        "shortHelp": {
+          "enUS": "Controls when players may submit a Pre-Dib. Encounter mode requires the matching raid and difficulty context; Wild Open may allow requests outside the raid under guild policy.",
+          "frFR": "Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/PreDibs.lua",
+        "line": 456,
+        "symbol": "Dibs.PreDibs.ValidatePublicRequest"
+      }
+    },
+    {
+      "id": "predibs.request",
+      "module": "PreDibs",
+      "category": "predibs",
+      "lifecycle": {
+        "since": "0.6.0",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_PREDIB_REQUEST_LABEL",
+        "shortHelp": "UI_HELP_PREDIB",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Pre-Dib Request",
+          "frFR": "Demande Pre-Dib"
+        },
+        "shortHelp": {
+          "enUS": "A Pre-Dib records your interest in eligible loot. It does not award an item or spend a Dib; that happens only after a qualifying award is finalized.",
+          "frFR": "Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/PreDibs.lua",
+        "line": 574,
+        "symbol": "Dibs.PreDibs.CreatePublic"
+      }
+    },
+    {
+      "id": "rank.allocation",
+      "module": "ProtectedActions",
+      "category": "rank-rules",
+      "lifecycle": {
+        "since": "0.6.0",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [
+        "rank.set"
+      ],
+      "scope": "guild-season",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_RANK_ALLOCATION_LABEL",
+        "shortHelp": "UI_HELP_RANK_ALLOCATION",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Rank Allocation",
+          "frFR": "Allocation de Dibs par rang"
+        },
+        "shortHelp": {
+          "enUS": "Starting Dibs assigned to a guild rank for the selected season. Changing the rule does not rewrite older ledger entries.",
+          "frFR": "Dibs attribues au depart a un rang de guilde pour la saison selectionnee. Changer la regle ne reecrit pas les anciennes transactions."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/ProtectedActions.lua",
+        "line": 154,
+        "symbol": "executeRankSet"
+      }
+    },
+    {
+      "id": "setup.reconciliation",
+      "module": "Installation",
+      "category": "setup",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "developer",
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_GUILD_RECONCILIATION_LABEL",
+        "shortHelp": "UI_HELP_RECONCILIATION",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Historical Reconciliation",
+          "frFR": "Rapprochement historique"
+        },
+        "shortHelp": {
+          "enUS": "Review detected historical Dibs entries before the Guild Master initializes the shared ledger. Keep uncertain evidence unresolved until it is understood.",
+          "frFR": "Examinez les entrees Dibs historiques detectees avant que le maitre de guilde initialise le registre partage. Laissez les preuves incertaines sans decision."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Installation.lua",
+        "line": 164,
+        "symbol": "Installation.GetReconciliationView"
+      }
+    },
+    {
+      "id": "sync.coordinator",
+      "module": "Governance",
+      "category": "governance",
+      "lifecycle": {
+        "since": "0.6.5",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "developer",
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_SYNC_COORDINATOR_LABEL",
+        "shortHelp": "UI_HELP_COORDINATOR",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Coordinator",
+          "frFR": "Coordinateur"
+        },
+        "shortHelp": {
+          "enUS": "The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Setup.",
+          "frFR": "Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/Governance.lua",
+        "line": 416,
+        "symbol": "Governance.GetAuthorityState"
+      }
+    },
+    {
+      "id": "sync.protocol.state",
+      "module": "SyncV2",
+      "category": "protocol",
+      "lifecycle": {
+        "since": "0.6.0",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "developer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_SYNC_PROTOCOL_STATE_LABEL",
+        "shortHelp": "UI_HELP_TECHNICAL_DETAILS",
+        "reference": "DOC_SYNC_PROTOCOL_STATE_REFERENCE"
+      },
+      "content": {
+        "label": {
+          "enUS": "SyncV2 Protocol State",
+          "frFR": "Etat du protocole SyncV2"
+        },
+        "shortHelp": {
+          "enUS": "Diagnostics may show protocol state such as V2_ENFORCED, ledgerEpoch, and hashes. These identifiers help troubleshooting; ordinary setup uses the status and next action.",
+          "frFR": "Les diagnostics peuvent afficher des etats de protocole comme V2_ENFORCED, ledgerEpoch et les empreintes. Ils servent au depannage; la configuration normale utilise les statuts et actions indiquees."
+        },
+        "reference": {
+          "enUS": "SyncV2 may report LEGACY_LOCAL before cutover, CUTOVER_PREPARED while writer compatibility is prepared, or V2_ENFORCED after approved enforcement. ledgerEpoch identifies the active canonical ledger generation; legacyBaselineHash identifies the approved legacy baseline.",
+          "frFR": "SyncV2 peut indiquer LEGACY_LOCAL avant le changement, CUTOVER_PREPARED pendant la preparation de compatibilite des ecrivains, ou V2_ENFORCED apres activation approuvee. ledgerEpoch identifie la generation active du registre canonique; legacyBaselineHash identifie la base historique approuvee."
+        }
+      },
+      "source": {
+        "file": "src/modules/SyncV2.lua",
+        "line": 478,
+        "symbol": "Sync.SetProtocolState"
+      }
+    },
+    {
+      "id": "sync.status",
+      "module": "SyncV2",
+      "category": "synchronization",
+      "lifecycle": {
+        "since": "0.6.0",
+        "changed": [
+          "0.6.5"
+        ],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "DOC_SYNC_STATUS_LABEL",
+        "shortHelp": "UI_HELP_SYNC_STATUS",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Synchronization",
+          "frFR": "Synchronisation"
+        },
+        "shortHelp": {
+          "enUS": "Shows whether this client can exchange current guild Dibs state. Unavailable or behind clients may be unable to apply canonical updates.",
+          "frFR": "Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/SyncV2.lua",
+        "line": 239,
+        "symbol": "Sync.GetStatus"
+      }
+    }
+  ]
+}

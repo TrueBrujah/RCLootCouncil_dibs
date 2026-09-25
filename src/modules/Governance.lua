@@ -405,6 +405,14 @@ function Governance.ApplyRecord(record, sender)
   return true, "ADOPTED", copy(record)
 end
 
+---@doc.id sync.coordinator
+---@doc.category governance
+---@doc.since 0.6.5
+---@doc.audience officer,gm,developer
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_COORDINATOR
+---@doc.label-key DOC_SYNC_COORDINATOR_LABEL
 function Governance.GetAuthorityState()
   return copy(authorityState(ensureState()))
 end

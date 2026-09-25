@@ -142,6 +142,15 @@ local function executeSeasonSet(actor, payload, decision)
   return buildResult(true, seasonId, decision)
 end
 
+---@doc.id rank.allocation
+---@doc.category rank-rules
+---@doc.since 0.6.0
+---@doc.audience officer,gm
+---@doc.permission rank.set
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_RANK_ALLOCATION
+---@doc.label-key DOC_RANK_ALLOCATION_LABEL
 local function executeRankSet(actor, payload, decision)
   if not Dibs.RankRules or not Dibs.RankRules.SetRankAllocation then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
@@ -200,6 +209,16 @@ local function executeLedgerRefund(actor, payload, decision)
   return buildResult(tx ~= nil, tx, decision)
 end
 
+---@doc.id ledger.adjust
+---@doc.category ledger
+---@doc.since 0.6.0
+---@doc.audience officer,gm
+---@doc.permission ledger.adjust
+---@doc.scope guild-season
+---@doc.audit true
+---@doc.reason-required true
+---@doc.help-key UI_HELP_DIBS_ADMIN
+---@doc.label-key DOC_LEDGER_ADJUST_LABEL
 local function executeLedgerAdjust(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.AdminAdjust then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))

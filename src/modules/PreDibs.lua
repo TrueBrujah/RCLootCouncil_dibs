@@ -445,6 +445,14 @@ end
 ---@return string|nil reasonCode
 ---@return table|nil policy
 ---@return table|nil validation Normalized request context when accepted.
+---@doc.id predibs.encounter.mode
+---@doc.category predibs
+---@doc.since 0.6.0
+---@doc.audience player,officer,gm
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_PREDIB_MODE
+---@doc.label-key DOC_PREDIB_ENCOUNTER_MODE_LABEL
 function Dibs.PreDibs.ValidatePublicRequest(itemID, seasonId, context)
   local targetItem = tonumber(itemID)
   if not targetItem or targetItem <= 0 then return nil, "INVALID_ITEM" end
@@ -555,6 +563,14 @@ end
 ---@return DibsPreDibRequest|nil request
 ---@return string|nil reasonCode
 -- Side effects: Persists/updates a confirmed request and may send configured announcements.
+---@doc.id predibs.request
+---@doc.category predibs
+---@doc.since 0.6.0
+---@doc.audience player,officer,gm
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_PREDIB
+---@doc.label-key DOC_PREDIB_REQUEST_LABEL
 function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, source, context)
   ensureState()
   local enabled, reason = requirePreDibsEnabled()

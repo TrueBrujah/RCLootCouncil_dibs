@@ -153,6 +153,14 @@ function Installation.GetStatus(actor)
   }
 end
 
+---@doc.id setup.reconciliation
+---@doc.category setup
+---@doc.since 0.6.5
+---@doc.audience officer,gm,developer
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_RECONCILIATION
+---@doc.label-key DOC_GUILD_RECONCILIATION_LABEL
 function Installation.GetReconciliationView()
   local evidence = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetEvidence and Dibs.LegacyBaseline.GetEvidence() or {}
   local state = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetState and Dibs.LegacyBaseline.GetState() or { decisions = {}, activeDecisionByEvidence = {} }
@@ -244,6 +252,14 @@ end
 ---@param actor string|nil Optional actor override; defaults to the local player.
 ---@param options table|nil `{ writers, acknowledgeIncompleteEvidence }`.
 ---@return table result `{ ok, stage?, reasonCode, status }`.
+---@doc.id guild.setup
+---@doc.category setup
+---@doc.since 0.6.5
+---@doc.audience gm,developer
+---@doc.scope guild
+---@doc.audit true
+---@doc.help-key UI_HELP_GUILD_SETUP
+---@doc.label-key DOC_GUILD_SETUP_LABEL
 function Installation.Initialize(actor, options)
   options = type(options) == "table" and options or {}
   if not isGM(actor) then

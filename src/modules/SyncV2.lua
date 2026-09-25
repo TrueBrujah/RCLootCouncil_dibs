@@ -227,6 +227,15 @@ function Sync.FormatSyncProbeReport(probe)
     tostring(report.seasonCatalogRevision or 0), tostring(ledger.revision or 0), tostring(ledger.rootHash or "none"), tostring(ledger.epoch or "none")) .. suffix
 end
 
+---@doc.id sync.status
+---@doc.category synchronization
+---@doc.since 0.6.0
+---@doc.changed 0.6.5
+---@doc.audience player,officer,gm
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_SYNC_STATUS
+---@doc.label-key DOC_SYNC_STATUS_LABEL
 function Sync.GetStatus()
   local state = ensure()
   if not transportReady() or Sync.transportRegistered ~= true then return { state = "SYNC_UNAVAILABLE", protocolState = state.protocolState } end
@@ -457,6 +466,15 @@ local function clearResolvedSeasonCatalogGap()
   return false
 end
 function Sync.GetProtocolState() return ensure().protocolState end
+---@doc.id sync.protocol.state
+---@doc.category protocol
+---@doc.since 0.6.0
+---@doc.audience developer
+---@doc.scope guild
+---@doc.audit false
+---@doc.help-key UI_HELP_TECHNICAL_DETAILS
+---@doc.label-key DOC_SYNC_PROTOCOL_STATE_LABEL
+---@doc.reference-key DOC_SYNC_PROTOCOL_STATE_REFERENCE
 function Sync.SetProtocolState(state, governanceApproved)
   -- B04 represents state but cannot independently enable enforcement.
   if state == "V2_ENFORCED" and governanceApproved ~= true then return false, "GOVERNANCE_CUTOVER_REQUIRED" end

@@ -630,6 +630,14 @@ function Ledger.CommitSeasonAllocation(context, evidence)
   return { accepted = true, idempotentReplay = false, reasonCode = "CANONICAL_COMMITTED", value = copy(commit) }
 end
 
+---@doc.id ledger.balance
+---@doc.category ledger
+---@doc.since 0.6.0
+---@doc.audience player,officer,gm
+---@doc.scope guild-season
+---@doc.audit false
+---@doc.help-key UI_HELP_DIB_BALANCE
+---@doc.label-key DOC_LEDGER_BALANCE_LABEL
 function Ledger.GetBalance(playerName, seasonId)
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
   return getCurrentBalance(memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName()), seasonId or Dibs.GetCurrentSeasonId())
