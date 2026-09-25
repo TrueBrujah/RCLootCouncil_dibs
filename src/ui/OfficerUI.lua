@@ -2049,6 +2049,16 @@ local function renderWizardPage(shell, parent, frame)
         end
       end
     end
+    if current.id == "review" or current.id == "readiness" then
+      local readiness = status.steps[total] and status.steps[total].detail or {}
+      for _, finding in ipairs(readiness.checks or {}) do
+        if finding.state ~= "ready" and finding.state ~= "skipped" then
+          Dibs.AceGUI.AddLabel(shell, parent,
+            tostring(finding.id) .. ": " .. tostring(finding.impact or finding.reasonCode or finding.state)
+              .. " " .. tostring(finding.remediation or ""), true)
+        end
+      end
+    end
     local route = WIZARD_STEP_ROUTE[current.id]
     if route then
       Dibs.AceGUI.AddButton(shell, parent, "Open " .. current.label, function()

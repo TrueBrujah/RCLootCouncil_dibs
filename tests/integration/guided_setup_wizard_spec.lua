@@ -15,6 +15,22 @@ local function stepById(status, id)
   end
 end
 
+local function configuredGuild()
+  local dibs = load("Tester-Realm", true)
+  assert_true(dibs.Installation.Initialize(nil).ok)
+  local season = dibs.Seasons.GetCurrent()
+  for _, rankIndex in ipairs({ 0, 1, 3 }) do
+    dibs.RankRules.SetAllocation(season.id, rankIndex, "Rank " .. rankIndex, rankIndex == 0 and 1 or 0)
+  end
+  return dibs, season
+end
+
+local function rankByIndex(rows, rankIndex)
+  for _, row in ipairs(rows) do
+    if row.rankIndex == rankIndex then return row end
+  end
+end
+
 describe("Dibs.Wizard status derivation", function()
   it("reports NEW_INSTALLATION/FIRST_TIME_SETUP before any configuration exists", function()
     local dibs = load("Tester-Realm", true)
@@ -24,14 +40,14 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("ACTION_REQUIRED", stepById(status, "installation").status)
   end)
 
-  it("reaches READY_FOR_RAID/REVIEW_CONFIGURATION on a fully initialized, configured guild", function()
+  it("does not claim raid readiness when a configured guild's check is unavailable", function()
     local dibs = load("Tester-Realm", true)
     local result = dibs.Installation.Initialize(nil)
     assert_true(result.ok, tostring(result.reasonCode))
     local season = dibs.Seasons.GetCurrent()
     assert_not_nil(season)
     for rankIndex = 0, 3 do
-      dibs.RankRules.SetAllocation(season.id, rankIndex, "Rank " .. rankIndex, 1)
+      dibs.RankRules.SetAllocation(season.id, rankIndex, "Rank " .. rankIndex, rankIndex == 0 and 1 or 0)
     end
 
     local status = dibs.Wizard.GetStatus()
@@ -40,11 +56,11 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("READY", stepById(status, "ledger").status)
     assert_equal("READY", stepById(status, "seasons").status)
     assert_equal("READY", stepById(status, "rankRules").status)
-    assert_equal("READY_FOR_RAID", status.overallState)
-    assert_equal("REVIEW_CONFIGURATION", status.mode)
+    assert_equal("BLOCKED", status.overallState)
+    assert_equal("BLOCKED", stepById(status, "readiness").status)
   end)
 
-  it("flags PARTIALLY_CONFIGURED when a rank is missing an allocation rule", function()
+  it("flags a missing rank rule even when raid readiness is unavailable", function()
     -- Dibs.Initialize()'s automatic default rules cover ranks 0-5; a rank
     -- beyond that range is genuinely unconfigured, not merely pending
     -- reconciliation (which is a separate, expected, ongoing officer task).
@@ -54,7 +70,7 @@ describe("Dibs.Wizard status derivation", function()
     } })
     assert_true(seeded.Installation.Initialize(nil).ok)
     local status = seeded.Wizard.GetStatus()
-    assert_equal("PARTIALLY_CONFIGURED", status.overallState)
+    assert_equal("BLOCKED", status.overallState)
     assert_equal("ACTION_REQUIRED", stepById(status, "rankRules").status)
   end)
 
@@ -98,7 +114,7 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal(1, dibs.Wizard.SetCurrentStepIndex(-5))
   end)
 
-  it("reuses Dibs.SetupAssistant.Evaluate verbatim for the readiness step and never overrides its verdict", function()
+  it("reuses Dibs.SetupAssistant.Evaluate and does not override its verdict", function()
     local dibs = load("Tester-Realm", true)
     assert_true(dibs.Installation.Initialize(nil).ok)
     local status = dibs.Wizard.GetStatus()
@@ -106,11 +122,145 @@ describe("Dibs.Wizard status derivation", function()
     local readiness = stepById(status, "readiness")
     assert_not_nil(readiness.detail)
     assert_equal(report.status, readiness.detail.status)
-    -- Outside a live raid, SetupAssistant's own verdict is not READY_FOR_RAID
-    -- (raid_context is unavailable) -- the Wizard's configuration-completeness
-    -- state must not depend on that and reaches READY_FOR_RAID anyway.
     assert_true(report.status ~= "READY_FOR_RAID")
-    assert_equal("READY_FOR_RAID", status.overallState)
+    assert_equal("BLOCKED", status.overallState)
+  end)
+
+  it("blocks an otherwise complete review when SetupAssistant is unavailable or needs attention", function()
+    local dibs = configuredGuild()
+    for _, reportStatus in ipairs({ "UNAVAILABLE", "NEEDS_ATTENTION", "UNRECOGNIZED" }) do
+      dibs.SetupAssistant.Evaluate = function()
+        return { status = reportStatus, checks = {
+          { id = "local_services", state = "blocked", impact = "Transport unavailable", remediation = "Repair transport" },
+        } }
+      end
+      local status = dibs.Wizard.GetStatus()
+      assert_equal("READY", stepById(status, "review").status)
+      assert_equal("BLOCKED", status.overallState)
+      assert_true(stepById(status, "readiness").status ~= "READY")
+    end
+  end)
+
+  it("keeps a warning in Review when SetupAssistant is ready", function()
+    local dibs, season = configuredGuild()
+    dibs.SetupAssistant.Evaluate = function() return { status = "READY_FOR_RAID", checks = {} } end
+    dibs.RankRules.SetAllocation(season.id, 1, "Officer", 1)
+    local status = dibs.Wizard.GetStatus()
+    assert_equal("ACTION_REQUIRED", stepById(status, "rankRules").status)
+    assert_true(stepById(status, "rankRules").summary:find("Officer", 1, true) ~= nil)
+    assert_equal("WARNING", stepById(status, "review").status)
+    assert_equal("READY", stepById(status, "readiness").status)
+    assert_equal("PARTIALLY_CONFIGURED", status.overallState)
+  end)
+
+  it("recomputes raid readiness after a refresh when SetupAssistant changes", function()
+    local dibs = configuredGuild()
+    local reportStatus = "UNAVAILABLE"
+    dibs.SetupAssistant.Evaluate = function() return { status = reportStatus, checks = {} } end
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    frame:ActivateRoute("wizard")
+    assert_equal("BLOCKED", dibs.Wizard.GetStatus().overallState)
+    reportStatus = "READY_FOR_RAID"
+    frame:Refresh()
+    assert_equal("READY_FOR_RAID", dibs.Wizard.GetStatus().overallState)
+  end)
+
+  it("preserves missing and surplus allocations from RankRules reconciliation", function()
+    local dibs, season = configuredGuild()
+    local rules = dibs.RankRules.GetRulesForSeason(season.id)
+    assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    assert_equal("OPTIONAL", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1).status)
+
+    dibs.RankRules.SetAllocation(season.id, 1, "Officer", 1)
+    local officer = rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1)
+    assert_equal("ACTION_REQUIRED", officer.status)
+    assert_true(officer.pendingReconciliation > 0)
+    assert_equal("ACTION_REQUIRED", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+
+    rules["1"] = { rankIndex = 1, rankName = "Officer" }
+    assert_equal("ACTION_REQUIRED", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1).status)
+    rules["1"] = nil
+    assert_equal("ACTION_REQUIRED", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1).status)
+
+    dibs.RankRules.SetAllocation(season.id, 0, "GM", 0)
+    assert_equal("WARNING", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+  end)
+
+  it("does not mark a missing rank reconciliation projection or empty roster READY", function()
+    local dibs, season = configuredGuild()
+    dibs.RankRules.GetAllocationReconciliation = function() error("reconciliation unavailable") end
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    dibs.RankRules.GetAllocationReconciliation = function() return {} end
+    assert_equal("WARNING", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    dibs.RankRules.GetAllocationReconciliation = function()
+      return { { rankIndex = 0, status = "UNKNOWN" } }
+    end
+    assert_equal("WARNING", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    _G.GetNumGuildMembers = function() return 0 end
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+  end)
+
+  it("distinguishes healthy, unavailable, behind, and unknown Sync states", function()
+    local dibs = configuredGuild()
+    assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "sync").status)
+
+    dibs.Sync.transportRegistered = false
+    local unavailable = stepById(dibs.Wizard.GetStatus(), "sync")
+    assert_equal("WARNING", unavailable.status)
+    assert_true(unavailable.summary:find("transport is unavailable", 1, true) ~= nil)
+
+    dibs.Sync.MarkSyncBehind("LEDGER_GAP")
+    local both = stepById(dibs.Wizard.GetStatus(), "sync")
+    assert_equal("WARNING", both.status)
+    assert_true(both.summary:find("transport is unavailable", 1, true) ~= nil)
+    assert_true(both.summary:find("behind", 1, true) ~= nil)
+
+    dibs.Sync.transportRegistered = true
+    assert_true(stepById(dibs.Wizard.GetStatus(), "sync").summary:find("behind", 1, true) ~= nil)
+    dibs.Sync.ClearSyncBehind()
+    assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "sync").status)
+
+    dibs.Sync.GetStatus = function() return { state = "UNRECOGNIZED" } end
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
+    dibs.Sync.GetStatus = function() return nil end
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
+  end)
+
+  it("recomputes Sync readiness on a live Wizard refresh after transport recovery", function()
+    local dibs = configuredGuild()
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    dibs.Wizard.SetCurrentStepIndex(10)
+    frame:ActivateRoute("wizard")
+    dibs.Sync.transportRegistered = false
+    frame:Refresh()
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
+    dibs.Sync.transportRegistered = true
+    dibs.Sync.ClearSyncBehind()
+    frame:Refresh()
+    assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "sync").status)
+  end)
+
+  it("reflects a failed then successful transport send without retaining stale unavailability", function()
+    local dibs = configuredGuild()
+    local sendComm = dibs.Ace3.SendComm
+    dibs.Ace3.SendComm = function() return false end
+    assert_false(dibs.Sync.Send({ type = "HELLO" }, "GUILD"))
+    assert_equal("SYNC_UNAVAILABLE", dibs.Sync.GetStatus().state)
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
+
+    dibs.Ace3.SendComm = sendComm
+    assert_true(dibs.Sync.Send({ type = "HELLO" }, "GUILD"))
+    assert_equal("SYNC_READY", dibs.Sync.GetStatus().state)
+    assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "sync").status)
+
+    dibs.Sync.MarkSyncBehind("LEDGER_GAP")
+    dibs.Ace3.SendComm = function() return false end
+    assert_false(dibs.Sync.Send({ type = "HELLO" }, "GUILD"))
+    dibs.Ace3.SendComm = sendComm
+    assert_true(dibs.Sync.Send({ type = "HELLO" }, "GUILD"))
+    assert_equal("SYNC_BEHIND", dibs.Sync.GetStatus().state)
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
   end)
 end)
 
@@ -160,6 +310,34 @@ describe("Guided Setup Wizard UI", function()
     clickLatestButton("Jump to first issue")
     local status = dibs.Wizard.GetStatus()
     assert_true(status.steps[dibs.Wizard.GetCurrentStepIndex()].status ~= "READY")
+  end)
+
+  it("shows authoritative readiness findings and refreshes the affected rank in Review", function()
+    local dibs, season = configuredGuild()
+    dibs.SetupAssistant.Evaluate = function() return { status = "UNAVAILABLE", checks = {
+      { id = "local_services", state = "unavailable", impact = "Transport unavailable", remediation = "Repair transport" },
+    } } end
+    dibs.Wizard.SetCurrentStepIndex(11)
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    frame:ActivateRoute("wizard")
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text == "Overall: Blocked"
+    end))
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text:find("local_services: Transport unavailable", 1, true) ~= nil
+    end))
+
+    dibs.RankRules.SetAllocation(season.id, 1, "Officer", 1)
+    frame:Refresh()
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text:find("Rank allocation needs attention: Officer", 1, true) ~= nil
+    end))
+
+    dibs.Wizard.SetCurrentStepIndex(12)
+    frame:Refresh()
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text:find("local_services: Transport unavailable", 1, true) ~= nil
+    end))
   end)
 
   it("denies configuration access to a non-officer", function()

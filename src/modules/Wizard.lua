@@ -103,17 +103,24 @@ end
 
 local function stepRankRules()
   local seasonId = call(Dibs.GetCurrentSeasonId)
-  local rows = call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId) or {}
-  local actionRequired, warning = 0, 0
+  local rows = call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId)
+  if type(rows) ~= "table" or #rows == 0 then
+    return { status = "WARNING", summary = "Guild rank configuration cannot be verified." }
+  end
+  local actionRequired, warning, affected = 0, 0, {}
   for _, row in ipairs(rows) do
     if row.status == "ACTION_REQUIRED" then actionRequired = actionRequired + 1
-    elseif row.status == "WARNING" then warning = warning + 1 end
+    elseif row.status == "WARNING" then warning = warning + 1
+    elseif row.status ~= "READY" and row.status ~= "OPTIONAL" then warning = warning + 1 end
+    if row.status ~= "READY" and row.status ~= "OPTIONAL" then
+      affected[#affected + 1] = tostring(row.rankName or ("Rank " .. tostring(row.rankIndex)))
+    end
   end
   if actionRequired > 0 then
-    return { status = "ACTION_REQUIRED", summary = actionRequired .. " rank(s) need a Dibs rule.", rows = rows }
+    return { status = "ACTION_REQUIRED", summary = "Rank allocation needs attention: " .. table.concat(affected, ", ") .. ".", rows = rows }
   end
   if warning > 0 then
-    return { status = "WARNING", summary = warning .. " rank(s) have pending allocation reconciliation.", rows = rows }
+    return { status = "WARNING", summary = "Rank allocation needs review: " .. table.concat(affected, ", ") .. ".", rows = rows }
   end
   return { status = "READY", summary = "All active ranks have a configured rule.", rows = rows }
 end
@@ -175,9 +182,23 @@ local function stepRCLootCouncil()
 end
 
 local function stepSync()
-  local behind = call(Dibs.Sync and Dibs.Sync.IsSyncBehind) == true
-  if behind then return { status = "WARNING", summary = "Synchronization is behind." } end
-  return { status = "READY", summary = "Synchronization is ready." }
+  local syncStatus = call(Dibs.Sync and Dibs.Sync.GetStatus)
+  local behind = call(Dibs.Sync and Dibs.Sync.IsSyncBehind)
+  if type(syncStatus) ~= "table" or type(syncStatus.state) ~= "string" then
+    return { status = "WARNING", summary = "Synchronization status is unavailable." }
+  end
+  if syncStatus.state == "SYNC_UNAVAILABLE" then
+    return { status = "WARNING", summary = behind == true
+      and "Synchronization transport is unavailable and this client is behind."
+      or "Synchronization transport is unavailable." }
+  end
+  if behind == true or syncStatus.syncBehind == true or syncStatus.state == "SYNC_BEHIND" then
+    return { status = "WARNING", summary = "Synchronization is behind." }
+  end
+  if syncStatus.state == "SYNC_READY" and (behind == false or syncStatus.syncBehind == false) then
+    return { status = "READY", summary = "Synchronization is ready." }
+  end
+  return { status = "WARNING", summary = "Synchronization status needs review." }
 end
 
 local STEP_STATUS = {
@@ -219,7 +240,7 @@ end
 
 local function readinessStatus(report)
   local map = { READY_FOR_RAID = "READY", NEEDS_ATTENTION = "WARNING", UNAVAILABLE = "BLOCKED", DENIED = "BLOCKED" }
-  return { status = map[report.status] or "WARNING", summary = "Readiness: " .. tostring(report.status), report = report }
+  return { status = map[report.status] or "BLOCKED", summary = "Readiness: " .. tostring(report.status), report = report }
 end
 
 ---@param actor string|nil Reserved for future actor-scoped projections; unused today.
@@ -239,10 +260,9 @@ function Wizard.GetStatus(actor)
     overallState = "MIGRATION_REQUIRED"
   elseif installation.state == "COORDINATOR_UNAVAILABLE" or installation.state == "RECOVERY_REQUIRED" or installation.state == "BLOCKED" then
     overallState = "BLOCKED"
-  elseif review.status == "READY" then
-    -- Configuration completeness (steps 1-9) drives this label. The separate
-    -- "readiness" step reflects Dibs.SetupAssistant's live-raid verdict on
-    -- its own terms and is never folded back into "is the guild configured."
+  elseif readiness.status ~= "READY" then
+    overallState = "BLOCKED"
+  elseif review.status == "READY" and readiness.status == "READY" then
     overallState = "READY_FOR_RAID"
   else
     overallState = "PARTIALLY_CONFIGURED"

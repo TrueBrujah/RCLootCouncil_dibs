@@ -517,6 +517,10 @@ function Sync.Send(message, channel, target)
   Sync.TraceOutgoing(channel, target, message.type)
   local sent = Dibs.Ace3.SendComm("DIBS", envelope, channel, target, "BULK")
   if not sent then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
+  local state = ensure()
+  if state.status == "SYNC_UNAVAILABLE" then
+    status(state.syncBehind and "SYNC_BEHIND" or "SYNC_READY")
+  end
   return true, envelope.messageId
 end
 

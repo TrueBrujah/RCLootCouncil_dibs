@@ -208,19 +208,28 @@ function Dibs.RankRules.GetRankConfigurationSummary(seasonId)
     byRank[key] = byRank[key] or { rankIndex = normalizeRankIndex(member.rankIndex), rankName = member.rankName, memberCount = 0 }
     byRank[key].memberCount = byRank[key].memberCount + 1
   end
-  local missingByRank = {}
+  local missingByRank, surplusByRank, reconciledByRank, unknownByRank = {}, {}, {}, {}
   for _, row in ipairs(Dibs.RankRules.GetAllocationReconciliation(targetSeason, roster)) do
+    local key = tostring(normalizeRankIndex(row.rankIndex))
+    reconciledByRank[key] = (reconciledByRank[key] or 0) + 1
     if row.status == "MISSING" then
-      local key = tostring(normalizeRankIndex(row.rankIndex))
       missingByRank[key] = (missingByRank[key] or 0) + 1
+    elseif row.status == "SURPLUS" then
+      surplusByRank[key] = (surplusByRank[key] or 0) + 1
+    elseif row.status ~= "ALIGNED" then
+      unknownByRank[key] = true
     end
   end
   local rows = {}
   for key, info in pairs(byRank) do
     local rule = rules[key]
     local status
-    if not rule then
+    if type(rule) ~= "table" or tonumber(rule.allocation) == nil or tonumber(rule.allocation) < 0
+      or (missingByRank[key] or 0) > 0 then
       status = "ACTION_REQUIRED"
+    elseif (reconciledByRank[key] or 0) ~= info.memberCount or unknownByRank[key]
+      or (surplusByRank[key] or 0) > 0 then
+      status = "WARNING"
     elseif tonumber(rule.allocation) == 0 then
       status = "OPTIONAL"
     else
@@ -228,8 +237,8 @@ function Dibs.RankRules.GetRankConfigurationSummary(seasonId)
     end
     rows[#rows + 1] = {
       rankIndex = info.rankIndex, rankName = info.rankName, memberCount = info.memberCount,
-      configured = rule ~= nil, allocation = rule and rule.allocation or nil,
-      pendingReconciliation = missingByRank[key] or 0, status = status,
+      configured = type(rule) == "table", allocation = type(rule) == "table" and rule.allocation or nil,
+      pendingReconciliation = missingByRank[key] or 0, surplusMembers = surplusByRank[key] or 0, status = status,
     }
   end
   table.sort(rows, function(a, b) return a.rankIndex < b.rankIndex end)
