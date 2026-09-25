@@ -40,6 +40,40 @@ describe("B06 coordinator distributed ledger", function()
     assert_false(unstable.accepted); assert_equal("STABLE_AWARD_ID_REQUIRED", unstable.reasonCode)
   end)
 
+  it("commits manual administration canonically and rejects a non-coordinator without mutation", function()
+    local coordinator = activateV2()
+    local season = coordinator.GetCurrentSeasonId()
+    local before = coordinator.Ledger.GetCanonicalState()
+    local preCommitSaved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
+    local result = coordinator.ProtectedActions.Execute("ledger.adjust", nil, {
+      playerName = "Player-Realm", amount = 1, reason = "Manual correction", source = "MANUAL_ADMIN",
+      seasonId = season, confirmation = true,
+    })
+    assert_true(result.ok, tostring(result.reasonCode))
+    assert_equal("DIB_ADMIN_ADJUSTMENT", result.value.type)
+    assert_equal("MANUAL_ADMIN", result.value.source)
+    assert_equal("Manual correction", result.value.reason)
+    assert_equal(before.nextSeq + 1, coordinator.Ledger.GetCanonicalState().nextSeq)
+    assert_equal(2, coordinator.Ledger.GetBalance("Player-Realm", season))
+
+    local saved = _G.RCLootCouncil_dibsDB.guilds["realm:testguild"]
+    local commit = saved.ledger.canonical.commits[tostring(before.epoch) .. ":" .. tostring(before.nextSeq)]
+    assert_not_nil(commit)
+    local follower = load("Officer-Realm", preCommitSaved)
+    local applied = follower.Ledger.ApplyAwardCommit(commit, "Coordinator-Realm")
+    assert_true(applied.accepted, tostring(applied.reasonCode))
+    local followerBefore = follower.Ledger.GetCanonicalState()
+    assert_equal(2, follower.Ledger.GetBalance("Player-Realm", season))
+    local denied = follower.ProtectedActions.Execute("ledger.adjust", nil, {
+      playerName = "Player-Realm", amount = 1, reason = "Manual correction", source = "MANUAL_ADMIN",
+      seasonId = season, confirmation = true,
+    })
+    assert_false(denied.ok)
+    assert_equal("CURRENT_COORDINATOR_REQUIRED", denied.reasonCode)
+    assert_equal(2, follower.Ledger.GetBalance("Player-Realm", season))
+    assert_equal(followerBefore.nextSeq, follower.Ledger.GetCanonicalState().nextSeq)
+  end)
+
   it("keeps non-coordinator work as a zero-effect proposal after V2 cutover", function()
     local coordinator = activateV2(); local saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
     local follower = load("Officer-Realm", saved); local before = follower.Ledger.GetBalance("Player-Realm", follower.GetCurrentSeasonId())

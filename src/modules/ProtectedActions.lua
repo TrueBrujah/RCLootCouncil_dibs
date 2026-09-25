@@ -204,7 +204,17 @@ local function executeLedgerAdjust(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.AdminAdjust then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx = Dibs.Ledger.AdminAdjust(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.adjust", actor, payload or {}, decision))
+  if payload and payload.source == "MANUAL_ADMIN" then
+    local reason = type(payload.reason) == "string" and payload.reason:match("^%s*(.-)%s*$") or ""
+    if reason == "" then
+      return buildResult(false, nil, { reasonCode = "REASON_REQUIRED" }, "A reason is required for manual Dibs administration.")
+    end
+    payload.reason = reason
+  end
+  local tx, reasonCode = Dibs.Ledger.AdminAdjust(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.adjust", actor, payload or {}, decision))
+  if not tx and payload and payload.source == "MANUAL_ADMIN" then
+    return buildResult(false, nil, { reasonCode = reasonCode or "ADJUSTMENT_REJECTED" }, reasonCode or "Dibs adjustment rejected.")
+  end
   return buildResult(tx ~= nil, tx, decision)
 end
 

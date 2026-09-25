@@ -60,22 +60,23 @@ end
 local OFFICER_NAV_TREE = {
   { section = "OVERVIEW", text = "Dashboard", value = "overview" },
   { section = "OVERVIEW", text = "Setup Assistant", value = "setup" },
-  { section = "DIBS", text = "Requests", value = "disputes", module = "requests" },
-  { section = "DIBS", text = "Pre-Dibs", value = "preDibs", module = "preDibs" },
-  { section = "DIBS", text = "Pending Awards", value = "pendingAwards" },
-  { section = "DIBS", text = "History", value = "history" },
   { section = "DIBS", text = "Automatic Dibs", value = "automaticDibs" },
-  { section = "DIBS", text = "Vault Review", value = "vault" },
+  { section = "DIBS", text = "Dibs Administration", value = "dibsAdmin" },
+  { section = "DIBS", text = "History", value = "history" },
+  { section = "REQUESTS", text = "Requests", value = "disputes", module = "requests" },
+  { section = "REQUESTS", text = "Pre-Dibs", value = "preDibs", module = "preDibs" },
+  { section = "REQUESTS", text = "Pending Awards", value = "pendingAwards" },
+  { section = "REQUESTS", text = "Vault Review", value = "vault" },
   { section = "GUILD RULES", text = "Seasons", value = "seasons" },
   { section = "GUILD RULES", text = "Rank Rules", value = "ranks" },
   { section = "GUILD RULES", text = "Loot Rules", value = "lootTypes" },
   { section = "GUILD RULES", text = "Announcements", value = "announcements", module = "announcements" },
+  { section = "GUILD RULES", text = "Loot Eligibility", value = "eligibility", module = "lootEligibility" },
   { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration", module = "rclootcouncil" },
   { section = "SYSTEM", text = "Settings", value = "settings" },
   { section = "SYSTEM", text = "Modules", value = "modules" },
   { section = "SYSTEM", text = "Synchronization", value = "sync" },
   { section = "SYSTEM", text = "Diagnostics", value = "diagnostics" },
-  { section = "SYSTEM", text = "Loot Eligibility", value = "eligibility", module = "lootEligibility" },
   { section = "DEVELOPER", text = "Developer", value = "developer" },
   { section = "DEVELOPER", text = "Debug", value = "debug" },
 }
@@ -1261,6 +1262,60 @@ function Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
   return { allocations = lines, rows = rows, hiddenTransactionCount = 0 }
 end
 
+function Dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, query, sortKey, descending)
+  if not canViewOfficerData() then return { state = "hidden", rows = {} } end
+  if type(_G.GetNumGuildMembers) ~= "function" or type(_G.GetGuildRosterInfo) ~= "function" then
+    return { state = "loading", rows = {} }
+  end
+  local ok, memberCount = pcall(_G.GetNumGuildMembers, true)
+  if not ok or tonumber(memberCount) == nil then return { state = "loading", rows = {} } end
+  local rows = {}
+  local memberKeyCounts = {}
+  local needle = string.lower(trimText(query or ""))
+  for index = 1, tonumber(memberCount) do
+    local rosterInfo = { pcall(_G.GetGuildRosterInfo, index) }
+    local success = rosterInfo[1]
+    local name, rankName, rankIndex, guid = rosterInfo[2], rosterInfo[3], rosterInfo[4], rosterInfo[18]
+    if success and type(name) == "string" and name ~= "" then
+      local displayName = name
+      if not displayName:find("-", 1, true) and type(_G.GetRealmName) == "function" then
+        local realm = _G.GetRealmName()
+        if type(realm) == "string" and realm ~= "" then displayName = displayName .. "-" .. realm end
+      end
+      local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(displayName)
+      local balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(displayName, seasonId) or 0
+      local matches = needle == "" or string.find(string.lower(displayName), needle, 1, true) ~= nil
+      if matches then
+        rows[#rows + 1] = {
+          playerName = displayName,
+          memberKey = memberKey,
+          guid = type(guid) == "string" and guid or nil,
+          rankName = type(rankName) == "string" and rankName ~= "" and rankName or "Unknown",
+          rankIndex = tonumber(rankIndex) or math.huge,
+          balance = tonumber(balance) or 0,
+          identityAvailable = memberKey ~= nil,
+        }
+        if memberKey then memberKeyCounts[memberKey] = (memberKeyCounts[memberKey] or 0) + 1 end
+      end
+    end
+  end
+  for _, row in ipairs(rows) do
+    if row.memberKey and memberKeyCounts[row.memberKey] > 1 then row.identityAvailable = false end
+  end
+  sortKey = (sortKey == "rank" or sortKey == "balance") and sortKey or "name"
+  if sortKey ~= "rank" and sortKey ~= "balance" then sortKey = "name" end
+  table.sort(rows, function(left, right)
+    local first, second
+    if sortKey == "rank" then first, second = left.rankIndex, right.rankIndex
+    elseif sortKey == "balance" then first, second = left.balance, right.balance
+    else first, second = string.lower(left.playerName), string.lower(right.playerName) end
+    if first == second then first, second = string.lower(left.playerName), string.lower(right.playerName) end
+    if descending == true then return first > second end
+    return first < second
+  end)
+  return { state = #rows > 0 and "ready" or "empty", rows = rows }
+end
+
 function Dibs.OfficerUI.BuildPreDibDetails(seasonId)
   if not canViewOfficerData() then
     return { requests = {}, activeRequestCount = 0, hiddenRequestCount = 0, hidden = true }
@@ -1958,12 +2013,86 @@ local function createAceWindow(initialRoute)
   local requestDetailShell
   local requestDetailRoot
   local requestChildDialog
+  local dibsAdminDialog
   local openRequestDetail
 
   local function closeRequestChildren()
     if Dibs.AceGUI and Dibs.AceGUI.HideContextMenu then Dibs.AceGUI.HideContextMenu() end
     if requestChildDialog and requestChildDialog.window then requestChildDialog.window:Hide() end
     requestChildDialog = nil
+  end
+
+  local function openDibsAdminAdjustment(row, delta, seasonId)
+    if not row or row.identityAvailable ~= true then
+      frame:SetStatus("This roster identity is ambiguous; no adjustment can be made.")
+      return false
+    end
+    if dibsAdminDialog and dibsAdminDialog.window then dibsAdminDialog.window:Hide() end
+    local reasonText = ""
+    dibsAdminDialog = Dibs.AceGUI.CreateWindow("Dibs | Confirm Dibs change", 500, 420, { "CENTER", 0, 0 }, "DibsManualAdministration")
+    if not dibsAdminDialog then return false end
+    local body = Dibs.AceGUI.Create(dibsAdminDialog, "SimpleGroup", dibsAdminDialog.window)
+    local footer = Dibs.AceGUI.Create(dibsAdminDialog, "SimpleGroup", dibsAdminDialog.window)
+    if not body or not footer then dibsAdminDialog.window:Hide(); dibsAdminDialog = nil; return false end
+    body:SetFullWidth(true); body:SetLayout("List")
+    footer:SetFullWidth(true); footer:SetLayout("Flow")
+    Dibs.AceGUI.AddHeading(dibsAdminDialog, body, delta > 0 and "Add 1 DIB" or "Remove 1 DIB")
+    local previousBalance = tonumber(row.balance) or 0
+    local resultingBalance = previousBalance + delta
+    for _, detail in ipairs({
+      { "Player", row.playerName },
+      { "Current balance", tostring(previousBalance) },
+      { "Adjustment", (delta > 0 and "+" or "") .. tostring(delta) },
+      { "New balance", tostring(resultingBalance) },
+    }) do
+      Dibs.AceGUI.AddSummaryRow(dibsAdminDialog, body, detail[1], detail[2], 28)
+    end
+    local confirm
+    local reason = Dibs.AceGUI.AddMultilineEditBox(dibsAdminDialog, body, "Required reason", function(value)
+      reasonText = value or ""
+      if confirm then Dibs.AceGUI.SetDisabled(confirm, trimText(reasonText) == "") end
+    end, 440, 80)
+    local message = Dibs.AceGUI.AddLabel(dibsAdminDialog, body, "", true)
+    Dibs.AceGUI.AddButton(dibsAdminDialog, footer, "Cancel", function()
+      if dibsAdminDialog and dibsAdminDialog.window then dibsAdminDialog.window:Hide() end
+      dibsAdminDialog = nil
+    end, 100)
+    confirm = Dibs.AceGUI.AddButton(dibsAdminDialog, footer, "Confirm", function()
+      local requiredReason = trimText(reasonText)
+      if requiredReason == "" then
+        Dibs.AceGUI.SetText(message, "A reason is required.")
+        return
+      end
+      local currentBalance = Dibs.Ledger.GetBalance(row.playerName, seasonId)
+      if tonumber(currentBalance) ~= previousBalance then
+        Dibs.AceGUI.SetText(message, "The balance changed. Close this dialog and review the current balance.")
+        return
+      end
+      local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+        and Dibs.ProtectedActions.Execute("ledger.adjust", nil, {
+          playerName = row.playerName,
+          playerGuid = row.guid,
+          amount = delta,
+          reason = requiredReason,
+          source = "MANUAL_ADMIN",
+          seasonId = seasonId,
+          confirmation = true,
+        })
+        or { ok = false, diagnostic = "Protected actions unavailable." }
+      if not result.ok then
+        Dibs.AceGUI.SetText(message, result.diagnostic or result.reasonCode or "Unable to adjust Dibs.")
+        return
+      end
+      if dibsAdminDialog and dibsAdminDialog.window then dibsAdminDialog.window:Hide() end
+      dibsAdminDialog = nil
+      frame.dibsAdminStatus = "Dibs adjustment recorded."
+      frame:Refresh()
+    end, 110)
+    Dibs.AceGUI.SetDisabled(confirm, true)
+    if reason then setControlText(reason, "") end
+    dibsAdminDialog.window:Show()
+    if dibsAdminDialog.window.DoLayout then dibsAdminDialog.window:DoLayout() end
+    return true
   end
 
   local function closeRequestDetail()
@@ -4359,6 +4488,87 @@ local function createAceWindow(initialRoute)
       self.ledgerText = Dibs.AceGUI.AddLabel(shell, tabs, table.concat(Dibs.OfficerUI.BuildDashboardDetails(current), "\n"), true)
       return
     end
+    if self.activeTab == "dibsAdmin" then
+      Dibs.AceGUI.AddHeading(shell, tabs, "Dibs Administration", "Adjust a guild character's current-season balance. Every change requires a reason.")
+      local controls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+      self.dibsAdminSearch = Dibs.AceGUI.AddEditBox(shell, controls, "Search player", function(value)
+        self.dibsAdminQuery = value or ""
+        self:Refresh()
+      end, 250)
+      setControlText(self.dibsAdminSearch, self.dibsAdminQuery or "")
+      Dibs.AceGUI.AddButton(shell, controls, "Clear", function()
+        self.dibsAdminQuery = ""
+        self:Refresh()
+      end, 60)
+      Dibs.AceGUI.AddButton(shell, controls, "Refresh guild roster", function()
+        if type(_G.GuildRoster) ~= "function" then
+          self.dibsAdminStatus = "Guild roster refresh is unavailable."
+          self:Refresh()
+          return
+        end
+        local refreshed = pcall(_G.GuildRoster)
+        if refreshed then
+          self.dibsAdminRosterLoading = true
+          self.dibsAdminStatus = "Waiting for guild roster update..."
+        else
+          self.dibsAdminStatus = "Unable to request a guild roster refresh."
+        end
+        self:Refresh()
+      end, 150)
+      if self.dibsAdminStatus and self.dibsAdminStatus ~= "" then
+        Dibs.AceGUI.AddLabel(shell, tabs, self.dibsAdminStatus, true)
+      end
+      if self.dibsAdminRosterLoading then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Loading guild roster...", true)
+        return
+      end
+      local roster = Dibs.OfficerUI.BuildDibsAdministrationRoster(currentId, self.dibsAdminQuery,
+        self.dibsAdminSortKey or "name", self.dibsAdminSortDescending)
+      if roster.state == "loading" then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Guild roster is loading or unavailable. Use Refresh guild roster to request an update.", true)
+        return
+      elseif roster.state == "empty" then
+        Dibs.AceGUI.AddLabel(shell, tabs, self.dibsAdminQuery and self.dibsAdminQuery ~= ""
+          and "No guild characters match this search." or "No guild characters are available in the roster.", true)
+        return
+      end
+      local headers = Dibs.AceGUI.AddInlineGroup(shell, tabs)
+      local function sortBy(key, label, width)
+        local marker = self.dibsAdminSortKey == key and (self.dibsAdminSortDescending and " v" or " ^") or ""
+        Dibs.AceGUI.AddButton(shell, headers, label .. marker, function()
+          if self.dibsAdminSortKey == key then
+            self.dibsAdminSortDescending = not self.dibsAdminSortDescending
+          else
+            self.dibsAdminSortKey, self.dibsAdminSortDescending = key, false
+          end
+          self:Refresh()
+        end, width)
+      end
+      sortBy("name", "Player Name", 190)
+      sortBy("rank", "Guild Rank", 135)
+      sortBy("balance", "DIBS Balance", 95)
+      Dibs.AceGUI.AddLabel(shell, headers, "Actions", false)
+      local rosterScroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 430) or tabs
+      for _, row in ipairs(roster.rows) do
+        local rowGroup = Dibs.AceGUI.AddInlineGroup(shell, rosterScroll)
+        if rowGroup.SetHeight then rowGroup:SetHeight(32) end
+        local playerCell = Dibs.AceGUI.AddLabel(shell, rowGroup, row.playerName, false)
+        local rankCell = Dibs.AceGUI.AddLabel(shell, rowGroup, row.rankName, false)
+        local balanceCell = Dibs.AceGUI.AddLabel(shell, rowGroup, tostring(row.balance), false)
+        if playerCell and playerCell.SetWidth then playerCell:SetWidth(190) end
+        if rankCell and rankCell.SetWidth then rankCell:SetWidth(135) end
+        if balanceCell and balanceCell.SetWidth then balanceCell:SetWidth(95) end
+        local add = Dibs.AceGUI.AddButton(shell, rowGroup, "ADD", function()
+          openDibsAdminAdjustment(row, 1, currentId)
+        end, 55)
+        local remove = Dibs.AceGUI.AddButton(shell, rowGroup, "REMOVE", function()
+          openDibsAdminAdjustment(row, -1, currentId)
+        end, 65)
+        Dibs.AceGUI.SetDisabled(add, not row.identityAvailable)
+        Dibs.AceGUI.SetDisabled(remove, not row.identityAvailable)
+      end
+      return
+    end
     if self.activeTab == "pendingAwards" then
       local proposals = Dibs.OfficerUI.GetPendingAwardProposals()
       Dibs.AceGUI.AddHeading(shell, tabs, (Dibs.L and Dibs.L.PENDING_AWARDS_TITLE) or "Pending awards", (Dibs.L and Dibs.L.PENDING_AWARDS_DESCRIPTION) or "Confirm awards received from another raid before they consume Dibs.")
@@ -5154,7 +5364,27 @@ end
 
 local combatFrame = CreateFrame("Frame")
 combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-combatFrame:SetScript("OnEvent", function()
+combatFrame:RegisterEvent("GUILD_ROSTER_UPDATE")
+combatFrame:SetScript("OnEvent", function(_, event)
+  if event == "GUILD_ROSTER_UPDATE" then
+    local frame = _G.DibsOfficerFrame
+    if frame then frame.dibsAdminRosterLoading = nil end
+    if frame and frame.activeTab == "dibsAdmin" and frame.IsShown and frame:IsShown() then
+      if type(InCombatLockdown) == "function" and InCombatLockdown() then
+        frame.dibsAdminRosterRefreshPending = true
+      elseif frame.Refresh then
+        frame.dibsAdminStatus = ""
+        frame:Refresh()
+      end
+    end
+    return
+  end
+  local frame = _G.DibsOfficerFrame
+  if frame and frame.dibsAdminRosterRefreshPending then
+    frame.dibsAdminRosterRefreshPending = nil
+    frame.dibsAdminStatus = ""
+    if frame.activeTab == "dibsAdmin" and frame.Refresh then frame:Refresh() end
+  end
   if Dibs.OfficerUI.pendingToggle then
     Dibs.OfficerUI.pendingToggle = nil
     Dibs.OfficerUI.Toggle(true)

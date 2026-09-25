@@ -521,8 +521,58 @@ function Ledger.Refund(playerName, amount, reason, source, seasonId, audit)
   local numeric = amount == nil and 1 or tonumber(amount); if not finiteInteger(numeric) or numeric <= 0 then return nil, "INVALID_AMOUNT" end
   return compatibilityMutation("DIB_REFUNDED", playerName, numeric, reason or "Dib refunded", source or "system", seasonId or Dibs.GetCurrentSeasonId(), audit)
 end
+local function commitCanonicalAdminAdjustment(playerName, amount, reason, source, seasonId, audit)
+  local context = compatibilityContext("DIB_ADMIN_ADJUSTMENT", audit)
+  local authorityState = authority()
+  local coordinator, coordinatorReason = localCoordinator(authorityState, context.actor)
+  if not coordinator then return { accepted = false, reasonCode = coordinatorReason } end
+  local ledger = ensureState()
+  local canonical, canonicalReason = canonicalStateForAuthority(ledger, authorityState)
+  if not canonical then return { accepted = false, reasonCode = canonicalReason } end
+  local input = {
+    transactionId = audit and audit.transactionId,
+    type = "DIB_ADMIN_ADJUSTMENT",
+    playerName = playerName or Dibs.GetPlayerName(),
+    playerGuid = audit and audit.playerGuid,
+    amount = amount,
+    reason = reason,
+    source = source,
+    seasonId = seasonId or Dibs.GetCurrentSeasonId(),
+    confirmation = audit and audit.confirmation,
+  }
+  local tx, txReason = buildDetachedTransaction(context, input)
+  if not tx then return { accepted = false, reasonCode = txReason } end
+  local existing = ledger.transactions[tx.transactionId]
+  if existing then
+    local key = canonical.transactionIndex[tx.transactionId]
+    local known = key and canonical.commits[key]
+    if known and existing.canonicalContentHash == tx.canonicalContentHash then
+      return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) }
+    end
+    return { accepted = false, reasonCode = "TRANSACTION_CONFLICT" }
+  end
+  local commit = {
+    schema = CANONICAL_SCHEMA, recordClass = "AWARD_COMMIT", guildKey = Dibs.GetGuildKey(), protocolMajor = 2,
+    ledgerEpoch = authorityState.ledgerEpoch, sequence = canonical.nextSeq, previousHash = canonical.rootHash,
+    canonicalTransactionId = tx.transactionId, transactionHash = tx.canonicalContentHash, transaction = tx,
+    coordinator = { memberKey = coordinator.memberKey, displayName = coordinator.displayName, guidWitness = coordinator.guidWitness },
+  }
+  local commitHash, hashReason = canonicalCommitHash(commit)
+  if not commitHash then return { accepted = false, reasonCode = hashReason } end
+  commit.commitHash = commitHash
+  appendValidated(tx)
+  local key = positionKey(commit.ledgerEpoch, commit.sequence)
+  canonical.commits[key], canonical.positions[key], canonical.transactionIndex[tx.transactionId] = copy(commit), commit.commitHash, key
+  canonical.nextSeq, canonical.rootHash = canonical.nextSeq + 1, commit.commitHash
+  if Dibs.Sync and Dibs.Sync.AnnounceAwardCommit then Dibs.Sync.AnnounceAwardCommit(copy(commit)) end
+  return { accepted = true, reasonCode = "CANONICAL_COMMITTED", value = copy(tx) }
+end
 function Ledger.AdminAdjust(playerName, amount, reason, source, seasonId, audit)
   local numeric = tonumber(amount); if not finiteInteger(numeric) or numeric == 0 then return nil, "INVALID_AMOUNT" end
+  if source == "MANUAL_ADMIN" and v2Enforced() then
+    local result = commitCanonicalAdminAdjustment(playerName, numeric, reason, source, seasonId, audit)
+    return result.value, result.reasonCode
+  end
   return compatibilityMutation("DIB_ADMIN_ADJUSTMENT", playerName, numeric, reason or "Manual adjustment", source or "officer", seasonId or Dibs.GetCurrentSeasonId(), audit)
 end
 function Ledger.RecordHistoricalAward(playerName, seasonId, awardRef, evidenceId, reason, audit)

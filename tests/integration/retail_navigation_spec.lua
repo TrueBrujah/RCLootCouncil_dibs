@@ -117,7 +117,7 @@ describe("Retail Officer navigation lifecycle", function()
     local callback = frame.aceTabs.callbacks.OnGroupSelected
     local separator = string.char(1)
 
-    callback(frame.aceTabs, "OnGroupSelected", "section_dibs" .. separator .. "disputes")
+    callback(frame.aceTabs, "OnGroupSelected", "section_requests" .. separator .. "disputes")
     assert_true(containsText(frame.contentHost, "Officer review requests"))
     assert_true(layoutCalls > 0)
 
@@ -153,7 +153,7 @@ describe("Retail Officer navigation lifecycle", function()
     assert_equal("disputes", frame.mountedPage)
   end)
 
-  it("selects grouped Officer routes by value so the DIBS section opens", function()
+  it("selects grouped Officer routes by value so the REQUESTS section opens", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow()
     local selectedByValue
@@ -167,7 +167,7 @@ describe("Retail Officer navigation lifecycle", function()
 
     frame.SelectTab("requests")
 
-    assert_equal("section_dibs" .. string.char(1) .. "disputes", selectedByValue)
+    assert_equal("section_requests" .. string.char(1) .. "disputes", selectedByValue)
     assert_nil(selectedDirectly)
   end)
 
