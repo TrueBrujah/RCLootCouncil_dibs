@@ -21,6 +21,25 @@ describe("Governance bootstrap and identity", function()
     assert_equal("Player-1-TESTER", disagreement.guidWitness)
   end)
 
+  it("collapses repeated realm suffixes in canonical identity and display names", function()
+    local dibs = load({ guildMembers = { "Tester-Realm", "Manu-Zul'jin-Zul'jin-Zul'jin" },
+      guildRankIndices = { [1] = 0, [2] = 3 } })
+    local resolved = dibs.Identity.ResolveRosterMember("Manu-Zul'jin-Zul'jin-Zul'jin")
+    assert_equal("RESOLVED", resolved.status)
+    assert_equal("manu-zul'jin-zul'jin-zul'jin", resolved.memberKey)
+    assert_equal("Manu-Zul'jin", resolved.displayName)
+    assert_equal("Manu-Zul'jin", dibs.Identity.NormalizeDisplayName("Manu-Zul'jin-Zul'jin-Zul'jin"))
+    assert_equal("RESOLVED", dibs.Identity.ResolveRosterMember("Manu-Zul'jin").status)
+    assert_equal("manu-zul'jin-zul'jin-zul'jin", dibs.Identity.ResolveRosterMember("Manu-Zul'jin").memberKey)
+
+    local peer
+    for _, row in ipairs(dibs.Sync.GetPeerStatuses()) do
+      if row.playerName:find("Manu", 1, true) then peer = row; break end
+    end
+    assert_not_nil(peer)
+    assert_equal("Manu-Zul'jin", peer.playerName)
+  end)
+
   it("resolves only a unique short name and reports ambiguity or unknown roster members", function()
     local dibs = load({ guildMembers = { "Tester-Realm", "Tester-Other", "Solo-Realm" }, guildRankIndices = { [1] = 0, [2] = 3, [3] = 3 } })
 

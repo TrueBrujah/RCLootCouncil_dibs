@@ -19,9 +19,11 @@ local state = Identity._rosterState or {
   fresh = false,
   members = {},
   shortNames = {},
+  displayNames = {},
   reason = "ROSTER_NOT_REFRESHED",
 }
 Identity._rosterState = state
+state.displayNames = state.displayNames or {}
 
 local function copy(value)
   return Dibs.DeepCopy and Dibs.DeepCopy(value) or value
@@ -47,17 +49,43 @@ local function actorGuid(value)
   return nil
 end
 
-local function parseNameRealm(value)
+local function normalizeDisplayName(value)
   local display = trim(actorName(value))
-  if not display then return nil, nil, "INVALID_IDENTITY" end
-  -- A Player GUID is witness data, never a Name-Realm wire identity.
-  if display:match("^Player%-%d+%-") then return nil, display, "GUID_IS_NOT_MEMBER_KEY" end
+  if not display then return nil end
   local name, realm = display:match("^([^%-]+)%-(.+)$")
+  if not name or not realm then return display end
+
+  local realmParts = {}
+  for part in realm:gmatch("[^%-]+") do realmParts[#realmParts + 1] = part end
+  for period = 1, math.floor(#realmParts / 2) do
+    local repeated = true
+    for index = period + 1, #realmParts do
+      if string.lower(realmParts[index]) ~= string.lower(realmParts[((index - 1) % period) + 1]) then
+        repeated = false
+        break
+      end
+    end
+    if repeated then
+      local canonicalRealm = {}
+      for index = 1, period do canonicalRealm[index] = realmParts[index] end
+      realm = table.concat(canonicalRealm, "-")
+      break
+    end
+  end
+  return name .. "-" .. realm
+end
+
+local function parseNameRealm(value)
+  local sourceDisplay = trim(actorName(value))
+  if not sourceDisplay then return nil, nil, "INVALID_IDENTITY" end
+  -- A Player GUID is witness data, never a Name-Realm wire identity.
+  if sourceDisplay:match("^Player%-%d+%-") then return nil, sourceDisplay, "GUID_IS_NOT_MEMBER_KEY" end
+  local name, realm = sourceDisplay:match("^([^%-]+)%-(.+)$")
   name, realm = trim(name), trim(realm)
-  if not name or not realm then return nil, display, "SHORT_NAME" end
+  if not name or not realm then return nil, sourceDisplay, "SHORT_NAME" end
   local normalizedRealm = realm:gsub("%s+", "")
-  if normalizedRealm == "" then return nil, display, "INVALID_IDENTITY" end
-  return string.lower(name .. "-" .. normalizedRealm), name .. "-" .. realm, nil
+  if normalizedRealm == "" then return nil, sourceDisplay, "INVALID_IDENTITY" end
+  return string.lower(name .. "-" .. normalizedRealm), normalizeDisplayName(sourceDisplay), nil
 end
 
 local function shortName(value)
@@ -91,6 +119,7 @@ function Identity.InvalidateRoster(reason)
   state.fresh = false
   state.members = {}
   state.shortNames = {}
+  state.displayNames = {}
   state.reason = reason or "ROSTER_INVALIDATED"
   return state.generation
 end
@@ -114,7 +143,7 @@ function Identity.RefreshRoster()
     return false, state.reason
   end
 
-  local members, shortNames = {}, {}
+  local members, shortNames, displayNames = {}, {}, {}
   for index = 1, tonumber(count) or 0 do
     local success, name, _, rankIndex = pcall(GetGuildRosterInfo, index)
     if success and name then
@@ -124,6 +153,9 @@ function Identity.RefreshRoster()
         local short = string.lower(member.displayName:match("^([^%-]+)"))
         shortNames[short] = shortNames[short] or {}
         table.insert(shortNames[short], member.memberKey)
+        local displayKey = string.lower(member.displayName)
+        displayNames[displayKey] = displayNames[displayKey] or {}
+        table.insert(displayNames[displayKey], member.memberKey)
       end
     end
   end
@@ -132,6 +164,7 @@ function Identity.RefreshRoster()
   state.fresh = true
   state.members = members
   state.shortNames = shortNames
+  state.displayNames = displayNames
   state.reason = nil
   return true, state.generation
 end
@@ -145,6 +178,10 @@ function Identity.CanonicalMemberKey(value)
   return key
 end
 
+function Identity.NormalizeDisplayName(value)
+  return normalizeDisplayName(value)
+end
+
 function Identity.ResolveRosterMember(value)
   local refreshed, reason = Identity.RefreshRoster()
   if not refreshed then return { status = "ROSTER_UNAVAILABLE", reason = reason } end
@@ -152,6 +189,13 @@ function Identity.ResolveRosterMember(value)
   local key, display, parseReason = parseNameRealm(value)
   if key then
     local member = state.members[key]
+    if not member then
+      local candidates = state.displayNames[string.lower(display or "")] or {}
+      if #candidates > 1 then
+        return { status = "AMBIGUOUS_IDENTITY", candidates = copy(candidates), rosterGeneration = state.generation }
+      end
+      if #candidates == 1 then member = state.members[candidates[1]] end
+    end
     if not member then return { status = "UNKNOWN_ROSTER_MEMBER", memberKey = key, displayName = display } end
     return {
       status = "RESOLVED",

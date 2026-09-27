@@ -1234,6 +1234,17 @@ describe("Officer Dibs administration", function()
     assert_equal(2, #duplicateRows.rows)
     assert_false(duplicateRows.rows[1].identityAvailable)
     assert_false(duplicateRows.rows[2].identityAvailable)
+
+    local _, repeatedRealmDibs = loader.load({ withAce3 = true, wow = {
+      playerName = "Tester-Realm", guildLeader = true,
+      guildMembers = { "Tester-Realm", "Manu-Zul'jin-Zul'jin-Zul'jin" },
+      guildRankIndices = { [1] = 0, [2] = 3 },
+    } })
+    local repeatedRealmRows = repeatedRealmDibs.OfficerUI.BuildDibsAdministrationRoster(
+      repeatedRealmDibs.GetCurrentSeasonId(), "Manu", "name", false)
+    assert_equal(1, #repeatedRealmRows.rows)
+    assert_equal("Manu-Zul'jin", repeatedRealmRows.rows[1].playerName)
+    assert_equal("manu-zul'jin-zul'jin-zul'jin", repeatedRealmRows.rows[1].memberKey)
   end)
 
   it("allows GM ADD +1 only after confirmation and records the trimmed reason", function()

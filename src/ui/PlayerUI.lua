@@ -1129,6 +1129,10 @@ local function createAceWindow()
         if result.direction == "SEND" and not latestByChannel[result.channel] then latestByChannel[result.channel] = result end
       end
       local function playerKey(name)
+        if Dibs.Identity and Dibs.Identity.CanonicalMemberKey then
+          local key = Dibs.Identity.CanonicalMemberKey(name)
+          if key then return string.lower(tostring(key)) end
+        end
         if Dibs.Identity and Dibs.Identity.CanonicalPlayerId then
           local key = Dibs.Identity.CanonicalPlayerId(name)
           if key then return string.lower(tostring(key)) end
@@ -1144,16 +1148,21 @@ local function createAceWindow()
         for index = 1, memberCount do
           local details = { pcall(_G.GetGuildRosterInfo, index) }
           local name = details[1] and trimText(details[2]) or ""
+          if Dibs.Identity and Dibs.Identity.NormalizeDisplayName then
+            name = Dibs.Identity.NormalizeDisplayName(name) or name
+          end
           local key = name ~= "" and playerKey(name) or ""
           if key ~= "" and not seenMembers[key] then
             seenMembers[key] = true
-            roster[#roster + 1] = { name = name, key = key, online = details[10] ~= false,
+            roster[#roster + 1] = { name = name, rawName = details[2], key = key, online = details[10] ~= false,
               isLocal = key == localPlayerKey }
           end
         end
       end
       if localPlayerKey ~= "" and not seenMembers[localPlayerKey] then
-        roster[#roster + 1] = { name = tostring(localPlayerName), key = localPlayerKey, online = true, isLocal = true }
+        local displayName = Dibs.Identity and Dibs.Identity.NormalizeDisplayName
+          and Dibs.Identity.NormalizeDisplayName(localPlayerName) or localPlayerName
+        roster[#roster + 1] = { name = tostring(displayName), key = localPlayerKey, online = true, isLocal = true }
       end
 
       local resultByChannel = {}
@@ -1196,7 +1205,7 @@ local function createAceWindow()
       local function channelApplies(member, channelKey, result)
         if channelKey == "OFFICER" then
           if not (Dibs.Permissions and Dibs.Permissions.GetGuildRole) then return nil end
-          local role = Dibs.Permissions.GetGuildRole(member.name)
+          local role = Dibs.Permissions.GetGuildRole(member.rawName or member.name)
           return role == "gm" or role == "officer"
         end
         if channelKey == "WHISPER" then

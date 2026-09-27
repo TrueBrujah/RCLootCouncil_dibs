@@ -1443,13 +1443,14 @@ function Dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, query, sortKey, 
     local success = rosterInfo[1]
     local name, rankName, rankIndex, guid = rosterInfo[2], rosterInfo[3], rosterInfo[4], rosterInfo[18]
     if success and type(name) == "string" and name ~= "" then
-      local displayName = name
+      local displayName = Dibs.Identity and Dibs.Identity.NormalizeDisplayName
+        and Dibs.Identity.NormalizeDisplayName(name) or name
       if not displayName:find("-", 1, true) and type(_G.GetRealmName) == "function" then
         local realm = _G.GetRealmName()
         if type(realm) == "string" and realm ~= "" then displayName = displayName .. "-" .. realm end
       end
-      local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(displayName)
-      local balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(displayName, seasonId) or 0
+      local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(name)
+      local balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(name, seasonId) or 0
       local matches = needle == "" or string.find(string.lower(displayName), needle, 1, true) ~= nil
       if matches then
         rows[#rows + 1] = {

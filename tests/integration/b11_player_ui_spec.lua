@@ -102,6 +102,21 @@ describe("B11c Player UI", function()
     assert_true(frame.channelTestReceivedStatus.text:find("DEVELOPER_MODE_REQUIRED", 1, true) ~= nil)
   end)
 
+  it("shows a duplicated realm suffix only once in the channel matrix", function()
+    local _, dibs = setup({ wow = { guildLeader = true,
+      guildMembers = { "Tester-Realm", "Manu-Zul'jin-Zul'jin-Zul'jin" } } })
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame:Show()
+    frame.SelectTab("diagnostics")
+    frame.developerModeToggle.callbacks.OnValueChanged(frame.developerModeToggle, "OnValueChanged", true)
+
+    local found
+    for _, row in ipairs(frame.channelTestMatrixRows or {}) do
+      if row[1]:find("Manu", 1, true) then found = row[1]; break end
+    end
+    assert_equal("Manu-Zul'jin", found)
+  end)
+
   it("does not report no-pong for members outside the probed channel audience", function()
     local _, dibs = setup({ wow = {
       guildLeader = true,
