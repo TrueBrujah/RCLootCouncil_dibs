@@ -428,6 +428,28 @@ describe("B04 V2 transport", function()
     assert_true(closed.ackWindowClosed)
   end)
 
+  it("accepts private Whisper ACKs for a Guild probe through the transport filter", function()
+    local dibs = load()
+    dibs.DeveloperMode.SetEnabled(true)
+    local sent, testId = dibs.Sync.StartChannelTest("GUILD")
+    assert_true(sent)
+    local acknowledgement = remote(dibs, { type = "CHANNEL_TEST_ACK", testId = testId,
+      testChannel = "GUILD", ackTransport = "WHISPER", result = "RECEIVED",
+      reasonCode = "CHANNEL_MESSAGE_VALIDATED" }, "Officer-Realm")
+
+    local accepted, reason = dibs.Sync.OnAddonMessage("DIBS", dibs.Ace3.Serialize(acknowledgement),
+      "WHISPER", "Officer-Realm")
+    assert_true(accepted, tostring(reason))
+    assert_equal("CHANNEL_TEST_ACK_APPLIED", reason)
+    local combined
+    for _, result in ipairs(dibs.Sync.GetChannelTestResults()) do
+      if result.testId == testId then combined = result; break end
+    end
+    assert_not_nil(combined)
+    assert_equal("ACKNOWLEDGED", combined.status)
+    assert_equal("Officer-Realm", combined.responders[1].player)
+  end)
+
   it("limits diagnostic pongs from one member to six per minute", function()
     local dibs = load()
     _G.time = function() return 1700000000 end

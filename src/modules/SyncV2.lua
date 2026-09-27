@@ -48,7 +48,12 @@ local function detailFetchChannel(requests)
   return channel
 end
 local function expectedTransportChannel(message, transfer)
-  if message.type == "CHANNEL_TEST" or message.type == "CHANNEL_TEST_ACK" then
+  if message.type == "CHANNEL_TEST_ACK" then
+    if message.ackTransport == "WHISPER" then return "WHISPER" end
+    if message.ackTransport ~= nil then return nil end
+    return CHANNEL_TEST_CHANNELS[message.testChannel] and message.testChannel or nil
+  end
+  if message.type == "CHANNEL_TEST" then
     return CHANNEL_TEST_CHANNELS[message.testChannel] and message.testChannel or nil
   end
   if message.type == "HELLO" or message.type == "DIGEST" or message.type == "LEDGER_DIGEST"
