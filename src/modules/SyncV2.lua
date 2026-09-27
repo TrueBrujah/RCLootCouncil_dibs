@@ -439,6 +439,17 @@ local function retryVaultRequests()
     end
   end
 end
+local function requestLedgerBatch(sender, state, target, localLast)
+  local requestedThrough = tonumber(state.ledgerRequestedThrough) or 0
+  local requestedAt = tonumber(state.ledgerRequestAt) or 0
+  if localLast < requestedThrough and time() - requestedAt < HEARTBEAT then return false end
+  local sent, through = requestAwardCommitBatch(sender, target.epoch, localLast + 1, target.lastSeq)
+  if sent then
+    state.ledgerRequestedThrough = through
+    state.ledgerRequestAt = time()
+  end
+  return sent
+end
 local function clearResolvedLedgerGap(sender)
   local state, target = ensure(), ensure().ledgerTarget
   if not target or not (Dibs.Ledger and Dibs.Ledger.GetCanonicalState) then return false end
@@ -446,16 +457,13 @@ local function clearResolvedLedgerGap(sender)
   if tonumber(current.epoch) ~= tonumber(target.epoch) then return false end
   local localLast = tonumber(current.nextSeq or 1) - 1
   if localLast < tonumber(target.lastSeq) then
-    local requestedThrough = tonumber(state.ledgerRequestedThrough) or 0
-    if localLast >= requestedThrough then
-      local sent, through = requestAwardCommitBatch(sender, target.epoch, localLast + 1, target.lastSeq)
-      if sent then state.ledgerRequestedThrough = through end
-    end
+    requestLedgerBatch(sender, state, target, localLast)
     return false
   end
   if localLast == tonumber(target.lastSeq) and current.rootHash == target.rootHash then
     state.ledgerTarget = nil
     state.ledgerRequestedThrough = nil
+    state.ledgerRequestAt = nil
     Sync.AnnounceLedgerDigest()
     if state.syncBehind and state.reason == "LEDGER_GAP" then Sync.ClearSyncBehind() end
     return true
@@ -984,11 +992,7 @@ function Sync.Receive(message, sender)
     if tonumber(message.lastSeq) > localLast then
       local state = ensure(); state.ledgerTarget = { epoch = message.ledgerEpoch, lastSeq = message.lastSeq, rootHash = message.rootHash }
       Sync.MarkSyncBehind("LEDGER_GAP")
-      local requestedThrough = tonumber(state.ledgerRequestedThrough) or 0
-      if localLast >= requestedThrough then
-        local sent, through = requestAwardCommitBatch(resolved.displayName, message.ledgerEpoch, localLast + 1, message.lastSeq)
-        if sent then state.ledgerRequestedThrough = through end
-      end
+      requestLedgerBatch(resolved.displayName, state, state.ledgerTarget, localLast)
       return true, "LEDGER_DETAIL_REQUESTED"
     end
     if tonumber(message.lastSeq) == localLast and message.rootHash ~= localState.rootHash then return false, "CANONICAL_ROOT_CONFLICT" end

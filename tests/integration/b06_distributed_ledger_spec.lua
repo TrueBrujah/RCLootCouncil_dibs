@@ -161,6 +161,50 @@ describe("B06 coordinator distributed ledger", function()
     assert_equal("7:3", request.requests[3].entityId)
   end)
 
+  it("retries an unfulfilled ledger batch after the heartbeat interval", function()
+    local coordinator = activateV2()
+    local season = coordinator.GetCurrentSeasonId()
+    local saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
+    local commit = coordinator.Ledger.CommitDibUse(nil, {
+      transactionId = "b06-retry-1", playerName = "Player-Realm", seasonId = season,
+      amount = 1, itemID = 1, source = "b06-retry",
+    })
+    assert_true(commit.accepted, tostring(commit.reasonCode))
+    local digest = coordinator.Sync.BuildLedgerDigest()
+    local firstEnvelope = assert(coordinator.Sync.BuildEnvelope(digest))
+    local earlyEnvelope = assert(coordinator.Sync.BuildEnvelope(digest))
+    local retryEnvelope = assert(coordinator.Sync.BuildEnvelope(digest))
+    local follower = load("Officer-Realm", saved)
+    local accepted, reason = follower.Sync.Receive(firstEnvelope, "Coordinator-Realm")
+    assert_true(accepted, tostring(reason))
+    assert_equal("LEDGER_DETAIL_REQUESTED", reason)
+
+    local syncState = follower.GetDB().sync.v2
+    assert_equal(1, syncState.ledgerRequestedThrough)
+    assert_not_nil(syncState.ledgerRequestAt)
+    accepted, reason = follower.Sync.Receive(earlyEnvelope, "Coordinator-Realm")
+    assert_true(accepted, tostring(reason))
+    local requests = 0
+    for _, sent in ipairs(follower.Ace3.libs.comm.sent) do
+      local message = follower.Ace3.Deserialize(sent.payload)
+      if message and message.type == "DETAIL_FETCH" then requests = requests + 1 end
+    end
+    assert_equal(1, requests)
+
+    syncState.ledgerRequestAt = syncState.ledgerRequestAt - 61
+
+    accepted, reason = follower.Sync.Receive(retryEnvelope, "Coordinator-Realm")
+    assert_true(accepted, tostring(reason))
+    assert_equal("LEDGER_DETAIL_REQUESTED", reason)
+
+    requests = 0
+    for _, sent in ipairs(follower.Ace3.libs.comm.sent) do
+      local message = follower.Ace3.Deserialize(sent.payload)
+      if message and message.type == "DETAIL_FETCH" then requests = requests + 1 end
+    end
+    assert_equal(2, requests)
+  end)
+
   it("serializes competing proposals against the coordinator's current balance and blocks local bypass", function()
     local dibs = activateV2(); local season = dibs.GetCurrentSeasonId()
     local first = dibs.Ledger.CommitDibUse(nil, { transactionId = "b06-race-1", playerName = "Player-Realm", seasonId = season, amount = 1, itemID = 1, source = "b06" })
