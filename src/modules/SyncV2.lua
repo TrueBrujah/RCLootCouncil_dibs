@@ -12,6 +12,7 @@ local Sync = Dibs.Sync
 
 local MAJOR, MINOR = 2, 0
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX, MAX_PROTOCOL_MISMATCHES = 256, 8, 16, 8192, 500, 10
+local LEDGER_BATCH_SIZE = 4
 local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 300, 60, 3
 local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
@@ -395,7 +396,7 @@ function Sync.ClearSyncBehind()
 end
 local function requestAwardCommitBatch(target, epoch, firstSequence, lastSequence)
   local requests = {}
-  local finalSequence = math.min(tonumber(lastSequence) or firstSequence, firstSequence + 31)
+  local finalSequence = math.min(tonumber(lastSequence) or firstSequence, firstSequence + LEDGER_BATCH_SIZE - 1)
   for sequence = firstSequence, finalSequence do
     requests[#requests + 1] = { entityType = "AWARD_COMMIT", entityId = tostring(epoch) .. ":" .. tostring(sequence), revision = sequence }
   end

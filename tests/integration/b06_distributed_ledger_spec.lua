@@ -134,9 +134,9 @@ describe("B06 coordinator distributed ledger", function()
   it("requests a bounded batch when catching up multiple canonical commits", function()
     local coordinator = activateV2()
     local season = coordinator.GetCurrentSeasonId()
-    assert_not_nil(coordinator.Ledger.Grant("Player-Realm", 2, "B06 batch top-up", "test", season))
+    assert_not_nil(coordinator.Ledger.Grant("Player-Realm", 39, "B06 batch top-up", "test", season))
     local saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
-    for sequence = 1, 3 do
+    for sequence = 1, 40 do
       local commit = coordinator.Ledger.CommitDibUse(nil, {
         transactionId = "b06-batch-" .. tostring(sequence), playerName = "Player-Realm",
         seasonId = season, amount = 1, itemID = sequence, source = "b06-batch",
@@ -156,9 +156,9 @@ describe("B06 coordinator distributed ledger", function()
       if message and message.type == "DETAIL_FETCH" then request = message end
     end
     assert_not_nil(request)
-    assert_equal(3, #request.requests)
+    assert_equal(4, #request.requests)
     assert_equal("7:1", request.requests[1].entityId)
-    assert_equal("7:3", request.requests[3].entityId)
+    assert_equal("7:4", request.requests[4].entityId)
   end)
 
   it("retries an unfulfilled ledger batch after the heartbeat interval", function()
