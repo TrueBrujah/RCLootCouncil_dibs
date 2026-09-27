@@ -322,26 +322,30 @@ describe("RCLootCouncil DIB response projection", function()
     dibs.Ledger.GetPlayerSeasonState = original
   end)
 
-  it("uses the same canonical balance service for PlayerUI and RCLootCouncil", function()
+  it("shows available Dibs in RCLootCouncil while PlayerUI retains the canonical balance", function()
     local rc = loader.makeRCLootCouncil({ enabled = true })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildMembers = { "Tester-Realm" } } })
     local calls = {}
     local original = dibs.Ledger.GetCanonicalPlayerDibsState
     dibs.Ledger.GetCanonicalPlayerDibsState = function(seasonId, identity)
       table.insert(calls, { seasonId = seasonId, identity = identity })
-      return { available = true, balance = 2, rankMaximum = 3, canonicalName = "Tester-Realm", seasonId = seasonId }
+      return { available = true, balance = 2, canonicalBalance = 2, availableBalance = 1,
+        pendingDibReservations = 1, rankMaximum = 3, canonicalName = "Tester-Realm", seasonId = seasonId }
     end
     local summary = dibs.PlayerUI.GetSummary("Tester-Realm")
     local value, sortValue = dibs.RCLootCouncil.GetDibsColumnValue({ name = "Tester-Realm" })
     assert_equal(2, summary.balance)
-    assert_equal("2/3", value)
-    assert_equal(2, sortValue)
+    assert_equal("1/3", value)
+    assert_equal(1, sortValue)
     assert_equal(2, #calls)
     assert_equal(calls[1].seasonId, calls[2].seasonId)
     assert_equal(calls[1].identity, "Tester-Realm")
     assert_equal(calls[2].identity, "Tester-Realm")
-    assert_true(dibs.RCLootCouncil.GetDibsColumnTooltip({ name = "Tester-Realm" }):find("Current balance: 2", 1, true) ~= nil)
-    assert_true(dibs.RCLootCouncil.GetDibsColumnTooltip({ name = "Tester-Realm" }):find("Rank maximum: 3", 1, true) ~= nil)
+    local tooltip = dibs.RCLootCouncil.GetDibsColumnTooltip({ name = "Tester-Realm" })
+    assert_true(tooltip:find("Available balance: 1", 1, true) ~= nil)
+    assert_true(tooltip:find("Committed balance: 2", 1, true) ~= nil)
+    assert_true(tooltip:find("Awaiting coordinator commit: 1 Dibs", 1, true) ~= nil)
+    assert_true(tooltip:find("Rank maximum: 3", 1, true) ~= nil)
     dibs.Ledger.GetCanonicalPlayerDibsState = original
   end)
 

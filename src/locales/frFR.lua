@@ -50,6 +50,7 @@ L.PENDING_AWARDS_DESCRIPTION = "Confirmez les attributions recues d'un autre rai
 L.PENDING_AWARDS_EMPTY = "Aucune attribution n'attend la confirmation du coordinateur."
 L.PENDING_AWARDS_CONFIRM = "Confirmer"
 L.PENDING_AWARDS_CONFIRMED = "Attribution confirmee."
+L.RC_DIBS_PENDING_COMMIT = "En attente du commit du coordinateur : %s Dibs"
 L.AWARD_NOT_FINAL = "Le loot n'est pas finalise; aucun Dib n'est consomme."
 L.AWARD_DIB_RESPONSE_REQUIRED = "Seule une reponse DIB finalisee peut consommer un Dib."
 L.AWARD_TEST_MODE = "Les loots de test ne peuvent pas consommer les Dibs de production."

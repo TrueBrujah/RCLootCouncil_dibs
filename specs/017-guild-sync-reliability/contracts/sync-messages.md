@@ -49,7 +49,19 @@ transfers):
 **Acknowledgement**: coordinator sends a small `WHISPER` reply
 `{ type = "AWARD_PROPOSAL_ACK", proposalId = ... }` so the submitter can move
 local status from `RELAY_PENDING` to `RELAY_ACKED`. If no ack arrives within
-the existing heartbeat window, the submitter retries (bounded).
+the existing heartbeat window, the submitter retries every five minutes,
+including after reconnect, with no finite retry-attempt cutoff. An ACK confirms
+receipt only; the proposal remains pending until committed or explicitly rejected.
+
+## 1.1 AWARD_RESERVATION_DIGEST
+
+**Transport**: `GUILD` only. The digest is split into bounded pages and contains
+only `proposalId`, recipient and actor member keys, season, positive amount,
+pending state, timestamp, and award/evidence reference IDs. It MUST NOT include
+loot links, candidate data, or vote details. Receivers deduplicate by
+`proposalId`, subtract pending amounts from available Dibs, and clear a hold
+when the matching canonical `AWARD_COMMIT` is applied. The digest is a
+reservation hint, never a ledger mutation.
 
 ## 2. SEASON_CATALOG (new entity type, DIGEST + detail, same shape as OPERATIONAL_POLICY)
 

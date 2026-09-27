@@ -69,7 +69,7 @@ Guild Masters and officers need a way to notice, without guesswork, when guild-w
 
 - **FR-001**: The system MUST automatically forward award evidence created by a non-authoritative officer to whichever guild member currently holds record-keeping authority, without requiring manual copy/resubmission.
 - **FR-002**: The system MUST apply each distinct award exactly once, even if the same award evidence is submitted more than once (e.g., due to retries or two officers independently reporting the same event).
-- **FR-003**: The system MUST retry delivery of a pending award until the authoritative record-keeper acknowledges it, and MUST survive the record-keeper being temporarily offline.
+- **FR-003**: The system MUST retry delivery of a pending award until the authoritative record-keeper acknowledges it, without a finite retry-attempt cutoff, and MUST survive the record-keeper being temporarily offline. A receipt acknowledgement MUST NOT resolve the proposal; it remains pending until committed or explicitly rejected.
 - **FR-004**: The system MUST let an officer see which of their own submitted awards are still pending confirmation versus already applied.
 - **FR-005**: The system MUST propagate season creation, rename, activation, and archival from the Guild Master to every other guild member's client without those members recreating the season locally.
 - **FR-006**: The system MUST let a guild member's client catch up on season changes it missed while offline.
@@ -77,10 +77,12 @@ Guild Masters and officers need a way to notice, without guesswork, when guild-w
 - **FR-008**: The system MUST surface a clear, visible notice to officers when guild-wide policy (including the Pre-Dibs mode setting) has not yet been confirmed/activated by the Guild Master, instead of silently discarding subsequent changes.
 - **FR-009**: The system MUST report a detectable, distinguishable status when two guild members' addon versions cannot understand each other's synchronization messages, so the mismatch can be diagnosed rather than appearing as a silent no-op.
 - **FR-010**: None of the above MUST weaken existing rules that the Dibs ledger is append-only and that only authorized guild roles may create balance-affecting events.
+- **FR-011**: When a finalized DIB award is awaiting coordinator commit, the system MUST announce a minimal reservation to guild clients, subtract it from available Dibs without changing the canonical ledger, and remove it when the matching canonical commit is applied. Retries or duplicate announcements MUST NOT reserve or debit the same award twice.
 
 ### Key Entities
 
 - **Award Proposal**: A record of a loot award finalized by a guild member who is not the current record-keeping authority; carries enough information (player, item/event reference, submitting officer, raid context) for the authority to confirm it exactly once, and tracks its own delivery/confirmation status.
+- **Award Reservation**: A minimal GUILD-replicated record for a finalized but uncommitted DIB award. It prevents overspending while remaining separate from the append-only canonical ledger; the canonical commit resolves it.
 - **Season Catalog Entry**: A season's identity, name, active/archived state, and lifecycle timestamps, replicated from the Guild Master's authoritative copy to every other guild member.
 - **Synchronization Status**: A per-member, human-readable indication of whether guild-wide policy is active, whether season data is current, and whether a peer's protocol/version is compatible.
 

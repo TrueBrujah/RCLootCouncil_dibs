@@ -24,7 +24,7 @@
 - [X] T004 [US1] Extend `Governance.RecordAwardProposal` in `src/modules/Governance.lua` to resolve the current coordinator from local authority state and enqueue a relay attempt (status `RELAY_PENDING`), without changing its existing zero-ledger-effect local behavior when no coordinator is known.
 - [X] T005 [US1] Implement `Sync.SendAwardProposal(proposal, target)` in `src/modules/SyncV2.lua` using `TRANSFER_BEGIN/CHUNK/END` with `entityType = "AWARD_PROPOSAL"` per contracts/sync-messages.md, WHISPER-only, and an `AWARD_PROPOSAL_ACK` reply message.
 - [X] T006 [US1] Implement the coordinator-side receiver in `src/modules/SyncV2.lua`: verify the receiver is the current coordinator, dedupe by `proposalId`, store into a bounded pending-proposals queue, and send the ack.
-- [X] T007 [US1] Implement submitter-side ack handling updating local `AwardProposal.status` (`RELAY_PENDING` → `RELAY_ACKED`) and a bounded retry loop (reuse T003 helper) that stops retrying once acked or once `relayAttempts` cap is hit, surfacing a diagnostic under the `sync` scope when the cap is hit.
+- [X] T007 [US1] Implement submitter-side ack handling updating local relay status (`RELAY_PENDING` → `RELAY_ACKED`) and retrying every five minutes until acknowledged, with no finite attempt cutoff; keep the proposal pending until commit or explicit rejection.
 - [X] T008 [US1] Add `Dibs.Governance.GetPendingCoordinatorProposals()` and wire an Officer UI "Pending awards to confirm" list/action in `src/ui/OfficerUI.lua` that calls the existing `Ledger.CommitAwardProposal` on confirmation.
 - [X] T009 [US1] Add `tests/integration/award_proposal_relay_spec.lua` covering: normal relay+commit convergence, duplicate submission idempotency, and partition/heal delivery (using `distributed_ledger_fixture.lua`).
 - [X] T010 [US1] Run the focused test file and fix regressions before proceeding.
@@ -68,6 +68,7 @@
 - [X] T025 Update `specs/017-guild-sync-reliability/checklists/requirements.md` notes if scope changed, and deploy via `scripts/deploy.ps1` for local Retail smoke testing.
 - [ ] T026 Perform one-guild, two-raid-group Retail validation session (manual, requires real WoW clients) confirming award-proposal relay, season propagation, and status banners; record evidence before marking this task complete.
   - 2026-09-24 partial evidence: two real Retail clients (Firebutt-Durotan, Huudada-Durotan) confirmed `Protocol: V2_ENFORCED`, `Local baseline: Present` on both, and `Baseline: Present` / `Governance: 3` converged in the Officer Sync tab after fixing a `BASELINE_HASH_MISMATCH` regression (see commit `c94a714`). Award-proposal relay across two simultaneous raid groups, season catalog propagation, and status banners still need to be exercised before this task is complete.
+- [X] T027 Replicate bounded pending DIB award reservations over GUILD, subtract them from available balances, deduplicate against local proposals, and clear them when the matching canonical commit is applied; cover the one-DIB multi-client case in `tests/integration/award_proposal_relay_spec.lua`.
 
 ## Dependencies
 

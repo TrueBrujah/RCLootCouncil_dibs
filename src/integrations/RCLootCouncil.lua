@@ -1675,7 +1675,11 @@ local function installDibsTooltip(button, entry)
     local status = Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType) or {}
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:AddLine("Dibs", 1, 0.84, 0)
-    GameTooltip:AddDoubleLine("Balance", tostring(status.balance or 0), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Available balance", tostring(status.availableBalance or status.balance or 0), 1, 1, 1, 1, 1, 1)
+    if (tonumber(status.pendingDibReservations) or 0) > 0 then
+      local pendingText = Dibs.L and Dibs.L.RC_DIBS_PENDING_COMMIT or "Awaiting coordinator commit: %s Dibs"
+      GameTooltip:AddLine(string.format(pendingText, formatCount(status.pendingDibReservations)), 1, 1, 1)
+    end
     GameTooltip:AddDoubleLine("Status", tostring(status.status or "none"), 1, 1, 1, 1, 1, 1)
     GameTooltip:AddDoubleLine("Can use Dib", status.canUseDib and "Yes" or "No", 1, 1, 1, status.canUseDib and 0.2 or 1, status.canUseDib and 1 or 0.2, 0.2)
     GameTooltip:Show()
@@ -1937,10 +1941,11 @@ local function getRemainingDibsText(playerName)
   if not ok or type(state) ~= "table" then
     return "-", 0, nil, nil
   end
-  local left = state.available == true and tonumber(state.balance) and formatCount(state.balance) or "-"
+  local availableBalance = tonumber(state.availableBalance) or tonumber(state.balance)
+  local left = state.available == true and availableBalance and formatCount(availableBalance) or "-"
   local right = tonumber(state.rankMaximum) and formatCount(state.rankMaximum) or "-"
   local text = left == "-" and right == "-" and "-" or left .. "/" .. right
-  return text, tonumber(state.balance) or 0, state.canonicalName, state
+  return text, availableBalance or 0, state.canonicalName, state
 end
 
 local function setDibsColumnCell(rowFrame, cellFrame, data, cols, row, realrow, column, fShow, tableArg)
@@ -1978,9 +1983,14 @@ function Dibs.RCLootCouncil.GetDibsColumnTooltip(rowData)
   local _, _, canonicalName, state = getRemainingDibsText(candidateName)
   if type(state) ~= "table" then return "Dibs\nUnavailable" end
   local season = Dibs.Seasons and Dibs.Seasons.GetById and Dibs.Seasons.GetById(state.seasonId)
-  local balance = tonumber(state.balance) and formatCount(state.balance) or "-"
+  local balance = tonumber(state.availableBalance or state.balance) and formatCount(state.availableBalance or state.balance) or "-"
+  local canonicalBalance = tonumber(state.canonicalBalance) and formatCount(state.canonicalBalance) or balance
   local maximum = tonumber(state.rankMaximum) and formatCount(state.rankMaximum) or "-"
-  return "Dibs\nCurrent balance: " .. balance .. "\nRank maximum: " .. maximum
+  local pendingDibReservations = tonumber(state.pendingDibReservations) or 0
+  local pendingLine = pendingDibReservations > 0 and ("\n" .. string.format(
+    Dibs.L and Dibs.L.RC_DIBS_PENDING_COMMIT or "Awaiting coordinator commit: %s Dibs",
+    formatCount(pendingDibReservations))) or ""
+  return "Dibs\nAvailable balance: " .. balance .. "\nCommitted balance: " .. canonicalBalance .. pendingLine .. "\nRank maximum: " .. maximum
     .. "\nSeason: " .. tostring(season and season.name or state.seasonId or "Unavailable")
     .. "\nPlayer: " .. tostring(canonicalName or "Unavailable")
 end
@@ -2775,7 +2785,12 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
   options = type(options) == "table" and options or {}
   local name = playerName or Dibs.GetPlayerName()
   local targetItem = tonumber(itemID)
-  local balance = Dibs.Ledger and Dibs.Ledger.GetBalance(name) or 0
+  local seasonId = options.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
+  local canonicalBalance = Dibs.Ledger and Dibs.Ledger.GetBalance(name, seasonId) or 0
+  local pendingDibReservations = Dibs.Ledger and Dibs.Ledger.GetPendingDibReservations
+    and Dibs.Ledger.GetPendingDibReservations(name, seasonId) or 0
+  local availableBalance = Dibs.Ledger and Dibs.Ledger.GetAvailableBalance
+    and Dibs.Ledger.GetAvailableBalance(name, seasonId) or canonicalBalance
   local typeKey = normalizeTypeKey(responseType)
   -- Resolve the semantic item family as well as the RCLC response type. This
   -- prevents a personal Catalyst item from falling through an equip-slot or
@@ -2808,7 +2823,7 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
     if publicPreDibsEnabled and options.ignorePublicPreDibRequirement ~= true then
       eligible = preDib ~= nil
     else
-      eligible = ((tonumber(balance) or 0) > 0 or preDib ~= nil)
+      eligible = ((tonumber(availableBalance) or 0) > 0 or preDib ~= nil)
     end
   end
   local state = "none"
@@ -2816,13 +2831,15 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
     state = "type-disabled"
   elseif lockedOutByPreDib then
     state = "pre-dib-locked"
+  elseif pendingDibReservations > 0 and (tonumber(availableBalance) or 0) <= 0 then
+    state = "dib-pending-commit"
   elseif publicPreDibsEnabled and preDib == nil then
     state = "pre-dib-required"
   elseif preDib then
     state = "pre-dib"
   elseif eligible then
     state = "dib-available"
-  elseif (tonumber(balance) or 0) > 0 then
+  elseif (tonumber(availableBalance) or 0) > 0 then
     state = "ineligible"
   end
   if eligibilityDecision and not protectedLootAllowed then
@@ -2833,8 +2850,12 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
     itemID = targetItem,
     responseType = typeKey,
     dibTypeEnabled = typeEnabled,
-    balance = tonumber(balance) or 0,
-    hasDibs = (tonumber(balance) or 0) > 0,
+    balance = tonumber(canonicalBalance) or 0,
+    availableBalance = tonumber(availableBalance) or 0,
+    canonicalBalance = tonumber(canonicalBalance) or 0,
+    pendingDibReservations = tonumber(pendingDibReservations) or 0,
+    hasDibs = (tonumber(canonicalBalance) or 0) > 0,
+    hasAvailableDibs = (tonumber(availableBalance) or 0) > 0,
     hasPreDib = preDib ~= nil,
     hasAnyConfirmedPreDib = hasPriority,
     publicPreDibsEnabled = publicPreDibsEnabled,

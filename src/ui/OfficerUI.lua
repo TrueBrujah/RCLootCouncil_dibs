@@ -2234,6 +2234,54 @@ local function renderWizardPage(shell, parent, frame)
         end
       end
     end
+    if current.id == "operationalPolicy" then
+      local policyState = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState
+        and Dibs.OperationalPolicy.GetState() or {}
+      local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+      local isGM = Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM() == true
+      if policyState.status == "POLICY_ADOPTED" then
+        Dibs.AceGUI.AddLabel(shell, parent,
+          "Guild Policy is adopted at revision " .. tostring(policyState.policyRevision) .. ".", true)
+      else
+        local draft = current.detail
+        if draft then
+          Dibs.AceGUI.AddLabel(shell, parent,
+            "Adoption publishes the current local Pre-Dibs availability, seasonal modes, announcement channels, and module settings as Guild Policy revision 1.", true)
+          Dibs.AceGUI.AddLabel(shell, parent,
+            "Public Pre-Dibs: " .. (draft.allowPublicPreDibs == true and "Enabled" or "Disabled"), true)
+          local modeRows = {}
+          for seasonId, mode in pairs(draft.preDibModes or {}) do
+            modeRows[#modeRows + 1] = tostring(seasonId) .. ": " .. tostring(mode)
+          end
+          table.sort(modeRows)
+          Dibs.AceGUI.AddLabel(shell, parent,
+            "Pre-Dibs modes: " .. (#modeRows > 0 and table.concat(modeRows, ", ") or "WILD_OPEN (default)"), true)
+          local channels = draft.announcementChannels or {}
+          Dibs.AceGUI.AddLabel(shell, parent,
+            "Announcement channels: " .. tostring(channels.publicChannel or "GUILD") .. " / " .. tostring(channels.officerChannel or "OFFICER"), true)
+          local moduleDefinitions = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleDefinitions
+            and Dibs.OperationalPolicy.GetModuleDefinitions() or {}
+          for _, definition in ipairs(moduleDefinitions) do
+            Dibs.AceGUI.AddLabel(shell, parent,
+              tostring(definition.label) .. ": " .. (draft.modules and draft.modules[definition.key] == true and "Enabled" or "Disabled"), true)
+          end
+        end
+        if governance.status ~= "GOVERNANCE_ADOPTED" and isGM then
+          Dibs.AceGUI.AddButton(shell, parent, "Open Guild Configuration", function()
+            frame:ActivateRoute("installation")
+          end, 200)
+        elseif governance.status == "GOVERNANCE_ADOPTED" and isGM then
+          Dibs.AceGUI.AddButton(shell, parent, "Adopt and publish Guild Policy", function()
+            local adopted, reason = Dibs.Wizard.AdoptOperationalPolicy(nil)
+            frame:SetStatus(adopted and "Guild Policy adopted and announced."
+              or ("Guild Policy adoption failed: " .. tostring(reason)))
+            frame:Refresh()
+          end, 250)
+        elseif not isGM then
+          Dibs.AceGUI.AddLabel(shell, parent, "Only the Guild Master can adopt Guild Policy.", true)
+        end
+      end
+    end
     if current.id == "review" or current.id == "readiness" then
       local readiness = status.steps[total] and status.steps[total].detail or {}
       for _, finding in ipairs(readiness.checks or {}) do
@@ -5365,6 +5413,63 @@ local function createAceWindow(initialRoute)
     if self.activeTab == "debug" then
       self.debugControls = {}
       Dibs.AceGUI.AddHeading(shell, tabs, "Debug", "Adjust module verbosity and open diagnostic logs.")
+      local channelTest = Dibs.AceGUI.AddSection(shell, tabs, "Transport channel test",
+        "An accepted send is only queued. A matching remote ACK confirms receipt; a timeout cannot distinguish offline, incompatible, or game-filtered traffic.")
+      local testChannel = self.channelTestChannel or "GUILD"
+      local channelOptions = {
+        GUILD = "Guild", OFFICER = "Guild officers", RAID = "Raid", PARTY = "Party",
+        INSTANCE_CHAT = "Instance group", WHISPER = "Whisper", CHANNEL = "Custom joined channel",
+      }
+      self.channelTestSelector = Dibs.AceGUI.AddDropdown(shell, channelTest, "Channel", channelOptions, function(value)
+        self.channelTestChannel = value
+        self:Refresh()
+      end, 220)
+      Dibs.AceGUI.SetValue(self.channelTestSelector, testChannel)
+      if testChannel == "WHISPER" then
+        self.channelTestTargetInput = Dibs.AceGUI.AddEditBox(shell, channelTest, "Guild member target", function(value)
+          self.channelTestTarget = value or ""
+        end, 260)
+        Dibs.AceGUI.SetValue(self.channelTestTargetInput, self.channelTestTarget or "")
+      elseif testChannel == "CHANNEL" then
+        self.channelTestCustomChannelInput = Dibs.AceGUI.AddEditBox(shell, channelTest, "Joined channel name", function(value)
+          self.channelTestCustomChannelName = value or ""
+        end, 260)
+        Dibs.AceGUI.SetValue(self.channelTestCustomChannelInput, self.channelTestCustomChannelName or "")
+      end
+      self.channelTestRunButton = Dibs.AceGUI.AddButton(shell, channelTest, "Test selected channel", function()
+        local target = self.channelTestChannel == "CHANNEL" and self.channelTestCustomChannelName or self.channelTestTarget
+        local sent, result = Dibs.Sync and Dibs.Sync.StartChannelTest
+          and Dibs.Sync.StartChannelTest(self.channelTestChannel or "GUILD", target)
+        self:SetStatus(sent and ("Probe queued: " .. tostring(self.channelTestChannel or "GUILD") .. " / " .. tostring(result))
+          or ("Probe not sent: " .. tostring(result or "SYNC_UNAVAILABLE")))
+        self:Refresh()
+      end, 190)
+      self.channelTestAllButton = Dibs.AceGUI.AddButton(shell, channelTest, "Test all available channels", function()
+        local results = Dibs.Sync and Dibs.Sync.RunAllChannelTests
+          and Dibs.Sync.RunAllChannelTests(self.channelTestTarget, self.channelTestCustomChannelName) or {}
+        local queued = 0
+        for _, result in ipairs(results) do if result.sent then queued = queued + 1 end end
+        self:SetStatus(string.format("Queued %d channel probe(s); unavailable channels include a local reason.", queued))
+        self:Refresh()
+      end, 220)
+      self.channelTestRefreshButton = Dibs.AceGUI.AddButton(shell, channelTest, "Refresh results", function()
+        self:Refresh()
+      end, 130)
+      local resultRows = {}
+      for _, result in ipairs(Dibs.Sync and Dibs.Sync.GetChannelTestResults and Dibs.Sync.GetChannelTestResults() or {}) do
+        resultRows[#resultRows + 1] = string.format("%s | %s | %s:%s%s | peer=%s | reason=%s",
+          date("%H:%M:%S", tonumber(result.startedAt) or time()), tostring(result.direction or "TEST"),
+          tostring(result.channel or "unknown"), tostring(result.status or "unknown"),
+          result.channelName and (" (" .. tostring(result.channelName) .. ")") or "",
+          tostring(result.peer or result.target or "-"), tostring(result.reasonCode or "none"))
+        for _, responder in ipairs(result.responders or {}) do
+          resultRows[#resultRows + 1] = string.format("  ACK from %s: %s / %s", tostring(responder.player),
+            tostring(responder.result), tostring(responder.reasonCode))
+        end
+      end
+      if #resultRows == 0 then resultRows[1] = "No channel tests recorded on this client." end
+      self.channelTestResults = Dibs.AceGUI.AddSelectableText(shell, channelTest, "Local send and receive results",
+        table.concat(resultRows, "\n"), 820, 170)
       local verbosity = Dibs.AceGUI.AddSection(shell, tabs, "Module verbosity", "0 disables diagnostics, 1 is normal, and 5 is maximum diagnostics.")
       for _, entry in ipairs({ { "All", "all" }, { "Announcements", "announce" }, { "Sync", "sync" }, { "UI", "ui" }, { "Adventure Guide", "encounter_journal" } }) do
         local key, label = entry[2], entry[1]

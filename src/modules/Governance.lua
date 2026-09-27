@@ -18,7 +18,7 @@ local Governance = Dibs.Governance
 local SCHEMA = 1
 local GENESIS_HASH = "GENESIS"
 local AUTHORITY_SCHEMA = 1
-local MAX_AUTHORITY_AUDIT, MAX_PROPOSALS, MAX_ORPHANS, MAX_RELAY_ATTEMPTS = 100, 100, 100, 5
+local MAX_AUTHORITY_AUDIT, MAX_PROPOSALS, MAX_ORPHANS, MAX_RELAY_ATTEMPT_COUNT = 100, 100, 100, 5
 
 local function rejectSandbox()
   if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
@@ -560,6 +560,7 @@ function Governance.RecordAwardProposal(actor, details)
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
   authority.proposals[proposalId] = proposal
   boundedInsert(authority.auditLog, { action = "AWARD_PROPOSAL", proposalId = proposalId, timestamp = proposal.createdAt }, MAX_AUTHORITY_AUDIT)
+  if Dibs.Sync and Dibs.Sync.AnnounceAwardReservationDigest then Dibs.Sync.AnnounceAwardReservationDigest() end
   -- Relay to the current coordinator so a non-coordinator's award is not
   -- silently stranded (see specs/017-guild-sync-reliability). Best-effort:
   -- failure here leaves the proposal PENDING_RECONCILIATION locally and is
@@ -574,18 +575,22 @@ end
 function Governance.GetRelayPendingProposals()
   local values = {}
   for _, proposal in pairs(authorityState(ensureState()).proposals) do
-    if proposal.relayStatus == "RELAY_PENDING" then values[#values + 1] = copy(proposal) end
+    if proposal.status == "PENDING_RECONCILIATION" then
+      values[#values + 1] = copy(proposal)
+    end
   end
   table.sort(values, function(a, b) return a.proposalId < b.proposalId end)
   return values
 end
 
-function Governance.NoteProposalRelayAttempt(proposalId)
+function Governance.NoteProposalRelayAttempt(proposalId, coordinatorMemberKey)
   local authority = authorityState(ensureState())
   local proposal = authority.proposals[proposalId]
-  if not proposal or proposal.relayStatus ~= "RELAY_PENDING" then return nil, "PROPOSAL_NOT_PENDING" end
-  proposal.relayAttempts = (tonumber(proposal.relayAttempts) or 0) + 1
-  if proposal.relayAttempts >= MAX_RELAY_ATTEMPTS then proposal.relayStatus = "RELAY_ATTEMPTS_EXHAUSTED" end
+  if not proposal or proposal.status ~= "PENDING_RECONCILIATION" then return nil, "PROPOSAL_NOT_PENDING" end
+  proposal.relayAttempts = math.min((tonumber(proposal.relayAttempts) or 0) + 1, MAX_RELAY_ATTEMPT_COUNT)
+  proposal.relayAttemptAt = time()
+  proposal.coordinatorMemberKey = coordinatorMemberKey or proposal.coordinatorMemberKey
+  proposal.relayStatus = "RELAY_PENDING"
   return proposal.relayAttempts, proposal.relayStatus
 end
 
@@ -603,6 +608,7 @@ function Governance.MarkAwardProposalCommitted(proposalId, commit)
   proposal.status, proposal.relayStatus = "COMMITTED", "COMMITTED"
   proposal.commitHash = type(commit) == "table" and commit.commitHash or proposal.commitHash
   proposal.committedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then Dibs.Sync.ClearAwardReservation(proposalId, commit) end
   return true
 end
 

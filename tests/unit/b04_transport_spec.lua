@@ -49,6 +49,101 @@ describe("B04 V2 transport", function()
     assert_equal("WHISPER", sent.channel)
   end)
 
+  it("routes shared ledger detail through GUILD while keeping personal detail targeted", function()
+    local dibs = load()
+    local sentBefore = #dibs.Ace3.libs.comm.sent
+    assert_true(dibs.Sync.SendDetail("AWARD_COMMIT", "7:1", 1, "commit-hash", {
+      commitHash = "commit-hash", ledgerEpoch = 7, sequence = 1,
+    }, "Owner-Realm"))
+    assert_equal("GUILD", dibs.Ace3.libs.comm.sent[sentBefore + 1].channel)
+    assert_equal("GUILD", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+
+    assert_true(dibs.Sync.SendDetail("PREDIB_REQUEST", "b04-request", 1, "request-hash", {
+      requestId = "b04-request", revision = 1,
+    }, "Owner-Realm"))
+    assert_equal("WHISPER", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+  end)
+
+  it("keeps a targeted fallback for peers without the guild-detail capability", function()
+    local dibs = load()
+    local hello = remote(dibs, { type = "HELLO" }, "Owner-Realm")
+    hello.protocol.capabilities.guildDetail = nil
+    assert_true(dibs.Sync.Receive(hello, "Owner-Realm"))
+
+    assert_true(dibs.Sync.SendDetail("AWARD_COMMIT", "7:1", 1, "commit-hash", {
+      commitHash = "commit-hash", ledgerEpoch = 7, sequence = 1,
+    }, "Owner-Realm"))
+    assert_equal("WHISPER", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+  end)
+
+  it("accepts shared ledger transfers only on the GUILD channel", function()
+    local dibs = load()
+    local function sendBegin(channel, transferId, legacy)
+      local message = remote(dibs, {
+        type = "TRANSFER_BEGIN", transferId = transferId, entityType = "AWARD_COMMIT",
+        entityId = "7:1", revision = 1, contentHash = "commit-hash",
+        payloadHash = "payload-hash", chunkCount = 1,
+      }, "Officer-Realm")
+      if legacy then message.protocol.capabilities.guildDetail = nil end
+      return dibs.Sync.OnAddonMessage("DIBS", dibs.Ace3.Serialize(message), channel, "Officer-Realm")
+    end
+    local accepted, reason = sendBegin("GUILD", "guild-ledger-transfer")
+    assert_true(accepted, tostring(reason))
+    accepted, reason = sendBegin("WHISPER", "whisper-ledger-transfer")
+    assert_false(accepted)
+    assert_equal("INVALID_TRANSPORT_CHANNEL", reason)
+    accepted, reason = sendBegin("WHISPER", "legacy-whisper-ledger-transfer", true)
+    assert_true(accepted, tostring(reason))
+  end)
+
+  it("keeps personal request transfers off the GUILD channel", function()
+    local dibs = load()
+    local message = remote(dibs, {
+      type = "TRANSFER_BEGIN", transferId = "guild-private-request", entityType = "PREDIB_REQUEST",
+      entityId = "b04-request", revision = 1, contentHash = "request-hash",
+      payloadHash = "payload-hash", chunkCount = 1,
+    }, "Owner-Realm")
+    local accepted, reason = dibs.Sync.OnAddonMessage("DIBS", dibs.Ace3.Serialize(message), "GUILD", "Owner-Realm")
+    assert_false(accepted)
+    assert_equal("INVALID_TRANSPORT_CHANNEL", reason)
+  end)
+
+  it("keeps direct Vault messages on targeted WHISPER", function()
+    local dibs = load()
+    local function vaultAck(channel)
+      local message = remote(dibs, {
+        type = "VAULT_ACK", acquisitionId = "b04-vault", revision = 1, result = "APPLIED",
+      }, "Owner-Realm")
+      return dibs.Sync.OnAddonMessage("DIBS", dibs.Ace3.Serialize(message), channel, "Owner-Realm")
+    end
+    local accepted, reason = vaultAck("WHISPER")
+    assert_true(accepted, tostring(reason))
+    accepted, reason = vaultAck("GUILD")
+    assert_false(accepted)
+    assert_equal("INVALID_TRANSPORT_CHANNEL", reason)
+  end)
+
+  it("accepts award reservation digests on GUILD and rejects WHISPER", function()
+    local dibs = load()
+    local records = { {
+      proposalId = "b04-award-reservation", playerMemberKey = "player-realm", actorMemberKey = "officer-realm",
+      seasonId = dibs.GetCurrentSeasonId(), amount = 1, state = "PENDING", updatedAt = time(),
+    } }
+    local function send(channel, id)
+      local message = remote(dibs, {
+        type = "AWARD_RESERVATION_DIGEST", entityType = "AWARD_RESERVATION", entityId = "pending",
+        revision = 1, records = records, contentHash = dibs.Sync.CalculateContentHash(records), messageId = id,
+      }, "Officer-Realm")
+      return dibs.Sync.OnAddonMessage("DIBS", dibs.Ace3.Serialize(message), channel, "Officer-Realm")
+    end
+    local accepted, reason = send("GUILD", "guild-reservation")
+    assert_true(accepted, tostring(reason))
+    assert_equal(1, #dibs.Sync.GetPendingAwardReservations())
+    accepted, reason = send("WHISPER", "whisper-reservation")
+    assert_false(accepted)
+    assert_equal("INVALID_TRANSPORT_CHANNEL", reason)
+  end)
+
   it("reassembles verified detail and propagates a terminal tombstone", function()
     local dibs = load(); local payload = request(dibs, 2, "fulfilled")
     local ok, reason = transfer(dibs, payload)
@@ -173,5 +268,96 @@ describe("B04 V2 transport", function()
     local _, fresh = loader.load({ withAce3 = true, wow = { guildLeader = true } })
     local live, liveReason = fresh.Sync.Send({ type = "DIGEST", candidates = { "secret" } }, "GUILD")
     assert_false(live); assert_equal("FORBIDDEN_LIVE_LOOT_DATA", liveReason)
+  end)
+
+  it("reports channel-test receipt and returns confirmation on the tested channel", function()
+    local dibs = load()
+    dibs.DeveloperMode.SetEnabled(true)
+    local sent, testId = dibs.Sync.StartChannelTest("GUILD")
+    assert_true(sent)
+    local outgoing = dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].payload)
+    assert_equal("CHANNEL_TEST", outgoing.type)
+    assert_equal("GUILD", outgoing.testChannel)
+
+    local inbound = remote(dibs, { type = "CHANNEL_TEST", testId = "remote-test", testChannel = "GUILD", startedAt = time() }, "Officer-Realm")
+    local accepted, reason = dibs.Sync.Receive(inbound, "Officer-Realm", "GUILD")
+    assert_true(accepted, tostring(reason))
+    local responseMessage = dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].payload)
+    assert_equal("CHANNEL_TEST_ACK", responseMessage.type)
+    assert_equal("GUILD", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+    assert_equal("CHANNEL_MESSAGE_VALIDATED", responseMessage.reasonCode)
+
+    local acknowledgement = remote(dibs, { type = "CHANNEL_TEST_ACK", testId = testId,
+      testChannel = "GUILD", result = "RECEIVED", reasonCode = "CHANNEL_MESSAGE_VALIDATED" }, "Officer-Realm")
+    assert_true(dibs.Sync.Receive(acknowledgement, "Officer-Realm", "GUILD"))
+    local results = dibs.Sync.GetChannelTestResults()
+    local confirmed
+    for _, result in ipairs(results) do if result.testId == testId then confirmed = result end end
+    assert_not_nil(confirmed)
+    assert_equal("ACKNOWLEDGED", confirmed.status)
+    assert_equal("CHANNEL_MESSAGE_VALIDATED", confirmed.reasonCode)
+  end)
+
+  it("targets Whisper tests to a guild roster member and explains unavailable group channels", function()
+    local dibs = load()
+    dibs.DeveloperMode.SetEnabled(true)
+    local sent, testId = dibs.Sync.StartChannelTest("WHISPER", "Officer-Realm")
+    assert_true(sent)
+    local outgoing = dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].payload)
+    assert_equal(testId, outgoing.testId)
+    assert_equal("WHISPER", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+    assert_equal("Officer-Realm", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
+    local available, reason = dibs.Sync.GetChannelTestAvailability("RAID")
+    assert_false(available)
+    assert_equal("NOT_IN_RAID", reason)
+  end)
+
+  it("rejects channel-test messages received over a different channel", function()
+    local dibs = load()
+    local inbound = remote(dibs, { type = "CHANNEL_TEST", testId = "wrong-channel-test",
+      testChannel = "GUILD", startedAt = time() }, "Officer-Realm")
+    local accepted, reason = dibs.Sync.Receive(inbound, "Officer-Realm", "OFFICER")
+    assert_false(accepted)
+    assert_equal("CHANNEL_MISMATCH", reason)
+    local results = dibs.Sync.GetChannelTestResults()
+    assert_equal("CHANNEL_MISMATCH_EXPECTED_GUILD", results[1].reasonCode)
+  end)
+
+  it("returns and records an explicit reason when a non-officer sends a test", function()
+    local dibs = load()
+    local inbound = remote(dibs, { type = "CHANNEL_TEST", testId = "unauthorized-test",
+      testChannel = "GUILD", startedAt = time() }, "Player-Realm")
+    local accepted, reason = dibs.Sync.Receive(inbound, "Player-Realm", "GUILD")
+    assert_false(accepted)
+    assert_equal("CHANNEL_TEST_OFFICER_REQUIRED", reason)
+    local acknowledgement = dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].payload)
+    assert_equal("CHANNEL_TEST_ACK", acknowledgement.type)
+    assert_equal("REJECTED", acknowledgement.result)
+    assert_equal(reason, acknowledgement.reasonCode)
+    local results = dibs.Sync.GetChannelTestResults()
+    assert_equal("REJECTED", results[1].status)
+    assert_equal(reason, results[1].reasonCode)
+  end)
+
+  it("sends custom-channel confirmations to the locally joined channel", function()
+    local dibs = load()
+    _G.GetChannelName = function(name) return name == "DibsTest" and 4 or 0 end
+    dibs.DeveloperMode.SetEnabled(true)
+    local sent, testId = dibs.Sync.StartChannelTest("CHANNEL", "DibsTest")
+    assert_true(sent)
+    local outgoing = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
+    assert_equal("CHANNEL", outgoing.channel)
+    assert_equal(4, outgoing.target)
+    local inbound = remote(dibs, { type = "CHANNEL_TEST", testId = "custom-test",
+      testChannel = "CHANNEL", channelName = "DibsTest", startedAt = time() }, "Officer-Realm")
+    assert_true(dibs.Sync.Receive(inbound, "Officer-Realm", "CHANNEL"))
+    local acknowledgement = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
+    assert_equal("CHANNEL", acknowledgement.channel)
+    assert_equal(4, acknowledgement.target)
+    local ackMessage = dibs.Ace3.Deserialize(acknowledgement.payload)
+    assert_equal("CHANNEL_TEST_ACK", ackMessage.type)
+    assert_true(dibs.Sync.Receive(remote(dibs, { type = "CHANNEL_TEST_ACK", testId = testId,
+      testChannel = "CHANNEL", result = "RECEIVED", reasonCode = "CHANNEL_MESSAGE_VALIDATED" }, "Officer-Realm"),
+      "Officer-Realm", "CHANNEL"))
   end)
 end)

@@ -509,6 +509,9 @@ function Ledger.ApplyAwardCommit(commit, sender)
       if commit.proposalId and Dibs.Governance and Dibs.Governance.MarkAwardProposalCommitted then
         Dibs.Governance.MarkAwardProposalCommitted(commit.proposalId, known)
       end
+      if commit.proposalId and Dibs.Sync and Dibs.Sync.ClearAwardReservation then
+        Dibs.Sync.ClearAwardReservation(commit.proposalId, known)
+      end
       return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) }
     end
     return { accepted = false, reasonCode = "CANONICAL_POSITION_CONFLICT" }
@@ -533,6 +536,9 @@ function Ledger.ApplyAwardCommit(commit, sender)
   if commit.proposalId and Dibs.Governance and Dibs.Governance.MarkAwardProposalCommitted then
     Dibs.Governance.MarkAwardProposalCommitted(commit.proposalId, commit)
   end
+  if commit.proposalId and Dibs.Sync and Dibs.Sync.ClearAwardReservation then
+    Dibs.Sync.ClearAwardReservation(commit.proposalId, commit)
+  end
   return { accepted = true, idempotentReplay = false, reasonCode = "CANONICAL_APPLIED", value = copy(commit) }
 end
 
@@ -541,6 +547,7 @@ end
 function Ledger.CommitDibUse(context, awardEvidence)
   local evidence = copy(awardEvidence or {}); evidence.type, evidence.actionType = "DIB_USED", "DIB_USED"
   evidence.amount = -math.abs(tonumber(evidence.amount) or 1)
+  evidence.seasonId = evidence.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
   if not v2Enforced() then return Ledger.CommitLocalTransaction(context, evidence) end
   local authorityState = authority(); local coordinator, coordinatorReason = localCoordinator(authorityState, context and context.actor)
   if not coordinator then return { accepted = false, idempotentReplay = false, reasonCode = coordinatorReason, proposal = proposalFor(context, evidence) } end
@@ -768,6 +775,38 @@ function Ledger.GetBalance(playerName, seasonId)
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
   return getCurrentBalance(memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName()), seasonId or Dibs.GetCurrentSeasonId())
 end
+function Ledger.GetPendingDibReservations(playerName, seasonId)
+  local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
+  memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local reserved, seen = 0, {}
+  local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
+  for _, proposal in ipairs(proposals) do
+    local player = proposal.playerSnapshot
+    local proposalType = proposal.type or "AWARD"
+    if player and player.memberKey == memberKey and (proposalType == "AWARD" or proposalType == "DIB_USED")
+      and proposal.status ~= "COMMITTED" and (not proposal.seasonId or proposal.seasonId == targetSeason) then
+      local proposalId = proposal.proposalId
+      if not proposalId or not seen[proposalId] then
+        reserved = reserved + math.abs(tonumber(proposal.amount) or 1)
+        if proposalId then seen[proposalId] = true end
+      end
+    end
+  end
+  local remoteReservations = Dibs.Sync and Dibs.Sync.GetPendingAwardReservations
+    and Dibs.Sync.GetPendingAwardReservations() or {}
+  for _, reservation in ipairs(remoteReservations) do
+    if reservation.playerMemberKey == memberKey and (not reservation.seasonId or reservation.seasonId == targetSeason)
+      and not seen[reservation.proposalId] then
+      reserved = reserved + math.abs(tonumber(reservation.amount) or 1)
+      seen[reservation.proposalId] = true
+    end
+  end
+  return reserved
+end
+function Ledger.GetAvailableBalance(playerName, seasonId)
+  return math.max(0, Ledger.GetBalance(playerName, seasonId) - Ledger.GetPendingDibReservations(playerName, seasonId))
+end
 function Ledger.GetPlayerState(playerName, seasonId)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
@@ -856,11 +895,14 @@ function Ledger.GetCanonicalPlayerDibsState(seasonId, playerIdentity)
     if rankOk then rankMaximum = tonumber(allocation) end
   end
   local ok, state = pcall(Ledger.GetPlayerSeasonState, targetSeason, canonicalName)
-  local balance = ok and type(state) == "table" and tonumber(state.remainingBalance) or nil
-  if balance == nil then
+  local canonicalBalance = ok and type(state) == "table" and tonumber(state.remainingBalance) or nil
+  if canonicalBalance == nil then
     return { available = false, balance = nil, rankMaximum = rankMaximum, canonicalName = canonicalName, reason = "BALANCE_UNAVAILABLE", seasonId = targetSeason }
   end
-  return { available = true, balance = balance, rankMaximum = rankMaximum, canonicalName = canonicalName, seasonId = targetSeason }
+  local pendingDibReservations = Ledger.GetPendingDibReservations(canonicalName, targetSeason)
+  return { available = true, balance = canonicalBalance, canonicalBalance = canonicalBalance,
+    availableBalance = canonicalBalance - pendingDibReservations, pendingDibReservations = pendingDibReservations,
+    rankMaximum = rankMaximum, canonicalName = canonicalName, seasonId = targetSeason }
 end
 function Ledger.CalculateCanonicalContentHash(record) return transactionCanonicalHash(record or {}) end
 function Ledger.CalculateCanonicalCommitHash(record) return canonicalCommitHash(record or {}) end

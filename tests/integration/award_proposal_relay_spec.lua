@@ -11,8 +11,8 @@ local loader = require("helpers.load_addon")
 -- used below. Wire framing itself (entity allowlist, transfer shape) is
 -- covered separately on a single instance.
 
-local roster = { "Coordinator-Realm", "Officer2-Realm", "Player-Realm" }
-local ranks = { [1] = 0, [2] = 1, [3] = 3 }
+local roster = { "Coordinator-Realm", "Officer2-Realm", "Officer3-Realm", "Player-Realm" }
+local ranks = { [1] = 0, [2] = 1, [3] = 1, [4] = 3 }
 
 local function load(player, saved)
   return select(2, loader.load({ withAce3 = true, savedVariables = saved, wow = {
@@ -69,7 +69,19 @@ describe("Award proposal relay wire framing (single instance)", function()
     local before = #dibs.Ace3.libs.comm.sent
     local proposal = assert(dibs.Governance.RecordAwardProposal(nil, { playerName = "Player-Realm", itemID = 4, awardRef = "no-coordinator" }))
     assert_nil(proposal.relayStatus)
-    assert_equal(before, #dibs.Ace3.libs.comm.sent)
+    assert_equal(before + 1, #dibs.Ace3.libs.comm.sent)
+    local announcement = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
+    local digest = dibs.Ace3.Deserialize(announcement.payload)
+    assert_equal("GUILD", announcement.channel)
+    assert_equal("AWARD_RESERVATION_DIGEST", digest.type)
+    assert_equal(proposal.proposalId, digest.records[1].proposalId)
+
+    local authority = dibs.GetDB().governance.authority
+    authority.state = "ACTIVE"
+    authority.ledgerEpoch = 1
+    authority.coordinator = assert(dibs.Identity.CreateSnapshot("Coordinator-Realm"))
+    assert_equal(1, dibs.Sync.RetryPendingAwardProposals())
+    assert_equal("RELAY_PENDING", findProposal(dibs.Governance.GetAwardProposals(), proposal.proposalId).relayStatus)
   end)
 end)
 
@@ -104,6 +116,7 @@ describe("Award proposal relay contract across simultaneous raids", function()
     local acknowledged = findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId)
     assert_not_nil(acknowledged)
     assert_equal("RELAY_ACKED", acknowledged.relayStatus)
+    assert_equal("PENDING_RECONCILIATION", acknowledged.status)
 
     -- Coordinator confirms/commits the award.
     coordinator = load("Coordinator-Realm", coordinatorSaved)
@@ -115,10 +128,12 @@ describe("Award proposal relay contract across simultaneous raids", function()
     assert_equal("COMMITTED", completed.status)
 
     -- The resulting AWARD_COMMIT, applied on the officer's own client, converges the balance.
-    officer = load("Officer2-Realm", officer.DeepCopy(_G.RCLootCouncil_dibsDB))
+    officer = load("Officer2-Realm", coordinator.DeepCopy(_G.RCLootCouncil_dibsDB))
     local applied = officer.Ledger.ApplyAwardCommit(commit.value, "Coordinator-Realm")
     assert_true(applied.accepted, tostring(applied.reasonCode))
     assert_equal(2, officer.Ledger.GetBalance("Player-Realm", season))
+    assert_equal("COMMITTED", findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId).status)
+    assert_equal("COMMITTED", findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId).status)
   end)
 
   it("is idempotent when the same proposal is relayed twice", function()
@@ -182,6 +197,7 @@ describe("Award proposal relay contract across simultaneous raids", function()
     local proposal = assert(officer.Governance.RecordAwardProposal(nil, { playerName = "Player-Realm", itemID = 3, awardRef = "reconnect-1" }))
     assert_equal(1, proposal.relayAttempts)
 
+    officer.GetDB().governance.authority.proposals[proposal.proposalId].relayAttemptAt = 0
     officer.Sync.RetryPendingAwardProposals()
     local afterRetry = findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId)
     assert_not_nil(afterRetry)
@@ -193,20 +209,76 @@ describe("Award proposal relay contract across simultaneous raids", function()
     assert_equal(1, #coordinator.Governance.GetPendingCoordinatorProposals())
   end)
 
-  it("stops retrying after the bounded relay attempt limit", function()
+  it("keeps an uncommitted proposal retryable after a prolonged coordinator absence", function()
     local saved = activateV2()
     local officer = load("Officer2-Realm", saved)
     local proposal = assert(officer.Governance.RecordAwardProposal(nil, { playerName = "Player-Realm", itemID = 8, awardRef = "retry-cap" }))
-
-    for _ = 1, 4 do officer.Sync.RetryPendingAwardProposals() end
-    local exhausted = findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId)
-    assert_not_nil(exhausted)
-    assert_equal(5, exhausted.relayAttempts)
-    assert_equal("RELAY_ATTEMPTS_EXHAUSTED", exhausted.relayStatus)
-
+    local stored = officer.GetDB().governance.authority.proposals[proposal.proposalId]
     local sentBefore = #officer.Ace3.libs.comm.sent
     assert_equal(0, officer.Sync.RetryPendingAwardProposals())
     assert_equal(sentBefore, #officer.Ace3.libs.comm.sent)
+
+    stored.relayAttempts = 5
+    stored.relayStatus = "RELAY_ATTEMPTS_EXHAUSTED"
+    stored.relayAttemptAt = 0
+    assert_equal(1, officer.Sync.RetryPendingAwardProposals())
+    local retried = findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId)
+    assert_equal(5, retried.relayAttempts)
+    assert_equal("RELAY_PENDING", retried.relayStatus)
+
+    local coordinator = load("Coordinator-Realm", saved)
+    assert_true(coordinator.Governance.ReceiveRelayedProposal(retried, "Officer2-Realm"))
+    assert_equal(1, #coordinator.Governance.GetPendingCoordinatorProposals())
+    assert_true(officer.Governance.AckProposalRelay(proposal.proposalId))
+    assert_equal("PENDING_RECONCILIATION", findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId).status)
+    assert_equal(1, #officer.Governance.GetPendingCoordinatorProposals())
+    assert_equal(1, #officer.Governance.GetRelayPendingProposals())
+    assert_equal(0, officer.Sync.RetryPendingAwardProposals())
+
+    officer.GetDB().governance.authority.coordinator = assert(officer.Identity.CreateSnapshot("Officer3-Realm"))
+    assert_equal(1, officer.Sync.RetryPendingAwardProposals())
+    local rerouted = findProposal(officer.Governance.GetAwardProposals(), proposal.proposalId)
+    assert_equal("officer3-realm", rerouted.coordinatorMemberKey)
+    local latestMessage = officer.Ace3.libs.comm.sent[#officer.Ace3.libs.comm.sent]
+    assert_equal("Officer3-Realm", latestMessage.target)
+  end)
+
+  it("replicates a pending DIB reservation to raiders and converts it once at commit", function()
+    local saved = activateV2()
+    local coordinator = load("Coordinator-Realm", saved)
+    local season = coordinator.GetCurrentSeasonId()
+    for index = 1, 2 do
+      local committed = coordinator.Ledger.CommitDibUse(nil, {
+        transactionId = "reservation-prior-" .. tostring(index), proposalId = "reservation-prior-" .. tostring(index),
+        playerName = "Player-Realm", seasonId = season, amount = 1, itemID = 90 + index, source = "test",
+      })
+      assert_true(committed.accepted, tostring(committed.reasonCode))
+    end
+    saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
+
+    local officer = load("Officer2-Realm", saved)
+    local proposal = assert(officer.Governance.RecordAwardProposal(nil, {
+      playerName = "Player-Realm", itemID = 9, awardRef = "guild-reservation-1", seasonId = season,
+    }))
+    local digest = officer.Sync.BuildAwardReservationDigest()
+
+    local raider = load("Player-Realm", saved)
+    local envelope = assert(raider.Sync.BuildEnvelope(digest))
+    envelope.senderNameRealm, envelope.senderMemberKey = "Officer2-Realm", "officer2-realm"
+    local accepted, reason = raider.Sync.Receive(envelope, "Officer2-Realm")
+    assert_true(accepted, tostring(reason))
+    assert_equal(1, raider.Ledger.GetPendingDibReservations("Player-Realm", season))
+    assert_equal(0, raider.Ledger.GetAvailableBalance("Player-Realm", season))
+
+    coordinator = load("Coordinator-Realm", saved)
+    assert_true(coordinator.Governance.ReceiveRelayedProposal(proposal, "Officer2-Realm"))
+    local result = coordinator.OfficerUI.ConfirmPendingAwardProposal(proposal.proposalId)
+    assert_true(result.accepted, tostring(result.reasonCode))
+    local applied = raider.Ledger.ApplyAwardCommit(result.value, "Coordinator-Realm")
+    assert_true(applied.accepted, tostring(applied.reasonCode))
+    assert_equal(0, raider.Ledger.GetPendingDibReservations("Player-Realm", season))
+    assert_equal(0, raider.Ledger.GetBalance("Player-Realm", season))
+    assert_equal(0, raider.Ledger.GetAvailableBalance("Player-Realm", season))
   end)
 end)
 

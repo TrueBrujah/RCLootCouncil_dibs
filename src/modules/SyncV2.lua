@@ -1,8 +1,9 @@
 --[[
 Module: Dibs.Sync V2 transport foundation (B04)
-Purpose: bounded GUILD digests and WHISPER detail transfer without enabling a
-distributed ledger. Hashes and sender checks are integrity/attribution signals,
-not cryptographic authentication.
+Purpose: bounded GUILD digests and shared detail transfer without enabling a
+distributed ledger. Targeted WHISPER remains for private sync exceptions.
+Hashes and sender checks are integrity/attribution signals, not cryptographic
+authentication.
 ]]
 
 ---@diagnostic disable: return-type-mismatch, redundant-return-value, assign-type-mismatch
@@ -10,16 +11,73 @@ not cryptographic authentication.
 local Dibs = _G.Dibs
 local Sync = Dibs.Sync
 
-local MAJOR, MINOR = 2, 0
+local MAJOR, MINOR = 2, 1
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX, MAX_PROTOCOL_MISMATCHES = 256, 8, 16, 8192, 500, 10
 local LEDGER_BATCH_SIZE = 4
+local PROPOSAL_RETRY_INTERVAL = 300
+local AWARD_RESERVATION_PAGE_SIZE = 16
+local CHANNEL_TEST_ACK_TIMEOUT = 20
+local CHANNEL_TEST_RESULT_LIMIT = 30
 local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 300, 60, 3
-local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
+local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
+TYPES.CHANNEL_TEST, TYPES.CHANNEL_TEST_ACK = true, true
+local CHANNEL_TEST_CHANNELS = { GUILD = true, OFFICER = true, RAID = true, PARTY = true, INSTANCE_CHAT = true, WHISPER = true, CHANNEL = true }
+local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, SEASON_CATALOG = true }
+local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
 local function trim(value) return type(value) == "string" and value:match("^%s*(.-)%s*$") or nil end
 local function finiteInteger(value) return type(tonumber(value)) == "number" and tonumber(value) == math.floor(tonumber(value)) end
+local function detailChannel(entityType)
+  if GUILD_DETAIL_ENTITIES[entityType] then return "GUILD" end
+  if WHISPER_DETAIL_ENTITIES[entityType] then return "WHISPER" end
+  return nil
+end
+local function detailFetchChannel(requests)
+  if type(requests) ~= "table" or #requests == 0 then return nil end
+  local channel
+  for _, request in ipairs(requests) do
+    local requestChannel = type(request) == "table" and detailChannel(request.entityType)
+    if not requestChannel or (channel and channel ~= requestChannel) then return nil end
+    channel = requestChannel
+  end
+  return channel
+end
+local function expectedTransportChannel(message, transfer)
+  if message.type == "CHANNEL_TEST" or message.type == "CHANNEL_TEST_ACK" then
+    return CHANNEL_TEST_CHANNELS[message.testChannel] and message.testChannel or nil
+  end
+  if message.type == "HELLO" or message.type == "DIGEST" or message.type == "LEDGER_DIGEST"
+    or message.type == "VAULT_DIGEST" or message.type == "AWARD_RESERVATION_DIGEST" then
+    return "GUILD"
+  end
+  if message.type == "DETAIL_FETCH" then return detailFetchChannel(message.requests) end
+  if message.type == "TRANSFER_BEGIN" then return detailChannel(message.entityType) end
+  if message.type == "TRANSFER_CHUNK" then return transfer and detailChannel(transfer.entityType) end
+  if message.type == "TRANSFER_END" then
+    if transfer and message.entityType ~= transfer.entityType then return nil end
+    return detailChannel(transfer and transfer.entityType or message.entityType)
+  end
+  if message.type == "TRANSFER_ACK" then return detailChannel(message.entityType) end
+  if message.type == "VAULT_FETCH" or message.type == "VAULT_DETAIL" or message.type == "VAULT_ACK"
+    or message.type == "SYNC_PROBE" or message.type == "SYNC_PROBE_RESPONSE"
+    or message.type == "AWARD_PROPOSAL_ACK" then return "WHISPER" end
+  return nil
+end
+local function allowsLegacyWhisper(message, transfer)
+  local capabilities = message.protocol and message.protocol.capabilities
+  if type(capabilities) == "table" and capabilities.guildDetail == true then return false end
+  if message.type == "DETAIL_FETCH" then return detailFetchChannel(message.requests) == "GUILD" end
+  if message.type == "TRANSFER_BEGIN" then return GUILD_DETAIL_ENTITIES[message.entityType] == true end
+  if message.type == "TRANSFER_CHUNK" then return transfer and GUILD_DETAIL_ENTITIES[transfer.entityType] == true or false end
+  if message.type == "TRANSFER_END" then
+    local entityType = transfer and transfer.entityType or message.entityType
+    return (not transfer or message.entityType == transfer.entityType) and GUILD_DETAIL_ENTITIES[entityType] == true
+  end
+  if message.type == "TRANSFER_ACK" then return GUILD_DETAIL_ENTITIES[message.entityType] == true end
+  return false
+end
 
 local function ensure()
   local db = Dibs.GetDB()
@@ -30,6 +88,10 @@ local function ensure()
   state.v2.replay = state.v2.replay or {}; state.v2.peers = state.v2.peers or {}
   state.v2.transferAcks = state.v2.transferAcks or {}
   state.v2.vaultPending = state.v2.vaultPending or {}; state.v2.protocolMismatches = state.v2.protocolMismatches or {}
+  state.v2.awardReservations = state.v2.awardReservations or {}
+  state.v2.awardReservationTombstones = state.v2.awardReservationTombstones or {}
+  state.v2.awardReservations = state.v2.awardReservations or {}
+  state.v2.awardReservationTombstones = state.v2.awardReservationTombstones or {}
   state.v2.addonVersionMismatches = state.v2.addonVersionMismatches or {}
   Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.v2Transfers = Dibs.runtime.v2Transfers or {}
   return state.v2
@@ -81,6 +143,20 @@ local function member(sender)
   local resolved = Dibs.Identity.ResolveRosterMember(sender)
   if resolved.status ~= "RESOLVED" then return nil, resolved.status end
   return resolved
+end
+local function routeForPeer(channel, target)
+  if channel ~= "GUILD" or not target then return channel end
+  local resolved = member(target)
+  local peer = resolved and ensure().peers[resolved.memberKey]
+  local capabilities = peer and peer.protocol and peer.protocol.capabilities
+  if peer and (type(capabilities) ~= "table" or capabilities.guildDetail ~= true) then return "WHISPER" end
+  return channel
+end
+local function sendDetailFetch(requests, target)
+  local channel = detailFetchChannel(requests)
+  if not channel then return false, "INVALID_DETAIL_FETCH_CHANNEL" end
+  channel = routeForPeer(channel, target)
+  return Sync.Send({ type = "DETAIL_FETCH", requests = requests }, channel, channel == "WHISPER" and target or nil)
 end
 local function localRole()
   return Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(nil) or "player"
@@ -401,7 +477,7 @@ local function requestAwardCommitBatch(target, epoch, firstSequence, lastSequenc
     requests[#requests + 1] = { entityType = "AWARD_COMMIT", entityId = tostring(epoch) .. ":" .. tostring(sequence), revision = sequence }
   end
   if #requests == 0 then return false, firstSequence - 1 end
-  local sent, reason = Sync.Send({ type = "DETAIL_FETCH", requests = requests }, "WHISPER", target)
+  local sent, reason = sendDetailFetch(requests, target)
   return sent, sent and finalSequence or (firstSequence - 1), reason
 end
 local function rememberVaultRequests(requests, target)
@@ -530,19 +606,25 @@ end
 function Sync.BuildEnvelope(message)
   local snapshot = localSnapshot(); if not snapshot then return nil, "ROSTER_UNAVAILABLE" end
   message = copy(message or {}); if not TYPES[message.type] then return nil, "INVALID_MESSAGE_TYPE" end
-  message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, whisperDetail = true, requestTombstones = true, ledgerDigestOnly = true, authoritySignals = true } }
+  message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, guildDetail = true, whisperDetail = true, requestTombstones = true, ledgerDigestOnly = true, authoritySignals = true } }
   message.messageId = message.messageId or Dibs.NewId("v2msg")
   message.guildKey = Dibs.GetGuildKey(); message.senderNameRealm = snapshot.displayName; message.senderMemberKey = snapshot.memberKey
   message.addonVersion = Dibs.VERSION
   return message
 end
 function Sync.Send(message, channel, target)
+  if type(message) ~= "table" then return false, "INVALID_SYNC_MESSAGE" end
   if Sync.ContainsForbiddenLiveLootData and Sync.ContainsForbiddenLiveLootData(message) then return false, "FORBIDDEN_LIVE_LOOT_DATA" end
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
   local envelope, reason = Sync.BuildEnvelope(message); if not envelope then return false, reason end
   channel = channel or "GUILD"
-  if channel ~= "GUILD" and channel ~= "WHISPER" then return false, "INVALID_SYNC_CHANNEL" end
+  local isChannelTest = message.type == "CHANNEL_TEST" or message.type == "CHANNEL_TEST_ACK"
+  if channel ~= "GUILD" and channel ~= "WHISPER" and not (isChannelTest and CHANNEL_TEST_CHANNELS[channel]) then
+    return false, "INVALID_SYNC_CHANNEL"
+  end
   if channel == "WHISPER" and (not trim(target) or #target > 96) then return false, "INVALID_WHISPER_TARGET" end
+  if isChannelTest and channel == "CHANNEL"
+    and (not finiteInteger(target) or tonumber(target) < 1) then return false, "INVALID_CUSTOM_CHANNEL_ID" end
   Sync.TraceOutgoing(channel, target, message.type)
   local sent = Dibs.Ace3.SendComm("DIBS", envelope, channel, target, "BULK")
   if not sent then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
@@ -551,6 +633,127 @@ function Sync.Send(message, channel, target)
     status(state.syncBehind and "SYNC_BEHIND" or "SYNC_READY")
   end
   return true, envelope.messageId
+end
+
+local function channelTestState()
+  Dibs.runtime = Dibs.runtime or {}
+  Dibs.runtime.channelTests = Dibs.runtime.channelTests or { pending = {}, results = {} }
+  local state = Dibs.runtime.channelTests
+  state.pending, state.results = state.pending or {}, state.results or {}
+  return state
+end
+
+local function recordChannelTest(result)
+  local state = channelTestState()
+  if not result._recorded then
+    state.results[#state.results + 1] = result
+    result._recorded = true
+    while #state.results > CHANNEL_TEST_RESULT_LIMIT do table.remove(state.results, 1) end
+  end
+  if Dibs.DebugLogs and type(Dibs.DebugLogs.Add) == "function" then
+    Dibs.DebugLogs.Add("Sync", 3, string.format("CHANNEL_TEST direction=%s channel=%s status=%s peer=%s reason=%s",
+      tostring(result.direction), tostring(result.channel), tostring(result.status),
+      tostring(result.peer or "-"), tostring(result.reasonCode or "none")))
+  end
+  return result
+end
+
+function Sync.GetChannelTestAvailability(channel, target)
+  if not CHANNEL_TEST_CHANNELS[channel] then return false, "UNSUPPORTED_TEST_CHANNEL" end
+  if channel == "GUILD" or channel == "OFFICER" then
+    if type(IsInGuild) ~= "function" or IsInGuild() ~= true then return false, "NOT_IN_GUILD" end
+    if channel == "OFFICER" and localRole() ~= "gm" and localRole() ~= "officer" then
+      return false, "OFFICER_CHAT_PERMISSION_REQUIRED"
+    end
+  elseif channel == "RAID" then
+    if type(IsInRaid) ~= "function" or IsInRaid() ~= true then return false, "NOT_IN_RAID" end
+  elseif channel == "PARTY" then
+    if type(IsInGroup) ~= "function" or IsInGroup() ~= true then return false, "NOT_IN_PARTY" end
+    if type(IsInRaid) == "function" and IsInRaid() == true then return false, "USE_RAID_CHANNEL" end
+  elseif channel == "INSTANCE_CHAT" then
+    if type(IsInGroup) ~= "function" or IsInGroup(_G.LE_PARTY_CATEGORY_INSTANCE) ~= true then
+      return false, "NOT_IN_INSTANCE_GROUP"
+    end
+  elseif channel == "WHISPER" then
+    if type(trim(target)) ~= "string" or trim(target) == "" then return false, "WHISPER_TARGET_REQUIRED" end
+    local resolved, reason = member(trim(target))
+    if not resolved then return false, "WHISPER_TARGET_NOT_IN_GUILD:" .. tostring(reason) end
+    local localMember = localSnapshot()
+    if localMember and resolved.memberKey == localMember.memberKey then return false, "WHISPER_TARGET_IS_SELF" end
+    return true, nil, resolved.displayName
+  elseif channel == "CHANNEL" then
+    local channelName = trim(target)
+    if not channelName then return false, "CUSTOM_CHANNEL_NAME_REQUIRED" end
+    if type(GetChannelName) ~= "function" then return false, "CUSTOM_CHANNEL_API_UNAVAILABLE" end
+    local channelId = tonumber(GetChannelName(channelName))
+    if not channelId or channelId < 1 then return false, "CUSTOM_CHANNEL_NOT_JOINED" end
+    return true, nil, channelId, channelName
+  end
+  return true
+end
+
+function Sync.GetChannelTestResults()
+  local state = channelTestState()
+  local now = time()
+  for testId, result in pairs(state.pending) do
+    if now - (tonumber(result.startedAt) or now) >= CHANNEL_TEST_ACK_TIMEOUT then
+      result.status = "NO_ACK"
+      result.reasonCode = "NO_ACK_TIMEOUT_CAUSE_UNKNOWN"
+      state.pending[testId] = nil
+      recordChannelTest(result)
+    end
+  end
+  local results = {}
+  for _, result in ipairs(state.results) do results[#results + 1] = copy(result) end
+  table.sort(results, function(a, b) return (tonumber(a.startedAt) or 0) > (tonumber(b.startedAt) or 0) end)
+  while #results > 12 do table.remove(results) end
+  return results
+end
+
+function Sync.StartChannelTest(channel, target)
+  if not (Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled()) then
+    return false, "DEVELOPER_MODE_REQUIRED"
+  end
+  if localRole() ~= "gm" and localRole() ~= "officer" then return false, "GUILD_ADMIN_REQUIRED" end
+  local available, reason, resolvedTarget, channelName = Sync.GetChannelTestAvailability(channel, target)
+  if not available then
+    recordChannelTest({ direction = "SEND", channel = channel, status = "NOT_SENT", reasonCode = reason, startedAt = time() })
+    return false, reason
+  end
+  local localMember = localSnapshot()
+  if not localMember then return false, "LOCAL_IDENTITY_UNAVAILABLE" end
+  local testId = Dibs.NewId("channel-test")
+  local result = { testId = testId, direction = "SEND", channel = channel, target = resolvedTarget,
+    channelName = channelName, sender = localMember.displayName, status = "WAITING_FOR_ACK",
+    reasonCode = "ACE_COMM_QUEUED_AWAITING_ACK", startedAt = time() }
+  channelTestState().pending[testId] = result
+  recordChannelTest(result)
+  local sent, sendReason = Sync.Send({ type = "CHANNEL_TEST", testId = testId, testChannel = channel,
+    channelName = channelName, startedAt = result.startedAt }, channel,
+    (channel == "WHISPER" or channel == "CHANNEL") and resolvedTarget or nil)
+  if not sent then
+    result.status, result.reasonCode = "SEND_FAILED", sendReason or "ACE_COMM_SEND_FAILED"
+    channelTestState().pending[testId] = nil
+    recordChannelTest(result)
+    return false, result.reasonCode
+  end
+  return true, testId
+end
+
+function Sync.RunAllChannelTests(whisperTarget, customChannelName)
+  local results = {}
+  for _, channel in ipairs({ "GUILD", "OFFICER", "RAID", "PARTY", "INSTANCE_CHAT", "WHISPER", "CHANNEL" }) do
+    local target = channel == "CHANNEL" and customChannelName or whisperTarget
+    local available, reason = Sync.GetChannelTestAvailability(channel, target)
+    if available then
+      local sent, result = Sync.StartChannelTest(channel, target)
+      results[#results + 1] = { channel = channel, sent = sent, result = result }
+    else
+      recordChannelTest({ direction = "SEND", channel = channel, status = "SKIPPED", reasonCode = reason, startedAt = time() })
+      results[#results + 1] = { channel = channel, sent = false, result = reason }
+    end
+  end
+  return results
 end
 
 function Sync.BuildRequestIndex()
@@ -649,6 +852,111 @@ function Sync.BuildVaultDigest()
     contentHash = hash(entries), records = entries, entries = entries }
 end
 
+local function reservationFromProposal(proposal, reservationState)
+  local player = proposal and proposal.playerSnapshot
+  local actor = proposal and proposal.actorSnapshot
+  if type(proposal) ~= "table" or type(proposal.proposalId) ~= "string"
+    or type(player) ~= "table" or type(player.memberKey) ~= "string"
+    or type(actor) ~= "table" or type(actor.memberKey) ~= "string" then return nil end
+  return {
+    proposalId = proposal.proposalId,
+    playerMemberKey = player.memberKey,
+    actorMemberKey = actor.memberKey,
+    awardRef = proposal.awardRef,
+    evidenceId = proposal.evidenceId,
+    seasonId = type(proposal.seasonId) == "string" and proposal.seasonId or Dibs.GetCurrentSeasonId(),
+    amount = math.abs(tonumber(proposal.amount) or 1),
+    state = reservationState,
+    updatedAt = tonumber(reservationState == "PENDING" and proposal.createdAt
+      or proposal.resolvedAt or proposal.committedAt or proposal.createdAt) or time(),
+  }
+end
+
+local function addReservationRecord(records, reservation)
+  if type(reservation) ~= "table" or type(reservation.proposalId) ~= "string" then return end
+  local current = records[reservation.proposalId]
+  local incomingAt, currentAt = tonumber(reservation.updatedAt) or 0, tonumber(current and current.updatedAt) or 0
+  if not current or incomingAt > currentAt or (incomingAt == currentAt and reservation.state == "RELEASED") then
+    records[reservation.proposalId] = copy(reservation)
+  end
+end
+
+function Sync.BuildAwardReservationDigest()
+  local records = {}
+  local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
+  for _, proposal in ipairs(proposals) do
+    if (proposal.type == "AWARD" or proposal.type == "DIB_USED") and proposal.status ~= "COMMITTED" then
+      addReservationRecord(records, reservationFromProposal(proposal, "PENDING"))
+    end
+  end
+  local state = ensure()
+  for _, reservation in pairs(state.awardReservations) do addReservationRecord(records, reservation) end
+  local entries = {}
+  for _, reservation in pairs(records) do entries[#entries + 1] = reservation end
+  table.sort(entries, function(a, b) return a.proposalId < b.proposalId end)
+  while #entries > MAX_INDEX do table.remove(entries) end
+  return { type = "AWARD_RESERVATION_DIGEST", entityType = "AWARD_RESERVATION", entityId = "pending",
+    revision = #entries, contentHash = hash(entries), records = entries }
+end
+
+function Sync.GetPendingAwardReservations()
+  local reservations = {}
+  for _, reservation in pairs(ensure().awardReservations) do
+    if reservation.state == "PENDING" then reservations[#reservations + 1] = copy(reservation) end
+  end
+  return reservations
+end
+
+function Sync.AnnounceAwardReservationDigest()
+  local digest = Sync.BuildAwardReservationDigest()
+  if #digest.records == 0 then return true, "NO_PENDING_AWARD_RESERVATIONS" end
+  local pageCount = math.ceil(#digest.records / AWARD_RESERVATION_PAGE_SIZE)
+  for pageIndex = 1, pageCount do
+    local page = copy(digest)
+    page.records = {}
+    local first = (pageIndex - 1) * AWARD_RESERVATION_PAGE_SIZE + 1
+    local last = math.min(#digest.records, first + AWARD_RESERVATION_PAGE_SIZE - 1)
+    for index = first, last do page.records[#page.records + 1] = digest.records[index] end
+    page.revision = pageIndex
+    page.entityId = "pending:" .. tostring(pageIndex) .. ":" .. tostring(pageCount)
+    page.contentHash = hash(page.records)
+    local sent, reason = Sync.Send(page, "GUILD")
+    if not sent then return false, reason end
+  end
+  return true, digest.contentHash
+end
+
+function Sync.ClearAwardReservation(proposalId, commit)
+  if type(proposalId) ~= "string" or proposalId == "" then return false end
+  local state = ensure()
+  local reservation = state.awardReservations[proposalId]
+  local transaction = type(commit) == "table" and commit.transaction or nil
+  local tombstone = reservation or {
+    proposalId = proposalId,
+    playerMemberKey = transaction and transaction.memberKey,
+    actorMemberKey = type(commit) == "table" and commit.coordinator and commit.coordinator.memberKey,
+    seasonId = transaction and transaction.seasonId,
+    amount = math.abs(tonumber(transaction and transaction.amount) or 1),
+  }
+  if type(tombstone.playerMemberKey) ~= "string" then return false end
+  tombstone = copy(tombstone)
+  tombstone.state, tombstone.updatedAt = "RELEASED", time()
+  state.awardReservations[proposalId] = nil
+  state.awardReservationTombstones[proposalId] = tombstone
+  boundMap(state.awardReservationTombstones, MAX_INDEX)
+  return true
+end
+
+local function reservationHasCanonicalCommit(reservation)
+  local ledger = Dibs.Ledger
+  if not ledger then return false end
+  if reservation.awardRef and ledger.GetTransactionForAward
+    and ledger.GetTransactionForAward(reservation.awardRef) then return true end
+  if reservation.evidenceId and ledger.GetTransactionForEvidence
+    and ledger.GetTransactionForEvidence(reservation.evidenceId) then return true end
+  return false
+end
+
 function Sync.BuildVaultFetch(requests)
   local bounded = {}
   for index, request in ipairs(type(requests) == "table" and requests or {}) do
@@ -715,24 +1023,30 @@ end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
   if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
+  local channel = detailChannel(entityType)
+  if not channel then return false, "UNSUPPORTED_ENTITY" end
+  channel = routeForPeer(channel, target)
+  local recipient = channel == "WHISPER" and target or nil
   local encoded = Dibs.Ace3.Serialize(payload); if type(encoded) ~= "string" or #encoded > MAX_BYTES then return false, "PAYLOAD_TOO_LARGE" end
   local transferId = Dibs.NewId("v2transfer"); local chunks = {}
   for offset = 1, #encoded, 480 do chunks[#chunks + 1] = encoded:sub(offset, offset + 479) end
   if #chunks < 1 or #chunks > MAX_CHUNKS then return false, "PAYLOAD_TOO_LARGE" end
   local rawHash = hash(encoded)
-  local sent = Sync.Send({ type = "TRANSFER_BEGIN", transferId = transferId, entityType = entityType, entityId = entityId, revision = revision, contentHash = contentHash, payloadHash = rawHash, chunkCount = #chunks }, "WHISPER", target)
+  local sent = Sync.Send({ type = "TRANSFER_BEGIN", transferId = transferId, entityType = entityType, entityId = entityId, revision = revision, contentHash = contentHash, payloadHash = rawHash, chunkCount = #chunks }, channel, recipient)
   if not sent then return false, "SYNC_UNAVAILABLE" end
-  for index, chunk in ipairs(chunks) do if not Sync.Send({ type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, "WHISPER", target) then return false, "SYNC_UNAVAILABLE" end end
+  for index, chunk in ipairs(chunks) do if not Sync.Send({ type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, channel, recipient) then return false, "SYNC_UNAVAILABLE" end end
   return Sync.Send({ type = "TRANSFER_END", transferId = transferId, entityType = entityType, entityId = entityId,
-    revision = revision, contentHash = contentHash }, "WHISPER", target)
+    revision = revision, contentHash = contentHash }, channel, recipient)
 end
 
-local function sendTransferAck(target, transfer, accepted, reason)
+local function sendTransferAck(target, transfer, accepted, reason, channel)
   if not transfer or transfer.entityType ~= "LEGACY_BASELINE" then return end
   local result = accepted and (reason == "TRANSFER_STARTED" and "STARTED" or "APPLIED") or "REJECTED"
+  local ackChannel = channel or "WHISPER"
+  local ackTarget = ackChannel == "WHISPER" and target or nil
   Sync.Send({ type = "TRANSFER_ACK", transferId = transfer.transferId, entityType = transfer.entityType,
     entityId = transfer.entityId, result = result, reasonCode = reason,
-    receivedChunks = tonumber(transfer.receivedChunks) or 0, chunkCount = tonumber(transfer.chunkCount) or 0 }, "WHISPER", target)
+    receivedChunks = tonumber(transfer.receivedChunks) or 0, chunkCount = tonumber(transfer.chunkCount) or 0 }, ackChannel, ackTarget)
 end
 
 -- B05a evidence transport: the receiving side stages this as non-canonical
@@ -765,22 +1079,37 @@ function Sync.RelayAwardProposal(proposal)
   local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
   local coordinatorNameRealm = authority and authority.coordinator and authority.coordinator.displayName
   if not coordinatorNameRealm then return false, "COORDINATOR_UNKNOWN" end
-  if Dibs.Governance.NoteProposalRelayAttempt then Dibs.Governance.NoteProposalRelayAttempt(proposal.proposalId) end
+  if Dibs.Governance.NoteProposalRelayAttempt then
+    Dibs.Governance.NoteProposalRelayAttempt(proposal.proposalId, authority.coordinator.memberKey)
+  end
   local hashValue = Sync.CalculateContentHash(proposal)
   return Sync.SendDetail("AWARD_PROPOSAL", proposal.proposalId, 1, hashValue, proposal, coordinatorNameRealm)
 end
 
----Retries delivery of any locally pending (not-yet-acked) award proposals.
+---Retries pending award proposals after timeout, or immediately after coordinator handoff.
 ---Safe to call repeatedly (e.g. from the heartbeat); a no-op when nothing is pending.
 function Sync.RetryPendingAwardProposals()
   if not (Dibs.Governance and Dibs.Governance.GetRelayPendingProposals) then return 0 end
+  local authority = Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  local localMember = localSnapshot()
+  if not authority or authority.state ~= "ACTIVE" or not authority.coordinator or not localMember
+    or authority.coordinator.memberKey == localMember.memberKey then return 0 end
   local pending = Dibs.Governance.GetRelayPendingProposals()
   local retryable = {}
-  for index, proposal in ipairs(pending) do retryable[index] = proposal end
-  retryable = retryableRecords(retryable, 5, function(proposal) return proposal.relayAttempts end)
+  local now = time()
+  for _, proposal in ipairs(pending) do
+    local lastAttempt = tonumber(proposal.relayAttemptAt) or 0
+    local coordinatorChanged = proposal.coordinatorMemberKey ~= authority.coordinator.memberKey
+    local alreadyAcknowledged = proposal.relayStatus == "RELAY_ACKED" and not coordinatorChanged
+    if not alreadyAcknowledged and (coordinatorChanged or now - lastAttempt >= PROPOSAL_RETRY_INTERVAL) then
+      retryable[#retryable + 1] = proposal
+    end
+  end
   local count = 0
-  for _, proposal in pairs(retryable) do Sync.RelayAwardProposal(proposal) end
-  for _ in pairs(retryable) do count = count + 1 end
+  for _, proposal in ipairs(retryable) do
+    Sync.RelayAwardProposal(proposal)
+    count = count + 1
+  end
   return count
 end
 function Sync.AnnounceAwardCommit(commit)
@@ -854,7 +1183,7 @@ local function applyVaultDetail(payload, transfer, sender)
   return true, applyReason
 end
 
-function Sync.Receive(message, sender)
+function Sync.Receive(message, sender, channel)
   ensure(); expiry()
   if Sync.ContainsForbiddenLiveLootData and Sync.ContainsForbiddenLiveLootData(message) then return false, "FORBIDDEN_LIVE_LOOT_DATA" end
   local resolved, reason = validateEnvelope(message, sender)
@@ -868,7 +1197,8 @@ function Sync.Receive(message, sender)
   peer.addonVersion = message.addonVersion
   peer.protocol = copy(message.protocol)
   peer.protocolState = message.protocolState or "LEGACY_LOCAL"
-  if message.type == "DIGEST" or message.type == "LEDGER_DIGEST" or message.type == "VAULT_DIGEST" then
+  if message.type == "DIGEST" or message.type == "LEDGER_DIGEST" or message.type == "VAULT_DIGEST"
+    or message.type == "AWARD_RESERVATION_DIGEST" then
     peer.entities = peer.entities or {}
     local entityType = message.entityType or message.type
     peer.entities[entityType] = { revision = tonumber(message.revision) or 0, contentHash = message.contentHash, at = peer.at }
@@ -900,6 +1230,112 @@ function Sync.Receive(message, sender)
   if message.type == "HELLO" then
     if message.protocolState == "V2_ENFORCED" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
     return true, "HELLO"
+  end
+  if message.type == "CHANNEL_TEST" then
+    local testId, testChannel = message.testId, message.testChannel
+    local receivedChannel = channel or testChannel
+    if type(testId) ~= "string" or testId == "" or #testId > 128
+      or not CHANNEL_TEST_CHANNELS[testChannel] or not finiteInteger(message.startedAt) then
+      return false, "INVALID_CHANNEL_TEST"
+    end
+    if receivedChannel ~= testChannel then
+      recordChannelTest({ direction = "RECEIVE", channel = receivedChannel, peer = resolved.displayName,
+        status = "REJECTED", reasonCode = "CHANNEL_MISMATCH_EXPECTED_" .. tostring(testChannel), startedAt = time() })
+      return false, "CHANNEL_MISMATCH"
+    end
+    local ackTarget
+    if testChannel == "CHANNEL" then
+      if type(message.channelName) ~= "string" or type(GetChannelName) ~= "function" then
+        recordChannelTest({ direction = "RECEIVE", channel = testChannel, channelName = message.channelName,
+          peer = resolved.displayName, status = "REJECTED", reasonCode = "CUSTOM_CHANNEL_API_UNAVAILABLE", startedAt = time() })
+        return false, "CUSTOM_CHANNEL_API_UNAVAILABLE"
+      end
+      ackTarget = tonumber(GetChannelName(message.channelName))
+      if not ackTarget or ackTarget < 1 then
+        recordChannelTest({ direction = "RECEIVE", channel = testChannel, channelName = message.channelName,
+          peer = resolved.displayName, status = "REJECTED", reasonCode = "CUSTOM_CHANNEL_NOT_JOINED", startedAt = time() })
+        return false, "CUSTOM_CHANNEL_NOT_JOINED"
+      end
+    elseif testChannel == "WHISPER" then
+      ackTarget = resolved.displayName
+    end
+    if resolved.role ~= "gm" and resolved.role ~= "officer" then
+      local rejectionReason = "CHANNEL_TEST_OFFICER_REQUIRED"
+      local sent, sendReason = Sync.Send({ type = "CHANNEL_TEST_ACK", testId = testId,
+        testChannel = testChannel, result = "REJECTED", reasonCode = rejectionReason }, testChannel, ackTarget)
+      recordChannelTest({ testId = testId, direction = "RECEIVE", channel = testChannel, peer = resolved.displayName,
+        status = "REJECTED", reasonCode = rejectionReason, responseStatus = sent and "ACK_QUEUED" or "ACK_SEND_FAILED",
+        responseReasonCode = sendReason, startedAt = time() })
+      return false, rejectionReason
+    end
+    local sent, sendReason = Sync.Send({ type = "CHANNEL_TEST_ACK", testId = testId,
+      testChannel = testChannel, result = "RECEIVED", reasonCode = "CHANNEL_MESSAGE_VALIDATED" },
+      testChannel, ackTarget)
+    recordChannelTest({ testId = testId, direction = "RECEIVE", channel = testChannel,
+      peer = resolved.displayName, status = sent and "ACK_QUEUED" or "ACK_SEND_FAILED",
+      reasonCode = sent and "CHANNEL_MESSAGE_VALIDATED" or (sendReason or "ACK_SEND_FAILED"), startedAt = time() })
+    return true, sent and "CHANNEL_TEST_ACK_QUEUED" or "CHANNEL_TEST_ACK_SEND_FAILED"
+  end
+  if message.type == "CHANNEL_TEST_ACK" then
+    local testId = message.testId
+    if type(testId) ~= "string" or testId == "" or #testId > 128
+      or not CHANNEL_TEST_CHANNELS[message.testChannel]
+      or (message.result ~= "RECEIVED" and message.result ~= "REJECTED")
+      or type(message.reasonCode) ~= "string" then return false, "INVALID_CHANNEL_TEST_ACK" end
+    if (channel or message.testChannel) ~= message.testChannel then return false, "CHANNEL_MISMATCH" end
+    local state = channelTestState()
+    local pending = state.pending[testId]
+    if not pending then return true, "CHANNEL_TEST_ACK_LATE_OR_UNKNOWN" end
+    if pending.channel ~= message.testChannel then return false, "CHANNEL_TEST_ACK_WRONG_CHANNEL" end
+    pending.status = message.result == "RECEIVED" and "ACKNOWLEDGED" or "REMOTE_REJECTED"
+    pending.reasonCode = message.reasonCode
+    pending.responders = pending.responders or {}
+    pending.responders[#pending.responders + 1] = { player = resolved.displayName,
+      result = message.result, reasonCode = message.reasonCode, receivedAt = time() }
+    recordChannelTest(pending)
+    state.pending[testId] = nil
+    return true, "CHANNEL_TEST_ACK_APPLIED"
+  end
+  if message.type == "AWARD_RESERVATION_DIGEST" then
+    local entries = message.records
+    if resolved.role ~= "gm" and resolved.role ~= "officer" then return false, "RESERVATION_SENDER_AUTHORITY_REQUIRED" end
+    if type(entries) ~= "table" or #entries > MAX_INDEX or type(message.contentHash) ~= "string"
+      or hash(entries) ~= message.contentHash then return false, "INVALID_AWARD_RESERVATION_DIGEST" end
+    local validated, seen = {}, {}
+    for _, entry in ipairs(entries) do
+      if type(entry) ~= "table" or type(entry.proposalId) ~= "string" or entry.proposalId == ""
+        or type(entry.playerMemberKey) ~= "string" or type(entry.actorMemberKey) ~= "string"
+        or not finiteInteger(entry.amount) or tonumber(entry.amount) <= 0
+        or type(entry.seasonId) ~= "string" or entry.seasonId == ""
+        or entry.state ~= "PENDING" or not finiteInteger(entry.updatedAt)
+        or seen[entry.proposalId] then return false, "INVALID_AWARD_RESERVATION_DIGEST" end
+      if (entry.awardRef ~= nil and type(entry.awardRef) ~= "string")
+        or (entry.evidenceId ~= nil and type(entry.evidenceId) ~= "string") then
+        return false, "INVALID_AWARD_RESERVATION_DIGEST"
+      end
+      local player = member(entry.playerMemberKey)
+      local actor = member(entry.actorMemberKey)
+      if not player or not actor or (actor.role ~= "gm" and actor.role ~= "officer") then
+        return false, "INVALID_AWARD_RESERVATION_IDENTITY"
+      end
+      seen[entry.proposalId] = true
+      validated[#validated + 1] = copy(entry)
+    end
+    for _, entry in ipairs(validated) do
+      local tombstone = state.awardReservationTombstones[entry.proposalId]
+      if not tombstone or tonumber(entry.updatedAt) > (tonumber(tombstone.updatedAt) or 0) then
+        if reservationHasCanonicalCommit(entry) then
+          Sync.ClearAwardReservation(entry.proposalId)
+        else
+          local existing = state.awardReservations[entry.proposalId]
+          if not existing or tonumber(entry.updatedAt) >= (tonumber(existing.updatedAt) or 0) then
+            state.awardReservations[entry.proposalId] = entry
+          end
+        end
+      end
+    end
+    boundMap(state.awardReservations, MAX_INDEX)
+    return true, "AWARD_RESERVATIONS_APPLIED"
   end
   if message.type == "AWARD_PROPOSAL_ACK" then
     if type(message.proposalId) ~= "string" or message.proposalId == "" then return false, "INVALID_PROPOSAL_ACK" end
@@ -1004,15 +1440,15 @@ function Sync.Receive(message, sender)
     local current = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or { revision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.revision) or 0) then
       Sync.MarkSyncBehind("GOVERNANCE_PARENT_MISSING")
-      Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "GOVERNANCE", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash } } }, "WHISPER", resolved.displayName)
+      sendDetailFetch({ { entityType = "GOVERNANCE", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash } }, resolved.displayName)
       return true, "GOVERNANCE_DETAIL_REQUESTED"
     end
     if tonumber(message.revision) == (tonumber(current.revision) or 0) and message.contentHash ~= current.hash then return false, "GOVERNANCE_CONFLICT" end
     local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
     if message.baselineHash and baseline.legacyBaselineHash ~= message.baselineHash then
-      Sync.Send({ type = "DETAIL_FETCH", requests = { {
+      sendDetailFetch({ {
         entityType = "LEGACY_BASELINE", entityId = message.baselineHash, revision = 1, contentHash = message.baselineHash,
-      } } }, "WHISPER", resolved.displayName)
+      } }, resolved.displayName)
       return true, "LEGACY_BASELINE_REQUESTED"
     end
     return true, "GOVERNANCE_CURRENT"
@@ -1030,7 +1466,7 @@ function Sync.Receive(message, sender)
     if tonumber(message.revision) > (tonumber(current.policyRevision) or 0) then
       local state = ensure(); state.policyTarget = { revision = message.revision, contentHash = message.contentHash }
       Sync.MarkSyncBehind("POLICY_CHAIN_MISSING")
-      Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "OPERATIONAL_POLICY", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, parentRevision = message.parentRevision } } }, "WHISPER", resolved.displayName)
+      sendDetailFetch({ { entityType = "OPERATIONAL_POLICY", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, parentRevision = message.parentRevision } }, resolved.displayName)
       return true, "POLICY_DETAIL_REQUESTED"
     end
     if tonumber(message.revision) == (tonumber(current.policyRevision) or 0) and message.contentHash ~= current.hash then return false, "POLICY_CONFLICT" end
@@ -1048,7 +1484,7 @@ function Sync.Receive(message, sender)
     if tonumber(message.revision) > (tonumber(current.catalogRevision) or 0) then
       local state = ensure(); state.seasonCatalogTarget = { revision = message.revision, contentHash = message.contentHash }
       Sync.MarkSyncBehind("SEASON_CATALOG_PARENT_MISSING")
-      Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "SEASON_CATALOG", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, parentRevision = message.parentRevision } } }, "WHISPER", resolved.displayName)
+      sendDetailFetch({ { entityType = "SEASON_CATALOG", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, parentRevision = message.parentRevision } }, resolved.displayName)
       return true, "SEASON_CATALOG_DETAIL_REQUESTED"
     end
     if tonumber(message.revision) == (tonumber(current.catalogRevision) or 0) and message.contentHash ~= current.hash then return false, "SEASON_CATALOG_CONFLICT" end
@@ -1059,7 +1495,7 @@ function Sync.Receive(message, sender)
     local localSignal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
     if not localSignal or localSignal.contentHash ~= message.contentHash then
       Sync.MarkSyncBehind("AUTHORITY_DETAIL_MISSING")
-      Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "AUTHORITY_SIGNAL", entityId = message.entityId, revision = 1, contentHash = message.contentHash } } }, "WHISPER", resolved.displayName)
+      sendDetailFetch({ { entityType = "AUTHORITY_SIGNAL", entityId = message.entityId, revision = 1, contentHash = message.contentHash } }, resolved.displayName)
       return true, "AUTHORITY_DETAIL_REQUESTED"
     end
     return true, "AUTHORITY_CURRENT"
@@ -1208,7 +1644,7 @@ function Sync.Receive(message, sender)
         state.policyTarget = state.policyTarget or { revision = transfer.revision, contentHash = transfer.contentHash }
         Sync.MarkSyncBehind(applyReason)
         if type(payload) == "table" and finiteInteger(payload.parentRevision) and type(payload.parentHash) == "string" then
-          Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "OPERATIONAL_POLICY", entityId = tostring(payload.parentRevision), revision = payload.parentRevision, contentHash = payload.parentHash } } }, "WHISPER", resolved.displayName)
+          sendDetailFetch({ { entityType = "OPERATIONAL_POLICY", entityId = tostring(payload.parentRevision), revision = payload.parentRevision, contentHash = payload.parentHash } }, resolved.displayName)
         end
       elseif ok then clearResolvedPolicyGap() end
       return ok, applyReason
@@ -1220,7 +1656,7 @@ function Sync.Receive(message, sender)
         local state = ensure()
         state.seasonCatalogTarget = { revision = transfer.revision, contentHash = transfer.contentHash }
         Sync.MarkSyncBehind(applyReason)
-        Sync.Send({ type = "DETAIL_FETCH", requests = { { entityType = "SEASON_CATALOG", entityId = tostring(payload.parentRevision), revision = payload.parentRevision, contentHash = payload.parentHash } } }, "WHISPER", resolved.displayName)
+        sendDetailFetch({ { entityType = "SEASON_CATALOG", entityId = tostring(payload.parentRevision), revision = payload.parentRevision, contentHash = payload.parentHash } }, resolved.displayName)
       elseif ok then clearResolvedSeasonCatalogGap() end
       return ok, applyReason
     end
@@ -1256,6 +1692,7 @@ function Sync.Receive(message, sender)
       if Sync.CalculateContentHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
       local accepted, applyReason = Dibs.Governance.ReceiveRelayedProposal(payload, resolved.displayName)
       if accepted then
+        Sync.AnnounceAwardReservationDigest()
         Sync.Send({ type = "AWARD_PROPOSAL_ACK", proposalId = payload.proposalId, result = "RECEIVED" }, "WHISPER", resolved.displayName)
         -- Season-allocation grants are deterministic rank rules, not a loot judgment call; commit immediately.
         if payload.type == "SEASON_ALLOCATION" and Dibs.Ledger and Dibs.Ledger.CommitAwardProposal then
@@ -1286,19 +1723,26 @@ function Sync.OnAddonMessage(prefix, payload, channel, sender)
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
   local message = Dibs.Ace3.Deserialize(payload); if type(message) ~= "table" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
   Sync.TraceIncoming(prefix, channel, sender, message.type, #payload)
-  local guildOnly = message.type == "HELLO" or message.type == "DIGEST" or message.type == "LEDGER_DIGEST" or message.type == "VAULT_DIGEST"
-  if (guildOnly and channel ~= "GUILD") or (not guildOnly and channel ~= "WHISPER") then return false, "INVALID_TRANSPORT_CHANNEL" end
   local transfer = message.transferId and Dibs.runtime and Dibs.runtime.v2Transfers and Dibs.runtime.v2Transfers[message.transferId]
   if message.type == "TRANSFER_BEGIN" and message.entityType == "LEGACY_BASELINE" then
     transfer = { transferId = message.transferId, entityType = message.entityType, entityId = message.entityId }
   end
-  local accepted, reason = Sync.Receive(message, sender)
+  local expectedChannel = expectedTransportChannel(message, transfer)
+  local legacyWhisper = channel == "WHISPER" and expectedChannel == "GUILD" and allowsLegacyWhisper(message, transfer)
+  if channel ~= expectedChannel and not legacyWhisper then
+    if message.type == "CHANNEL_TEST" or message.type == "CHANNEL_TEST_ACK" then
+      recordChannelTest({ direction = "RECEIVE", channel = channel, peer = sender, status = "REJECTED",
+        reasonCode = "INVALID_TRANSPORT_CHANNEL_EXPECTED_" .. tostring(expectedChannel), startedAt = time() })
+    end
+    return false, "INVALID_TRANSPORT_CHANNEL"
+  end
+  local accepted, reason = Sync.Receive(message, sender, channel)
   if message.type == "TRANSFER_END" and not transfer and message.entityType == "LEGACY_BASELINE" then
     transfer = { transferId = message.transferId, entityType = message.entityType, entityId = message.entityId }
   end
   if transfer and transfer.entityType == "LEGACY_BASELINE"
     and (message.type == "TRANSFER_END" or (message.type == "TRANSFER_BEGIN" and not accepted)) then
-    sendTransferAck(sender, transfer, accepted, reason)
+    sendTransferAck(sender, transfer, accepted, reason, channel)
   end
   return accepted, reason
 end
@@ -1320,6 +1764,7 @@ function Sync.OnLifecycle(reason)
   Sync.Send({ type = "HELLO", protocolState = Sync.GetProtocolState(), lifecycle = reason }, "GUILD")
   local digest = Sync.BuildManifest(); local sent = Sync.Send(digest, "GUILD")
   Sync.Send(Sync.BuildVaultDigest(), "GUILD")
+  Sync.AnnounceAwardReservationDigest()
   retryVaultRequests()
   Sync.AnnounceGovernance()
   local sendGovernedDigests = function()

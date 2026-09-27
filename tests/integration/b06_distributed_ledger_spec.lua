@@ -150,12 +150,13 @@ describe("B06 coordinator distributed ledger", function()
     assert_true(accepted, tostring(reason))
     assert_equal("LEDGER_DETAIL_REQUESTED", reason)
 
-    local request
+    local request, requestChannel
     for _, sent in ipairs(follower.Ace3.libs.comm.sent) do
       local message = follower.Ace3.Deserialize(sent.payload)
-      if message and message.type == "DETAIL_FETCH" then request = message end
+      if message and message.type == "DETAIL_FETCH" then request, requestChannel = message, sent.channel end
     end
     assert_not_nil(request)
+    assert_equal("GUILD", requestChannel)
     assert_equal(4, #request.requests)
     assert_equal("7:1", request.requests[1].entityId)
     assert_equal("7:4", request.requests[4].entityId)

@@ -23,6 +23,7 @@ L.NOTIFY_AWARD_FINALIZED = "Finalized award recorded for %s."
 L.NOTIFY_DIB_CONSUMED = "Dib consumed for %s."
 L.NOTIFY_REQUEST_RESOLVED = "Request resolved for %s."
 L.NOTIFY_VAULT_RECORDED = "Great Vault acquisition recorded for %s."
+L.RC_DIBS_PENDING_COMMIT = "Awaiting coordinator commit: %s Dibs"
 
 L.AUTHORITY_INVALID_ACTION = "Unknown protected action."
 L.AUTHORITY_INVALID_ACTOR = "Unable to identify the actor."

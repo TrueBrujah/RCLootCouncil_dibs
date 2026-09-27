@@ -15,7 +15,8 @@ on top of the existing fields.
 | `itemID` / `itemLink` / `awardRef` / `evidenceId` | existing | Award evidence fields, unchanged. |
 | `submitterSnapshot` | Identity snapshot | New. The non-coordinator officer who recorded the proposal (needed so the coordinator's pending list can show "submitted by"). |
 | `raidContext` | string/nil | New, optional. Free-form label (e.g., group name) purely for the coordinator's pending-list UI; never used for authorization. |
-| `relayAttempts` | integer | New. Bounded retry counter for the local delivery queue (caps to avoid unbounded retry loops). |
+| `relayAttempts` | integer | New. Saturating retry counter for diagnostics; reaching the cap never stops delivery retries. |
+| `relayAttemptAt` | timestamp | New. Last relay time; retries are spaced by a fixed five-minute interval and resume after reconnect. |
 | `createdAt` | timestamp | Existing. |
 
 **Validation rules**:
@@ -25,15 +26,38 @@ on top of the existing fields.
 - Only the coordinator resolved via the current, verified `Governance`
   authority state may transition a proposal to `COMMITTED`
   (`Ledger.CommitAwardProposal`), never the submitter's own client.
-- `relayAttempts` is capped (bounded, matching existing `MAX_MESSAGES`-style
-  caps elsewhere in `SyncV2.lua`) to prevent an unreachable coordinator from
-  causing unbounded local queue growth.
+- `relayAttempts` saturates at its diagnostic cap but MUST NOT exhaust or remove
+  a pending proposal. The proposal queue remains bounded by `MAX_PROPOSALS`;
+  delivery retries continue every five minutes until acknowledgement.
 
 **State transitions**: `PENDING_RECONCILIATION` (local only) → `RELAY_PENDING`
 (WHISPER sent) → `RELAY_ACKED` (coordinator confirms receipt of the detail,
-independent of whether it has been committed yet) → `COMMITTED` (coordinator
-calls `Ledger.CommitAwardProposal`, then broadcasts the resulting
-`AWARD_COMMIT` through the existing, unchanged commit-broadcast path).
+independent of whether it has been committed yet; the proposal remains in the
+pending list) → `COMMITTED` (coordinator calls `Ledger.CommitAwardProposal`,
+then broadcasts the resulting `AWARD_COMMIT` through the existing, unchanged
+commit-broadcast path).
+
+## AwardReservation
+
+Represents the temporary DIB hold for a finalized award before its canonical
+commit. A bounded, paged `AWARD_RESERVATION_DIGEST` replicates these minimal
+records over GUILD; full proposal and loot evidence remains targeted to the
+coordinator.
+
+| Field | Type | Notes |
+|---|---|---|
+| `proposalId` | string | Stable idempotency key shared with the award proposal. |
+| `playerMemberKey` / `actorMemberKey` | string | Roster identities for the recipient and submitting officer. |
+| `seasonId` | string | Season whose available DIB balance is reserved. |
+| `amount` | integer | Positive amount held from the available balance. |
+| `state` | enum | `PENDING` until the matching canonical commit is applied. |
+| `timestamp` | number | Timestamp used to prefer newer replicated state. |
+| `awardRef` / `evidenceId` | string | References only; no item, vote, or loot details are broadcast. |
+
+The available balance is canonical balance minus distinct local and replicated
+pending reservations, floored at zero. A canonical `AWARD_COMMIT` clears the
+matching reservation and supplies the one ledger debit. Duplicate digests and
+commit replays MUST remain idempotent.
 
 ## SeasonCatalogRecord
 

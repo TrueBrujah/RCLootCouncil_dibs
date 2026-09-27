@@ -29,6 +29,7 @@ local STEPS = {
   { id = "ledger", label = "Ledger" },
   { id = "rclootcouncil", label = "RCLootCouncil" },
   { id = "sync", label = "Synchronization" },
+  { id = "operationalPolicy", label = "Guild Policy" },
   { id = "review", label = "Review" },
   { id = "readiness", label = "Readiness" },
 }
@@ -80,6 +81,47 @@ local function stepGuild()
     return { status = "OPTIONAL", summary = "No guild detected; running in unguilded/character scope." }
   end
   return { status = "READY", summary = "Guild: " .. tostring(guildName) }
+end
+
+local function initialOperationalPolicyValues()
+  local preDibModes = {}
+  local seasons = call(Dibs.Seasons and Dibs.Seasons.List, false) or {}
+  for _, season in ipairs(seasons) do
+    if season.id ~= nil then
+      local mode = call(Dibs.PreDibs and Dibs.PreDibs.GetModePolicy, season.id)
+      preDibModes[tostring(season.id)] = mode and mode.mode or "WILD_OPEN"
+    end
+  end
+  local channels = call(Dibs.PreDibs and Dibs.PreDibs.GetAnnouncementSettings) or {}
+  return {
+    allowPublicPreDibs = call(Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled) ~= false,
+    preDibModes = preDibModes,
+    announcementChannels = {
+      publicChannel = channels.publicChannel or "GUILD",
+      officerChannel = channels.officerChannel or "OFFICER",
+    },
+    modules = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleValues) or {},
+  }
+end
+
+local function stepOperationalPolicy()
+  local policy = Dibs.OperationalPolicy
+  local state = call(policy and policy.GetState) or {}
+  if state.status == "POLICY_ADOPTED" then
+    return { status = "READY", summary = "Guild Policy is adopted at revision " .. tostring(state.policyRevision) .. "." }
+  end
+  local governance = call(Dibs.Governance and Dibs.Governance.GetState) or {}
+  if governance.status ~= "GOVERNANCE_ADOPTED" then
+    return { status = "BLOCKED", summary = "Initialize Guild Configuration before adopting Guild Policy." }
+  end
+  if call(Dibs.Permissions and Dibs.Permissions.IsGM) ~= true then
+    return { status = "WARNING", summary = "Waiting for the Guild Master to review and adopt Guild Policy." }
+  end
+  return {
+    status = "ACTION_REQUIRED",
+    summary = "Review the local settings below, then explicitly adopt Guild Policy.",
+    detail = initialOperationalPolicyValues(),
+  }
 end
 
 local function stepAdministration()
@@ -249,7 +291,7 @@ end
 local STEP_STATUS = {
   installation = stepInstallation, guild = stepGuild, administration = stepAdministration,
   seasons = stepSeasons, rankRules = stepRankRules, allocationReconciliation = stepAllocationReconciliation,
-  preDibs = stepPreDibs, ledger = stepLedger,
+  preDibs = stepPreDibs, ledger = stepLedger, operationalPolicy = stepOperationalPolicy,
   rclootcouncil = stepRCLootCouncil, sync = stepSync,
 }
 
@@ -323,6 +365,12 @@ function Wizard.GetStatus(actor)
   return { steps = steps, overallState = overallState, mode = mode }
 end
 
+function Wizard.AdoptOperationalPolicy(actor)
+  local policy = Dibs.OperationalPolicy
+  if not policy or type(policy.AdoptInitial) ~= "function" then return false, "OPERATIONAL_POLICY_UNAVAILABLE" end
+  return policy.AdoptInitial(actor, initialOperationalPolicyValues(), "GUIDED_SETUP")
+end
+
 function Wizard.GetSteps()
   local copy = {}
   for _, definition in ipairs(STEPS) do copy[#copy + 1] = { id = definition.id, label = definition.label } end
@@ -336,10 +384,15 @@ end
 function Wizard.GetCurrentStepIndex()
   local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
   local index = tonumber(settings.wizardStepIndex)
-  if settings.wizardStepMigrationVersion ~= 1 then
+  if settings.wizardStepMigrationVersion ~= 1 and settings.wizardStepMigrationVersion ~= 2 then
     if index and index > 5 and index <= 12 then index = index + 1 end
     settings.wizardStepIndex = index
     settings.wizardStepMigrationVersion = 1
+  end
+  if settings.wizardStepMigrationVersion ~= 2 then
+    if index and index >= 12 and index <= 13 then index = index + 1 end
+    settings.wizardStepIndex = index
+    settings.wizardStepMigrationVersion = 2
   end
   if not index or index < 1 or index > #STEPS then return 1 end
   return math.floor(index)
@@ -349,7 +402,7 @@ function Wizard.SetCurrentStepIndex(index)
   local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings()
   if not settings then return Wizard.GetCurrentStepIndex() end
   local clamped = math.max(1, math.min(math.floor(tonumber(index) or 1), #STEPS))
-  settings.wizardStepIndex, settings.wizardStepMigrationVersion = clamped, 1
+  settings.wizardStepIndex, settings.wizardStepMigrationVersion = clamped, 2
   return clamped
 end
 

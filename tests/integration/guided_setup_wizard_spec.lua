@@ -25,6 +25,7 @@ end
 local function configuredGuild()
   local dibs = load("Tester-Realm", true)
   assert_true(dibs.Installation.Initialize(nil).ok)
+  assert_true(dibs.Wizard.AdoptOperationalPolicy(nil))
   local season = dibs.Seasons.GetCurrent()
   for _, rankIndex in ipairs({ 0, 1, 3 }) do
     publishRule(dibs, season.id, rankIndex, rankIndex == 0 and 1 or 0)
@@ -39,6 +40,30 @@ local function rankByIndex(rows, rankIndex)
 end
 
 describe("Dibs.Wizard status derivation", function()
+  it("adds an explicit GM policy adoption step and preserves the local policy inputs", function()
+    local dibs = load("Tester-Realm", true)
+    assert_true(dibs.Installation.Initialize(nil).ok)
+    local season = dibs.Seasons.GetCurrent()
+    local settings = dibs.GetDB().settings
+    settings.allowPublicPreDibs = false
+    settings.preDibAnnouncementChannel = "RAID"
+    settings.preDibOfficerAnnouncementChannel = "OFFICER"
+    dibs.GetDB().preDibs.modePolicies[season.id] = { seasonId = season.id, mode = "ENCOUNTER" }
+
+    local step = stepById(dibs.Wizard.GetStatus(), "operationalPolicy")
+    assert_equal("ACTION_REQUIRED", step.status)
+    assert_equal(false, step.detail.allowPublicPreDibs)
+    assert_equal("ENCOUNTER", step.detail.preDibModes[tostring(season.id)])
+    assert_equal("RAID", step.detail.announcementChannels.publicChannel)
+    assert_true(dibs.Wizard.AdoptOperationalPolicy(nil))
+
+    local adopted = dibs.OperationalPolicy.GetValues()
+    assert_equal(false, adopted.allowPublicPreDibs)
+    assert_equal("ENCOUNTER", adopted.preDibModes[tostring(season.id)])
+    assert_equal("RAID", adopted.announcementChannels.publicChannel)
+    assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "operationalPolicy").status)
+  end)
+
   it("reports NEW_INSTALLATION/FIRST_TIME_SETUP before any configuration exists", function()
     local dibs = load("Tester-Realm", true)
     local status = dibs.Wizard.GetStatus()
@@ -341,12 +366,55 @@ describe("Guided Setup Wizard UI", function()
     assert_equal("automaticDibs", frame.activeTab)
   end)
 
+  it("shows policy adoption only to the GM and removes the action after adoption", function()
+    local gm = load("Tester-Realm", true)
+    assert_true(gm.Installation.Initialize(nil).ok)
+    local saved = gm.DeepCopy(_G.RCLootCouncil_dibsDB)
+    local function policyIndex(dibs)
+      for index, step in ipairs(dibs.Wizard.GetStatus().steps) do
+        if step.id == "operationalPolicy" then return index end
+      end
+    end
+
+    local officer = load("Officer-Realm", false, saved)
+    officer.Wizard.SetCurrentStepIndex(policyIndex(officer))
+    local officerFrame = officer.OfficerUI.CreateWindow("wizard")
+    officerFrame:ActivateRoute("wizard")
+    assert_nil(findLatestWidget(function(widget)
+      return widget.kind == "Button" and widget.text == "Adopt and publish Guild Policy"
+    end))
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text == "Only the Guild Master can adopt Guild Policy."
+    end))
+
+    gm = load("Tester-Realm", true, saved)
+    gm.Wizard.SetCurrentStepIndex(policyIndex(gm))
+    local gmFrame = gm.OfficerUI.CreateWindow("wizard")
+    gmFrame:ActivateRoute("wizard")
+    local adoptButton = findLatestWidget(function(widget)
+      return widget.kind == "Button" and widget.text == "Adopt and publish Guild Policy"
+    end)
+    assert_not_nil(adoptButton)
+    local widgetsBeforeRefresh = #(_G.__dibsAceWidgets or {})
+    adoptButton.callbacks.OnClick(adoptButton, "OnClick")
+    assert_true(gm.OperationalPolicy.IsAdopted())
+    for index = widgetsBeforeRefresh + 1, #(_G.__dibsAceWidgets or {}) do
+      local widget = _G.__dibsAceWidgets[index]
+      assert_false(widget.kind == "Button" and widget.text == "Adopt and publish Guild Policy")
+    end
+  end)
+
   it("shows authoritative readiness findings and refreshes the affected rank in Review", function()
     local dibs, season = configuredGuild()
     dibs.SetupAssistant.Evaluate = function() return { status = "UNAVAILABLE", checks = {
       { id = "local_services", state = "unavailable", impact = "Transport unavailable", remediation = "Repair transport" },
     } } end
-    dibs.Wizard.SetCurrentStepIndex(12)
+    local reviewIndex
+    for stepIndex, step in ipairs(dibs.Wizard.GetStatus().steps) do
+      if step.id == "review" then reviewIndex = stepIndex break end
+    end
+    assert_not_nil(reviewIndex)
+    dibs.Wizard.SetCurrentStepIndex(reviewIndex)
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
     assert_not_nil(findLatestWidget(function(widget)

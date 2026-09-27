@@ -38,17 +38,36 @@ Receivers validate the message type, protocol version, sender identity, guild me
 ## V2 multi-raid behavior
 
 V2 is enabled only by an explicit GM governance record after baseline and
-compatible-writer checks. The active coordinator emits bounded `LEDGER_DIGEST`
-hints after persisting a commit; complete `AWARD_COMMIT` detail is fetched by
-WHISPER from that coordinator and applied only at the exact next sequence with
-the matching previous hash and content hash. A gap or branch conflict yields
-`SYNC_BEHIND`/conflict handling and cannot be skipped.
+compatible-writer checks. Guild-wide revision digests and shared detail
+transfers use the `GUILD` addon channel. The active coordinator emits bounded
+`LEDGER_DIGEST` hints after persisting a commit; peers request `AWARD_COMMIT`
+details in bounded batches over `GUILD`, and the coordinator broadcasts those
+commits to guild clients. Each receiver applies a commit only at the exact next
+sequence with the matching previous hash and content hash. A gap or branch
+conflict yields `SYNC_BEHIND`/conflict handling and cannot be skipped.
+
+Peers advertise `guildDetail`; newer clients use the guild route by default
+and retain a targeted fallback when talking to an older V2 peer without that
+capability. Receivers continue to accept that legacy targeted route.
+
+Targeted `WHISPER` transfers remain for owner-scoped Pre-Dib and Vault details,
+award proposals sent to the coordinator, recovery packages, orphaned evidence,
+and explicit sync probes. These exceptions preserve the existing ownership or
+recipient checks; they do not carry shared revision state.
 
 No coordinator or canonical Dibs consumption is allowed while the client is
 `SYNC_BEHIND`, `COORDINATOR_UNAVAILABLE`, or `RECOVERY_PENDING`. An award in
 those states is proposal evidence with `PENDING_RECONCILIATION`, not a debit.
 Normal handoff binds the predecessor epoch, final sequence, and root hash;
 forced recovery binds a GM-approved baseline hash and audit decisions.
+
+An uncommitted finalized DIB award also emits a bounded, paged
+`AWARD_RESERVATION_DIGEST` over `GUILD`. It contains only reservation identity,
+player/actor member keys, season, amount, state, timestamp, and evidence
+references; award and vote details remain targeted to the coordinator. Clients
+subtract each distinct pending reservation from available Dibs immediately,
+without changing the canonical ledger. Applying the matching canonical commit
+removes the reservation, so the debit is counted exactly once.
 
 Each raid can maintain its own encounter context. Sync never moves an item, a
 live RC candidate list, a vote, or an RC response between raids

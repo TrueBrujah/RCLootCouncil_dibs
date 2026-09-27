@@ -145,7 +145,7 @@ describe("B02b operational policy", function()
     assert_equal(1, guild:inspectCanonicalState(raidB.nameRealm).policyRevision)
   end)
 
-  it("uses B04 GUILD hints and WHISPER policy details without synchronizing presentation settings", function()
+  it("uses B04 GUILD hints and policy details without synchronizing presentation settings", function()
     local dibs = load(); adoptGovernance(dibs)
     assert_true(dibs.OperationalPolicy.AdoptInitial(nil, values(dibs)))
     local digest = remote(dibs, dibs.Sync.BuildOperationalPolicyDigest(), "Officer-Realm")
@@ -153,7 +153,7 @@ describe("B02b operational policy", function()
     local accepted, reason = dibs.Sync.Receive(digest, "Officer-Realm")
     assert_true(accepted); assert_equal("POLICY_DETAIL_REQUESTED", reason); assert_true(dibs.Sync.IsSyncBehind())
     local sent = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
-    assert_equal("WHISPER", sent.channel)
+    assert_equal("GUILD", sent.channel)
     local beforeLanguage = dibs.GetDB().settings.language
     local changed, changeReason = dibs.OperationalPolicy.Change(nil, { allowPublicPreDibs = false }, "notify")
     assert_true(changed, tostring(changeReason)); assert_equal(beforeLanguage, dibs.GetDB().settings.language)
