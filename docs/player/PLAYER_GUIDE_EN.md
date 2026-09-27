@@ -32,6 +32,33 @@ RCLootCouncil is optional. Standalone mode manages Dibs balances and requests
 without a live RCLootCouncil session. RCLootCouncil mode uses RCLootCouncil for
 loot voting and award finalization.
 
+## Guild Loot Rules
+
+On DIBS 0.7.x, the Guild Master explicitly adopts the guild's Loot Rules and
+publishes later changes. Officers consume the published snapshot read-only;
+local legacy values are not guild authority. Raid Readiness reports one of
+these states:
+
+- `GUILD_LOOT_RULES_READY`: this client has a valid published snapshot;
+- `LOCAL_LEGACY_ONLY`: local rules remain a pre-adoption fallback, not a shared
+  guild decision;
+- `GUILD_LOOT_RULES_NOT_CONFIGURED`: the GM has not adopted the rules;
+- `GUILD_LOOT_RULES_SYNC_BEHIND`: keep the last received guild snapshot active
+  and allow synchronization to recover;
+- `GUILD_LOOT_RULES_INCOMPATIBLE`: update DIBS before relying on shared rules;
+- `UNAVAILABLE`: supported loot types could not be loaded.
+
+The current 0.8.x family is required for synchronization with a 0.8.x guild.
+Clients on 0.7.x must update before they can synchronize with it.
+
+## Rank allocations
+
+Your starting allocation is recorded for the season. If your guild rank changes,
+an Officer may explicitly top up a positive difference after review. A lower
+expected allocation never removes Dibs already assigned to you, creates debt,
+or changes your balance through a negative adjustment. Ask an Officer if your
+starting allocation appears out of date.
+
 ## Slash commands
 
 ```text

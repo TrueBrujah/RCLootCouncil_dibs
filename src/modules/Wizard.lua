@@ -23,6 +23,7 @@ local STEPS = {
   { id = "administration", label = "Administration" },
   { id = "seasons", label = "Seasons" },
   { id = "rankRules", label = "Rank Rules" },
+  { id = "allocationReconciliation", label = "Allocation Reconciliation" },
   { id = "dibsRules", label = "Dibs Rules" },
   { id = "preDibs", label = "Pre-Dibs" },
   { id = "ledger", label = "Ledger" },
@@ -104,8 +105,19 @@ end
 local function stepRankRules()
   local seasonId = call(Dibs.GetCurrentSeasonId)
   local rows = call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId)
-  if type(rows) ~= "table" or #rows == 0 then
+  if type(rows) ~= "table" then
     return { status = "WARNING", summary = "Guild rank configuration cannot be verified." }
+  end
+  local catalog = call(Dibs.Seasons and Dibs.Seasons.GetCatalogState) or {}
+  local revision = tonumber(catalog.catalogRevision) or 0
+  local record = revision > 0 and call(Dibs.Seasons and Dibs.Seasons.GetCatalogRecord, revision) or nil
+  local publishedRules = record and record.rankRules and record.rankRules[tostring(seasonId)]
+  local currentRules = call(Dibs.RankRules and Dibs.RankRules.GetRulesForSeason, seasonId) or {}
+  local currentHash = Dibs.Sync and Dibs.Sync.CalculateContentHash and Dibs.Sync.CalculateContentHash(currentRules)
+  local publishedHash = publishedRules and Dibs.Sync and Dibs.Sync.CalculateContentHash
+    and Dibs.Sync.CalculateContentHash(publishedRules)
+  if revision < 1 or not record or not publishedRules or currentHash ~= publishedHash then
+    return { status = "ACTION_REQUIRED", summary = "Rank Rules are not published in the current SEASON_CATALOG revision.", rows = rows }
   end
   local actionRequired, warning, affected = 0, 0, {}
   for _, row in ipairs(rows) do
@@ -117,12 +129,45 @@ local function stepRankRules()
     end
   end
   if actionRequired > 0 then
-    return { status = "ACTION_REQUIRED", summary = "Rank allocation needs attention: " .. table.concat(affected, ", ") .. ".", rows = rows }
+    return { status = "ACTION_REQUIRED", summary = "Rank Rules need configuration: " .. table.concat(affected, ", ") .. ".", rows = rows }
   end
   if warning > 0 then
-    return { status = "WARNING", summary = "Rank allocation needs review: " .. table.concat(affected, ", ") .. ".", rows = rows }
+    return { status = "WARNING", summary = "Rank Rules need review: " .. table.concat(affected, ", ") .. ".", rows = rows }
   end
-  return { status = "READY", summary = "All active ranks have a configured rule.", rows = rows }
+  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then
+    return { status = "WARNING", summary = "Rank Rules are published, but SEASON_CATALOG synchronization is behind. Revision " .. tostring(revision) .. ".", rows = rows }
+  end
+  if #rows == 0 then
+    return { status = "READY", summary = "Rank Rules are published through SEASON_CATALOG revision " .. tostring(revision) .. "; no current rank rows need configuration.", rows = rows }
+  end
+  return { status = "READY", summary = "Rank Rules are configured and synchronized through SEASON_CATALOG revision " .. tostring(revision) .. ".", rows = rows }
+end
+
+local function stepAllocationReconciliation()
+  local seasonId = call(Dibs.GetCurrentSeasonId)
+  local rows = call(Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation, seasonId)
+  if type(rows) ~= "table" or #rows == 0 then
+    return { status = "WARNING", summary = "Member allocation reconciliation cannot be verified from the current roster." }
+  end
+  local needed, retained = 0, 0
+  local unknown = 0
+  for _, row in ipairs(rows) do
+    local difference = tonumber(row.difference)
+    if difference == nil then unknown = unknown + 1
+    elseif difference > 0 then needed = needed + 1
+    elseif difference < 0 then retained = retained + 1 end
+  end
+  if unknown > 0 then
+    return { status = "WARNING", summary = "Member allocation reconciliation cannot be verified for " .. tostring(unknown) .. " roster row(s)." }
+  end
+  if needed > 0 then
+    return { status = "ACTION_REQUIRED", summary = tostring(needed) .. " players need starting-allocation reconciliation.",
+      detail = { needsReconciliation = needed, keepGranted = retained } }
+  end
+  return { status = "READY", summary = retained > 0
+      and (tostring(retained) .. " existing allocations are retained after rank decreases.")
+      or "No member allocation top-ups are currently required.",
+    detail = { needsReconciliation = 0, keepGranted = retained } }
 end
 
 local function stepDibsRules(report)
@@ -203,7 +248,8 @@ end
 
 local STEP_STATUS = {
   installation = stepInstallation, guild = stepGuild, administration = stepAdministration,
-  seasons = stepSeasons, rankRules = stepRankRules, preDibs = stepPreDibs, ledger = stepLedger,
+  seasons = stepSeasons, rankRules = stepRankRules, allocationReconciliation = stepAllocationReconciliation,
+  preDibs = stepPreDibs, ledger = stepLedger,
   rclootcouncil = stepRCLootCouncil, sync = stepSync,
 }
 
@@ -290,6 +336,11 @@ end
 function Wizard.GetCurrentStepIndex()
   local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
   local index = tonumber(settings.wizardStepIndex)
+  if settings.wizardStepMigrationVersion ~= 1 then
+    if index and index > 5 and index <= 12 then index = index + 1 end
+    settings.wizardStepIndex = index
+    settings.wizardStepMigrationVersion = 1
+  end
   if not index or index < 1 or index > #STEPS then return 1 end
   return math.floor(index)
 end
@@ -298,7 +349,7 @@ function Wizard.SetCurrentStepIndex(index)
   local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings()
   if not settings then return Wizard.GetCurrentStepIndex() end
   local clamped = math.max(1, math.min(math.floor(tonumber(index) or 1), #STEPS))
-  settings.wizardStepIndex = clamped
+  settings.wizardStepIndex, settings.wizardStepMigrationVersion = clamped, 1
   return clamped
 end
 

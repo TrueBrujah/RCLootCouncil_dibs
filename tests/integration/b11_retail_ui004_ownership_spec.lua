@@ -100,6 +100,38 @@ describe("B11 Retail UI-004 ownership", function()
     assert_nil(host._dibsScrollingTable)
   end)
 
+  it("fits native table columns after localized action sizing", function()
+    local _, dibs = setup()
+    local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
+    dibs.Ace3.libs.scrollingTable = {
+      SORT_ASC = 1,
+      SORT_DSC = 2,
+      CreateST = function(_, columns, _, _, _, parent)
+        local tableFrame = _G.CreateFrame("Frame", nil, parent)
+        tableFrame.ClearAllPoints = function() end
+        return {
+          frame = tableFrame,
+          RegisterEvents = function() end,
+          SetData = function() end,
+        }
+      end,
+    }
+
+    local host = dibs.AceGUI.AddTable(shell, shell.window, {
+      { title = "Player", width = 150, minWidth = 50, priority = 1 },
+      { title = "Action", width = 48, minWidth = 48, action = true },
+    }, { { "Tester-Realm" } }, 100, function()
+      return { text = "RAPPROCHER", callback = function() end }
+    end, { widthHint = 232 })
+
+    local columns = host._dibsScrollingTable._dibsColumns
+    local availableWidth = 220
+    local requiredActionWidth = dibs.AceGUI.GetContentSizedActionWidth({ "RAPPROCHER" }, 48)
+    assert_true(columns[2].width >= requiredActionWidth)
+    assert_true(columns[1].width < 150)
+    assert_true(columns[1].width + columns[2].width <= availableWidth)
+  end)
+
   it("keeps Player and Officer trees isolated through repeated close and reopen", function()
     local _, dibs = setup()
     local player = dibs.PlayerUI.CreateWindow()

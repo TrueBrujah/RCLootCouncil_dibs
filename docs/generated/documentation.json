@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.6.5",
+  "addonVersion": "0.8.0",
   "concepts": [
     {
       "id": "guild.ledger.status",
@@ -85,7 +85,7 @@
       },
       "source": {
         "file": "src/modules/Seasons.lua",
-        "line": 159,
+        "line": 181,
         "symbol": "Dibs.Seasons.Create"
       }
     },
@@ -114,12 +114,12 @@
       },
       "content": {
         "label": {
-          "enUS": "Guild Setup",
+          "enUS": "Guild Configuration",
           "frFR": "Configuration de guilde"
         },
         "shortHelp": {
-          "enUS": "Guild Master workflow for reviewing existing Dibs data and activating this guild's shared Dibs ledger. Opening the page does not initialize it.",
-          "frFR": "Parcours reserve au maitre de guilde pour examiner les donnees Dibs existantes et activer le registre partage de la guilde. Ouvrir la page ne l'initialise pas."
+          "enUS": "Guild Master workflow for Guild Configuration: review existing Dibs data and activate this guild's shared Dibs ledger. Opening this page does not initialize it.",
+          "frFR": "Parcours du maitre de guilde pour la configuration de guilde : examinez les donnees Dibs existantes et activez le registre partage de cette guilde. Ouvrir cette page ne l'initialise pas."
         },
         "reference": {
           "enUS": "",
@@ -173,7 +173,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 222,
+        "line": 277,
         "symbol": "executeLedgerAdjust"
       }
     },
@@ -218,7 +218,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 580,
+        "line": 686,
         "symbol": "Ledger.AdminAdjust"
       }
     },
@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 685,
+        "line": 801,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -306,7 +306,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 651,
+        "line": 767,
         "symbol": "Ledger.GetBalance"
       }
     },
@@ -481,7 +481,7 @@
       },
       "source": {
         "file": "src/modules/Readiness.lua",
-        "line": 199,
+        "line": 200,
         "symbol": "Readiness.Evaluate"
       }
     },
@@ -704,6 +704,51 @@
       }
     },
     {
+      "id": "rank.reconciliation",
+      "module": "ProtectedActions",
+      "category": "rank-rules",
+      "lifecycle": {
+        "since": "0.8.0",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [
+        "rank.reconcile"
+      ],
+      "scope": "guild-season",
+      "audit": true,
+      "reasonRequired": true,
+      "helpKeys": {
+        "label": "DOC_RANK_RECONCILIATION_LABEL",
+        "shortHelp": "UI_HELP_RANK_RECONCILIATION",
+        "reference": ""
+      },
+      "content": {
+        "label": {
+          "enUS": "Rank Allocation Reconciliation",
+          "frFR": "Rapprochement des allocations par rang"
+        },
+        "shortHelp": {
+          "enUS": "Positive differences require an explicit, reasoned top-up through the canonical ledger. Existing allocations are never removed or converted to debt when a member's expected allocation decreases.",
+          "frFR": "Un ecart positif exige un complement explicite, motive et enregistre dans le registre canonique. Une baisse d'allocation attendue ne retire jamais les allocations existantes et ne cree aucune dette."
+        },
+        "reference": {
+          "enUS": "",
+          "frFR": ""
+        }
+      },
+      "source": {
+        "file": "src/modules/ProtectedActions.lua",
+        "line": 180,
+        "symbol": "executeRankReconcile"
+      }
+    },
+    {
       "id": "rclootcouncil.history.reconciliation",
       "module": "RCLootCouncil",
       "category": "ledger",
@@ -743,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3416,
+        "line": 3433,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
@@ -815,12 +860,12 @@
       },
       "content": {
         "label": {
-          "enUS": "Setup Assistant readiness",
-          "frFR": "Readiness de l'assistant de configuration"
+          "enUS": "Raid Readiness",
+          "frFR": "Preparation au raid"
         },
         "shortHelp": {
-          "enUS": "Checks whether this guild's configuration is operational for a raid and lists blockers with the next safe action.",
-          "frFR": "Verifie si la configuration actuelle de la guilde convient au raid et liste les blocages avec la prochaine action sure."
+          "enUS": "Raid Readiness answers whether DIBS is ready for this raid and lists blocking checks with their next actions.",
+          "frFR": "La preparation au raid indique si DIBS est pret pour ce raid et liste les controles bloquants avec leurs prochaines actions."
         },
         "reference": {
           "enUS": "",
@@ -829,7 +874,7 @@
       },
       "source": {
         "file": "src/ui/SetupAssistant.lua",
-        "line": 106,
+        "line": 117,
         "symbol": "SetupAssistant.Evaluate"
       }
     },
@@ -907,7 +952,7 @@
           "frFR": "Coordinateur"
         },
         "shortHelp": {
-          "enUS": "The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Setup.",
+          "enUS": "The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Configuration.",
           "frFR": "Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration."
         },
         "reference": {
@@ -917,7 +962,7 @@
       },
       "source": {
         "file": "src/modules/Governance.lua",
-        "line": 416,
+        "line": 423,
         "symbol": "Governance.GetAuthorityState"
       }
     },
@@ -960,7 +1005,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 268,
+        "line": 280,
         "symbol": "Sync.GetPeerStatuses"
       }
     },
@@ -1002,7 +1047,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 486,
+        "line": 498,
         "symbol": "Sync.SetProtocolState"
       }
     },
@@ -1133,7 +1178,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 239,
+        "line": 251,
         "symbol": "Sync.GetStatus"
       }
     }

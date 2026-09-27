@@ -13,8 +13,9 @@ The first-installation assistant is an Officer-only setup surface. Players can
 continue using the normal player guide; administrative checklist details and
 protected setup controls are not exposed to players.
 
-This guide describes the 0.6.5 B12 release. Live Retail behavior
-still requires the final validation listed in the [B12 Retail evidence record](../audits/B12_Retail_Validation_Evidence.md).
+The guides include the 0.7.0 guild Loot Rules authority workflow. The 0.6.5
+B12 Retail evidence remains historical; current Retail behavior still requires
+the manual validation gate in the feature audit.
 
 ## What is a Dib?
 

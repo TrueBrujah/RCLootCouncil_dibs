@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.0 - Guild Loot Rules and rank allocation reconciliation - 2026-09-26
+
+- Add explicit GM adoption and publication of guild Loot Rules through the
+  revisioned season catalog; Officers consume the published rules read-only.
+- Preserve existing local Loot Rules as draft/fallback values and prevent
+  catalog receipt from overwriting those maps. After adoption, guild rules are
+  effective and synchronization lag does not fall back to local choices.
+- Require the 0.8.x addon family for the versioned catalog payload; 0.7.x peers
+  are rejected by the existing update-required compatibility gate.
+
+- Add current-roster Automatic Dibs reconciliation with explicit, reasoned
+  positive top-ups through the canonical coordinator ledger.
+- Preserve granted allocations on demotion; negative differences never create
+  clawbacks, negative adjustments, or debt.
+- Revalidate proposal snapshots at the coordinator, hash immutable audit basis,
+  and require the 0.8.x peer family for compatible synchronization.
+- Separate rank-rule publication from member allocation reconciliation in
+  Guided Setup and retain the legacy Assignments surface through the protected
+  reconciliation service.
+
 ## 0.6.5 - B12 release hardening and guild synchronization - 2026-09-22
 
 - Stabilize Player and Officer route ownership, shared context-menu cleanup,

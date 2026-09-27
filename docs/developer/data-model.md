@@ -18,6 +18,10 @@ The active database is a guild bucket returned by `Dibs.GetDB()`. The current gu
 
 Pre-Dibs requests move through `pending -> confirmed -> fulfilled`, with `cancelled` or `invalidated` terminal branches. Sync revisions are monotonic and idempotent. Disputes move through open, review/waiting, resolved, and reopened states. Reconciliation candidates remain ambiguous until confirmed or rejected; confirmation is the only path that records a historical ledger award.
 
+## Rank allocation reconciliation
+
+`SEASON_ALLOCATION` is a positive assigned-allocation event, distinct from a balance adjustment. Manual reconciliation stores its target and requester identity snapshots, current rank, expected and assigned-before values, season catalog revision/hash, governance and operational-policy revisions, coordinator epoch, and deterministic operation key in the transaction content covered by the canonical hash. Non-coordinator requests remain `AWARD_PROPOSAL` records until the coordinator revalidates the live basis and emits the canonical `AWARD_COMMIT`. A negative difference is informational only: assigned allocation is retained and no transaction is written.
+
 ## Database tree
 
 ```text

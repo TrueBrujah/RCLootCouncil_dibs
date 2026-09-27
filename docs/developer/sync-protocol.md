@@ -5,13 +5,27 @@
 ## Addon version compatibility
 
 V2 envelopes include `addonVersion`. Clients are compatible only when their
-semantic-version `major.minor` family matches: `0.6.2`, `0.6.4`, and
-`0.6.5` are compatible with one another. A different family, such as
-`0.7.x`, is rejected with `ADDON_UPDATE_REQUIRED` before any sync payload is
-applied. The last verified mismatch is retained for Officer UI and the debug
-report. A legacy peer that does not yet send `addonVersion` remains observable
-as unknown so an upgrade can be planned without treating an unverified value
-as a compatible claim.
+semantic-version `major.minor` family matches. The 0.8.x family carries the
+rank-reconciliation transaction and proposal contract; 0.7.x peers are rejected with
+`ADDON_UPDATE_REQUIRED` before any sync payload is applied. The last verified
+mismatch is retained for Officer UI, Loot Rules readiness, and the debug
+report. A legacy peer that does not send `addonVersion` remains observable as
+unknown rather than being treated as a compatible claim.
+
+The existing `SEASON_CATALOG` entity carries the versioned
+`guildConfiguration.guildLootRules` schema-v1 snapshot. It includes one
+Adventure Guide and one RCLootCouncil decision for every dynamically supported
+loot type and remains covered by the catalog hash and parent revision chain.
+Only explicit GM adoption/publication changes that snapshot. Legacy local maps
+are preserved and excluded from generic catalog replication. Officers consume
+the last validated snapshot read-only. A rejected or missing-parent revision
+does not change effective rules or the DIBS-owned RCLootCouncil projection.
+
+Loot Rules readiness distinguishes `GUILD_LOOT_RULES_READY`,
+`GUILD_LOOT_RULES_NOT_CONFIGURED`, `LOCAL_LEGACY_ONLY`,
+`GUILD_LOOT_RULES_SYNC_BEHIND`, `GUILD_LOOT_RULES_INCOMPATIBLE`, and
+`UNAVAILABLE`. Catalog lag keeps the last valid guild snapshot effective and
+visible in readiness; it must not trigger local fallback.
 
 ## Message types
 

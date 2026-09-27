@@ -120,6 +120,7 @@ local function canonicalContent(tx)
     transactionId = tx.transactionId, actionType = tx.actionType, memberKey = tx.memberKey,
     identitySnapshot = canonicalSnapshot(tx.identitySnapshot), seasonId = tx.seasonId,
     amount = tx.amount, reason = tx.reason, source = tx.source,
+    reconciliation = tx.reconciliation,
     evidence = { evidenceId = tx.evidenceId, awardRef = tx.awardRef, itemID = tx.itemID, itemLink = tx.itemLink, sourceStatus = tx.sourceStatus, response = tx.response, reviewRequestId = tx.reviewRequestId, originalTransactionId = tx.originalTransactionId, correctionKey = tx.correctionKey, confirmation = tx.confirmation },
     actor = { actorId = tx.actorId, identitySnapshot = canonicalSnapshot(tx.actorSnapshot), authority = tx.context and tx.context.authority, action = tx.context and tx.context.action },
     debtPolicy = tx.debtPolicy,
@@ -216,6 +217,84 @@ local function createMemberSnapshot(value)
   return snapshot
 end
 
+function Ledger.GetRankReconciliationSnapshot(playerName, seasonId)
+  if not v2Enforced() then return nil, "V2_ENFORCED_REQUIRED" end
+  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return nil, "SYNC_BEHIND" end
+  local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
+  if targetSeason ~= (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()) then return nil, "STALE_SEASON" end
+  local authorityState = authority()
+  if not authorityState or authorityState.state ~= "ACTIVE" or not authorityState.coordinator
+    or not finiteInteger(authorityState.ledgerEpoch) then return nil, "COORDINATOR_UNAVAILABLE" end
+  local resolved = Dibs.Identity and Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember(playerName)
+  if not resolved or resolved.status ~= "RESOLVED" then return nil, resolved and resolved.status or "ROSTER_UNAVAILABLE" end
+  local targetSnapshot, identityReason = createMemberSnapshot(resolved.displayName)
+  if not targetSnapshot then return nil, identityReason end
+  if targetSnapshot.memberKey ~= resolved.memberKey then return nil, "STALE_TARGET" end
+  local rankInfo = Dibs.RankRules and Dibs.RankRules.GetPlayerRankInfo and Dibs.RankRules.GetPlayerRankInfo(resolved.displayName)
+  if type(rankInfo) ~= "table" or tonumber(rankInfo.rankIndex) == nil then return nil, "RANK_UNAVAILABLE" end
+  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
+  local catalogRevision = tonumber(catalog.catalogRevision)
+  if not finiteInteger(catalogRevision) or catalogRevision < 1 or type(catalog.hash) ~= "string" or catalog.hash == "GENESIS" then
+    return nil, "SEASON_CATALOG_UNPUBLISHED"
+  end
+  local expected = Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer
+    and tonumber(Dibs.RankRules.GetAllocationForPlayer(resolved.displayName, targetSeason))
+  if not finiteInteger(expected) or expected < 0 then return nil, "RANK_RULE_INVALID" end
+  local playerState = Ledger.GetPlayerState(resolved.displayName, targetSeason) or {}
+  local assigned = tonumber(playerState.allocation) or 0
+  if not finiteInteger(assigned) or assigned < 0 then return nil, "ASSIGNED_ALLOCATION_INVALID" end
+  local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+  local policyState = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or {}
+  local snapshot = {
+    playerName = resolved.displayName, targetSnapshot = targetSnapshot, targetMemberKey = resolved.memberKey,
+    seasonId = targetSeason, currentSeasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or targetSeason,
+    currentRankIndex = tonumber(rankInfo.rankIndex), currentRankName = rankInfo.rankName or "Guild Member",
+    expectedAllocation = expected, assignedBefore = assigned, seasonCatalogRevision = catalogRevision,
+    seasonCatalogHash = catalog.hash, governanceRevision = tonumber(governanceState.revision) or 0,
+    operationalPolicyRevision = tonumber(policyState.policyRevision) or 0, reconciliationMode = "MANUAL",
+    authorityEpoch = tonumber(authorityState.ledgerEpoch), coordinatorMemberKey = authorityState.coordinator.memberKey,
+  }
+  local operationBasis = {
+    targetMemberKey = snapshot.targetMemberKey, seasonId = snapshot.seasonId,
+    currentRankIndex = snapshot.currentRankIndex, currentRankName = snapshot.currentRankName,
+    expectedAllocation = snapshot.expectedAllocation, assignedBefore = snapshot.assignedBefore,
+    seasonCatalogRevision = snapshot.seasonCatalogRevision, seasonCatalogHash = snapshot.seasonCatalogHash,
+    governanceRevision = snapshot.governanceRevision, operationalPolicyRevision = snapshot.operationalPolicyRevision,
+    authorityEpoch = snapshot.authorityEpoch, coordinatorMemberKey = snapshot.coordinatorMemberKey,
+  }
+  local serialized, serializeReason = canonicalSerialize(operationBasis)
+  if not serialized then return nil, serializeReason end
+  snapshot.operationKey = contentHash(serialized)
+  return snapshot
+end
+
+local function validateRankReconciliation(reconciliation, playerName, amount)
+  if type(reconciliation) ~= "table" or reconciliation.schema ~= 1 then return false, "INVALID_RECONCILIATION_CONTEXT" end
+  local current, currentReason = Ledger.GetRankReconciliationSnapshot(playerName, reconciliation.seasonId)
+  if not current then return false, currentReason end
+  if current.targetMemberKey ~= reconciliation.targetMemberKey then return false, "STALE_TARGET" end
+  if current.seasonId ~= reconciliation.seasonId or current.currentSeasonId ~= reconciliation.currentSeasonId then return false, "STALE_SEASON" end
+  if current.currentRankIndex ~= reconciliation.currentRankIndex or current.currentRankName ~= reconciliation.currentRankName then return false, "STALE_RANK" end
+  if current.seasonCatalogRevision ~= reconciliation.seasonCatalogRevision or current.seasonCatalogHash ~= reconciliation.seasonCatalogHash then return false, "STALE_CATALOG" end
+  if current.assignedBefore ~= reconciliation.assignedBefore then return false, "STALE_ASSIGNMENT" end
+  if current.expectedAllocation ~= reconciliation.expectedAllocation then return false, "STALE_EXPECTATION" end
+  if current.governanceRevision ~= reconciliation.governanceRevision
+    or current.operationalPolicyRevision ~= reconciliation.operationalPolicyRevision
+    or current.reconciliationMode ~= reconciliation.reconciliationMode
+    or current.authorityEpoch ~= reconciliation.authorityEpoch
+    or current.coordinatorMemberKey ~= reconciliation.coordinatorMemberKey then return false, "AUTHORITY_CHANGED" end
+  if current.operationKey ~= reconciliation.operationKey then return false, "STALE_OPERATION" end
+  if amount ~= current.expectedAllocation - current.assignedBefore or amount <= 0 then return false, "STALE_DELTA" end
+  local requester = reconciliation.requestedBySnapshot
+  local resolvedRequester = requester and Dibs.Identity and Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember(requester.displayName)
+  if not requester or not resolvedRequester or resolvedRequester.status ~= "RESOLVED"
+    or resolvedRequester.memberKey ~= requester.memberKey then return false, "REQUESTER_UNAVAILABLE" end
+  local requesterRole = Dibs.Permissions and Dibs.Permissions.GetGuildRole
+    and Dibs.Permissions.GetGuildRole(requester.displayName)
+  if requesterRole ~= "gm" and requesterRole ~= "officer" then return false, "REQUESTER_AUTHORITY_CHANGED" end
+  return true, current
+end
+
 local function authorize(context, actionType)
   context = context or {}
   if context.systemBootstrap == true then
@@ -282,6 +361,7 @@ local function buildDetachedTransaction(context, input)
     confirmation = input.confirmation == true or nil, createdAt = timestamp, timestamp = timestamp,
     actorId = authorization.actorId, actorSnapshot = copy(authorization.actorSnapshot),
     context = { authority = authorization.authority, action = authorization.action, authorization = authorization.reasonCode }, debtPolicy = debtPolicy,
+    reconciliation = type(input.reconciliation) == "table" and copy(input.reconciliation) or nil,
   }
   local hash, hashReason = transactionCanonicalHash(tx); if not hash then return nil, hashReason end
   tx.canonicalContentHash = hash
@@ -369,6 +449,24 @@ function Ledger.CommitAwardProposal(context, proposalId, awardEvidence)
   if not proposal or proposal.status ~= "PENDING_RECONCILIATION" then return { accepted = false, reasonCode = "PROPOSAL_NOT_PENDING" } end
   evidence.playerName = evidence.playerName or proposal.playerSnapshot.displayName
   evidence.proposalId = proposal.proposalId
+  if proposal.reconciliation then
+    evidence.reconciliation = copy(proposal.reconciliation)
+    evidence.reconciliation.proposalId = proposal.proposalId
+    evidence.amount = evidence.amount or proposal.amount
+    local valid, validationReason = validateRankReconciliation(evidence.reconciliation, evidence.playerName, tonumber(evidence.amount))
+    if not valid then
+      if string.match(tostring(validationReason), "^STALE_") or validationReason == "AUTHORITY_CHANGED" then
+        if Dibs.Governance and Dibs.Governance.ResolveAwardProposal then
+          Dibs.Governance.ResolveAwardProposal(proposal.proposalId, "STALE", validationReason)
+        end
+      elseif validationReason ~= "SYNC_BEHIND" and validationReason ~= "COORDINATOR_UNAVAILABLE" then
+        if Dibs.Governance and Dibs.Governance.ResolveAwardProposal then
+          Dibs.Governance.ResolveAwardProposal(proposal.proposalId, "REJECTED", validationReason)
+        end
+      end
+      return { accepted = false, reasonCode = validationReason, proposalId = proposal.proposalId }
+    end
+  end
   local result
   if proposal.type == "SEASON_ALLOCATION" then
     evidence.amount = evidence.amount or proposal.amount
@@ -407,7 +505,12 @@ function Ledger.ApplyAwardCommit(commit, sender)
   local expectedHash, hashReason = canonicalCommitHash(commit)
   if not expectedHash or expectedHash ~= commit.commitHash then return { accepted = false, reasonCode = hashReason or "COMMIT_HASH_MISMATCH" } end
   if known then
-    if known.commitHash == commit.commitHash then return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) } end
+    if known.commitHash == commit.commitHash then
+      if commit.proposalId and Dibs.Governance and Dibs.Governance.MarkAwardProposalCommitted then
+        Dibs.Governance.MarkAwardProposalCommitted(commit.proposalId, known)
+      end
+      return { accepted = true, idempotentReplay = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) }
+    end
     return { accepted = false, reasonCode = "CANONICAL_POSITION_CONFLICT" }
   end
   if commit.sequence ~= canonical.nextSeq then
@@ -427,6 +530,9 @@ function Ledger.ApplyAwardCommit(commit, sender)
   appendValidated(copy(commit.transaction))
   canonical.commits[key], canonical.positions[key], canonical.transactionIndex[commit.canonicalTransactionId] = copy(commit), commit.commitHash, key
   canonical.nextSeq, canonical.rootHash = canonical.nextSeq + 1, commit.commitHash
+  if commit.proposalId and Dibs.Governance and Dibs.Governance.MarkAwardProposalCommitted then
+    Dibs.Governance.MarkAwardProposalCommitted(commit.proposalId, commit)
+  end
   return { accepted = true, idempotentReplay = false, reasonCode = "CANONICAL_APPLIED", value = copy(commit) }
 end
 
@@ -596,20 +702,30 @@ function Ledger.RegisterSeasonAllocation(playerName, seasonId, amount, reason, a
     playerName = playerName or Dibs.GetPlayerName(), amount = numeric,
     reason = reason or "Season allocation", source = audit and (audit.source or "rank_reconciliation") or "system", seasonId = seasonId or Dibs.GetCurrentSeasonId(),
     transactionId = audit and audit.transactionId, rankIndex = audit and audit.rankIndex, rankName = audit and audit.rankName,
-    expectedAllocation = audit and audit.expectedAllocation,
+    expectedAllocation = audit and audit.expectedAllocation, reconciliation = audit and audit.reconciliation,
   })
-  return result.value, result.reasonCode
+  return result.value, result.reasonCode, result
 end
 
 -- B06 canonical command mirroring CommitDibUse for automatic/manual season-allocation grants.
 function Ledger.CommitSeasonAllocation(context, evidence)
   local input = copy(evidence or {}); input.type, input.actionType = "SEASON_ALLOCATION", "SEASON_ALLOCATION"
   input.amount = math.abs(tonumber(input.amount) or 1)
+  if input.reconciliation then
+    if not v2Enforced() then return { accepted = false, idempotentReplay = false, reasonCode = "V2_ENFORCED_REQUIRED" } end
+    local valid, validationReason = validateRankReconciliation(input.reconciliation, input.playerName, input.amount)
+    if not valid then return { accepted = false, idempotentReplay = false, reasonCode = validationReason } end
+  end
   if not v2Enforced() then return Ledger.CommitLocalTransaction(context, input) end
   local authorityState = authority(); local coordinator, coordinatorReason = localCoordinator(authorityState, context and context.actor)
   if not coordinator then return { accepted = false, idempotentReplay = false, reasonCode = coordinatorReason, proposal = proposalFor(context, input) } end
   local ledger = ensureState(); local canonical, canonicalReason = canonicalStateForAuthority(ledger, authorityState)
   if not canonical then return { accepted = false, idempotentReplay = false, reasonCode = canonicalReason } end
+  if input.reconciliation then
+    input.transactionId = "rank-reconcile-" .. tostring(authorityState.ledgerEpoch) .. "-" .. tostring(input.reconciliation.operationKey)
+    input.reconciliation = copy(input.reconciliation)
+    input.reconciliation.proposalId = input.proposalId
+  end
   input.seasonId = input.seasonId or Dibs.GetCurrentSeasonId()
   if context and context.systemBootstrap == true then
     local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(input.playerName) or normalizeLegacyPlayerKey(input.playerName)
@@ -618,7 +734,7 @@ function Ledger.CommitSeasonAllocation(context, evidence)
       return { accepted = false, idempotentReplay = false, reasonCode = "SEASON_ALLOCATION_EXISTS" }
     end
   end
-  local tx, txReason = buildDetachedTransaction({ action = (context and context.action) or "ledger.adjust", actor = coordinator.displayName, b06Canonical = true }, input)
+  local tx, txReason = buildDetachedTransaction({ action = (context and context.action) or (input.reconciliation and "rank.reconcile") or "ledger.adjust", actor = coordinator.displayName, b06Canonical = true }, input)
   if not tx then return { accepted = false, idempotentReplay = false, reasonCode = txReason } end
   local existing = ledger.transactions[tx.transactionId]
   if existing then

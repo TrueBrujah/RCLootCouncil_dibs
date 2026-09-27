@@ -51,3 +51,15 @@ Developer mode and DryRun are test/dev-only surfaces. They must not bypass permi
 The developer sandbox is bounded and fail-closed. `SANDBOX_STORE_TOO_LARGE` is a
 developer-only retained-store limitation; Developer Mode is off by default and
 normal production state must remain isolated when the limit is reached.
+
+The 0.7.0 guild Loot Rules slice is exercised with:
+
+```powershell
+$env:DIBS_TEST_FILES = "tests/unit/guild_loot_rules_spec.lua;tests/integration/guild_loot_rules_spec.lua;tests/integration/guild_loot_rules_ui_spec.lua;tests/integration/season_catalog_sync_spec.lua;tests/integration/sync_status_spec.lua"
+npx.cmd --yes fengari tests/run.lua
+Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
+```
+
+The `LRA01`-`LRA22` scenarios cover adoption, publication, all dynamic keys,
+catalog recovery, readiness, old-peer rejection, and raid-time application.
+Retail two-client verification remains a separate release gate.

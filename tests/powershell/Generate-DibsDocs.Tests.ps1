@@ -300,6 +300,12 @@ Describe 'DIBS source-driven documentation foundation' {
       $concept.label.enUS | Should Not BeNullOrEmpty
       $concept.label.frFR | Should Not BeNullOrEmpty
     }
+    $guildSetup = $model.Concepts | Where-Object { $_.id -eq 'guild.setup' }
+    $readiness = $model.Concepts | Where-Object { $_.id -eq 'setup.assistant.readiness' }
+    $guildSetup.label.enUS | Should Be 'Guild Configuration'
+    $guildSetup.label.frFR | Should Be 'Configuration de guilde'
+    $readiness.label.enUS | Should Be 'Raid Readiness'
+    $readiness.label.frFR | Should Be 'Preparation au raid'
   }
 
   It 'keeps technical relay documentation out of Player output' {

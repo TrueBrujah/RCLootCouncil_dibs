@@ -1,4 +1,7 @@
-# RCLootCouncil_dibs 0.6.5
+# RCLootCouncil_dibs
+
+Development compatibility baseline: **0.8.0**. Latest stable publication:
+**0.6.5**.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -15,7 +18,8 @@ guild Dibs ledger, reservations, permissions, and audit history.
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. The 0.6.5 build
-is the current stable publication.
+is the current stable publication; development builds use the 0.8.x
+compatibility family and reject 0.7.x peers until they update.
 Live Retail validation remains an operational check documented in the [B12
 Retail evidence record](docs/audits/B12_Retail_Validation_Evidence.md). Two-client
 validation is conditional and is not required for the B12 presentation-only scope.
@@ -27,6 +31,8 @@ validation is conditional and is not required for the B12 presentation-only scop
 - Append-only ledger and auditable transaction history.
 - Player Pre-Dib requests with optional raid and Encounter Journal flows.
 - Player and Officer interfaces with shared settings.
+- Explicit GM adoption and publication of guild-wide Loot Rules, consumed by
+   DIBS eligibility and RCLootCouncil button projections.
 - Standalone operation when RCLootCouncil is absent.
 - Optional RCLootCouncil Master Looter integration.
 - RCLootCouncil item-family mapping and an installation assistant for Dibs buttons.
@@ -69,7 +75,8 @@ delta, request reference, and canonical event/reference.
 
 ### Installation
 
-1. Download the stable 0.6.5 ZIP.
+1. Download the stable 0.6.5 ZIP, or use the 0.7.x development build when the
+   guild Loot Rules authority feature is required.
 2. Extract it into `World of Warcraft/_retail_/Interface/AddOns/`.
 3. Confirm that the extracted folder is named `RCLootCouncil_dibs` and contains
    `RCLootCouncil_dibs.toc` directly inside it.
@@ -91,14 +98,17 @@ includes its required libraries and declares RCLootCouncil as optional.
    choose **Curio + Tier Set** or **Standard loot + collections**. Use **Refresh
    Dibs buttons** after changing RCLootCouncil's enabled button sets.
 6. Choose the Pre-Dib mode, announcement channels, and supported loot types.
-7. Review **Overview** to confirm the season, permissions, and integration status.
-8. Open **RCLootCouncil > Dibs > RCLootCouncil > Raid Readiness & Dry-Run** and
+7. Review the complete Loot Rules draft and explicitly adopt it as the Guild
+   Master. Later changes remain drafts until explicitly published. Officers
+   consume the published snapshot read-only.
+8. Review **Overview** to confirm the season, permissions, Loot Rules, and integration status.
+9. Open **RCLootCouncil > Dibs > RCLootCouncil > Raid Readiness & Dry-Run** and
    run the readiness check before a raid. Use the dry-run form to validate a
    test item, winner, response, finalization status, and synthetic session ID.
-9. Open the **Data** tab for safety backups, named local/guild profiles, and
+10. Open the **Data** tab for safety backups, named local/guild profiles, and
    portable package transfer. Every restore or import shows a preview and
    requires an explicit confirmation.
-10. Open **System > Modules** to review optional features. The GM can disable
+11. Open **System > Modules** to review optional features. The GM can disable
    and later re-enable them without deleting their stored data.
 
 Only the current guild master and officers selected by the configured guild

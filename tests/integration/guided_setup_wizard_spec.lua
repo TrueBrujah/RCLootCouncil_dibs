@@ -15,12 +15,19 @@ local function stepById(status, id)
   end
 end
 
+local function publishRule(dibs, seasonId, rankIndex, allocation)
+  local result = dibs.ProtectedActions.Execute("rank.set", nil, {
+    seasonId = seasonId, rankIndex = rankIndex, rankName = "Rank " .. rankIndex, allocation = allocation,
+  })
+  assert_true(result.ok, tostring(result.diagnostic))
+end
+
 local function configuredGuild()
   local dibs = load("Tester-Realm", true)
   assert_true(dibs.Installation.Initialize(nil).ok)
   local season = dibs.Seasons.GetCurrent()
   for _, rankIndex in ipairs({ 0, 1, 3 }) do
-    dibs.RankRules.SetAllocation(season.id, rankIndex, "Rank " .. rankIndex, rankIndex == 0 and 1 or 0)
+    publishRule(dibs, season.id, rankIndex, rankIndex == 0 and 1 or 0)
   end
   return dibs, season
 end
@@ -47,7 +54,7 @@ describe("Dibs.Wizard status derivation", function()
     local season = dibs.Seasons.GetCurrent()
     assert_not_nil(season)
     for rankIndex = 0, 3 do
-      dibs.RankRules.SetAllocation(season.id, rankIndex, "Rank " .. rankIndex, rankIndex == 0 and 1 or 0)
+      publishRule(dibs, season.id, rankIndex, rankIndex == 0 and 1 or 0)
     end
 
     local status = dibs.Wizard.GetStatus()
@@ -57,7 +64,7 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("READY", stepById(status, "seasons").status)
     assert_equal("READY", stepById(status, "rankRules").status)
     assert_equal("BLOCKED", status.overallState)
-    assert_equal("BLOCKED", stepById(status, "readiness").status)
+    assert_equal("WARNING", stepById(status, "readiness").status)
   end)
 
   it("flags a missing rank rule even when raid readiness is unavailable", function()
@@ -144,10 +151,11 @@ describe("Dibs.Wizard status derivation", function()
   it("keeps a warning in Review when SetupAssistant is ready", function()
     local dibs, season = configuredGuild()
     dibs.SetupAssistant.Evaluate = function() return { status = "READY_FOR_RAID", checks = {} } end
-    dibs.RankRules.SetAllocation(season.id, 1, "Officer", 1)
+    publishRule(dibs, season.id, 1, 1)
     local status = dibs.Wizard.GetStatus()
-    assert_equal("ACTION_REQUIRED", stepById(status, "rankRules").status)
-    assert_true(stepById(status, "rankRules").summary:find("Officer", 1, true) ~= nil)
+    assert_equal("READY", stepById(status, "rankRules").status)
+    assert_equal("ACTION_REQUIRED", stepById(status, "allocationReconciliation").status)
+    assert_true(stepById(status, "allocationReconciliation").summary:find("players need starting-allocation reconciliation", 1, true) ~= nil)
     assert_equal("WARNING", stepById(status, "review").status)
     assert_equal("READY", stepById(status, "readiness").status)
     assert_equal("PARTIALLY_CONFIGURED", status.overallState)
@@ -171,19 +179,22 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
     assert_equal("OPTIONAL", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1).status)
 
-    dibs.RankRules.SetAllocation(season.id, 1, "Officer", 1)
+    publishRule(dibs, season.id, 1, 1)
     local officer = rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1)
-    assert_equal("ACTION_REQUIRED", officer.status)
+    assert_equal("READY", officer.status)
     assert_true(officer.pendingReconciliation > 0)
-    assert_equal("ACTION_REQUIRED", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    local status = dibs.Wizard.GetStatus()
+    assert_equal("READY", stepById(status, "rankRules").status)
+    assert_equal("ACTION_REQUIRED", stepById(status, "allocationReconciliation").status)
 
+    rules = dibs.RankRules.GetRulesForSeason(season.id)
     rules["1"] = { rankIndex = 1, rankName = "Officer" }
     assert_equal("ACTION_REQUIRED", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1).status)
     rules["1"] = nil
     assert_equal("ACTION_REQUIRED", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 1).status)
 
-    dibs.RankRules.SetAllocation(season.id, 0, "GM", 0)
-    assert_equal("WARNING", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    publishRule(dibs, season.id, 0, 0)
+    assert_equal("OPTIONAL", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
   end)
 
   it("does not mark a missing rank reconciliation projection or empty roster READY", function()
@@ -191,14 +202,17 @@ describe("Dibs.Wizard status derivation", function()
     dibs.RankRules.GetAllocationReconciliation = function() error("reconciliation unavailable") end
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
     dibs.RankRules.GetAllocationReconciliation = function() return {} end
-    assert_equal("WARNING", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
-    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
     dibs.RankRules.GetAllocationReconciliation = function()
       return { { rankIndex = 0, status = "UNKNOWN" } }
     end
-    assert_equal("WARNING", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
     _G.GetNumGuildMembers = function() return 0 end
-    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
   end)
 
   it("distinguishes healthy, unavailable, behind, and unknown Sync states", function()
@@ -312,12 +326,27 @@ describe("Guided Setup Wizard UI", function()
     assert_true(status.steps[dibs.Wizard.GetCurrentStepIndex()].status ~= "READY")
   end)
 
+  it("opens Automatic Dibs from the Allocation Reconciliation step", function()
+    local dibs = load("Tester-Realm", true)
+    local status = dibs.Wizard.GetStatus()
+    local index
+    for stepIndex, step in ipairs(status.steps) do
+      if step.id == "allocationReconciliation" then index = stepIndex break end
+    end
+    assert_not_nil(index)
+    dibs.Wizard.SetCurrentStepIndex(index)
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    frame:ActivateRoute("wizard")
+    clickLatestButton("Open Allocation Reconciliation")
+    assert_equal("automaticDibs", frame.activeTab)
+  end)
+
   it("shows authoritative readiness findings and refreshes the affected rank in Review", function()
     local dibs, season = configuredGuild()
     dibs.SetupAssistant.Evaluate = function() return { status = "UNAVAILABLE", checks = {
       { id = "local_services", state = "unavailable", impact = "Transport unavailable", remediation = "Repair transport" },
     } } end
-    dibs.Wizard.SetCurrentStepIndex(11)
+    dibs.Wizard.SetCurrentStepIndex(12)
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
     assert_not_nil(findLatestWidget(function(widget)
@@ -327,13 +356,13 @@ describe("Guided Setup Wizard UI", function()
       return widget.kind == "Label" and widget.text:find("local_services: Transport unavailable", 1, true) ~= nil
     end))
 
-    dibs.RankRules.SetAllocation(season.id, 1, "Officer", 1)
+    publishRule(dibs, season.id, 1, 1)
     frame:Refresh()
     assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text:find("Rank allocation needs attention: Officer", 1, true) ~= nil
+      return widget.kind == "Label" and widget.text:find("Allocation Reconciliation", 1, true) ~= nil
     end))
 
-    dibs.Wizard.SetCurrentStepIndex(12)
+    dibs.Wizard.SetCurrentStepIndex(13)
     frame:Refresh()
     assert_not_nil(findLatestWidget(function(widget)
       return widget.kind == "Label" and widget.text:find("local_services: Transport unavailable", 1, true) ~= nil

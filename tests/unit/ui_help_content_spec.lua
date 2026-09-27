@@ -8,7 +8,9 @@ local function loadHelpCatalogs()
   englishChunk("RCLootCouncil_dibs", addonTable)
   local english = {}
   for key, value in pairs(dibs.L or {}) do
-    if key:match("^UI_HELP_") or key:match("^SETUP_ASSISTANT_.*_TOOLTIP$") then
+    if key:match("^UI_HELP_") or key:match("^SETUP_ASSISTANT_.*_TOOLTIP$")
+      or key == "DOC_SETUP_ASSISTANT_LABEL" or key == "DOC_GUILD_SETUP_LABEL"
+      or key == "OFFICER_NAV_GUIDED_SETUP_LABEL" then
       english[key] = value
     end
   end
@@ -66,9 +68,19 @@ describe("localized UI help content", function()
     assert_true(french.UI_HELP_RANK_ALLOCATION ~= "Allocation de rang")
   end)
 
-  it("provides Guild Setup help in both locales", function()
+  it("distinguishes Guided Setup, Raid Readiness, and Guild Configuration in both locales", function()
     local english, french = loadHelpCatalogs()
+    assert_equal("Guided Setup", english.OFFICER_NAV_GUIDED_SETUP_LABEL)
+    assert_equal("Configuration guidee", french.OFFICER_NAV_GUIDED_SETUP_LABEL)
+    assert_equal("Raid Readiness", english.DOC_SETUP_ASSISTANT_LABEL)
+    assert_equal("Preparation au raid", french.DOC_SETUP_ASSISTANT_LABEL)
+    assert_equal("Guild Configuration", english.DOC_GUILD_SETUP_LABEL)
+    assert_equal("Configuration de guilde", french.DOC_GUILD_SETUP_LABEL)
     assert_true(hasText(english.UI_HELP_GUILD_SETUP, "Guild Master"))
+    assert_true(hasText(english.UI_HELP_SETUP_ASSISTANT, "ready for this raid"))
+    assert_true(hasText(english.UI_HELP_WIZARD, "what still needs configuration"))
+    assert_true(hasText(french.UI_HELP_SETUP_ASSISTANT, "pret pour ce raid"))
+    assert_true(hasText(french.UI_HELP_WIZARD, "reste a configurer"))
     assert_true(hasText(french.UI_HELP_GUILD_SETUP, "maitre de guilde"))
   end)
 

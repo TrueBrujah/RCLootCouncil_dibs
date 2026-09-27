@@ -167,22 +167,77 @@ local function executeRankSet(actor, payload, decision)
   return buildResult(rule ~= nil, rule, decision, reason)
 end
 
+---@doc.id rank.reconciliation
+---@doc.category rank-rules
+---@doc.since 0.8.0
+---@doc.audience officer,gm
+---@doc.permission rank.reconcile
+---@doc.scope guild-season
+---@doc.audit true
+---@doc.reason-required true
+---@doc.help-key UI_HELP_RANK_RECONCILIATION
+---@doc.label-key DOC_RANK_RECONCILIATION_LABEL
 local function executeRankReconcile(actor, payload, decision)
-  if not Dibs.Ledger or not Dibs.Ledger.RegisterSeasonAllocation then
+  if not Dibs.Ledger or not Dibs.Ledger.RegisterSeasonAllocation or not Dibs.Ledger.GetRankReconciliationSnapshot then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local amount = tonumber(payload and payload.amount)
-  if not amount or amount < 1 or amount ~= math.floor(amount) then
-    return reject(decision, "INVALID_ALLOCATION_DELTA")
+  local reason = type(payload and payload.reason) == "string" and payload.reason:match("^%s*(.-)%s*$") or ""
+  if reason == "" then
+    return buildResult(false, nil, { reasonCode = "REASON_REQUIRED" }, "A reason is required for rank allocation reconciliation.")
   end
-  local tx, reason = Dibs.Ledger.RegisterSeasonAllocation(
-    payload and payload.playerName,
-    payload and payload.seasonId,
+  local playerName = payload and payload.playerName
+  local seasonId = payload and payload.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
+  local snapshot, snapshotReason = Dibs.Ledger.GetRankReconciliationSnapshot(playerName, seasonId)
+  if not snapshot then return buildResult(false, nil, { reasonCode = snapshotReason }, snapshotReason) end
+  local preview = payload and payload.reconciliationSnapshot
+  if type(preview) == "table" then
+    for _, field in ipairs({ "targetMemberKey", "seasonId", "currentRankIndex", "currentRankName", "expectedAllocation", "assignedBefore", "seasonCatalogRevision", "seasonCatalogHash", "governanceRevision", "operationalPolicyRevision", "authorityEpoch", "coordinatorMemberKey", "operationKey" }) do
+      if preview[field] ~= snapshot[field] then
+        return buildResult(false, nil, { reasonCode = "STALE_PREVIEW" }, "The reconciliation preview changed. Refresh and confirm the current values.")
+      end
+    end
+  end
+  local amount = snapshot.expectedAllocation - snapshot.assignedBefore
+  local behavior = Dibs.RankRules and Dibs.RankRules.GetRankReconciliationBehavior
+    and Dibs.RankRules.GetRankReconciliationBehavior(amount)
+  if behavior == "KEEP_GRANTED" then
+    return buildResult(false, nil, { reasonCode = "KEEP_GRANTED" }, "Previously granted Dibs are retained under the current reconciliation policy.")
+  end
+  if behavior ~= "REQUIRE_CONFIRMATION" or (payload and payload.amount ~= nil and tonumber(payload.amount) ~= amount) then
+    return buildResult(false, nil, { reasonCode = "INVALID_ALLOCATION_DELTA" }, "The confirmed amount does not match the current positive allocation difference.")
+  end
+  local requesterSnapshot, requesterReason = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(actor or Dibs.GetPlayerName())
+  if not requesterSnapshot then return buildResult(false, nil, { reasonCode = requesterReason or "IDENTITY_UNAVAILABLE" }, requesterReason) end
+  local reconciliation = {
+    schema = 1, targetMemberKey = snapshot.targetMemberKey, seasonId = snapshot.seasonId,
+    currentSeasonId = snapshot.currentSeasonId, requestedBySnapshot = requesterSnapshot,
+    assignedBefore = snapshot.assignedBefore, expectedAllocation = snapshot.expectedAllocation,
+    currentRankIndex = snapshot.currentRankIndex, currentRankName = snapshot.currentRankName,
+    seasonCatalogRevision = snapshot.seasonCatalogRevision, seasonCatalogHash = snapshot.seasonCatalogHash,
+    governanceRevision = snapshot.governanceRevision, operationalPolicyRevision = snapshot.operationalPolicyRevision,
+    reconciliationMode = "MANUAL", trigger = "MANUAL_RECONCILIATION",
+    authorityEpoch = snapshot.authorityEpoch, coordinatorMemberKey = snapshot.coordinatorMemberKey,
+    operationKey = snapshot.operationKey,
+  }
+  local audit = buildAudit("rank.reconcile", actor, payload or {}, decision)
+  audit.actorName = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName())
+  audit.rankIndex, audit.rankName = snapshot.currentRankIndex, snapshot.currentRankName
+  audit.expectedAllocation, audit.reconciliation = snapshot.expectedAllocation, reconciliation
+  local tx, reasonCode, commandResult = Dibs.Ledger.RegisterSeasonAllocation(
+    snapshot.playerName,
+    snapshot.seasonId,
     amount,
-    payload and payload.reason or "Rank allocation reconciliation",
-    buildAudit("rank.reconcile", actor, payload or {}, decision)
+    reason,
+    audit
   )
-  return buildResult(tx ~= nil, tx, decision, reason)
+  if commandResult and commandResult.proposal then
+    return { ok = true, outcome = "PENDING", value = { proposalId = commandResult.proposal.proposalId, proposal = commandResult.proposal },
+      decision = decision, reasonCode = "PENDING_RECONCILIATION", diagnostic = "Proposal sent to the coordinator; awaiting canonical commit." }
+  end
+  local result = buildResult(tx ~= nil, tx, decision, reasonCode)
+  result.outcome = tx and "COMMITTED" or "REJECTED"
+  if commandResult and commandResult.idempotentReplay then result.outcome = "COMMITTED" end
+  return result
 end
 
 local function executeLedgerGrant(actor, payload, decision)

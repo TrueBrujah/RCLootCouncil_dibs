@@ -17,14 +17,14 @@ Category: `governance` | Module: `Seasons` | Audience: gm, officer
 
 **English:** A season scopes the active Dibs balance and guild rules. Activating another season does not rewrite earlier history.
 **Francais:** Une saison determine le solde Dibs actif et les regles de guilde. Activer une autre saison ne reecrit pas l'historique anterieur.
-Source: `src/modules/Seasons.lua:159` (`Dibs.Seasons.Create`)
+Source: `src/modules/Seasons.lua:181` (`Dibs.Seasons.Create`)
 
-## Guild Setup (`guild.setup`)
+## Guild Configuration (`guild.setup`)
 
 Category: `setup` | Module: `Installation` | Audience: developer, gm
 
-**English:** Guild Master workflow for reviewing existing Dibs data and activating this guild's shared Dibs ledger. Opening the page does not initialize it.
-**Francais:** Parcours reserve au maitre de guilde pour examiner les donnees Dibs existantes et activer le registre partage de la guilde. Ouvrir la page ne l'initialise pas.
+**English:** Guild Master workflow for Guild Configuration: review existing Dibs data and activate this guild's shared Dibs ledger. Opening this page does not initialize it.
+**Francais:** Parcours du maitre de guilde pour la configuration de guilde : examinez les donnees Dibs existantes et activez le registre partage de cette guilde. Ouvrir cette page ne l'initialise pas.
 Source: `src/modules/Installation.lua:271` (`Installation.Initialize`)
 
 ## Manual Dibs Adjustment (`ledger.adjust`)
@@ -33,7 +33,7 @@ Category: `ledger` | Module: `ProtectedActions` | Audience: gm, officer
 
 **English:** Guild Master and authorized Officers can adjust a member's current-season balance. Each change records actor, target, reason, previous balance, and resulting balance in audit history.
 **Francais:** Le maitre de guilde et les officiers autorises peuvent ajuster le solde de la saison pour un membre. L'historique conserve l'auteur, la cible, la raison et les soldes avant/apres.
-Source: `src/modules/ProtectedActions.lua:222` (`executeLedgerAdjust`)
+Source: `src/modules/ProtectedActions.lua:277` (`executeLedgerAdjust`)
 
 ## Adjustment reason (`ledger.adjust.reason`)
 
@@ -41,7 +41,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer
 
 **English:** The recorded explanation for this action. Administrative changes require a meaningful reason.
 **Francais:** Explication conservee avec cette action. Les changements administratifs exigent une raison pertinente.
-Source: `src/modules/Ledger.lua:580` (`Ledger.AdminAdjust`)
+Source: `src/modules/Ledger.lua:686` (`Ledger.AdminAdjust`)
 
 ## Dibs audit history (`ledger.audit.history`)
 
@@ -49,7 +49,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer, player
 
 **English:** Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
-Source: `src/modules/Ledger.lua:685` (`Ledger.GetHistory`)
+Source: `src/modules/Ledger.lua:801` (`Ledger.GetHistory`)
 
 ## Dib Balance (`ledger.balance`)
 
@@ -57,7 +57,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer, player
 
 **English:** Your available Dibs are scoped to this guild and season. A qualifying finalized award or authorized adjustment changes the balance.
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
-Source: `src/modules/Ledger.lua:651` (`Ledger.GetBalance`)
+Source: `src/modules/Ledger.lua:767` (`Ledger.GetBalance`)
 
 ## Loot eligibility (`loot.eligibility`)
 
@@ -89,7 +89,7 @@ Category: `setup` | Module: `Readiness` | Audience: gm, officer, player
 
 **English:** Summarizes whether current guild setup and context are ready for live loot. An unavailable check is not a personal penalty; contact an Officer if the state remains blocked.
 **Francais:** Resume si la configuration de guilde et le contexte actuel sont prets pour le butin en direct. Un controle indisponible n'est pas une penalite personnelle; contactez un officier si l'etat reste bloque.
-Source: `src/modules/Readiness.lua:199` (`Readiness.Evaluate`)
+Source: `src/modules/Readiness.lua:200` (`Readiness.Evaluate`)
 
 ## Guild Dibs status (`player.status`)
 
@@ -131,13 +131,21 @@ Category: `rank-rules` | Module: `ProtectedActions` | Audience: gm, officer
 **Francais:** Dibs attribues au depart a un rang de guilde pour la saison selectionnee. Changer la regle ne reecrit pas les anciennes transactions.
 Source: `src/modules/ProtectedActions.lua:154` (`executeRankSet`)
 
+## Rank Allocation Reconciliation (`rank.reconciliation`)
+
+Category: `rank-rules` | Module: `ProtectedActions` | Audience: gm, officer
+
+**English:** Positive differences require an explicit, reasoned top-up through the canonical ledger. Existing allocations are never removed or converted to debt when a member's expected allocation decreases.
+**Francais:** Un ecart positif exige un complement explicite, motive et enregistre dans le registre canonique. Une baisse d'allocation attendue ne retire jamais les allocations existantes et ne cree aucune dette.
+Source: `src/modules/ProtectedActions.lua:180` (`executeRankReconcile`)
+
 ## RCLootCouncil history review (`rclootcouncil.history.reconciliation`)
 
 Category: `ledger` | Module: `RCLootCouncil` | Audience: developer, gm, officer
 
 **English:** Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
-Source: `src/integrations/RCLootCouncil.lua:3416` (`Dibs.RCLootCouncil.GetHistoryRows`)
+Source: `src/integrations/RCLootCouncil.lua:3433` (`Dibs.RCLootCouncil.GetHistoryRows`)
 
 ## RCLootCouncil response mapping (`rclootcouncil.response.mapping`)
 
@@ -147,13 +155,13 @@ Category: `ledger` | Module: `RCLootCouncilOptions` | Audience: gm, officer
 **Francais:** Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange.
 Source: `src/integrations/RCLootCouncilOptions.lua:245` (`buildButtonSetMappingText`)
 
-## Setup Assistant readiness (`setup.assistant.readiness`)
+## Raid Readiness (`setup.assistant.readiness`)
 
 Category: `setup` | Module: `SetupAssistant` | Audience: gm, officer
 
-**English:** Checks whether this guild's configuration is operational for a raid and lists blockers with the next safe action.
-**Francais:** Verifie si la configuration actuelle de la guilde convient au raid et liste les blocages avec la prochaine action sure.
-Source: `src/ui/SetupAssistant.lua:106` (`SetupAssistant.Evaluate`)
+**English:** Raid Readiness answers whether DIBS is ready for this raid and lists blocking checks with their next actions.
+**Francais:** La preparation au raid indique si DIBS est pret pour ce raid et liste les controles bloquants avec leurs prochaines actions.
+Source: `src/ui/SetupAssistant.lua:117` (`SetupAssistant.Evaluate`)
 
 ## Historical Reconciliation (`setup.reconciliation`)
 
@@ -167,9 +175,9 @@ Source: `src/modules/Installation.lua:172` (`Installation.GetReconciliationView`
 
 Category: `governance` | Module: `Governance` | Audience: developer, gm, officer
 
-**English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Setup.
+**English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Configuration.
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
-Source: `src/modules/Governance.lua:416` (`Governance.GetAuthorityState`)
+Source: `src/modules/Governance.lua:423` (`Governance.GetAuthorityState`)
 
 ## Synchronization peer status (`sync.peer.status`)
 
@@ -177,7 +185,7 @@ Category: `synchronization` | Module: `SyncV2` | Audience: gm, officer
 
 **English:** Peer status is based on the latest response observed by this client; an offline or unresponsive member may show stale synchronization details.
 **Francais:** L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes.
-Source: `src/modules/SyncV2.lua:268` (`Sync.GetPeerStatuses`)
+Source: `src/modules/SyncV2.lua:280` (`Sync.GetPeerStatuses`)
 
 ## SyncV2 Protocol State (`sync.protocol.state`)
 
@@ -186,7 +194,7 @@ Category: `protocol` | Module: `SyncV2` | Audience: developer
 **English:** Diagnostics may show protocol state such as V2_ENFORCED, ledgerEpoch, and hashes. These identifiers help troubleshooting; ordinary setup uses the status and next action.
 **Francais:** Les diagnostics peuvent afficher des etats de protocole comme V2_ENFORCED, ledgerEpoch et les empreintes. Ils servent au depannage; la configuration normale utilise les statuts et actions indiquees.
 **Technical reference:** SyncV2 may report LEGACY_LOCAL before cutover, CUTOVER_PREPARED while writer compatibility is prepared, or V2_ENFORCED after approved enforcement. ledgerEpoch identifies the active canonical ledger generation; legacyBaselineHash identifies the approved legacy baseline.
-Source: `src/modules/SyncV2.lua:486` (`Sync.SetProtocolState`)
+Source: `src/modules/SyncV2.lua:498` (`Sync.SetProtocolState`)
 
 ## Raid Relay service (`sync.raid.relay`)
 
@@ -210,4 +218,4 @@ Category: `synchronization` | Module: `SyncV2` | Audience: gm, officer, player
 
 **English:** Shows whether this client can exchange current guild Dibs state. Unavailable or behind clients may be unable to apply canonical updates.
 **Francais:** Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques.
-Source: `src/modules/SyncV2.lua:239` (`Sync.GetStatus`)
+Source: `src/modules/SyncV2.lua:251` (`Sync.GetStatus`)

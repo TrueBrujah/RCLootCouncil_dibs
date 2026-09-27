@@ -171,6 +171,7 @@ local function resultState(result)
   if integration == "Blocked" then return "Blocked" end
   if integration == "Degraded" then return "Degraded" end
   if integration == "Unavailable" then return "Unavailable" end
+  if result.guildLootRulesStatus ~= "GUILD_LOOT_RULES_READY" then return "Degraded" end
   return "Ready"
 end
 
@@ -224,6 +225,7 @@ function Readiness.Evaluate(options)
     status = "Unavailable",
     probes = {},
     reasonCodes = {},
+    guildLootRulesStatus = "UNAVAILABLE",
     context = {
       grouped = context.inGroup,
       inRaid = context.inRaid,
@@ -241,6 +243,33 @@ function Readiness.Evaluate(options)
     freshnessMarker = checkedAt,
     simulationCount = 0,
   }
+
+  local lootRulesStatus = Dibs.LootRules and type(Dibs.LootRules.GetStatus) == "function"
+    and safeTableCall(Dibs.LootRules.GetStatus) or nil
+  local lootStatus = lootRulesStatus and lootRulesStatus.status or "UNAVAILABLE"
+  result.guildLootRulesStatus = lootStatus
+  local lootState = lootStatus == "GUILD_LOOT_RULES_READY" and "ready"
+    or lootStatus == "GUILD_LOOT_RULES_NOT_CONFIGURED" and "unavailable"
+    or lootStatus == "LOCAL_LEGACY_ONLY" and "degraded"
+    or lootStatus == "GUILD_LOOT_RULES_SYNC_BEHIND" and "degraded"
+    or lootStatus == "GUILD_LOOT_RULES_INCOMPATIBLE" and "blocked"
+    or "unavailable"
+  local lootMessageKeys = {
+    GUILD_LOOT_RULES_READY = "LOOT_RULES_STATUS_READY",
+    GUILD_LOOT_RULES_NOT_CONFIGURED = "LOOT_RULES_STATUS_NOT_CONFIGURED",
+    LOCAL_LEGACY_ONLY = "LOOT_RULES_STATUS_LOCAL_ONLY",
+    GUILD_LOOT_RULES_SYNC_BEHIND = "LOOT_RULES_STATUS_SYNC_BEHIND",
+    GUILD_LOOT_RULES_INCOMPATIBLE = "LOOT_RULES_STATUS_INCOMPATIBLE",
+    UNAVAILABLE = "LOOT_RULES_STATUS_UNAVAILABLE",
+  }
+  local lootImpact = text(lootMessageKeys[lootStatus] or lootMessageKeys.UNAVAILABLE,
+    "Guild Loot Rules are not confirmed current on this client.")
+  local lootReason = lootStatus == "GUILD_LOOT_RULES_READY" and nil
+    or (lootRulesStatus and lootRulesStatus.reasonCode or lootStatus)
+  local lootProbe = addProbe(result, "guild_loot_rules", lootState, lootReason, lootImpact,
+    lootStatus == "GUILD_LOOT_RULES_READY" and "No action required."
+      or text("LOOT_RULES_STATUS_ACTION", "Review Loot Rules and synchronize with the Guild Master."), true)
+  lootProbe.statusCode = lootStatus
 
   if not season then
     result.standaloneStatus = "Blocked"
@@ -456,6 +485,7 @@ function Readiness.FormatSummary(result, detailed)
     statusLine("RCLootCouncil version", result.integration and result.integration.observedVersion or "unknown"),
     statusLine("Standalone Dibs", result.standaloneStatus),
     statusLine("Live RCLootCouncil", result.integrationStatus),
+    statusLine("Guild Loot Rules", result.guildLootRulesStatus),
     statusLine("Mode", result.mode),
     statusLine("Live consumption", result.liveConsumptionAllowed and "Allowed after revalidation" or "Blocked or unavailable"),
     statusLine("Checked", result.checkedAt),
@@ -484,6 +514,7 @@ function Readiness.BuildReport(result, scope)
     "Status: " .. tostring(result.status),
     "Standalone: " .. tostring(result.standaloneStatus),
     "Live integration: " .. tostring(result.integrationStatus),
+    "Guild Loot Rules: " .. tostring(result.guildLootRulesStatus),
     "Live consumption: " .. (result.liveConsumptionAllowed and "allowed after revalidation" or "blocked or unavailable"),
     "Checked: " .. tostring(result.checkedAt),
     "Fingerprint: " .. tostring(result.fingerprint),

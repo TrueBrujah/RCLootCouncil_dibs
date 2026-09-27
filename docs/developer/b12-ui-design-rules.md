@@ -39,6 +39,26 @@ widths, stable row geometry, bounded scrolling or pagination, and visible empty 
 error states. Permanent `Action`, `Actions`, `Review`, or `Transfer` columns SHOULD NOT
 be used when they contain only generic secondary commands.
 
+### Shared Data Grid
+
+Automatic Dibs and Dibs Administration are the reference pages for roster-style data
+grids. New list pages SHOULD reuse the shared table page, fluid column allocator,
+pagination footer, and page-slice helpers. Keep filtering, row projection, sorting, and
+page-specific actions in the owning page; do not duplicate shared geometry or pager
+controls.
+
+The TreeGroup content frame bounds the page. Header, column header, scroll viewport, and
+pagination footer are siblings; only row content belongs inside the scroll frame. The
+footer remains inside the content frame, while the window Close control remains
+window-owned. Action columns use a stable width sized to their longest button label and
+padding. Descriptive columns absorb available width, compact numeric columns stay
+bounded, and pagination stays inline until the content area genuinely requires stacking.
+
+Future migration candidates are History, Requests, Pre-Dibs, Pending Awards, Vault
+Review, Synchronization, and other roster/list views. This list records candidates only;
+it does not schedule or imply their migration. Raid Readiness remains a dashboard/status
+pattern rather than a data-grid page.
+
 ## Interaction Contract
 
 Use the following default row behavior:

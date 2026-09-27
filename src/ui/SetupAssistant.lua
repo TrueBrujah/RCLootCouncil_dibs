@@ -60,14 +60,23 @@ local function countRules(seasonId)
   return count
 end
 
-local function lootTypesAvailable()
-  if not Dibs.RCOptions or type(Dibs.RCOptions.GetOptionsTable) ~= "function" then
-    return nil
+local function lootTypesAvailability()
+  if not Dibs.RCOptions or type(Dibs.RCOptions.GetLootTypeOptions) ~= "function" then
+    return "unavailable", "LOOT_TYPES_UNAVAILABLE"
   end
-  local ok, options = call(Dibs.RCOptions.GetOptionsTable)
-  local groups = options and options.args and options.args.dibsSettings and options.args.dibsSettings.args
-  local group = groups and (groups.integration or groups.officer)
-  return ok and type(group) == "table" and group.args and group.args.lootTypes ~= nil or false
+  local ok, options = call(Dibs.RCOptions.GetLootTypeOptions)
+  if not ok or type(options) ~= "table" or type(options.types) ~= "table" then
+    return "unavailable", "LOOT_TYPES_UNAVAILABLE"
+  end
+  local lootTypes = options.types
+  if type(lootTypes.values) ~= "function" or type(lootTypes.get) ~= "function" or type(lootTypes.set) ~= "function" then
+    return "degraded", "LOOT_TYPES_INVALID"
+  end
+  local valuesOK, values = call(lootTypes.values)
+  if not valuesOK or type(values) ~= "table" or next(values) == nil then
+    return "degraded", "LOOT_TYPES_INVALID"
+  end
+  return "ready"
 end
 
 local function addReadinessChecks(report, readiness)
@@ -87,8 +96,10 @@ local function addReadinessChecks(report, readiness)
       remediation = "Enter the intended raid and refresh to verify the live Master Looter and award profile."
     end
     if not seen[id] then
-      report.checks[#report.checks + 1] = check(id, state, probe.required, reasonCode,
+      local projected = check(id, state, probe.required, reasonCode,
         impact, remediation, "readiness")
+      projected.statusCode = probe.statusCode
+      report.checks[#report.checks + 1] = projected
       seen[id] = true
     end
   end
@@ -148,11 +159,31 @@ function SetupAssistant.Evaluate(options)
       "The optional Raid Dibs channel is not visible in this session.",
       "Join or configure the channel before relying on raid announcements.", "readiness")
   end
-  local lootAvailable = lootTypesAvailable()
-  report.checks[#report.checks + 1] = check("loot_types", lootAvailable == true and "ready" or "unavailable", false,
-    lootAvailable == true and nil or "LOOT_TYPES_UNAVAILABLE",
-    lootAvailable == true and "Loot type controls are available." or "Loot type controls are not available in this client context.",
-    lootAvailable == true and "No action required." or "Open Officer Loot Rules when the configuration panel is available.", "options")
+  local lootState, lootReason = lootTypesAvailability()
+  local scopeLabel, scopeExplanation
+  if lootState == "ready" then
+    scopeLabel = (Dibs.L and Dibs.L.SETUP_ASSISTANT_LOOT_LOCAL_LABEL) or "Controls available"
+    local scopeKey = report.actorRole == "gm" and "SETUP_ASSISTANT_LOOT_SCOPE_GM"
+      or (report.actorRole == "officer" and "SETUP_ASSISTANT_LOOT_SCOPE_OFFICER" or "SETUP_ASSISTANT_LOOT_SCOPE_GENERIC")
+    scopeExplanation = (Dibs.L and Dibs.L[scopeKey])
+      or "Loot Rules controls are available; guild authority is reported separately in Raid Readiness."
+  end
+  local lootCheck = check("loot_types", lootState, false, lootReason,
+    lootState == "ready" and scopeExplanation
+      or (lootState == "degraded" and ((Dibs.L and Dibs.L.SETUP_ASSISTANT_LOOT_INVALID)
+        or "Loot Rules controls are present but returned invalid configuration data.")
+        or ((Dibs.L and Dibs.L.SETUP_ASSISTANT_LOOT_UNAVAILABLE)
+          or "Loot type controls are not available in this client context.")),
+    lootState == "ready" and scopeLabel
+      or (lootState == "degraded" and ((Dibs.L and Dibs.L.SETUP_ASSISTANT_LOOT_INVALID_ACTION)
+        or "Review the Loot Rules configuration controls.")
+        or ((Dibs.L and Dibs.L.SETUP_ASSISTANT_ACTION_LOOT_RULES) or "Open Loot Rules")),
+    "options")
+  if scopeLabel then
+    lootCheck.scopeLabel = scopeLabel
+    lootCheck.scopeExplanation = scopeExplanation
+  end
+  report.checks[#report.checks + 1] = lootCheck
 
   for _, item in ipairs(report.checks) do
     if item.required and item.state ~= "ready" and item.state ~= "skipped" then

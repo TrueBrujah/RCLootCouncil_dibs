@@ -86,7 +86,14 @@ local function proposalContent(proposal)
     evidenceId = proposal.evidenceId, source = proposal.source, context = proposal.context,
     amount = proposal.amount, seasonId = proposal.seasonId, rankIndex = proposal.rankIndex, rankName = proposal.rankName,
     actorSnapshot = proposal.actorSnapshot, createdAt = proposal.createdAt, authorityState = proposal.authorityState,
+    reconciliation = proposal.reconciliation,
   }
+end
+
+local function proposalHashContent(proposal)
+  local content = proposalContent(proposal)
+  if proposal.reconciliation then content.status = nil end
+  return content
 end
 
 local function trim(value)
@@ -528,16 +535,28 @@ function Governance.RecordAwardProposal(actor, details)
   local projection = { guildKey = Dibs.GetGuildKey(), player = target.memberKey, type = proposalType, itemID = tonumber(details.itemID), itemLink = trim(details.itemLink),
     awardRef = trim(details.awardRef), evidenceId = trim(details.evidenceId), source = trim(details.source), context = trim(details.reason),
     amount = tonumber(details.amount), seasonId = trim(tostring(details.seasonId or "")) or nil,
-    rankIndex = tonumber(details.rankIndex), rankName = trim(details.rankName) }
+    rankIndex = tonumber(details.rankIndex), rankName = trim(details.rankName), reconciliation = copy(details.reconciliation) }
+  if projection.reconciliation and projection.reconciliation.operationKey then
+    for _, candidate in pairs(authority.proposals) do
+      if candidate.type == "SEASON_ALLOCATION" and candidate.reconciliation
+        and candidate.reconciliation.operationKey == projection.reconciliation.operationKey then
+        return copy(candidate), "IDEMPOTENT_PROPOSAL"
+      end
+    end
+  end
   local proposalId = trim(details.proposalId) or ("AP5-" .. authorityHash("PROPOSAL", projection))
   local existing = authority.proposals[proposalId]
-  if existing then return copy(existing), "IDEMPOTENT_PROPOSAL" end
+  if existing then
+    if existing.contentHash == authorityHash("PROPOSAL", proposalHashContent(existing)) then return copy(existing), "IDEMPOTENT_PROPOSAL" end
+    return nil, "PROPOSAL_ID_CONFLICT"
+  end
   local proposal = { schema = AUTHORITY_SCHEMA, recordClass = "AWARD_PROPOSAL", proposalId = proposalId, status = "PENDING_RECONCILIATION",
     guildKey = Dibs.GetGuildKey(), playerSnapshot = target, type = projection.type, itemID = projection.itemID, itemLink = projection.itemLink, awardRef = projection.awardRef,
     evidenceId = projection.evidenceId, source = projection.source, context = projection.context,
-    amount = projection.amount, seasonId = projection.seasonId, rankIndex = projection.rankIndex, rankName = projection.rankName, actorSnapshot = actorSnapshot,
+    amount = projection.amount, seasonId = projection.seasonId, rankIndex = projection.rankIndex, rankName = projection.rankName,
+    actorSnapshot = actorSnapshot, reconciliation = projection.reconciliation,
     createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(), authorityState = authority.state }
-  proposal.contentHash = authorityHash("PROPOSAL", proposalContent(proposal))
+  proposal.contentHash = authorityHash("PROPOSAL", proposalHashContent(proposal))
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
   authority.proposals[proposalId] = proposal
   boundedInsert(authority.auditLog, { action = "AWARD_PROPOSAL", proposalId = proposalId, timestamp = proposal.createdAt }, MAX_AUTHORITY_AUDIT)
@@ -587,6 +606,23 @@ function Governance.MarkAwardProposalCommitted(proposalId, commit)
   return true
 end
 
+function Governance.ResolveAwardProposal(proposalId, status, reasonCode)
+  if status ~= "STALE" and status ~= "REJECTED" then return false, "INVALID_PROPOSAL_TERMINAL_STATUS" end
+  local proposal = authorityState(ensureState()).proposals[proposalId]
+  if not proposal then return false, "PROPOSAL_NOT_FOUND" end
+  if proposal.status == "COMMITTED" then return false, "PROPOSAL_ALREADY_COMMITTED" end
+  if proposal.status == "STALE" or proposal.status == "REJECTED" then
+    return proposal.status == status and proposal.resolutionReason == reasonCode, "PROPOSAL_ALREADY_RESOLVED"
+  end
+  proposal.status, proposal.resolutionReason = status, trim(reasonCode) or "PROPOSAL_REJECTED"
+  proposal.resolvedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  boundedInsert(authorityState(ensureState()).auditLog, {
+    action = "AWARD_PROPOSAL_" .. status, proposalId = proposalId,
+    reasonCode = proposal.resolutionReason, timestamp = proposal.resolvedAt,
+  }, MAX_AUTHORITY_AUDIT)
+  return true, status
+end
+
 ---@param proposal table Award proposal payload received from a non-coordinator officer over Sync.
 ---@param senderDisplayName string|nil Sender's display name, for audit only.
 ---@return boolean accepted Whether the coordinator accepted (or already held) the proposal.
@@ -597,7 +633,7 @@ function Governance.ReceiveRelayedProposal(proposal, senderDisplayName)
   end
   if proposal.schema ~= AUTHORITY_SCHEMA or proposal.recordClass ~= "AWARD_PROPOSAL" or proposal.status ~= "PENDING_RECONCILIATION"
     or proposal.guildKey ~= Dibs.GetGuildKey() or type(proposal.contentHash) ~= "string"
-    or proposal.contentHash ~= authorityHash("PROPOSAL", proposalContent(proposal)) then
+    or proposal.contentHash ~= authorityHash("PROPOSAL", proposalHashContent(proposal)) then
     return false, "PROPOSAL_HASH_MISMATCH"
   end
   if not Dibs.Identity or type(Dibs.Identity.ResolveRosterMember) ~= "function" then return false, "ROSTER_UNAVAILABLE" end
@@ -613,7 +649,11 @@ function Governance.ReceiveRelayedProposal(proposal, senderDisplayName)
   if not authority.coordinator or authority.coordinator.memberKey ~= localSnapshot.memberKey then
     return false, "CURRENT_COORDINATOR_REQUIRED"
   end
-  if authority.proposals[proposal.proposalId] then return true, "IDEMPOTENT_PROPOSAL" end
+  if authority.proposals[proposal.proposalId] then
+    local existing = authority.proposals[proposal.proposalId]
+    if existing.contentHash == proposal.contentHash then return true, "IDEMPOTENT_PROPOSAL" end
+    return false, "PROPOSAL_ID_CONFLICT"
+  end
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return false, "PROPOSAL_LIMIT_EXCEEDED" end
   local stored = copy(proposal)
   stored.status, stored.relayStatus = "PENDING_RECONCILIATION", nil

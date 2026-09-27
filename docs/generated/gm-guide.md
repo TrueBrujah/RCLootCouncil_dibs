@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Guild Master Documentation Reference
 
-Addon version: 0.6.5
+Addon version: 0.8.0
 
 ## Guild Ledger status
 
@@ -27,14 +27,14 @@ Scope: `guild` | Audit: `false` | Reason required: `false`
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
 
-## Guild Setup
+## Guild Configuration
 
 - **ID:** `guild.setup`
 - **Category:** `setup`
 - **Audience:** developer, gm
 
-**English:** Guild Master workflow for reviewing existing Dibs data and activating this guild's shared Dibs ledger. Opening the page does not initialize it.
-**Francais:** Parcours reserve au maitre de guilde pour examiner les donnees Dibs existantes et activer le registre partage de la guilde. Ouvrir la page ne l'initialise pas.
+**English:** Guild Master workflow for Guild Configuration: review existing Dibs data and activate this guild's shared Dibs ledger. Opening this page does not initialize it.
+**Francais:** Parcours du maitre de guilde pour la configuration de guilde : examinez les donnees Dibs existantes et activez le registre partage de cette guilde. Ouvrir cette page ne l'initialise pas.
 
 Scope: `guild` | Audit: `true` | Reason required: `false`
 
@@ -173,6 +173,18 @@ Scope: `guild-season` | Audit: `false` | Reason required: `false`
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
 Permission: `rank.set`
 
+## Rank Allocation Reconciliation
+
+- **ID:** `rank.reconciliation`
+- **Category:** `rank-rules`
+- **Audience:** gm, officer
+
+**English:** Positive differences require an explicit, reasoned top-up through the canonical ledger. Existing allocations are never removed or converted to debt when a member's expected allocation decreases.
+**Francais:** Un ecart positif exige un complement explicite, motive et enregistre dans le registre canonique. Une baisse d'allocation attendue ne retire jamais les allocations existantes et ne cree aucune dette.
+
+Scope: `guild-season` | Audit: `true` | Reason required: `true`
+Permission: `rank.reconcile`
+
 ## RCLootCouncil history review
 
 - **ID:** `rclootcouncil.history.reconciliation`
@@ -195,14 +207,14 @@ Scope: `guild-season` | Audit: `false` | Reason required: `false`
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
 
-## Setup Assistant readiness
+## Raid Readiness
 
 - **ID:** `setup.assistant.readiness`
 - **Category:** `setup`
 - **Audience:** gm, officer
 
-**English:** Checks whether this guild's configuration is operational for a raid and lists blockers with the next safe action.
-**Francais:** Verifie si la configuration actuelle de la guilde convient au raid et liste les blocages avec la prochaine action sure.
+**English:** Raid Readiness answers whether DIBS is ready for this raid and lists blocking checks with their next actions.
+**Francais:** La preparation au raid indique si DIBS est pret pour ce raid et liste les controles bloquants avec leurs prochaines actions.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
 
@@ -223,7 +235,7 @@ Scope: `guild` | Audit: `false` | Reason required: `false`
 - **Category:** `governance`
 - **Audience:** developer, gm, officer
 
-**English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Setup.
+**English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Configuration.
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`

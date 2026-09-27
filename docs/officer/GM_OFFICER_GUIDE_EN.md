@@ -36,7 +36,7 @@ GM or Officer.
 3. Open `/dibs options` and open **Guided Setup** under Officer > Overview.
 4. Follow the Guided Setup steps in order, or jump directly to any step or to
    the first outstanding issue. Each step summarizes and links to an existing
-   Officer page (Guild Setup, Seasons, Rank Rules, Loot Rules, Pre-Dibs,
+  Officer page (Guild Configuration, Seasons, Rank Rules, Loot Rules, Pre-Dibs,
    RCLootCouncil, Synchronization); the Wizard itself makes no configuration
    decision for you and initializes nothing merely by being opened.
 5. Create and activate a season, configure rank allocations, policy,
@@ -46,9 +46,25 @@ GM or Officer.
    dry-run, before the first live raid.
 
 A normal Guild Master does not need to run `/run` commands or call internal
-APIs to reach a working guild ledger; Guided Setup, Guild Setup, and Setup
-Assistant all perform governance initialization, historical data review, and
-canonical ledger activation through the existing authoritative modules.
+APIs to reach a working guild ledger. Guided Setup shows what needs
+configuration, Raid Readiness checks whether DIBS is ready for this raid, and
+Guild Configuration handles historical review and canonical ledger activation
+through the existing authoritative modules.
+
+## Rank allocation reconciliation
+
+Guided Setup keeps **Rank Rules** publication separate from **Allocation
+Reconciliation**. Open **Automatic Dibs** to compare each current roster
+member's rank rule with their assigned seasonal allocation. A positive
+difference can be granted only after an explicit confirmation and a required
+reason; non-coordinator actions remain pending until the coordinator commits
+the canonical ledger transaction. Reconcile All processes members independently
+and reports committed, pending, stale, skipped, and failed outcomes.
+
+A negative difference is informational only. Previously assigned Dibs stay
+granted after demotion, including Dibs already spent; there is no clawback,
+negative balance adjustment, or debt. The legacy Assignments option remains
+available and routes through the same protected reconciliation service.
 
 **Three related but distinct pages** exist under Officer > Overview/System —
 use the one that matches what you're trying to do:
@@ -56,8 +72,8 @@ use the one that matches what you're trying to do:
 | Page | Purpose |
 |---|---|
 | **Guided Setup** | Step-by-step workflow that navigates and summarizes the pages below in one guided order. Configures nothing directly; it is a navigation/status shell. |
-| **Setup Assistant** | Answers "is the current configuration operational and safe for a raid right now?" (season, rank rules, RCLootCouncil, live raid context). This is the Readiness Check; it can be run independently at any time and is reused as-is by Guided Setup's final step. |
-| **Guild Setup** | Governance/canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and the one-time guild ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
+| **Raid Readiness** | Answers "is DIBS ready for this raid?" (season, rank rules, RCLootCouncil, live raid context). It can be run independently and is reused as-is by Guided Setup's final step. |
+| **Guild Configuration** | Guild-level configuration and canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and one-time ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
 
 ![Season, rank, and permissions setup](../assets/guides/screenshots/en/officer/officer-setup.png)
 
@@ -101,6 +117,29 @@ Choose an installation mode:
   evidence and accounting;
 - `AUTO`: use the integration when available and retain local operation when it
   is absent or unavailable.
+
+## Guild Loot Rules
+
+Loot Rules are guild authority, separate from Rank Rules and OperationalPolicy.
+The GM reviews the complete dynamic loot-type draft, then selects **Adopt
+reviewed Loot Rules** once. Later edits remain a local draft until **Publish
+Loot Rules changes** succeeds. A failed publication leaves the prior catalog
+revision effective. Do not tell the raid a change is active until the success
+state is shown.
+
+Officers see the adopted values read-only. Local legacy maps remain preserved
+for recovery and do not override an adopted snapshot. DIBS derives supported
+keys from the existing RCLootCouncil option source, and the same guild values
+drive Adventure Guide eligibility and Dibs response buttons.
+
+Raid Readiness reports the exact `Guild Loot Rules` state. `GUILD_LOOT_RULES_READY`
+means this client has a validated snapshot; `GUILD_LOOT_RULES_NOT_CONFIGURED`
+and `LOCAL_LEGACY_ONLY` are not guild-wide readiness;
+`GUILD_LOOT_RULES_SYNC_BEHIND` keeps the last received snapshot effective while
+recovery proceeds; `GUILD_LOOT_RULES_INCOMPATIBLE` requires updating DIBS;
+`UNAVAILABLE` means the dynamic option source could not be loaded. SyncV2
+rejects 0.7.x peers from the 0.8.x compatibility family. Ask affected members
+to update rather than changing local settings to compensate.
 
 Configure supported loot families, announcement channels, and the Pre-Dib mode:
 
@@ -171,7 +210,7 @@ History is never rewritten, and confirmed transfers are idempotent.
 
 ## Multi-raid synchronization and recovery
 
-Guild Setup (Officer > System > Guild Setup) is the normal way to initialize
+Guild Configuration (Officer > System > Guild Configuration) is the normal way to initialize
 the canonical guild ledger; it never requires understanding ledger epochs,
 baseline hashes, or internal protocol states. Those technical values remain
 available under its "Show technical details" disclosure and on the

@@ -174,12 +174,24 @@ describe("Dibs options compatibility", function()
       withAce3 = true,
     })
     local seasonId = dibs.GetCurrentSeasonId()
-    dibs.RankRules.SetAllocation(seasonId, 3, "Member", 2)
+    assert_true(dibs.Governance.AdoptInitial(nil, { reason = "assignment reconciliation test" }))
+    local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+    local coordinator = assert(dibs.Identity.CreateSnapshot("Tester-Realm"))
+    assert_true(dibs.Governance.Change(nil, { future = { authority = {
+      schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 1,
+      transition = { kind = "INITIAL", baselineHash = baseline.legacyBaselineHash },
+    } } }))
+    assert_true(dibs.Governance.EnableV2(nil, { "Tester-Realm" }))
+    local ruleResult = dibs.ProtectedActions.Execute("rank.set", nil, {
+      seasonId = seasonId, rankIndex = 3, rankName = "Member", allocation = 2,
+    })
+    assert_true(ruleResult.ok, tostring(ruleResult.diagnostic))
     dibs.RCOptions.EnsureRegistered(1)
     local assignments = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.assignments.args
     local summary = assignments.assignmentLog.name()
     assert_true(string.find(summary, "Alice-Realm", 1, true) ~= nil)
-    assert_true(string.find(summary, "Missing 2", 1, true) ~= nil)
+    assert_true(string.find(summary, "Difference +2", 1, true) ~= nil)
+    assignments.reconciliationReason.set(nil, "Initial rank allocation")
 
     local before = #dibs.Ledger.GetTransactions(seasonId)
     assignments.reconcileMissing.func()
@@ -367,26 +379,22 @@ end)
 
 
 describe("Officer loot type controls", function()
-  it("shares dynamic types, changes and presets with RC options", function()
+  it("shares dynamic types and draft changes with RC options without bulk presets", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
-    dibs.RCLootCouncil.SetDibEnabledForType("INVTYPE_FINGER", false)
+    dibs.RCLootCouncil.SetDibEnabledForType("TOKEN", false)
     local frame = dibs.OfficerUI.CreateWindow()
     frame.SelectTab("lootTypes")
     local policy = dibs.RCOptions.GetLootTypeOptions().types
     assert_true(policy.values().COSMETIC ~= nil)
-    assert_equal(false, frame.lootTypeControls.INVTYPE_FINGER.value)
-    frame.lootTypeControls.INVTYPE_FINGER.callbacks.OnValueChanged(nil, nil, true)
-    assert_equal(true, policy.get(nil, "INVTYPE_FINGER"))
+    assert_equal(false, frame.lootTypeControls.TOKEN.value)
+    frame.lootTypeControls.TOKEN.callbacks.OnValueChanged(nil, nil, true)
+    assert_equal(true, policy.get(nil, "TOKEN"))
     policy.set(nil, "MOUNTS", false)
     frame:Refresh()
     assert_equal(false, frame.lootTypeControls.MOUNTS.value)
-    frame.enableLootTypes.callbacks.OnClick()
-    assert_equal(true, policy.get(nil, "MOUNTS"))
-    frame.defaultLootTypes.callbacks.OnClick()
-    assert_equal(false, policy.get(nil, "MOUNTS"))
-    assert_equal(false, policy.get(nil, "INVTYPE_FINGER"))
-    assert_equal(true, policy.get(nil, "default"))
+    assert_equal(nil, frame.enableLootTypes)
+    assert_equal(nil, frame.defaultLootTypes)
   end)
 end)
 

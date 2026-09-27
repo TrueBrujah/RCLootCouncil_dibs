@@ -155,7 +155,7 @@ describe("P0 regression: Governance.ActivateV2 never silently acknowledges incom
   end)
 end)
 
-describe("Guild Setup next steps after activation", function()
+describe("Guild Configuration next steps after activation", function()
   local function findLatestWidget(predicate)
     for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
       local widget = _G.__dibsAceWidgets[index]
@@ -170,17 +170,35 @@ describe("Guild Setup next steps after activation", function()
     return widget
   end
 
-  it("links a ready guild to the Setup Assistant readiness checklist", function()
+  it("links a ready guild to Raid Readiness without changing its route", function()
     local dibs = load("Tester-Realm", true)
     local result = dibs.Installation.Initialize(nil)
     assert_true(result.ok, tostring(result.reasonCode))
     assert_equal("READY", result.status.state)
-
     local frame = dibs.OfficerUI.CreateWindow("installation")
     frame:ActivateRoute("installation")
-    assert_not_nil(findLatestWidget(function(widget) return widget.kind == "Button" and widget.text == "Open Setup Assistant" end))
+    local navigationByLabel = {}
+    for _, entry in ipairs(dibs.OfficerUI.GetNavigationTree()) do
+      navigationByLabel[entry.text] = entry.value
+    end
+    assert_equal("wizard", navigationByLabel["Guided Setup"])
+    assert_equal("setup", navigationByLabel["Raid Readiness"])
+    assert_equal("installation", navigationByLabel["Guild Configuration"])
+    assert_nil(navigationByLabel["Setup Assistant"])
+    assert_nil(navigationByLabel["Guild Setup"])
+    assert_not_nil(findLatestWidget(function(widget) return widget.kind == "Button" and widget.text == "Open Raid Readiness" end))
 
-    clickLatestButton("Open Setup Assistant")
+    clickLatestButton("Open Raid Readiness")
     assert_equal("setup", frame.activeTab)
+    frame:ActivateRoute(navigationByLabel["Guided Setup"])
+    assert_equal("wizard", frame.activeTab)
+  end)
+
+  it("opens the existing installation route from the renamed Guild Configuration link", function()
+    local dibs = load("Tester-Realm", true)
+    local frame = dibs.OfficerUI.CreateWindow("sync")
+    frame:ActivateRoute("sync")
+    clickLatestButton("Open Guild Configuration")
+    assert_equal("installation", frame.activeTab)
   end)
 end)

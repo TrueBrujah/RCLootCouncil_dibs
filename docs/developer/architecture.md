@@ -86,5 +86,6 @@ DryRun, DebugLogs, and test doubles under `tests/` are test/dev-only components.
 - **DIBS-RULE-010:** Character eligibility requires approved relationships, policy evaluation, and bounded exceptions; similarity alone is not a link.
 - **DIBS-RULE-011:** Vault acquisitions are display-only and never create ledger consumption.
 - **DIBS-RULE-012:** Multiple raids may operate concurrently; accounting metadata may synchronize, but loot itself never transfers between raids.
+- **DIBS-RULE-013:** Rank reconciliation is a manual positive-only top-up. A coordinator revalidates its immutable roster, season, catalog, authority, and assigned-allocation basis before commit; negative differences keep already granted Dibs and never create debt or a clawback.
 
 See [modules](modules.md), [data model](data-model.md), [events](events.md), and [RCLootCouncil integration](rclc-integration.md).

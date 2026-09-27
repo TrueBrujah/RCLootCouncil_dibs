@@ -202,6 +202,11 @@ end
 
 function Dibs.RCLootCouncil.IsRCButtonEnabledForType(responseType)
   local key = canonicalPolicyKey(responseType)
+  if Dibs.LootRules and Dibs.LootRules.GetEffectiveValue then
+    local value = Dibs.LootRules.GetEffectiveValue(key, "rclootcouncil")
+    if type(value) == "boolean" then return value end
+    return false
+  end
   local values = getDibRCEnabledSettings()
   return values[key] ~= false
 end
@@ -212,14 +217,15 @@ function Dibs.RCLootCouncil.SetRCButtonEnabledForType(responseType, enabled, act
     return nil, "GUILD_ADMIN_REQUIRED"
   end
   local key = canonicalPolicyKey(responseType)
+  if Dibs.LootRules and Dibs.LootRules.SetDraftValue then
+    local changed, changeReason = Dibs.LootRules.SetDraftValue(key, "rclootcouncil", enabled == true)
+    if not changed then return nil, changeReason end
+    typePolicyRevision = typePolicyRevision + 1
+    typeAllowanceCache = {}
+    return true
+  end
   local values = getDibRCEnabledSettings()
   values[key] = enabled == true
-  local rc = getRC()
-  local db = rc and rc.Getdb and rc:Getdb()
-  if enabled == true and type(db) == "table" then
-    db.enabledButtons = db.enabledButtons or {}
-    db.enabledButtons[key] = true
-  end
   typePolicyRevision = typePolicyRevision + 1
   typeAllowanceCache = {}
   return true
@@ -239,6 +245,10 @@ function Dibs.RCLootCouncil.IsDibEnabledForType(responseType)
     return false
   end
   local key = canonicalPolicyKey(responseType)
+  if Dibs.LootRules and Dibs.LootRules.GetEffectiveValue then
+    local value = Dibs.LootRules.GetEffectiveValue(key, "adventureGuide")
+    return type(value) == "boolean" and value or false
+  end
   local rules = getDibTypeSettings()
   local value = rules[key]
   if value == nil then
@@ -257,8 +267,12 @@ function Dibs.RCLootCouncil.SetDibEnabledForType(responseType, enabled, actor)
     return nil, "PERSONAL_ITEM_TYPE"
   end
   local key = canonicalPolicyKey(responseType)
-  local rules = getDibTypeSettings()
-  rules[key] = enabled == true
+  if Dibs.LootRules and type(Dibs.LootRules.SetDraftValue) == "function" then
+    local changed, reason = Dibs.LootRules.SetDraftValue(key, "adventureGuide", enabled == true)
+    if not changed then return nil, reason end
+  else
+    getDibTypeSettings()[key] = enabled == true
+  end
   typePolicyRevision = typePolicyRevision + 1
   typeAllowanceCache = {}
   return true
@@ -1380,6 +1394,9 @@ local function getProjectionStatus(rc)
     addAdditionalKeys(keys, db.responses)
     for key in pairs(keys) do
       local entry = getProjectionSetStatus(db.buttons and db.buttons[key], db.responses and db.responses[key])
+      if not entry and db.enabledButtons and db.enabledButtons[key] == true then
+        entry = { activeButtons = 0 }
+      end
       if entry then
         entry.enabled = db.enabledButtons and db.enabledButtons[key] == true or false
         status.additional[key] = entry

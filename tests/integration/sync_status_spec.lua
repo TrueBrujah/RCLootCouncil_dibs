@@ -11,26 +11,31 @@ end
 describe("Synchronization status", function()
   it("accepts patch and dev changes within one major.minor addon family", function()
     local dibs = load()
-    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.6.2"))
-    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.6.4-dev"))
+    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.2"))
+    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.4-dev"))
     local message = assert(dibs.Sync.BuildEnvelope({ type = "HELLO" }))
-    message.addonVersion = "0.6.2"
+    message.addonVersion = "0.8.2"
     local accepted, reason = dibs.Sync.Receive(message, "Tester-Realm")
     assert_true(accepted, tostring(reason))
   end)
 
-  it("requires an update for a different major.minor addon family", function()
+  it("LRA21 requires an update for a 0.7.x peer and reports Loot Rules incompatible", function()
     local dibs = load()
-    assert_false(dibs.Sync.GetAddonVersionCompatibility("0.7.0"))
+    assert_false(dibs.Sync.GetAddonVersionCompatibility("0.7.5"))
     local message = assert(dibs.Sync.BuildEnvelope({ type = "HELLO" }))
-    message.addonVersion = "0.7.0"
+    message.addonVersion = "0.7.5"
     local accepted, reason = dibs.Sync.Receive(message, "Tester-Realm")
     assert_false(accepted)
     assert_equal("ADDON_UPDATE_REQUIRED", reason)
     local status = dibs.Sync.GetSynchronizationStatus()
-    assert_equal("0.7.0", status.lastAddonVersionMismatch.remoteVersion)
+    assert_equal("0.7.5", status.lastAddonVersionMismatch.remoteVersion)
     assert_equal("Tester-Realm", status.lastAddonVersionMismatch.sender)
-    assert_true(dibs.BuildDebugReport():find("Addon version mismatch: sender=Tester-Realm local=0.6.5 remote=0.7.0 reason=ADDON_UPDATE_REQUIRED", 1, true) ~= nil)
+    dibs.db.settings.dibAllowedTypes = { TOKEN = false }
+    assert_equal("GUILD_LOOT_RULES_INCOMPATIBLE", dibs.LootRules.GetStatus().status)
+    local effective, effectiveReason = dibs.LootRules.GetEffectiveValue("TOKEN", "adventureGuide")
+    assert_equal(nil, effective)
+    assert_equal("GUILD_LOOT_RULES_INCOMPATIBLE", effectiveReason)
+    assert_true(dibs.BuildDebugReport():find("Addon version mismatch: sender=Tester-Realm local=0.8.0 remote=0.7.5 reason=ADDON_UPDATE_REQUIRED", 1, true) ~= nil)
   end)
 
   it("keeps legacy peers observable when they do not send an addon version", function()

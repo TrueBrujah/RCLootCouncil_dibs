@@ -107,6 +107,30 @@ La page **Raid Readiness & Dry-Run** indique notamment :
 
 Un etat **Blocked** doit etre resolu avant de compter sur un debit automatique. Un etat **Unavailable** peut simplement signifier qu'aucun raid ou aucune integration live n'est actif.
 
+### Regles de butin de guilde
+
+Les Loot Rules sont une autorite de guilde distincte des Rank Rules et de
+OperationalPolicy. Le GM examine le brouillon complet pour tous les types de
+butin, puis choisit **Adopt reviewed Loot Rules** une seule fois. Les
+modifications suivantes restent locales jusqu'a la reussite de **Publish Loot
+Rules changes**. En cas d'echec, la revision precedente du catalogue reste
+effective ; ne presentez pas le changement comme actif avant le message de
+reussite.
+
+Les Officers consultent les regles adoptees en lecture seule. Les anciennes
+valeurs locales sont conservees mais ne remplacent pas le snapshot publie. Les
+cles disponibles proviennent dynamiquement de RCLootCouncil ; les memes valeurs
+de guilde controlent l'eligibilite Adventure Guide et les boutons Dibs.
+
+Raid Readiness affiche l'etat exact des Loot Rules. `GUILD_LOOT_RULES_READY`
+indique un snapshot valide ; `GUILD_LOOT_RULES_NOT_CONFIGURED` et
+`LOCAL_LEGACY_ONLY` ne sont pas une readiness de guilde ;
+`GUILD_LOOT_RULES_SYNC_BEHIND` conserve le dernier snapshot recu pendant la
+reprise ; `GUILD_LOOT_RULES_INCOMPATIBLE` exige une mise a jour ; `UNAVAILABLE`
+signifie que la source dynamique des types n'a pas pu etre chargee. SyncV2
+refuse les clients 0.7.x face a la famille 0.8.x. Demandez leur mise a jour au
+lieu de compenser en modifiant les valeurs locales.
+
 Le dry-run permet de tester un objet, un joueur, une reponse et un statut de finalisation sans modifier le ledger :
 
 ```text
@@ -124,7 +148,21 @@ Utilisez **Seasons** pour :
 
 Utilisez **Rank Rules** pour definir l'allocation de chaque grade pour la saison
 selectionnee. Modifier la regle ne reecrit pas les anciennes transactions;
-verifiez separement le rapprochement des membres deja presents.
+verifiez separement le rapprochement des membres deja presents. Dans Guided
+Setup, **Rank Rules** et **Allocation Reconciliation** sont deux etapes
+distinctes.
+
+Ouvrez **Automatic Dibs** pour comparer le rang actuel de chaque membre a son
+allocation saisonniere deja attribuee. Un ecart positif exige une confirmation
+explicite et une raison obligatoire. Si l'action vient d'un client non
+coordinateur, elle reste en attente jusqu'au commit canonique du coordinateur.
+**Reconcile All** traite chaque membre independamment et presente les resultats
+commis, en attente, perimes, ignores ou refuses.
+
+Un ecart negatif est informatif : une retrogradation ne retire pas les Dibs
+deja attribues, meme s'ils ont ete depenses. Il n'y a ni reprise, ni ajustement
+negatif du solde, ni dette. L'ancienne option Assignments reste disponible et
+utilise le meme service de rapprochement protege.
 
 Pour les operations de ledger :
 

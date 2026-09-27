@@ -315,6 +315,11 @@ local function getDibTypeValues()
       end
     end
   end
+  local projection = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetConfigProjectionStatus
+    and Dibs.RCLootCouncil.GetConfigProjectionStatus()
+  for key in pairs(projection and projection.additional or {}) do
+    addValue(key)
+  end
   return values
 end
 
@@ -331,7 +336,12 @@ local function setDibTypeEnabled(typeKey, enabled)
   typeKey = semanticKey
   if Dibs.RCLootCouncil and Dibs.RCLootCouncil.SetDibEnabledForType then
     local ok, reason = Dibs.RCLootCouncil.SetDibEnabledForType(typeKey, enabled == true)
-    return ok ~= nil, reason
+    if ok == nil then setStatus("Unable to change Loot Rules draft: " .. tostring(reason)) end
+    return ok == true, reason
+  elseif Dibs.LootRules and Dibs.LootRules.SetDraftValue then
+    local ok, reason = Dibs.LootRules.SetDraftValue(typeKey, "adventureGuide", enabled == true)
+    if not ok then setStatus("Unable to change Loot Rules draft: " .. tostring(reason)) end
+    return ok == true, reason
   else
     getDibTypeSettings()[tostring(typeKey)] = enabled == true
     return true
@@ -629,14 +639,15 @@ local function buildAssignmentLogText(seasonId)
     and Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId) or {}
   local rows = details.rows or {}
   if #rows == 0 then return buildRankReconciliationText(seasonId) end
-  local lines = { "Date time | Player | Guild rank | Expected Dibs | Assigned Dibs | Action | Reason" }
+  local lines = { "Player | Guild rank | Expected | Assigned | Difference | Status | Reason" }
   for _, row in ipairs(rows) do
-    local expected = Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer
-      and Dibs.RankRules.GetAllocationForPlayer(row.plainPlayerName or row.playerName, seasonId) or 0
     local color = classColorCode(row.classFileName)
     local player = "|c" .. color .. tostring(row.playerName) .. "|r"
-    table.insert(lines, table.concat({ tostring(row.dateText or ""), player, tostring(row.rankName or "Unknown"),
-      tostring(expected), tostring(row.amount), tostring(row.action or "Auto"), tostring(row.reason or "") }, " | "))
+    local difference = tonumber(row.difference) or 0
+    local signedDifference = difference > 0 and ("+" .. tostring(difference)) or tostring(difference)
+    table.insert(lines, table.concat({ player, tostring(row.rankName or "Unknown"),
+      "Expected " .. tostring(row.expected), "Assigned " .. tostring(row.assigned),
+      "Difference " .. signedDifference, tostring(row.action or "Ready"), tostring(row.reason or "") }, " | "))
   end
   return table.concat(lines, "\n")
 end
@@ -929,27 +940,26 @@ local optionsTable = {
               width = "full",
               name = function() return buildAssignmentLogText(getSelectedSeasonId()) end,
             },
-            reconcileMissing = {
+            reconciliationReason = {
               order = 3,
+              type = "input",
+              name = "Reconciliation reason",
+              get = function() return getState().reconciliationReason or "" end,
+              set = function(_, value) getState().reconciliationReason = value end,
+            },
+            reconcileMissing = {
+              order = 4,
               type = "execute",
               name = "Reconcile missing Dibs",
               func = function()
                 local seasonId = getSelectedSeasonId()
-                local rows = Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation
-                  and Dibs.RankRules.GetAllocationReconciliation(seasonId) or {}
-                local assigned, failed = 0, 0
-                for _, row in ipairs(rows) do
-                  if tonumber(row.missingAllocation) and row.missingAllocation > 0 then
-                    local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
-                      and Dibs.ProtectedActions.Execute("rank.reconcile", nil, {
-                        playerName = row.playerName, seasonId = seasonId, amount = row.missingAllocation,
-                        reason = "Roster rank reconciliation", source = "rank_reconciliation",
-                        rankIndex = row.rankIndex, rankName = row.rankName, expectedAllocation = row.expectedAllocation,
-                      }) or { ok = false }
-                    if result.ok then assigned = assigned + row.missingAllocation else failed = failed + 1 end
-                  end
-                end
-                setStatus("Roster reconciliation complete: assigned " .. tostring(assigned) .. " Dibs; failed " .. tostring(failed) .. ".")
+                local details = Dibs.OfficerUI and Dibs.OfficerUI.BuildAutomaticAllocationDetails
+                  and Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId) or { rows = {} }
+                local report = Dibs.OfficerUI and Dibs.OfficerUI.ReconcileAllAllocations
+                  and Dibs.OfficerUI.ReconcileAllAllocations(seasonId, getState().reconciliationReason, details.rows)
+                  or { succeeded = 0, stale = 0, skipped = 0, failed = #details.rows, pending = 0 }
+                setStatus(string.format("Roster reconciliation: succeeded %d; stale %d; skipped %d; failed %d; pending %d.",
+                  report.succeeded, report.stale, report.skipped, report.failed, report.pending))
               end,
             },
             player = {
@@ -1593,9 +1603,17 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
   } },
   types = { type = "multiselect", name = "Dib semantic loot types", order = 2, width = "full",
     values = getDibTypeValues,
+    disabled = function()
+      return not (Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM())
+    end,
     get = function(_, key)
       local semanticKey = canonicalSemanticTypeKey(key)
       if semanticKey == nil then return false end
+      if Dibs.LootRules and Dibs.LootRules.GetEffectiveValue then
+        local value = Dibs.LootRules.GetEffectiveValue(semanticKey, "adventureGuide")
+        if type(value) == "boolean" then return value end
+        return false
+      end
       local settings = getDibTypeSettings()
       if settings[key] ~= nil then return settings[key] ~= false end
       if settings[semanticKey] ~= nil then return settings[semanticKey] ~= false end

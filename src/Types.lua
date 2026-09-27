@@ -225,6 +225,7 @@ runtime state or changing addon load order.
 ---@field SetupAssistant table|nil Transient first-installation assistant surface.
 ---@field HealthUI table|nil Transient Officer health projection surface.
 ---@field Notifications table|nil Local idempotent notification surface.
+---@field LootRules table|nil Guild-authoritative Loot Rules draft and effective-value service.
 
 ---@class DibsSavedVariables
 ---@field schemaVersion integer Root SavedVariables schema.

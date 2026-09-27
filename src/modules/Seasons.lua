@@ -26,8 +26,8 @@ end
 local GUILD_SETTING_KEYS = {
   "allowPublicPreDibs", "defaultAllocation", "officerMaxRankIndex", "officerRankIndices",
   "preDibAnnouncementChannel", "preDibOfficerAnnouncementChannel", "preDibAnnouncementTemplate",
-  "raidReminderTemplate", "raidReminderMessage", "raidEntryDibPromptsEnabled", "dibAllowedTypes",
-  "dibButtonTemplate", "dibRCEnabledTypes", "ejBlockedSubCategories", "installationMode",
+  "raidReminderTemplate", "raidReminderMessage", "raidEntryDibPromptsEnabled",
+  "dibButtonTemplate", "ejBlockedSubCategories", "installationMode",
 }
 
 local function guildConfiguration()
@@ -38,6 +38,13 @@ local function guildConfiguration()
   end
   local eligibility = Dibs.db.characterEligibility
   result.eligibilityPolicies = eligibility and copy(eligibility.policies or {}) or {}
+  local catalog = Dibs.db.seasonCatalog
+  local records = type(catalog) == "table" and catalog.records or nil
+  local currentRecord = type(records) == "table" and records[tostring(catalog.catalogRevision or "")] or nil
+  local currentConfiguration = currentRecord and currentRecord.guildConfiguration
+  if type(currentConfiguration) == "table" and currentConfiguration.guildLootRules ~= nil then
+    result.guildLootRules = copy(currentConfiguration.guildLootRules)
+  end
   return result
 end
 
@@ -55,6 +62,13 @@ end
 
 local function integer(value)
   return type(value) == "number" and value == math.floor(value)
+end
+
+local function onlyKeys(value, allowed)
+  for key in pairs(value) do
+    if not allowed[key] then return false end
+  end
+  return true
 end
 
 local function catalogState()
@@ -137,6 +151,14 @@ local function validateCatalog(record)
   end
   local seasons, seasonReason = normalizeCatalogSeasons(record.seasons)
   if not seasons then return false, seasonReason end
+  local guildLootRules = record.guildConfiguration and record.guildConfiguration.guildLootRules
+  if guildLootRules ~= nil then
+    if not (Dibs.LootRules and Dibs.LootRules.NormalizeSnapshot) then
+      return false, "GUILD_LOOT_RULES_UNAVAILABLE"
+    end
+    local normalized, ruleReason = Dibs.LootRules.NormalizeSnapshot(guildLootRules)
+    if not normalized then return false, ruleReason end
+  end
   if catalogHash(record) ~= record.contentHash then return false, "SEASON_CATALOG_HASH_MISMATCH" end
   return true
 end
@@ -329,24 +351,67 @@ function Dibs.Seasons.CalculateCatalogHash(record)
   return catalogHash(record or {})
 end
 
-function Dibs.Seasons.PublishCatalog(actor, action)
+function Dibs.Seasons.PublishCatalog(actor, action, publication)
+  local normalizedRules, changedLootTypes
+  if publication ~= nil then
+    if type(publication) ~= "table" or not onlyKeys(publication, { guildLootRules = true, changedLootTypes = true })
+      or publication.guildLootRules == nil or type(publication.changedLootTypes) ~= "table" then
+      return false, "INVALID_GUILD_LOOT_RULES_PUBLICATION"
+    end
+    if not (Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM()) then
+      return false, "CURRENT_GUILD_MASTER_REQUIRED"
+    end
+    if not (Dibs.LootRules and Dibs.LootRules.NormalizeSnapshot) then
+      return false, "GUILD_LOOT_RULES_UNAVAILABLE"
+    end
+    local ruleReason
+    normalizedRules, ruleReason = Dibs.LootRules.NormalizeSnapshot(publication.guildLootRules)
+    if not normalizedRules then return false, ruleReason end
+    changedLootTypes = copy(publication.changedLootTypes)
+    for _, key in ipairs(changedLootTypes) do
+      if type(key) ~= "string" or normalizedRules.types[key] == nil then
+        return false, "INVALID_GUILD_LOOT_RULES_PUBLICATION"
+      end
+    end
+  end
   local author, authorReason = localWriter(actor)
   if not author then return false, authorReason end
   local state = catalogState()
   local seasons, seasonReason = normalizeCatalogSeasons(Dibs.db.seasons)
   if not seasons then return false, seasonReason end
+  local configuration = guildConfiguration()
+  if normalizedRules then configuration.guildLootRules = copy(normalizedRules) end
+  local audit = { action = action or "SEASON_CHANGE" }
+  if normalizedRules then audit.changedLootTypes = changedLootTypes end
   local record = {
     schema = CATALOG_SCHEMA, recordClass = "SEASON_CATALOG", guildKey = Dibs.GetGuildKey(),
     catalogRevision = state.catalogRevision + 1, parentRevision = state.catalogRevision, parentHash = state.hash,
     authorNameRealm = author.displayName, authorMemberKey = author.memberKey, authorSnapshot = copy(author),
-    timestamp = Dibs.GetTimestamp and Dibs.GetTimestamp() or time(), audit = { action = action or "SEASON_CHANGE" },
+    timestamp = Dibs.GetTimestamp and Dibs.GetTimestamp() or time(), audit = audit,
     currentSeasonId = Dibs.db.currentSeasonId, seasons = seasons, rankRules = copy(Dibs.db.rankRules or {}),
-    guildConfiguration = guildConfiguration(),
+    guildConfiguration = configuration,
   }
   record.contentHash = catalogHash(record)
   if not record.contentHash then return false, "CANONICAL_HASH_UNAVAILABLE" end
   local applied, applyReason = Dibs.Seasons.ApplyCatalog(record, author.displayName)
   return applied, applyReason, applied and copy(record) or nil
+end
+
+function Dibs.Seasons.RollbackCatalogPublication(record)
+  if type(record) ~= "table" then return false, "INVALID_SEASON_CATALOG" end
+  local state = catalogState()
+  if state.catalogRevision ~= record.catalogRevision or state.hash ~= record.contentHash
+    or record.parentRevision ~= state.catalogRevision - 1 then
+    return false, "SEASON_CATALOG_ROLLBACK_CONFLICT"
+  end
+  state.records[tostring(record.catalogRevision)] = nil
+  state.catalogRevision, state.hash = record.parentRevision, record.parentHash
+  local configuration = record.guildConfiguration
+  if type(configuration) == "table" and configuration.guildLootRules ~= nil
+    and Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.RefreshConfigProjection) == "function" then
+    pcall(Dibs.RCLootCouncil.RefreshConfigProjection)
+  end
+  return true
 end
 
 function Dibs.Seasons.ApplyCatalog(record, sender)
@@ -356,6 +421,25 @@ function Dibs.Seasons.ApplyCatalog(record, sender)
   if not author then return false, authorityReason end
   if author.memberKey ~= record.authorMemberKey then return false, "AUTHOR_SENDER_MISMATCH" end
   local state = catalogState()
+  local incomingConfiguration = record.guildConfiguration
+  local incomingLootRules = type(incomingConfiguration) == "table" and incomingConfiguration.guildLootRules or nil
+  local currentRecord = state.records[tostring(state.catalogRevision)]
+  local currentConfiguration = currentRecord and currentRecord.guildConfiguration
+  local currentLootRules = type(currentConfiguration) == "table" and currentConfiguration.guildLootRules or nil
+  if currentLootRules ~= nil and incomingLootRules == nil then
+    return false, "GUILD_LOOT_RULES_DOWNGRADE"
+  end
+  local lootRulesChanged = incomingLootRules ~= nil and currentLootRules == nil
+  if incomingLootRules ~= nil and currentLootRules ~= nil then
+    local incomingHash = Dibs.Sync and Dibs.Sync.CalculateContentHash(incomingLootRules)
+    local currentHash = Dibs.Sync and Dibs.Sync.CalculateContentHash(currentLootRules)
+    lootRulesChanged = incomingHash == nil or currentHash == nil or incomingHash ~= currentHash
+  end
+  if lootRulesChanged then
+    local isCurrentGM = Dibs.Identity and Dibs.Identity.IsCurrentGuildMaster
+      and Dibs.Identity.IsCurrentGuildMaster(sender)
+    if isCurrentGM ~= true then return false, "CURRENT_GUILD_MASTER_REQUIRED" end
+  end
   if record.catalogRevision == state.catalogRevision then
     if record.contentHash == state.hash then return true, "IDEMPOTENT_REPLAY", Dibs.Seasons.GetCatalogRecord(record.catalogRevision) end
     table.insert(state.conflicts, { revision = record.catalogRevision, existingHash = state.hash, conflictingHash = record.contentHash, receivedAt = Dibs.GetTimestamp and Dibs.GetTimestamp() or time() })
@@ -375,5 +459,9 @@ function Dibs.Seasons.ApplyCatalog(record, sender)
   end
   state.catalogRevision, state.hash = record.catalogRevision, record.contentHash
   state.records[tostring(record.catalogRevision)] = copy(record)
+  if incomingLootRules ~= nil and Dibs.RCLootCouncil
+    and type(Dibs.RCLootCouncil.RefreshConfigProjection) == "function" then
+    pcall(Dibs.RCLootCouncil.RefreshConfigProjection)
+  end
   return true, "SEASON_CATALOG_APPLIED", copy(record)
 end

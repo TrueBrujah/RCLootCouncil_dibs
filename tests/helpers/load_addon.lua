@@ -10,6 +10,7 @@ local TOC_FILES = {
   "modules/Governance.lua",
   "modules/OperationalPolicy.lua",
   "modules/Seasons.lua",
+  "modules/LootRules.lua",
   "modules/RankRules.lua",
   "modules/Ledger.lua",
   "modules/Permissions.lua",
@@ -124,22 +125,40 @@ local function makeAce3()
   function gui:Create(kind)
     local frame = _G.CreateFrame("Frame")
     local widget = { frame = frame, kind = kind, children = {}, callbacks = {} }
+    if kind == "Button" then
+      frame._fontString = {
+        _text = "",
+        SetText = function(self, value) self._text = tostring(value or "") end,
+        GetStringWidth = function(self) return #(self._text or "") * 8 end,
+      }
+      frame.GetFontString = function(self) return self._fontString end
+    end
+    if kind == "Frame" then
+      widget.closebutton = _G.CreateFrame("Button", nil, frame)
+      widget.closebutton:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -27, 17)
+    end
     table.insert(_G.__dibsAceWidgets, widget)
     function widget:SetTitle(value) self.title = value end
-    function widget:SetWidth(value) self.width = value end
-    function widget:SetHeight(value) self.height = value end
+    function widget:SetWidth(value) self.width = value; self.frame:SetWidth(value) end
+    function widget:SetRelativeWidth(value) self.relWidth = value; self.width = "relative" end
+    function widget:SetHeight(value) self.height = value; self.frame:SetHeight(value) end
+    function widget:SetAutoWidth(value) self.autoWidth = value end
     function widget:SetLayout(value) self.layout = value end
     function widget:SetFullWidth(value) self.fullWidth = value end
     function widget:SetFullHeight(value) self.fullHeight = value end
     function widget:SetTabs(value) self.tabs = value end
     function widget:SetList(value) self.list = value end
     function widget:SetLabel(value) self.label = value end
-    function widget:SetText(value) self.text = value end
+    function widget:SetText(value)
+      self.text = value
+      if self.frame._fontString then self.frame._fontString:SetText(value) end
+    end
     function widget:GetText() return self.text or "" end
     function widget:SetValue(value) self.value = value end
     function widget:SetDisabled(value) self.disabled = value == true end
+    function widget:DisableButton(value) self.buttonDisabled = value == true end
     function widget:SetCallback(name, callback) self.callbacks[name] = callback end
-    function widget:AddChild(child) table.insert(self.children, child) end
+    function widget:AddChild(child) table.insert(self.children, child); child.parent = self end
     function widget:ReleaseChildren() self.children = {} end
     function widget:Hide() self.frame:Hide() end
     function widget:Show() self.frame:Show() end

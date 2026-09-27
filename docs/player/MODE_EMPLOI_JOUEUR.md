@@ -50,6 +50,35 @@ RCLootCouncil est optionnel. En mode Standalone, Dibs gere le registre et les
 demande localement ; en mode RCLootCouncil, RCLootCouncil gere le vote et la
 finalisation du butin.
 
+## Regles de butin de guilde
+
+Avec DIBS 0.7.x, le maitre de guilde adopte explicitement les regles de butin
+de guilde et publie leurs modifications. Les Officers consultent la version
+publiee sans la modifier ; les anciennes valeurs locales ne constituent pas
+une autorite de guilde. Raid Readiness distingue les etats suivants :
+
+- `GUILD_LOOT_RULES_READY` : une version de guilde valide est presente ;
+- `LOCAL_LEGACY_ONLY` : les anciennes regles restent un repli local avant
+	adoption, pas une decision partagee ;
+- `GUILD_LOOT_RULES_NOT_CONFIGURED` : le GM n'a pas encore adopte les regles ;
+- `GUILD_LOOT_RULES_SYNC_BEHIND` : conservez la derniere version recue et
+	laissez la synchronisation se retablir ;
+- `GUILD_LOOT_RULES_INCOMPATIBLE` : mettez DIBS a jour avant d'utiliser les
+	regles partagees ;
+- `UNAVAILABLE` : les types de butin pris en charge n'ont pas pu etre charges.
+
+La synchronisation avec une guilde en 0.8.x exige la famille actuelle 0.8.x.
+Les clients en 0.7.x doivent etre mis a jour.
+
+## Allocations par rang
+
+Votre allocation de depart est enregistree pour la saison. Si votre rang de
+guilde change, un Officer peut valider un complement lorsque la nouvelle
+allocation attendue est superieure. Une allocation attendue plus faible ne
+retire jamais les Dibs deja attribues, ne cree aucune dette et ne modifie pas
+votre solde par un ajustement negatif. Contactez un Officer si votre allocation
+de depart semble incorrecte.
+
 ## 2. Comprendre les Dibs
 
 Un Dib est une unite de priorite definie par la guilde pour la saison active.

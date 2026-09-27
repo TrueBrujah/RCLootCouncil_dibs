@@ -122,6 +122,14 @@ function Dibs.RankRules.GetAllocationForPlayer(playerName, seasonId)
   return Dibs.DEFAULT_DIBS_PER_RANK
 end
 
+-- Guild Policy may provide this decision later; current behavior is deliberately not persisted.
+function Dibs.RankRules.GetRankReconciliationBehavior(difference)
+  local delta = tonumber(difference) or 0
+  if delta > 0 then return "REQUIRE_CONFIRMATION" end
+  if delta < 0 then return "KEEP_GRANTED" end
+  return "ALIGNED"
+end
+
 local function getGuildRosterMembers()
   local members = {}
   if type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then
@@ -148,13 +156,16 @@ function Dibs.RankRules.GetAllocationReconciliation(seasonId, members)
       local expected = Dibs.RankRules.GetAllocationForPlayer(name, targetSeason)
       local state = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(name, targetSeason) or {}
       local assigned = tonumber(state.allocation) or 0
-      local delta = math.max(0, (tonumber(expected) or 0) - assigned)
+      local difference = (tonumber(expected) or 0) - assigned
+      local delta = math.max(0, difference)
       table.insert(rows, {
         playerName = name,
         rankName = rankInfo.rankName or "Guild Member",
         rankIndex = tonumber(rankInfo.rankIndex) or 0,
         expectedAllocation = tonumber(expected) or 0,
         assignedAllocation = assigned,
+        difference = difference,
+        behavior = Dibs.RankRules.GetRankReconciliationBehavior(difference),
         missingAllocation = delta,
         surplusAllocation = math.max(0, assigned - (tonumber(expected) or 0)),
         balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(name, targetSeason) or 0,
@@ -208,28 +219,21 @@ function Dibs.RankRules.GetRankConfigurationSummary(seasonId)
     byRank[key] = byRank[key] or { rankIndex = normalizeRankIndex(member.rankIndex), rankName = member.rankName, memberCount = 0 }
     byRank[key].memberCount = byRank[key].memberCount + 1
   end
-  local missingByRank, surplusByRank, reconciledByRank, unknownByRank = {}, {}, {}, {}
+  local missingByRank, surplusByRank = {}, {}
   for _, row in ipairs(Dibs.RankRules.GetAllocationReconciliation(targetSeason, roster)) do
     local key = tostring(normalizeRankIndex(row.rankIndex))
-    reconciledByRank[key] = (reconciledByRank[key] or 0) + 1
     if row.status == "MISSING" then
       missingByRank[key] = (missingByRank[key] or 0) + 1
     elseif row.status == "SURPLUS" then
       surplusByRank[key] = (surplusByRank[key] or 0) + 1
-    elseif row.status ~= "ALIGNED" then
-      unknownByRank[key] = true
     end
   end
   local rows = {}
   for key, info in pairs(byRank) do
     local rule = rules[key]
     local status
-    if type(rule) ~= "table" or tonumber(rule.allocation) == nil or tonumber(rule.allocation) < 0
-      or (missingByRank[key] or 0) > 0 then
+    if type(rule) ~= "table" or tonumber(rule.allocation) == nil or tonumber(rule.allocation) < 0 then
       status = "ACTION_REQUIRED"
-    elseif (reconciledByRank[key] or 0) ~= info.memberCount or unknownByRank[key]
-      or (surplusByRank[key] or 0) > 0 then
-      status = "WARNING"
     elseif tonumber(rule.allocation) == 0 then
       status = "OPTIONAL"
     else

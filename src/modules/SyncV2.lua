@@ -154,6 +154,18 @@ function Sync.GetAddonVersionCompatibility(remoteVersion)
   return false, "ADDON_UPDATE_REQUIRED"
 end
 
+function Sync.SendAwardProposalResult(proposalId, result, reasonCode, target)
+  if type(proposalId) ~= "string" or proposalId == "" or (result ~= "STALE" and result ~= "REJECTED") then
+    return false, "INVALID_PROPOSAL_RESULT"
+  end
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  local localMember = localSnapshot()
+  if not authority or authority.state ~= "ACTIVE" or not localMember or not authority.coordinator
+    or authority.coordinator.memberKey ~= localMember.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+  return Sync.Send({ type = "AWARD_PROPOSAL_ACK", proposalId = proposalId, result = result,
+    reasonCode = reasonCode }, "WHISPER", target)
+end
+
 function Sync.BuildSyncProbeReport()
   local state = ensure()
   local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
@@ -665,6 +677,10 @@ local function validateEnvelope(message, sender)
     return nil, "UNSUPPORTED_PROTOCOL_MAJOR"
   end
   local compatible, compatibilityReason = Sync.GetAddonVersionCompatibility(message.addonVersion)
+  if message.type == "TRANSFER_BEGIN" and message.entityType == "AWARD_PROPOSAL" and compatible ~= true then
+    rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN")
+    return nil, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN"
+  end
   if compatible == false then
     rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason)
     return nil, compatibilityReason
@@ -882,6 +898,13 @@ function Sync.Receive(message, sender)
     if not authority or authority.state ~= "ACTIVE" or not authority.coordinator or authority.coordinator.memberKey ~= resolved.memberKey then
       return false, "CURRENT_COORDINATOR_REQUIRED"
     end
+    if message.result == "STALE" or message.result == "REJECTED" then
+      local resolvedProposal = Dibs.Governance and Dibs.Governance.ResolveAwardProposal
+        and Dibs.Governance.ResolveAwardProposal(message.proposalId, message.result, message.reasonCode)
+      if not resolvedProposal then return false, "PROPOSAL_TERMINAL_UPDATE_UNAVAILABLE" end
+      return true, "PROPOSAL_" .. message.result
+    end
+    if message.result ~= nil and message.result ~= "RECEIVED" then return false, "INVALID_PROPOSAL_ACK_RESULT" end
     local acknowledged = false
     local acknowledgementReason = "PROPOSAL_ACK_UNAVAILABLE"
     if Dibs.Governance and Dibs.Governance.AckProposalRelay then
@@ -1228,11 +1251,23 @@ function Sync.Receive(message, sender)
       if Sync.CalculateContentHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
       local accepted, applyReason = Dibs.Governance.ReceiveRelayedProposal(payload, resolved.displayName)
       if accepted then
-        Sync.Send({ type = "AWARD_PROPOSAL_ACK", proposalId = payload.proposalId }, "WHISPER", resolved.displayName)
+        Sync.Send({ type = "AWARD_PROPOSAL_ACK", proposalId = payload.proposalId, result = "RECEIVED" }, "WHISPER", resolved.displayName)
         -- Season-allocation grants are deterministic rank rules, not a loot judgment call; commit immediately.
         if payload.type == "SEASON_ALLOCATION" and Dibs.Ledger and Dibs.Ledger.CommitAwardProposal then
-          Dibs.Ledger.CommitAwardProposal(nil, payload.proposalId, {})
+          local committed = Dibs.Ledger.CommitAwardProposal(nil, payload.proposalId, {})
+          if payload.reconciliation and committed and not committed.accepted then
+            local terminalProposal = Dibs.Governance.GetAwardProposals and (function()
+              for _, candidate in ipairs(Dibs.Governance.GetAwardProposals()) do
+                if candidate.proposalId == payload.proposalId then return candidate end
+              end
+            end)()
+            if terminalProposal and (terminalProposal.status == "STALE" or terminalProposal.status == "REJECTED") then
+              Sync.SendAwardProposalResult(payload.proposalId, terminalProposal.status, terminalProposal.resolutionReason, resolved.displayName)
+            end
+          end
         end
+      elseif payload.reconciliation then
+        Sync.SendAwardProposalResult(payload.proposalId, "REJECTED", applyReason, resolved.displayName)
       end
       return accepted, applyReason
     end

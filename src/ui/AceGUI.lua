@@ -88,9 +88,85 @@ end
 
 function Adapter.GetLayoutMetrics()
   if Dibs.Midnight and type(Dibs.Midnight.GetLayoutMetrics) == "function" then
-    return Dibs.Midnight.GetLayoutMetrics()
+    local metrics = Dibs.Midnight.GetLayoutMetrics()
+    local tokens = Adapter.GetPresentationTokens() or {}
+    local spacing = tokens.spacing or {}
+    local sizing = tokens.sizing or {}
+    metrics.tableColumnGap = math.max(0, tonumber(spacing.xs) or 4)
+    metrics.tableHorizontalPadding = math.max(0, tonumber(spacing.sm) or 8)
+    metrics.tableScrollbarReserve = math.max(12, tonumber(sizing.scrollbarReserve) or 18)
+    metrics.tableVerticalGap = math.max(0, tonumber(spacing.xs) or 4)
+    metrics.tableFooterHeight = math.max(metrics.buttonHeight, tonumber(sizing.tableFooterHeight) or metrics.buttonHeight + 8)
+    metrics.tableViewportMinimum = math.max(96, tonumber(sizing.tableViewportMinimum) or 120)
+    metrics.buttonHorizontalPadding = 30
+    metrics.buttonSizingSafetyMargin = 8
+    return metrics
   end
-  return { minWidth = 520, minHeight = 360, maxWidth = 1400, maxHeight = 1100, actionMinWidth = 88, rowHeight = 24 }
+  return {
+    minWidth = 520, minHeight = 360, maxWidth = 1400, maxHeight = 1100,
+    actionMinWidth = 88, rowHeight = 24, buttonHeight = 24,
+    tableColumnGap = 4, tableHorizontalPadding = 8, tableScrollbarReserve = 18,
+    tableVerticalGap = 4, tableFooterHeight = 32, tableViewportMinimum = 120,
+    buttonHorizontalPadding = 30,
+    buttonSizingSafetyMargin = 8,
+  }
+end
+
+local measuredTextFontString
+local measuredTextWidths = {}
+local measuredTextLocale
+
+function Adapter.MeasureTextWidth(text)
+  local value = tostring(text or "")
+  local locale = type(_G.GetLocale) == "function" and _G.GetLocale() or "unknown"
+  if measuredTextLocale ~= locale then
+    measuredTextLocale = locale
+    measuredTextWidths = {}
+  end
+  if measuredTextWidths[value] then return measuredTextWidths[value] end
+  local parent = _G.UIParent
+  if not measuredTextFontString and parent and type(parent.CreateFontString) == "function" then
+    local ok, fontString = pcall(parent.CreateFontString, parent, nil, "ARTWORK", "GameFontNormal")
+    if ok then measuredTextFontString = fontString end
+  end
+  local width
+  if measuredTextFontString then
+    if measuredTextFontString.SetText then pcall(measuredTextFontString.SetText, measuredTextFontString, value) end
+    if measuredTextFontString.GetStringWidth then
+      local ok, measured = pcall(measuredTextFontString.GetStringWidth, measuredTextFontString)
+      if ok then width = tonumber(measured) end
+    end
+  end
+  width = math.ceil(width or (#value * 8))
+  measuredTextWidths[value] = width
+  return width
+end
+
+function Adapter.GetContentSizedActionWidth(labels, minimumWidth)
+  local metrics = Adapter.GetLayoutMetrics()
+  local maximumTextWidth = 0
+  if type(labels) == "string" then labels = { labels } end
+  for _, label in ipairs(labels or {}) do
+    maximumTextWidth = math.max(maximumTextWidth, Adapter.MeasureTextWidth(label))
+  end
+  return math.max(tonumber(minimumWidth) or metrics.actionMinWidth,
+    maximumTextWidth + (tonumber(metrics.buttonHorizontalPadding) or 30)
+      + (tonumber(metrics.buttonSizingSafetyMargin) or 8))
+end
+
+function Adapter.GetPageSlice(rows, page, pageSize)
+  local source = rows or {}
+  local size = math.max(1, math.floor(tonumber(pageSize) or 10))
+  local rowCount = #source
+  local totalPages = math.max(1, math.ceil(rowCount / size))
+  local currentPage = math.min(totalPages, math.max(1, math.floor(tonumber(page) or 1)))
+  local firstIndex = ((currentPage - 1) * size) + 1
+  local lastIndex = math.min(rowCount, currentPage * size)
+  local visibleRows = {}
+  for index = firstIndex, lastIndex do
+    if source[index] ~= nil then visibleRows[#visibleRows + 1] = source[index] end
+  end
+  return visibleRows, currentPage, totalPages, rowCount, firstIndex, lastIndex
 end
 
 function Adapter.FitColumnWidths(columns, availableWidth)
@@ -121,6 +197,69 @@ function Adapter.FitColumnWidths(columns, availableWidth)
     end
   end
   return widths, deficit > 0
+end
+
+function Adapter.AllocateFluidColumnWidths(columns, contentWidth, options)
+  local definitions = columns or {}
+  options = options or {}
+  local widths, flexible = {}, {}
+  local fixedTotal, flexibleMinimumTotal = 0, 0
+  local gaps = math.max(0, #definitions - 1) * math.max(0, tonumber(options.columnGap) or 0)
+  local insets = math.max(0, tonumber(options.horizontalPadding) or 0)
+    + math.max(0, tonumber(options.scrollbarReserve) or 0) + gaps
+  local available = math.max(0, (tonumber(contentWidth) or 0) - insets)
+
+  for index, column in ipairs(definitions) do
+    local minimum = math.max(0, tonumber(column.minWidth) or 0)
+    local width = math.max(minimum, tonumber(column.width) or minimum)
+    local weight = not column.fixed and math.max(0, tonumber(column.weight) or 0) or 0
+    if weight > 0 then
+      widths[index] = minimum
+      flexible[#flexible + 1] = { index = index, weight = weight }
+      flexibleMinimumTotal = flexibleMinimumTotal + minimum
+    else
+      widths[index] = width
+      fixedTotal = fixedTotal + width
+    end
+  end
+
+  local remaining = available - fixedTotal - flexibleMinimumTotal
+  local totalWeight = 0
+  for _, column in ipairs(flexible) do totalWeight = totalWeight + column.weight end
+  if remaining > 0 and totalWeight > 0 then
+    for _, column in ipairs(flexible) do
+      widths[column.index] = widths[column.index] + remaining * column.weight / totalWeight
+    end
+  end
+
+  local used = fixedTotal + flexibleMinimumTotal + math.max(0, remaining)
+  return widths, used > available, used + insets
+end
+
+local function fluidColumnBudget(columns, options, preferred)
+  options = options or {}
+  local definitions = columns or {}
+  local width = math.max(0, #definitions - 1) * math.max(0, tonumber(options.columnGap) or 0)
+    + math.max(0, tonumber(options.horizontalPadding) or 0)
+    + math.max(0, tonumber(options.scrollbarReserve) or 0)
+  for _, column in ipairs(definitions) do
+    local minimum = math.max(0, tonumber(column.minWidth) or 0)
+    local isFlexible = not column.fixed and (tonumber(column.weight) or 0) > 0
+    if preferred or not isFlexible then
+      width = width + math.max(minimum, tonumber(column.width) or minimum)
+    else
+      width = width + minimum
+    end
+  end
+  return width
+end
+
+function Adapter.GetFluidColumnMinimumWidth(columns, options)
+  return fluidColumnBudget(columns, options, false)
+end
+
+function Adapter.GetFluidColumnPreferredWidth(columns, options)
+  return fluidColumnBudget(columns, options, true)
 end
 
 local function applyRCLootCouncilTheme(frame)
@@ -259,21 +398,30 @@ function Adapter.CreateWindow(title, width, height, point, positionId)
   end
   if window.frame and type(window.frame.HookScript) == "function" and not window.frame._dibsSizeHookInstalled then
     window.frame._dibsSizeHookInstalled = true
-    window.frame:HookScript("OnSizeChanged", function(frame)
+    window.frame:HookScript("OnSizeChanged", function(frame, width, height)
       local activeShell = frame._dibsWindowShell
       if not activeShell or not activeShell._dibsActive then return end
       local activeWindow = activeShell.window
-      local height = frame.GetHeight and frame:GetHeight() or nil
+      width = tonumber(width) or (frame.GetWidth and frame:GetWidth()) or nil
+      height = tonumber(height) or (frame.GetHeight and frame:GetHeight()) or nil
+      if activeShell.layout then
+        if width then activeShell.layout.width = width end
+        if height then activeShell.layout.height = height end
+      end
+      if activeWindow and activeWindow.DoLayout then activeWindow:DoLayout() end
       if height then
         for _, scroll in ipairs(activeShell._dibsResponsiveScrolls) do
-          if scroll and scroll.SetHeight and scroll._dibsResizeOffset then
+          if scroll and type(scroll._dibsViewportUpdater) == "function" then
+            pcall(scroll._dibsViewportUpdater)
+          elseif scroll and scroll.SetHeight and scroll._dibsResizeOffset then
             scroll:SetHeight(math.max(120, height - scroll._dibsResizeOffset))
           end
           if scroll and scroll.DoLayout then scroll:DoLayout() end
         end
       end
-      if activeWindow and activeWindow.DoLayout then activeWindow:DoLayout() end
-      for _, callback in ipairs(activeShell._dibsResizeHandlers) do pcall(callback, activeShell) end
+      for _, callback in ipairs(activeShell._dibsResizeHandlers) do
+        pcall(callback, activeShell, width, height)
+      end
     end)
   end
   call(window, "SetCallback", "OnClose", function(widget)
@@ -451,6 +599,11 @@ local function releaseMSAControls(widget, seen)
   end
   widget._dibsTableWidthHandler = nil
   widget._dibsBaseOnWidthSet = nil
+  if widget._dibsTablePageLayout and widget.LayoutFunc == widget._dibsTablePageLayout then
+    widget.LayoutFunc = widget._dibsBaseLayoutFunc
+  end
+  widget._dibsTablePageLayout = nil
+  widget._dibsBaseLayoutFunc = nil
   normalizeChildren(widget)
   for _, child in ipairs(widget.children or {}) do
     releaseMSAControls(child, seen)
@@ -811,6 +964,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
 
   local desiredWidth = 0
   local tableColumns = {}
+  local actionLabelsByColumn = {}
   for index, column in ipairs(definitions) do
     local width = math.max(48, tonumber(column.width) or 100)
     local action = column.action == true or (index == #definitions and rowActions ~= nil)
@@ -820,13 +974,22 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     if not action and title:find("player", 1, true) then defaultMinimum, defaultPriority = 120, 5 end
     if not action and title:find("item", 1, true) then defaultMinimum, defaultPriority = 140, 5 end
     if not action and title:find("status", 1, true) then defaultMinimum, defaultPriority = 88, 5 end
+    local actionLabels = {}
+    for _, label in ipairs(column.actionLabels or {}) do actionLabels[#actionLabels + 1] = label end
+    if action and column.title and column.title ~= "Action" then actionLabels[#actionLabels + 1] = column.title end
+    actionLabelsByColumn[index] = actionLabels
+    local minimumWidth = tonumber(column.minWidth) or defaultMinimum
+    if action and #actionLabels > 0 then
+      minimumWidth = math.max(minimumWidth, Adapter.GetContentSizedActionWidth(actionLabels, minimumWidth))
+      width = math.max(width, minimumWidth)
+    end
     desiredWidth = desiredWidth + width
     tableColumns[index] = {
       name = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
       baseName = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
       width = width,
       baseWidth = width,
-      minWidth = tonumber(column.minWidth) or defaultMinimum,
+      minWidth = minimumWidth,
       priority = tonumber(column.priority) or defaultPriority,
       align = column.align or "LEFT",
       tooltip = column.tooltip,
@@ -840,7 +1003,9 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     availableWidth = math.max(360, (shell.frame:GetWidth() or desiredWidth) - 220)
   end
   if availableWidth > 0 then availableWidth = availableWidth - 12 end
-  if availableWidth > 0 and desiredWidth > availableWidth then
+  local finalDesiredWidth = 0
+  for _, column in ipairs(tableColumns) do finalDesiredWidth = finalDesiredWidth + column.width end
+  if availableWidth > 0 and finalDesiredWidth > availableWidth then
     local fitted = Adapter.FitColumnWidths(tableColumns, availableWidth)
     for index, column in ipairs(tableColumns) do column.width = fitted[index] end
   end
@@ -851,7 +1016,11 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     local cells = {}
     for index = 1, #tableColumns do
       local value = sourceRow[index]
-      if index == #tableColumns and action then value = action.text or "Action" end
+      if index == #tableColumns and action then
+        value = action.text or "Action"
+        actionLabelsByColumn[index] = actionLabelsByColumn[index] or {}
+        actionLabelsByColumn[index][#actionLabelsByColumn[index] + 1] = value
+      end
       cells[index] = value == nil and "" or value
     end
     rowData[#rowData + 1] = { cols = cells, _dibsRow = sourceRow, _dibsAction = action }
@@ -859,6 +1028,22 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   if #rowData == 0 then
     rowData[1] = { cols = {}, _dibsRow = { "No entries" } }
     for index = 1, #tableColumns do rowData[1].cols[index] = index == 1 and "No entries" or "" end
+  end
+
+  for index, column in ipairs(tableColumns) do
+    if column.action and #(actionLabelsByColumn[index] or {}) > 0 then
+      local requiredWidth = Adapter.GetContentSizedActionWidth(actionLabelsByColumn[index], column.minWidth)
+      column.width = math.max(column.baseWidth, requiredWidth)
+      column.minWidth = math.max(column.minWidth, requiredWidth)
+    else
+      column.width = column.baseWidth
+    end
+  end
+  finalDesiredWidth = 0
+  for _, column in ipairs(tableColumns) do finalDesiredWidth = finalDesiredWidth + column.width end
+  if availableWidth > 0 and finalDesiredWidth > availableWidth then
+    local fitted = Adapter.FitColumnWidths(tableColumns, availableWidth)
+    for index, column in ipairs(tableColumns) do column.width = fitted[index] end
   end
 
   local visibleRows = math.max(1, math.floor(tableHeight / rowHeight))
@@ -996,33 +1181,78 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
   local scroll = options.noScrolling and parent or (parent and parent.type == "ScrollFrame" and parent or Adapter.AddScrollableList(shell, parent, height))
   if not scroll then return nil end
   local definitions = columns or {}
+  local actionLabelsByColumn = {}
+  for index, column in ipairs(definitions) do
+    if column.action or (rowActions and index == #definitions) then
+      local labels = {}
+      for _, label in ipairs(column.actionLabels or {}) do labels[#labels + 1] = label end
+      if column.title and column.title ~= "Action" then labels[#labels + 1] = column.title end
+      actionLabelsByColumn[index] = labels
+    end
+  end
+  for index, column in ipairs(definitions) do
+    if column.action or (rowActions and index == #definitions) then
+      local requiredWidth = Adapter.GetContentSizedActionWidth(actionLabelsByColumn[index] or {},
+        tonumber(column.minWidth) or 0)
+      column.width = math.max(tonumber(column.width) or 0, requiredWidth)
+      column.minWidth = math.max(tonumber(column.minWidth) or 0, requiredWidth)
+      column.fixed = true
+      column.weight = nil
+    end
+  end
   local desiredWidth = 0
   for _, column in ipairs(definitions) do desiredWidth = desiredWidth + (tonumber(column.width) or 100) end
   local frameWidth = tonumber(options.widthHint) or (scroll.frame and scroll.frame.GetWidth and scroll.frame:GetWidth() or 0)
   if frameWidth <= 0 and parent and parent.frame and parent.frame.GetWidth then frameWidth = parent.frame:GetWidth() or 0 end
   if frameWidth <= 0 and shell and shell.frame and shell.frame.GetWidth then frameWidth = (shell.frame:GetWidth() or 760) - 220 end
-  frameWidth = math.max(360, frameWidth > 0 and frameWidth - 8 or math.min(desiredWidth, 760))
+  if options.fluidColumns then
+    if frameWidth <= 0 then frameWidth = math.min(desiredWidth, 760) end
+  else
+    frameWidth = math.max(360, frameWidth > 0 and frameWidth - 8 or math.min(desiredWidth, 760))
+  end
   local fitDefinitions = {}
   for index, column in ipairs(definitions) do
     local title = string.lower(tostring(column.title or column.name or ""))
-    local action = rowActions and index == #definitions
+    local action = column.action == true or (rowActions and index == #definitions)
     local minimum = column.minWidth
     local priority = column.priority
     if not minimum and title:find("player", 1, true) then minimum = 120 end
     if not minimum and title:find("item", 1, true) then minimum = 140 end
     if not minimum and title:find("status", 1, true) then minimum = 88 end
     if action then minimum, priority = minimum or Adapter.GetLayoutMetrics().actionMinWidth, priority or 100 end
+    local contentSizedAction = column.action == true or (rowActions and index == #definitions)
     fitDefinitions[index] = {
       width = column.width, minWidth = minimum,
-      priority = priority, action = action,
+      priority = priority, action = action, fixed = contentSizedAction or column.fixed,
+      weight = contentSizedAction and 0 or column.weight,
     }
   end
-  local widths = Adapter.FitColumnWidths(fitDefinitions, frameWidth)
+  local widths
+  local fluidOptions = {
+    horizontalPadding = options.horizontalPadding or 0,
+    scrollbarReserve = options.scrollbarReserve or 0,
+    columnGap = options.columnGap or 0,
+  }
+  if options.fluidColumns then
+    widths = Adapter.AllocateFluidColumnWidths(fitDefinitions, frameWidth, fluidOptions)
+  else
+    widths = Adapter.FitColumnWidths(fitDefinitions, frameWidth)
+  end
+  local function promoteActionWidth(index, requiredWidth)
+    local definition = fitDefinitions[index]
+    if not definition or not definition.fixed or not requiredWidth then return end
+    local width = math.ceil(tonumber(requiredWidth) or 0)
+    if width <= (tonumber(widths[index]) or 0) then return end
+    widths[index] = width
+    definition.width, definition.minWidth = width, width
+    definitions[index].width, definitions[index].minWidth = width, width
+  end
   local actualWidth = 0
   for index in ipairs(definitions) do actualWidth = actualWidth + widths[index] end
 
-  local function cellText(value, width)
+  local function cellText(value, width, preserveText)
     local result = tostring(value or "")
+    if preserveText then return result end
     -- Let WoW render a complete hyperlink. Truncating the colour and Hitem
     -- escape sequence makes the visible cell look like raw `[Hitem:...]` text.
     if result:find("|Hitem:", 1, true) then return result end
@@ -1031,35 +1261,97 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     return result
   end
 
-  local function addGridRow(values, action, header)
-    local rowGroup = Adapter.Create(shell, "SimpleGroup", scroll)
+  local renderedGroups = {}
+  local function addGridRow(values, action, header, target)
+    local rowGroup = Adapter.Create(shell, "SimpleGroup", target or scroll)
     if not rowGroup then return end
+    renderedGroups[#renderedGroups + 1] = rowGroup
     call(rowGroup, "SetFullWidth", true)
     call(rowGroup, "SetLayout", "Flow")
+    if options.rowHeight then call(rowGroup, "SetHeight", tonumber(options.rowHeight)) end
     local columnCount = action and math.max(0, #definitions - 1) or #definitions
     for index = 1, columnCount do
       local column = definitions[index]
       local value = header and column.title or values[index]
-      local cell = Adapter.AddLabel(shell, rowGroup, cellText(value, widths[index]), false)
+      local cellAction = not header and options.cellAction and options.cellAction(values, index)
+      local cell
+      if header and options.onHeaderClick and column.sortable ~= false and not column.action then
+        cell = Adapter.AddButton(shell, rowGroup, value, function()
+          options.onHeaderClick(column, index)
+        end, widths[index])
+      elseif cellAction then
+        cell = Adapter.AddButton(shell, rowGroup, cellAction.text or value, cellAction.callback, widths[index],
+          Adapter.GetLayoutMetrics().buttonSizingSafetyMargin)
+        Adapter.SetDisabled(cell, cellAction.disabled)
+        Adapter.AddTooltip(cell, cellAction.text, cellAction.tooltip)
+      else
+        cell = Adapter.AddLabel(shell, rowGroup, cellText(value, widths[index], column.wrap), false)
+      end
       if cell then
-        call(cell, "SetWidth", widths[index])
+        if cellAction then promoteActionWidth(index, cell._dibsRequiredWidth) end
+        local cellWidth = math.max(widths[index], tonumber(cell._dibsRequiredWidth) or 0)
+        cell._dibsColumnWidth = widths[index]
+        cell._dibsColumnIndex = index
+        call(cell, "SetWidth", cellWidth)
         if cell.SetJustifyH then cell:SetJustifyH("LEFT") end
-        Adapter.AddTooltip(cell, value, column.tooltip)
+        if not cellAction then
+          local tooltip = options.cellTooltip and options.cellTooltip(values, index) or column.tooltip
+          Adapter.AddTooltip(cell, value, tooltip)
+        end
       end
     end
     if action then
       -- The action lives in the final cell's visual column, so it stays on
       -- the same row as its request even when the table is narrow.
-      local button = Adapter.AddButton(shell, rowGroup, action.text or "Action", action.callback, math.max(70, widths[#definitions] or 86))
-      if button then call(button, "SetWidth", math.max(70, widths[#definitions] or 86)) end
+      local columnWidth = widths[#definitions] or 86
+      local button = Adapter.AddButton(shell, rowGroup, action.text or "Action", action.callback, columnWidth,
+        Adapter.GetLayoutMetrics().buttonSizingSafetyMargin)
+      if button then
+        promoteActionWidth(#definitions, button._dibsRequiredWidth)
+        columnWidth = widths[#definitions] or columnWidth
+        button._dibsColumnWidth = columnWidth
+        button._dibsColumnIndex = #definitions
+        call(button, "SetWidth", math.max(columnWidth, tonumber(button._dibsRequiredWidth) or 0))
+      end
     end
   end
 
-  addGridRow({}, nil, true)
-  for _, row in ipairs(rows or {}) do
+  addGridRow({}, nil, true, options.headerParent)
+  if #(rows or {}) == 0 and options.emptyText then
+    Adapter.AddLabel(shell, scroll, options.emptyText, true)
+  end
+  for rowIndex, row in ipairs(rows or {}) do
     local action = rowActions and rowActions(row) or nil
     addGridRow(row, action, false)
   end
+  local function applyAllocatedWidths(nextWidths)
+    for _, rowGroup in ipairs(renderedGroups) do
+      for index, cell in ipairs(rowGroup.children or {}) do
+        if nextWidths[index] then
+          local cellWidth = math.max(nextWidths[index], tonumber(cell._dibsRequiredWidth) or 0)
+          cell._dibsColumnWidth = nextWidths[index]
+          cell._dibsColumnIndex = index
+          call(cell, "SetWidth", cellWidth)
+        end
+      end
+      if rowGroup.DoLayout then pcall(rowGroup.DoLayout, rowGroup) end
+    end
+    local headerContainer = options.headerParent
+    if headerContainer and headerContainer.DoLayout then pcall(headerContainer.DoLayout, headerContainer) end
+  end
+  local function applyFluidWidth(width)
+    local nextWidths
+    if options.fluidColumns then
+      nextWidths = Adapter.AllocateFluidColumnWidths(fitDefinitions, width, fluidOptions)
+    else
+      nextWidths = Adapter.FitColumnWidths(fitDefinitions, width)
+    end
+    applyAllocatedWidths(nextWidths)
+  end
+  if options.fluidColumns then
+    scroll._dibsApplyFluidWidth = applyFluidWidth
+  end
+  applyFluidWidth(frameWidth)
   return scroll
 end
 
@@ -1072,16 +1364,33 @@ function Adapter.AddPropertyTable(shell, parent, rows, height)
   })
 end
 
-function Adapter.AddButton(shell, parent, text, callback, width)
+function Adapter.AddButton(shell, parent, text, callback, width, sizingSafetyMargin)
   local button = Adapter.Create(shell, "Button", parent)
   if not button then return nil end
   Adapter.SetText(button, text)
   call(button, "SetAutoWidth", true)
   call(button, "SetHeight", Adapter.GetLayoutMetrics().buttonHeight)
-  if width and button.frame and type(button.frame.GetWidth) == "function" then
-    local autoWidth = button.frame:GetWidth() or 0
-    call(button, "SetWidth", math.max(width, autoWidth))
+  local fontString = type(button.text) == "table" and button.text or nil
+  if not fontString and button.frame and type(button.frame.GetFontString) == "function" then
+    local ok, result = pcall(button.frame.GetFontString, button.frame)
+    if ok then fontString = result end
   end
+  local labelWidth
+  if fontString and type(fontString.GetStringWidth) == "function" then
+    local ok, measured = pcall(fontString.GetStringWidth, fontString)
+    if ok then labelWidth = tonumber(measured) end
+  end
+  labelWidth = math.max(0, labelWidth or Adapter.MeasureTextWidth(text))
+  local metrics = Adapter.GetLayoutMetrics()
+  local requiredWidth = math.ceil(labelWidth + (tonumber(metrics.buttonHorizontalPadding) or 30)
+    + math.max(0, tonumber(sizingSafetyMargin) or 0))
+  local autoWidth = button.frame and type(button.frame.GetWidth) == "function"
+    and tonumber(button.frame:GetWidth()) or 0
+  button._dibsLabelWidth = labelWidth
+  button._dibsRequiredWidth = requiredWidth
+  button._dibsHorizontalPadding = tonumber(metrics.buttonHorizontalPadding) or 30
+  button._dibsSizingSafetyMargin = math.max(0, tonumber(sizingSafetyMargin) or 0)
+  call(button, "SetWidth", math.max(tonumber(width) or 0, autoWidth or 0, requiredWidth))
   call(button, "SetCallback", "OnClick", function()
     if callback then callback() end
   end)
@@ -1309,6 +1618,134 @@ function Adapter.AddDropdown(shell, parent, label, values, callback, width, useM
     if callback then callback(selected) end
   end)
   return dropdown
+end
+
+function Adapter.AddPaginationFooter(shell, page, options)
+  if not shell or not page or not page.footer then return nil end
+  options = options or {}
+  local metrics = Adapter.GetLayoutMetrics()
+  local footer = page.footer
+  local navigation = Adapter.Create(shell, "SimpleGroup", footer)
+  local pageSizeGroup = Adapter.Create(shell, "SimpleGroup", footer)
+  if not navigation or not pageSizeGroup then return nil end
+  call(navigation, "SetLayout", "Flow")
+  call(navigation, "SetAutoAdjustHeight", false)
+  call(pageSizeGroup, "SetLayout", "Flow")
+  call(pageSizeGroup, "SetAutoAdjustHeight", false)
+
+  local previousWidth = Adapter.GetContentSizedActionWidth({ "Previous" }, 72)
+  local nextWidth = Adapter.GetContentSizedActionWidth({ "Next" }, 64)
+  local pageLabelWidth = 96
+  local navigationGap = 6
+  local pageSizeLabelWidth = Adapter.MeasureTextWidth("Rows per page:") + 4
+  local pageSizeDropdownWidth = 76
+  local pageSizeGap = 8
+  local pageSizeHeight = math.max(metrics.buttonHeight, 26)
+  local footerGap = math.max(12, metrics.tableColumnGap * 3)
+  call(navigation, "SetHeight", metrics.buttonHeight)
+  call(pageSizeGroup, "SetHeight", pageSizeHeight)
+
+  local controls = {}
+  controls.previous = Adapter.AddButton(shell, navigation, "Previous", function()
+    if options.onPrevious then options.onPrevious() end
+  end, previousWidth)
+  controls.page = Adapter.AddLabel(shell, navigation, "Page 1 / 1", false)
+  call(controls.page, "SetWidth", pageLabelWidth)
+  call(controls.page, "SetHeight", metrics.buttonHeight)
+  controls.next = Adapter.AddButton(shell, navigation, "Next", function()
+    if options.onNext then options.onNext() end
+  end, nextWidth)
+  controls.pageSizeLabel = Adapter.AddLabel(shell, pageSizeGroup, "Rows per page:", false)
+  call(controls.pageSizeLabel, "SetWidth", pageSizeLabelWidth)
+  call(controls.pageSizeLabel, "SetHeight", metrics.buttonHeight)
+  controls.pageSize = Adapter.AddDropdown(shell, pageSizeGroup, "",
+    options.pageSizes or { ["5"] = "5", ["10"] = "10", ["15"] = "15", ["20"] = "20" },
+    options.onPageSizeChanged, pageSizeDropdownWidth, false)
+  if controls.pageSize then controls.pageSize._dibsRowsPerPageSelector = true end
+  local dropdownHeight = controls.pageSize and controls.pageSize.frame
+    and controls.pageSize.frame.GetHeight and tonumber(controls.pageSize.frame:GetHeight()) or nil
+  pageSizeHeight = math.max(pageSizeHeight, dropdownHeight or 0)
+  call(pageSizeGroup, "SetHeight", pageSizeHeight)
+
+  local function controlWidth(widget, fallback)
+    local frame = widget and widget.frame
+    local frameWidth = frame and type(frame.GetWidth) == "function" and tonumber(frame:GetWidth()) or 0
+    return math.max(0, tonumber(widget and widget.width) or 0, tonumber(frame and frame.width) or 0,
+      frameWidth or 0, tonumber(fallback) or 0)
+  end
+  local function anchorOneLine(group, widgets, gap)
+    local totalWidth = 0
+    local previous
+    group.LayoutFunc = function() end
+    for _, widget in ipairs(widgets) do
+      local frame = widget and widget.frame
+      if frame then
+        if frame.ClearAllPoints then frame:ClearAllPoints() end
+        if previous then
+          frame:SetPoint("LEFT", previous.frame, "RIGHT", gap, 0)
+          totalWidth = totalWidth + gap
+        else
+          frame:SetPoint("LEFT", group.frame, "LEFT", 0, 0)
+        end
+        totalWidth = totalWidth + controlWidth(widget)
+        previous = widget
+      end
+    end
+    call(group, "SetWidth", totalWidth)
+    return totalWidth
+  end
+  local navigationWidth = anchorOneLine(navigation,
+    { controls.previous, controls.page, controls.next }, navigationGap)
+  local pageSizeWidth = anchorOneLine(pageSizeGroup,
+    { controls.pageSizeLabel, controls.pageSize }, pageSizeGap)
+
+  footer._dibsBaseLayoutFunc = footer.LayoutFunc
+  footer._dibsTablePageLayout = function() end
+  footer.LayoutFunc = footer._dibsTablePageLayout
+  footer._dibsPaginationLayout = function(availableWidth)
+    local inline = (tonumber(availableWidth) or 0) >= navigationWidth + pageSizeWidth + footerGap
+    local footerHeight = math.max(metrics.buttonHeight, pageSizeHeight)
+    if not inline then
+      footerHeight = metrics.buttonHeight + metrics.tableVerticalGap + pageSizeHeight
+    end
+    call(footer, "SetHeight", footerHeight)
+    if navigation.frame and navigation.frame.ClearAllPoints then navigation.frame:ClearAllPoints() end
+    if pageSizeGroup.frame and pageSizeGroup.frame.ClearAllPoints then pageSizeGroup.frame:ClearAllPoints() end
+    if inline then
+      if navigation.frame and navigation.frame.SetPoint then navigation.frame:SetPoint("LEFT", footer.frame, "LEFT", 0, 0) end
+      if pageSizeGroup.frame and pageSizeGroup.frame.SetPoint then
+        pageSizeGroup.frame:SetPoint("LEFT", navigation.frame, "RIGHT", footerGap, 0)
+      end
+    else
+      if navigation.frame and navigation.frame.SetPoint then navigation.frame:SetPoint("TOPLEFT", footer.frame, "TOPLEFT", 0, 0) end
+      if pageSizeGroup.frame and pageSizeGroup.frame.SetPoint then
+        pageSizeGroup.frame:SetPoint("TOPLEFT", navigation.frame, "BOTTOMLEFT", 0, -metrics.tableVerticalGap)
+      end
+    end
+    controls.layoutMode = inline and "INLINE" or "STACKED"
+    return inline and "INLINE" or "STACKED"
+  end
+  page.UpdateFooterLayout = footer._dibsPaginationLayout
+  page.pagination = controls
+  page.pagination.navigationGroup = navigation
+  page.pagination.pageSizeGroup = pageSizeGroup
+  page.pagination.navigationWidth = navigationWidth
+  page.pagination.pageSizeWidth = pageSizeWidth
+  page.pagination.pageSizeHeight = pageSizeHeight
+  page.pagination.footerGap = footerGap
+  page.pagination.UpdateState = function(currentPage, rowCount, pageSize)
+    local totalPages = math.max(1, math.ceil((tonumber(rowCount) or 0) / math.max(1, tonumber(pageSize) or 10)))
+    local selectedPage = math.min(totalPages, math.max(1, math.floor(tonumber(currentPage) or 1)))
+    Adapter.SetText(controls.page, string.format("Page %d / %d", selectedPage, totalPages))
+    Adapter.SetDisabled(controls.previous, selectedPage <= 1)
+    Adapter.SetDisabled(controls.next, selectedPage >= totalPages)
+    return selectedPage, totalPages
+  end
+  local initialSize = tostring(options.pageSize or 10)
+  Adapter.SetValue(controls.pageSize, initialSize)
+  page.UpdateFooterLayout(page.boundsFrame and page.boundsFrame.GetWidth
+    and page.boundsFrame:GetWidth() or page.pagination.navigationWidth + page.pagination.pageSizeWidth + footerGap)
+  return page.pagination
 end
 
 function Adapter.AddCheckBox(shell, parent, label, value, callback, width)
@@ -1593,17 +2030,23 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   return true
 end
 
-function Adapter.AddScrollableList(shell, parent, height)
-  if parent and parent.type == "ScrollFrame" then return parent end
-  local scroll = Adapter.Create(shell, "ScrollFrame", parent)
+function Adapter.AddScrollableList(shell, parent, height, resizeOffset)
+  local scroll = parent and parent.type == "ScrollFrame" and parent or nil
+  if scroll and not tonumber(resizeOffset) then return scroll end
   if not scroll then
-    scroll = Adapter.Create(shell, "SimpleGroup", parent)
+    scroll = Adapter.Create(shell, "ScrollFrame", parent)
+    if not scroll then
+      scroll = Adapter.Create(shell, "SimpleGroup", parent)
+    end
   end
   if not scroll then return nil end
   local metrics = Adapter.GetLayoutMetrics()
   local requestedHeight = tonumber(height) or metrics.defaultScrollHeight or 260
   local frameHeight = shell and shell.frame and shell.frame.GetHeight and shell.frame:GetHeight() or nil
-  if frameHeight and frameHeight > 0 then
+  local fixedOffset = tonumber(resizeOffset)
+  if fixedOffset and frameHeight and frameHeight > 0 then
+    requestedHeight = math.max(120, math.min(requestedHeight, frameHeight - fixedOffset))
+  elseif frameHeight and frameHeight > 0 then
     requestedHeight = math.min(requestedHeight, math.max(240, frameHeight - 180))
   end
   call(scroll, "SetHeight", requestedHeight)
@@ -1611,13 +2054,176 @@ function Adapter.AddScrollableList(shell, parent, height)
   call(scroll, "SetLayout", "List")
   -- Long pages should follow a resizable Dibs window. Keep compact embedded
   -- lists (for example multiselect checkboxes) at their requested height.
-  if shell and requestedHeight >= 380 and frameHeight and frameHeight > requestedHeight then
+  if shell and fixedOffset then
+    scroll._dibsShell = shell
+    scroll._dibsResizeOffset = fixedOffset
+    shell._dibsResponsiveScrolls = shell._dibsResponsiveScrolls or {}
+    shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll
+  elseif shell and requestedHeight >= 380 and frameHeight and frameHeight > requestedHeight then
     scroll._dibsShell = shell
     scroll._dibsResizeOffset = frameHeight - requestedHeight
     shell._dibsResponsiveScrolls = shell._dibsResponsiveScrolls or {}
     shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll
   end
   return scroll
+end
+
+function Adapter.AddTablePage(shell, parent, options)
+  if not shell or not parent then return nil end
+  options = options or {}
+  local metrics = Adapter.GetLayoutMetrics()
+  local boundsFrame = options.boundsFrame or parent.content or parent.frame
+  if not boundsFrame then return nil end
+  local pageRoot = Adapter.Create(shell, "SimpleGroup", parent)
+  if not pageRoot then return nil end
+  call(pageRoot, "SetFullWidth", true)
+  call(pageRoot, "SetFullHeight", true)
+  call(pageRoot, "SetAutoAdjustHeight", false)
+  pageRoot._dibsBaseLayoutFunc = pageRoot.LayoutFunc
+  pageRoot._dibsTablePageLayout = function() end
+  pageRoot.LayoutFunc = pageRoot._dibsTablePageLayout
+  local pageContent = pageRoot.content or pageRoot.frame
+
+  local header = Adapter.Create(shell, "SimpleGroup", pageRoot)
+  local columnHeader = Adapter.Create(shell, "SimpleGroup", pageRoot)
+  local scroll = Adapter.AddScrollableList(shell, pageRoot, options.initialScrollHeight or metrics.defaultScrollHeight)
+  local footer = options.footer and Adapter.Create(shell, "SimpleGroup", pageRoot) or nil
+  if not header or not columnHeader or not scroll or (options.footer and not footer) then return nil end
+  call(header, "SetFullWidth", true)
+  call(header, "SetLayout", "List")
+  call(columnHeader, "SetFullWidth", true)
+  call(columnHeader, "SetLayout", "Flow")
+  if footer then
+    call(footer, "SetFullWidth", true)
+    call(footer, "SetLayout", "Flow")
+  end
+
+  local function setAnchors(frame, firstPoint, firstRelative, firstRelativePoint, firstX, firstY,
+      secondPoint, secondRelative, secondRelativePoint, secondX, secondY)
+    if not frame or type(frame.ClearAllPoints) ~= "function" or type(frame.SetPoint) ~= "function" then return end
+    frame:ClearAllPoints()
+    frame:SetPoint(firstPoint, firstRelative, firstRelativePoint, firstX or 0, firstY or 0)
+    if secondPoint then
+      frame:SetPoint(secondPoint, secondRelative, secondRelativePoint, secondX or 0, secondY or 0)
+    end
+  end
+
+  local function measure(widget)
+    local frame = widget and widget.frame
+    if frame and type(frame.GetHeight) == "function" then
+      local height = tonumber(frame:GetHeight())
+      if height and height > 0 then return height end
+    end
+    if widget and type(widget.GetHeight) == "function" then
+      local height = tonumber(widget:GetHeight())
+      if height and height > 0 then return height end
+    end
+    return 0
+  end
+  local function measureWidth(widget)
+    local frame = widget and widget.frame
+    if frame and type(frame.GetWidth) == "function" then
+      local width = tonumber(frame:GetWidth())
+      if width and width > 0 then return width end
+    end
+    if widget and type(widget.GetWidth) == "function" then
+      local width = tonumber(widget:GetWidth())
+      if width and width > 0 then return width end
+    end
+    return 0
+  end
+  local adjustingWindowHeight = false
+  local function updateViewportHeight()
+    local availableHeight = measure(boundsFrame)
+    local availableWidth = measureWidth(boundsFrame)
+    local hasMeasuredBounds = availableHeight > 0
+    if availableHeight <= 0 then availableHeight = metrics.defaultScrollHeight or 260 end
+    if availableWidth <= 0 then availableWidth = metrics.defaultTableWidth or 640 end
+    setAnchors(pageRoot.frame, "TOPLEFT", boundsFrame, "TOPLEFT", 0, 0,
+      "TOPRIGHT", boundsFrame, "TOPRIGHT", 0, 0)
+    if header.SetWidth then pcall(header.SetWidth, header, availableWidth) end
+    if columnHeader.SetWidth then pcall(columnHeader.SetWidth, columnHeader, availableWidth) end
+    if footer and footer.SetWidth then pcall(footer.SetWidth, footer, availableWidth) end
+    if header.DoLayout then pcall(header.DoLayout, header) end
+    if columnHeader.DoLayout then pcall(columnHeader.DoLayout, columnHeader) end
+    if footer and footer._dibsPaginationLayout then
+      pcall(footer._dibsPaginationLayout, availableWidth)
+    end
+    if footer and footer.DoLayout then pcall(footer.DoLayout, footer) end
+    local footerHeight = measure(footer)
+    if footer and footerHeight <= 0 then footerHeight = metrics.tableFooterHeight end
+    local headerHeight = measure(header)
+    local columnHeaderHeight = measure(columnHeader)
+    local gap = metrics.tableVerticalGap
+    local fixedHeight = headerHeight + columnHeaderHeight + footerHeight + gap
+    local availableViewportHeight = availableHeight - fixedHeight
+    if hasMeasuredBounds and availableViewportHeight < metrics.tableViewportMinimum and not adjustingWindowHeight then
+      local windowFrame = shell.frame
+      local currentWindowHeight = windowFrame and windowFrame.GetHeight and tonumber(windowFrame:GetHeight()) or nil
+      if currentWindowHeight and currentWindowHeight > 0 and shell.window and shell.window.SetHeight then
+        local targetHeight = currentWindowHeight + metrics.tableViewportMinimum - availableViewportHeight
+        local maximumHeight = shell.layout and tonumber(shell.layout.maxHeight) or nil
+        if maximumHeight then targetHeight = math.min(targetHeight, maximumHeight) end
+        if targetHeight > currentWindowHeight then
+          adjustingWindowHeight = true
+          call(shell.window, "SetHeight", targetHeight)
+          adjustingWindowHeight = false
+          local resizedHeight = measure(boundsFrame)
+          if resizedHeight > availableHeight then availableHeight = resizedHeight end
+          availableViewportHeight = availableHeight - fixedHeight
+        end
+      end
+    end
+    if pageRoot.SetHeight then pcall(pageRoot.SetHeight, pageRoot, availableHeight) end
+    local viewportHeight = math.max(metrics.tableViewportMinimum,
+      availableViewportHeight)
+
+    setAnchors(header.frame, "TOPLEFT", pageContent, "TOPLEFT", 0, 0,
+      "TOPRIGHT", pageContent, "TOPRIGHT", 0, 0)
+    setAnchors(columnHeader.frame, "TOPLEFT", header.frame, "BOTTOMLEFT", 0, -gap,
+      "TOPRIGHT", header.frame, "BOTTOMRIGHT", 0, -gap)
+    if footer then
+      setAnchors(footer.frame, "BOTTOMLEFT", boundsFrame, "BOTTOMLEFT", 0, 0,
+        "BOTTOMRIGHT", boundsFrame, "BOTTOMRIGHT", 0, 0)
+    end
+    if footer then
+      setAnchors(scroll.frame, "TOPLEFT", columnHeader.frame, "BOTTOMLEFT", 0, 0,
+        "BOTTOMRIGHT", footer.frame, "TOPRIGHT", 0, 0)
+    else
+      setAnchors(scroll.frame, "TOPLEFT", columnHeader.frame, "BOTTOMLEFT", 0, 0,
+        "TOPRIGHT", columnHeader.frame, "BOTTOMRIGHT", 0, 0)
+    end
+    if scroll.frame and scroll.frame.SetHeight then pcall(scroll.frame.SetHeight, scroll.frame, viewportHeight) end
+    if scroll.SetHeight then pcall(scroll.SetHeight, scroll, viewportHeight) end
+    if scroll.DoLayout then pcall(scroll.DoLayout, scroll) end
+    local function updateFluidWidths(widget, width, seen)
+      if type(widget) ~= "table" or seen[widget] then return end
+      seen[widget] = true
+      if type(widget._dibsApplyFluidWidth) == "function" then
+        pcall(widget._dibsApplyFluidWidth, width)
+      end
+      for _, child in ipairs(widget.children or {}) do updateFluidWidths(child, width, seen) end
+    end
+    if availableWidth > 0 then updateFluidWidths(pageRoot, availableWidth, {}) end
+    return viewportHeight
+  end
+
+  scroll._dibsViewportUpdater = updateViewportHeight
+  scroll._dibsShell = shell
+  shell._dibsResponsiveScrolls = shell._dibsResponsiveScrolls or {}
+  for index = #shell._dibsResponsiveScrolls, 1, -1 do
+    if shell._dibsResponsiveScrolls[index] == scroll then
+      table.remove(shell._dibsResponsiveScrolls, index)
+    end
+  end
+  scroll._dibsResizeOffset = nil
+  shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll
+  updateViewportHeight()
+  return {
+    root = pageRoot, header = header, columnHeader = columnHeader,
+    scroll = scroll, footer = footer, boundsFrame = boundsFrame, contentFrame = pageContent,
+    UpdateViewportHeight = updateViewportHeight,
+  }
 end
 
 function Adapter.AddSearch(shell, onChanged)

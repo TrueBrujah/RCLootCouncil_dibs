@@ -28,10 +28,16 @@ local itemCache = {
 
 local function makeFrame()
   local scripts = {}
-  return {
+  local frame = {
     _scripts = scripts,
-    SetSize = function() end,
-    SetPoint = function() end,
+    SetSize = function(self, width, height) self._width, self._height = width, height end,
+    SetPoint = function(self, ...)
+      self._points = self._points or {}
+      local point = { ... }
+      self._points[#self._points + 1] = point
+      self._point = point
+    end,
+    ClearAllPoints = function(self) self._points = {}; self._point = nil end,
     Hide = function(self) self._shown = false end,
     Show = function(self) self._shown = true end,
     Raise = function() end,
@@ -45,7 +51,10 @@ local function makeFrame()
     RegisterForDrag = function() end,
     StartMoving = function() end,
     StopMovingOrSizing = function() end,
-    SetWidth = function() end,
+    SetWidth = function(self, width) self._width = width end,
+    GetWidth = function(self) return self._width or 0 end,
+    SetHeight = function(self, height) self._height = height end,
+    GetHeight = function(self) return self._height or 0 end,
     SetJustifyH = function() end,
     SetText = function(self, value) self._text = tostring(value or "") end,
     GetText = function(self) return self._text or "" end,
@@ -74,16 +83,19 @@ local function makeFrame()
     CreateFontString = function()
       return {
         SetPoint = function() end,
-        SetText = function() end,
+        SetText = function(self, value) self._text = tostring(value or "") end,
+        GetStringWidth = function(self) return #(self._text or "") * 8 end,
         SetWidth = function() end,
         SetJustifyH = function() end,
       }
     end,
   }
+  return frame
 end
 
 function M.install(opts)
   opts = opts or {}
+  _G.GetLocale = function() return opts.locale or "enUS" end
   now = tonumber(opts.now) or baseTime
   currentPlayerName = opts.playerName or "Tester-Realm"
   currentPlayerGUID = opts.playerGUID or "Player-1-TESTER"

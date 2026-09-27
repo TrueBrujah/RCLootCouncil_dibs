@@ -13,10 +13,10 @@ DO NOT EDIT MANUALLY.
 **English:** A season scopes the active Dibs balance and guild rules. Activating another season does not rewrite earlier history.
 **Francais:** Une saison determine le solde Dibs actif et les regles de guilde. Activer une autre saison ne reecrit pas l'historique anterieur.
 
-## Guild Setup / Configuration de guilde
+## Guild Configuration / Configuration de guilde
 
-**English:** Guild Master workflow for reviewing existing Dibs data and activating this guild's shared Dibs ledger. Opening the page does not initialize it.
-**Francais:** Parcours reserve au maitre de guilde pour examiner les donnees Dibs existantes et activer le registre partage de la guilde. Ouvrir la page ne l'initialise pas.
+**English:** Guild Master workflow for Guild Configuration: review existing Dibs data and activate this guild's shared Dibs ledger. Opening this page does not initialize it.
+**Francais:** Parcours du maitre de guilde pour la configuration de guilde : examinez les donnees Dibs existantes et activez le registre partage de cette guilde. Ouvrir cette page ne l'initialise pas.
 
 ## Manual Dibs Adjustment / Ajustement manuel des Dibs
 
@@ -83,6 +83,11 @@ DO NOT EDIT MANUALLY.
 **English:** Starting Dibs assigned to a guild rank for the selected season. Changing the rule does not rewrite older ledger entries.
 **Francais:** Dibs attribues au depart a un rang de guilde pour la saison selectionnee. Changer la regle ne reecrit pas les anciennes transactions.
 
+## Rank Allocation Reconciliation / Rapprochement des allocations par rang
+
+**English:** Positive differences require an explicit, reasoned top-up through the canonical ledger. Existing allocations are never removed or converted to debt when a member's expected allocation decreases.
+**Francais:** Un ecart positif exige un complement explicite, motive et enregistre dans le registre canonique. Une baisse d'allocation attendue ne retire jamais les allocations existantes et ne cree aucune dette.
+
 ## RCLootCouncil history review / Revue de l'historique RCLootCouncil
 
 **English:** Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.
@@ -93,10 +98,10 @@ DO NOT EDIT MANUALLY.
 **English:** Maps a RCLootCouncil response to Dibs meaning. Review the mapping with your guild before live loot; this does not change RCLootCouncil history.
 **Francais:** Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange.
 
-## Setup Assistant readiness / Readiness de l'assistant de configuration
+## Raid Readiness / Preparation au raid
 
-**English:** Checks whether this guild's configuration is operational for a raid and lists blockers with the next safe action.
-**Francais:** Verifie si la configuration actuelle de la guilde convient au raid et liste les blocages avec la prochaine action sure.
+**English:** Raid Readiness answers whether DIBS is ready for this raid and lists blocking checks with their next actions.
+**Francais:** La preparation au raid indique si DIBS est pret pour ce raid et liste les controles bloquants avec leurs prochaines actions.
 
 ## Historical Reconciliation / Rapprochement historique
 
@@ -105,7 +110,7 @@ DO NOT EDIT MANUALLY.
 
 ## Coordinator / Coordinateur
 
-**English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Setup.
+**English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Configuration.
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
 
 ## Synchronization peer status / Etat de synchronisation des membres

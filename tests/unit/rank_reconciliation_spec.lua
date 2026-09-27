@@ -1,5 +1,25 @@
 local loader = require("helpers.load_addon")
 
+local function activateV2(wow)
+  local _, dibs = loader.load({ wow = wow })
+  assert_true(dibs.Governance.AdoptInitial(nil, { reason = "rank reconciliation test" }))
+  local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+  local coordinator = assert(dibs.Identity.CreateSnapshot("Tester-Realm"))
+  assert_true(dibs.Governance.Change(nil, { future = { authority = {
+    schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 1,
+    transition = { kind = "INITIAL", baselineHash = baseline.legacyBaselineHash },
+  } } }))
+  assert_true(dibs.Governance.EnableV2(nil, { "Tester-Realm" }))
+  return dibs
+end
+
+local function setRule(dibs, seasonId, rankIndex, rankName, allocation)
+  local result = dibs.ProtectedActions.Execute("rank.set", nil, {
+    seasonId = seasonId, rankIndex = rankIndex, rankName = rankName, allocation = allocation,
+  })
+  assert_true(result.ok, tostring(result.diagnostic))
+end
+
 describe("Rank allocation reconciliation", function()
   it("lists expected, assigned, missing, and surplus allocations for guild members", function()
     local _, dibs = loader.load({
@@ -32,15 +52,11 @@ describe("Rank allocation reconciliation", function()
   end)
 
   it("grants only the missing delta and remains idempotent after a rank increase", function()
-    local _, dibs = loader.load({
-      wow = {
-        guildLeader = true,
-        guildMembers = { "Tester-Realm", "Alice-Realm" },
-        guildRankIndices = { [1] = 0, [2] = 3 },
-      },
+    local dibs = activateV2({
+      guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 },
     })
     local seasonId = dibs.GetCurrentSeasonId()
-    dibs.RankRules.SetAllocation(seasonId, 3, "Member", 1)
+    setRule(dibs, seasonId, 3, "Member", 1)
     local first = dibs.RankRules.GetAllocationReconciliation(seasonId)
     local alice = first[2].playerName == "Alice-Realm" and first[2] or first[1]
     local grant = dibs.ProtectedActions.Execute("rank.reconcile", nil, {
@@ -54,7 +70,7 @@ describe("Rank allocation reconciliation", function()
     assert_equal(1, dibs.Ledger.GetPlayerState("Alice-Realm", seasonId).allocation)
     assert_equal(0, dibs.RankRules.GetAllocationReconciliation(seasonId)[1].missingAllocation)
 
-    dibs.RankRules.SetAllocation(seasonId, 3, "Member", 3)
+    setRule(dibs, seasonId, 3, "Member", 3)
     local increased = dibs.RankRules.GetAllocationReconciliation(seasonId)
     local updated = increased[1].playerName == "Alice-Realm" and increased[1] or increased[2]
     assert_equal(2, updated.missingAllocation)
@@ -66,16 +82,40 @@ describe("Rank allocation reconciliation", function()
   end)
 
   it("keeps an existing allocation as surplus when a member rank decreases", function()
-    local _, dibs = loader.load({ wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 } } })
+    local dibs = activateV2({ guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 } })
     local seasonId = dibs.GetCurrentSeasonId()
-    dibs.RankRules.SetAllocation(seasonId, 3, "Member", 1)
-    dibs.ProtectedActions.Execute("rank.reconcile", nil, { playerName = "Alice-Realm", seasonId = seasonId, amount = 1, reason = "Initial allocation" })
-    dibs.RankRules.SetAllocation(seasonId, 3, "Member", 0)
+    setRule(dibs, seasonId, 3, "Member", 1)
+    local reconciliation = dibs.ProtectedActions.Execute("rank.reconcile", nil, {
+      playerName = "Alice-Realm", seasonId = seasonId, amount = 1, reason = "Initial allocation",
+    })
+    assert_true(reconciliation.ok, tostring(reconciliation.diagnostic))
+    setRule(dibs, seasonId, 3, "Member", 0)
 
     local rows = dibs.RankRules.GetAllocationReconciliation(seasonId)
     local alice = rows[1].playerName == "Alice-Realm" and rows[1] or rows[2]
     assert_equal(0, alice.missingAllocation)
     assert_equal(1, alice.surplusAllocation)
+    assert_equal(-1, alice.difference)
+    assert_equal("KEEP_GRANTED", alice.behavior)
     assert_equal("SURPLUS", alice.status)
+  end)
+
+  it("keeps valid rank configuration ready when a member needs a top-up", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 } } })
+    local seasonId = dibs.GetCurrentSeasonId()
+    dibs.RankRules.SetAllocation(seasonId, 0, "Guild Master", 2)
+    dibs.RankRules.SetAllocation(seasonId, 3, "Member", 2)
+    dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Existing allocation", {
+      action = "rank.reconcile", actor = "Tester-Realm",
+    })
+
+    local summary = dibs.RankRules.GetRankConfigurationSummary(seasonId)
+    local memberRule
+    for _, row in ipairs(summary) do
+      if row.rankIndex == 3 then memberRule = row end
+    end
+
+    assert_equal("READY", memberRule.status)
+    assert_equal(1, memberRule.pendingReconciliation)
   end)
 end)
