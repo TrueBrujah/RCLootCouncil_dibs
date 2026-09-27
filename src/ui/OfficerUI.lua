@@ -5414,7 +5414,7 @@ local function createAceWindow(initialRoute)
       self.debugControls = {}
       Dibs.AceGUI.AddHeading(shell, tabs, "Debug", "Adjust module verbosity and open diagnostic logs.")
       local channelTest = Dibs.AceGUI.AddSection(shell, tabs, "Transport channel test",
-        "An accepted send is only queued. A matching remote ACK confirms receipt; a timeout cannot distinguish offline, incompatible, or game-filtered traffic.")
+        "An accepted send is only queued. Replying clients must have Developer Mode enabled; a matching remote ACK confirms probe receipt, not data sync. A timeout cannot distinguish offline, incompatible, or game-filtered traffic.")
       local testChannel = self.channelTestChannel or "GUILD"
       local channelOptions = {
         GUILD = "Guild", OFFICER = "Guild officers", RAID = "Raid", PARTY = "Party",
@@ -5449,7 +5449,7 @@ local function createAceWindow(initialRoute)
           and Dibs.Sync.RunAllChannelTests(self.channelTestTarget, self.channelTestCustomChannelName) or {}
         local queued = 0
         for _, result in ipairs(results) do if result.sent then queued = queued + 1 end end
-        self:SetStatus(string.format("Queued %d channel probe(s); unavailable channels include a local reason.", queued))
+        self:SetStatus(string.format("Queued %d channel probe(s); waiting up to 20s for replies. Enable Developer Mode on clients expected to reply.", queued))
         self:Refresh()
       end, 220)
       self.channelTestRefreshButton = Dibs.AceGUI.AddButton(shell, channelTest, "Refresh results", function()

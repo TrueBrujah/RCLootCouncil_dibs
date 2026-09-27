@@ -300,6 +300,24 @@ describe("B04 V2 transport", function()
     assert_equal("CHANNEL_MESSAGE_VALIDATED", confirmed.reasonCode)
   end)
 
+  it("records a received channel probe when Developer Mode suppresses the reply", function()
+    local dibs = load()
+    local inbound = remote(dibs, { type = "CHANNEL_TEST", testId = "dev-mode-off-test",
+      testChannel = "GUILD", startedAt = time() }, "Officer-Realm")
+    local accepted, reason = dibs.Sync.Receive(inbound, "Officer-Realm", "GUILD")
+    assert_false(accepted)
+    assert_equal("DEVELOPER_MODE_REQUIRED", reason)
+
+    local received
+    for _, result in ipairs(dibs.Sync.GetChannelTestResults()) do
+      if result.testId == "dev-mode-off-test" then received = result; break end
+    end
+    assert_not_nil(received)
+    assert_equal("RECEIVE", received.direction)
+    assert_equal("IGNORED", received.status)
+    assert_equal("DEVELOPER_MODE_REQUIRED", received.reasonCode)
+  end)
+
   it("targets Whisper tests to a guild roster member and explains unavailable group channels", function()
     local dibs = load()
     dibs.DeveloperMode.SetEnabled(true)

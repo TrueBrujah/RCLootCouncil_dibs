@@ -1369,6 +1369,9 @@ function Sync.Receive(message, sender, channel)
       end
     end
     if not (Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled()) then
+      recordChannelTest({ testId = testId, direction = "RECEIVE", channel = testChannel,
+        peer = resolved.displayName, status = "IGNORED", reasonCode = "DEVELOPER_MODE_REQUIRED", startedAt = time() })
+      refreshChannelTestUI()
       return false, "DEVELOPER_MODE_REQUIRED"
     end
     if not markChannelTestResponded(resolved.memberKey, testId) then

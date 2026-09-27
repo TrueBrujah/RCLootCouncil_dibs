@@ -1049,8 +1049,20 @@ local function createAceWindow()
         end
         self:Refresh()
       end, 240)
+      local receivedProbe
+      local channelResults = Dibs.Sync and Dibs.Sync.GetChannelTestResults and Dibs.Sync.GetChannelTestResults() or {}
+      for _, result in ipairs(channelResults) do
+        if result.direction == "RECEIVE" then receivedProbe = result; break end
+      end
+      if receivedProbe then
+        local receivedAt = tonumber(receivedProbe.startedAt)
+        local receivedTime = receivedAt and type(date) == "function" and date("%H:%M:%S", receivedAt) or "unknown time"
+        self.channelTestReceivedStatus = Dibs.AceGUI.AddLabel(shell, tabs, string.format("Last received probe: %s from %s at %s (%s).",
+          tostring(receivedProbe.channel or "unknown channel"), tostring(receivedProbe.peer or "unknown sender"),
+          receivedTime, tostring(receivedProbe.reasonCode or receivedProbe.status or "unknown result")), true)
+      end
       if not devEnabled then
-        Dibs.AceGUI.AddLabel(shell, tabs, "Enable Developer Mode to show local diagnostic tests. This setting is also controlled by /dibs dev on and /dibs dev off.", true)
+        Dibs.AceGUI.AddLabel(shell, tabs, "Enable Developer Mode on both the sender and any client expected to reply. This setting is also controlled by /dibs dev on and /dibs dev off.", true)
         return
       end
 
@@ -1372,6 +1384,7 @@ local function createAceWindow()
       "devRequestButton", "devStatusText", "devStatus", "playerTab", "historyDetail", "historyMode", "historyPage",
       "historyQuery", "eligibilityCharacter", "eligibilityStatus", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
       "developerModeToggle", "channelTestChannel", "channelTestTarget", "channelTestCustomChannelName", "channelTestStatus",
+      "channelTestReceivedStatus",
       "channelTestSelector", "channelTestTargetInput", "channelTestCustomChannelInput", "channelTestRunButton",
       "channelTestScanButton", "channelTestRefreshButton", "channelTestAutoPingToggle", "channelTestMatrix",
       "channelTestMatrixRows", "channelTestMatrixPage", "channelTestPrevious", "channelTestPageLabel",

@@ -83,6 +83,25 @@ describe("B11c Player UI", function()
     assert_true(officerRow[2]:find(date("%H:%M", 1700000000), 1, true) ~= nil)
   end)
 
+  it("shows a received probe's reason when local Developer Mode suppresses the reply", function()
+    local _, dibs = setup({ wow = { playerName = "Firebutt-Realm", guildLeader = false,
+      guildMembers = { "Officer-Realm", "Firebutt-Realm" }, guildRankIndices = { [1] = 1, [2] = 3 } } })
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame:Show()
+    frame.SelectTab("diagnostics")
+    local probe = assert(dibs.Sync.BuildEnvelope({ type = "CHANNEL_TEST", testId = "firebutt-probe",
+      testChannel = "GUILD", startedAt = time() }))
+    probe.senderNameRealm = "Officer-Realm"
+    probe.senderMemberKey = "officer-realm"
+
+    local accepted, reason = dibs.Sync.Receive(probe, "Officer-Realm", "GUILD")
+    assert_false(accepted)
+    assert_equal("DEVELOPER_MODE_REQUIRED", reason)
+    assert_not_nil(frame.channelTestReceivedStatus)
+    assert_true(frame.channelTestReceivedStatus.text:find("Last received probe: GUILD from Officer-Realm", 1, true) ~= nil)
+    assert_true(frame.channelTestReceivedStatus.text:find("DEVELOPER_MODE_REQUIRED", 1, true) ~= nil)
+  end)
+
   it("does not report no-pong for members outside the probed channel audience", function()
     local _, dibs = setup({ wow = {
       guildLeader = true,
