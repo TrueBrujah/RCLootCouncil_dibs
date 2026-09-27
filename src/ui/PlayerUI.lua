@@ -965,6 +965,47 @@ local function createAceWindow()
     if not Dibs.AceGUI.SelectTree(tabs, tab) then frame:Refresh() end
   end
 
+  local MATRIX_CHANNELS = {
+    { key = "GUILD", title = "Guild" }, { key = "OFFICER", title = "Officer" },
+    { key = "RAID", title = "Raid" }, { key = "PARTY", title = "Party" },
+    { key = "INSTANCE_CHAT", title = "Instance" }, { key = "WHISPER", title = "Whisper" },
+    { key = "CHANNEL", title = "Custom" },
+  }
+  local AUTO_PING_INTERVAL = 300
+  local function canAutoPing()
+    local role = Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(nil)
+    return role == "gm" or role == "officer"
+  end
+  local function stopAutoPing()
+    frame.channelTestAutoPingGeneration = (frame.channelTestAutoPingGeneration or 0) + 1
+    frame.channelTestAutoPingScheduled = false
+  end
+  local function autoPingIsActive()
+    return frame.channelTestAutoPingEnabled == true and frame.playerTab == "diagnostics"
+      and Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled()
+      and canAutoPing() and shell._dibsActive == true
+      and (not frame.IsShown or frame:IsShown())
+  end
+  local function runAvailableChannelTests()
+    local results = Dibs.Sync and Dibs.Sync.RunAvailableChannelTests and Dibs.Sync.RunAvailableChannelTests() or {}
+    local queued = 0
+    for _, result in ipairs(results) do if result.sent then queued = queued + 1 end end
+    frame.channelTestStatus = string.format("Queued %d available channel probe(s).", queued)
+  end
+  local function scheduleAutoPing()
+    if not autoPingIsActive() or frame.channelTestAutoPingScheduled then return end
+    if not (Dibs.Ace3 and Dibs.Ace3.ScheduleTimer) then return end
+    frame.channelTestAutoPingScheduled = true
+    local generation = frame.channelTestAutoPingGeneration or 0
+    Dibs.Ace3.ScheduleTimer(function()
+      if generation ~= frame.channelTestAutoPingGeneration then return end
+      frame.channelTestAutoPingScheduled = false
+      if not autoPingIsActive() then return end
+      runAvailableChannelTests()
+      frame:Refresh()
+    end, AUTO_PING_INTERVAL)
+  end
+
   local function submitFromInput()
     local request, errorText = submitPublicPreDib(getControlText(frame.preDibInput))
     if request then
@@ -996,11 +1037,16 @@ local function createAceWindow()
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
     local view = Dibs.PlayerUI.GetViewModel()
+    if self.playerTab ~= "diagnostics" then stopAutoPing() end
     if self.playerTab == "diagnostics" then
       Dibs.AceGUI.AddHeading(shell, tabs, "Diagnostics", "Local sync transport tests and debug controls.")
       local devEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() or false
       self.developerModeToggle = Dibs.AceGUI.AddCheckBox(shell, tabs, "Enable Developer Mode", devEnabled, function(value)
         if Dibs.DeveloperMode and Dibs.DeveloperMode.SetEnabled then Dibs.DeveloperMode.SetEnabled(value) end
+        if not value then
+          self.channelTestAutoPingEnabled = false
+          stopAutoPing()
+        end
         self:Refresh()
       end, 240)
       if not devEnabled then
@@ -1033,31 +1079,187 @@ local function createAceWindow()
       end
       self.channelTestRunButton = Dibs.AceGUI.AddButton(shell, channelTest, "Test selected channel", function()
         local target = self.channelTestChannel == "CHANNEL" and self.channelTestCustomChannelName or self.channelTestTarget
-        local sent, result = Dibs.Sync and Dibs.Sync.StartChannelTest
-          and Dibs.Sync.StartChannelTest(self.channelTestChannel or "GUILD", target)
+        local sent, result = false, "SYNC_UNAVAILABLE"
+        if Dibs.Sync and type(Dibs.Sync.StartChannelTest) == "function" then
+          sent, result = Dibs.Sync.StartChannelTest(self.channelTestChannel or "GUILD", target)
+        end
         self.channelTestStatus = sent and ("Probe queued: " .. tostring(self.channelTestChannel or "GUILD") .. " / " .. tostring(result))
           or ("Probe not sent: " .. tostring(result or "SYNC_UNAVAILABLE"))
         self:Refresh()
       end, 190)
+      self.channelTestScanButton = Dibs.AceGUI.AddButton(shell, channelTest, "Ping available channels", function()
+        runAvailableChannelTests()
+        self:Refresh()
+      end, 210)
       self.channelTestRefreshButton = Dibs.AceGUI.AddButton(shell, channelTest, "Refresh results", function()
         self:Refresh()
       end, 130)
       if self.channelTestStatus then Dibs.AceGUI.AddLabel(shell, channelTest, self.channelTestStatus, true) end
-      local resultRows = {}
-      for _, result in ipairs(Dibs.Sync and Dibs.Sync.GetChannelTestResults and Dibs.Sync.GetChannelTestResults() or {}) do
-        resultRows[#resultRows + 1] = string.format("%s | %s | %s:%s%s | peer=%s | reason=%s",
-          date("%H:%M:%S", tonumber(result.startedAt) or time()), tostring(result.direction or "TEST"),
-          tostring(result.channel or "unknown"), tostring(result.status or "unknown"),
-          result.channelName and (" (" .. tostring(result.channelName) .. ")") or "",
-          tostring(result.peer or result.target or "-"), tostring(result.reasonCode or "none"))
-        for _, responder in ipairs(result.responders or {}) do
-          resultRows[#resultRows + 1] = string.format("  ACK from %s: %s / %s", tostring(responder.player),
-            tostring(responder.result), tostring(responder.reasonCode))
+      if canAutoPing() then
+        self.channelTestAutoPingToggle = Dibs.AceGUI.AddCheckBox(shell, channelTest,
+          "Auto-ping available channels every 5 minutes", self.channelTestAutoPingEnabled == true, function(value)
+            self.channelTestAutoPingEnabled = value == true
+            stopAutoPing()
+            if value then runAvailableChannelTests() end
+            self:Refresh()
+          end, 330)
+        Dibs.AceGUI.AddTooltip(self.channelTestAutoPingToggle, "Automatic channel check",
+          "Only this GM/Officer client starts periodic probes. Disable it or leave Diagnostics to stop automatic checks.")
+      else
+        Dibs.AceGUI.AddLabel(shell, channelTest, "Automatic probing is controlled by a GM or Officer. You can run a manual check here.", true)
+      end
+      Dibs.AceGUI.AddLabel(shell, channelTest,
+        "Green = pong and local receipt time. Yellow = waiting. Orange = no pong after the response window (not proof of offline). Gray = not applicable, not tested, or offline. Blue = this client. Only Developer Mode clients reply.", true)
+
+      local latestByChannel, roster, seenMembers = {}, {}, {}
+      local testResults = Dibs.Sync and Dibs.Sync.GetChannelTestResults and Dibs.Sync.GetChannelTestResults() or {}
+      for _, result in ipairs(testResults) do
+        if result.direction == "SEND" and not latestByChannel[result.channel] then latestByChannel[result.channel] = result end
+      end
+      local function playerKey(name)
+        if Dibs.Identity and Dibs.Identity.CanonicalPlayerId then
+          local key = Dibs.Identity.CanonicalPlayerId(name)
+          if key then return string.lower(tostring(key)) end
+        end
+        return string.lower(trimText(name))
+      end
+      local localPlayerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or ""
+      local localPlayerKey = playerKey(localPlayerName)
+      local memberCount = 0
+      if type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
+        local ok, count = pcall(_G.GetNumGuildMembers, true)
+        memberCount = ok and (tonumber(count) or 0) or 0
+        for index = 1, memberCount do
+          local details = { pcall(_G.GetGuildRosterInfo, index) }
+          local name = details[1] and trimText(details[2]) or ""
+          local key = name ~= "" and playerKey(name) or ""
+          if key ~= "" and not seenMembers[key] then
+            seenMembers[key] = true
+            roster[#roster + 1] = { name = name, key = key, online = details[10] ~= false,
+              isLocal = key == localPlayerKey }
+          end
         end
       end
-      if #resultRows == 0 then resultRows[1] = "No channel tests recorded on this client." end
-      self.channelTestResults = Dibs.AceGUI.AddSelectableText(shell, channelTest, "Local send and receive results",
-        table.concat(resultRows, "\n"), 520, 170)
+      if localPlayerKey ~= "" and not seenMembers[localPlayerKey] then
+        roster[#roster + 1] = { name = tostring(localPlayerName), key = localPlayerKey, online = true, isLocal = true }
+      end
+
+      local resultByChannel = {}
+      for _, definition in ipairs(MATRIX_CHANNELS) do
+        local result = latestByChannel[definition.key]
+        local responders = {}
+        for _, responder in ipairs(result and result.responders or {}) do
+          if responder.memberKey then responders["id:" .. string.lower(tostring(responder.memberKey))] = responder end
+          if responder.player then responders["name:" .. playerKey(responder.player)] = responder end
+        end
+        resultByChannel[definition.key] = { result = result, responders = responders }
+      end
+      local function groupMembership(member, channelKey)
+        local inRaid = type(_G.IsInRaid) == "function" and _G.IsInRaid() == true
+        local inGroup = type(_G.IsInGroup) == "function" and _G.IsInGroup() == true
+        if channelKey == "RAID" and not inRaid then return false end
+        if channelKey == "PARTY" and (not inGroup or inRaid) then return false end
+        if channelKey == "INSTANCE_CHAT" then
+          local instanceGroup = type(_G.IsInGroup) == "function" and _G.LE_PARTY_CATEGORY_INSTANCE ~= nil
+            and _G.IsInGroup(_G.LE_PARTY_CATEGORY_INSTANCE) == true
+          if not instanceGroup then return false end
+        end
+        if inRaid and type(_G.GetNumGroupMembers) == "function" and type(_G.GetRaidRosterInfo) == "function" then
+          for index = 1, tonumber(_G.GetNumGroupMembers()) or 0 do
+            local details = { pcall(_G.GetRaidRosterInfo, index) }
+            local name = details[1] and trimText(details[2]) or ""
+            if name ~= "" and playerKey(name) == member.key then return true end
+          end
+          return false
+        end
+        if not inRaid and type(_G.UnitName) == "function" then
+          for index = 1, 4 do
+            local name = trimText(_G.UnitName("party" .. index))
+            if name ~= "" and playerKey(name) == member.key then return true end
+          end
+          if type(_G.GetNumSubgroupMembers) == "function" then return false end
+        end
+        return nil
+      end
+      local function channelApplies(member, channelKey, result)
+        if channelKey == "OFFICER" then
+          if not (Dibs.Permissions and Dibs.Permissions.GetGuildRole) then return nil end
+          local role = Dibs.Permissions.GetGuildRole(member.name)
+          return role == "gm" or role == "officer"
+        end
+        if channelKey == "WHISPER" then
+          return result.target ~= nil and playerKey(result.target) == member.key
+        end
+        if channelKey == "RAID" or channelKey == "PARTY" or channelKey == "INSTANCE_CHAT" then
+          return groupMembership(member, channelKey)
+        end
+        if channelKey == "CHANNEL" then return false end
+        return true
+      end
+      local function statusFor(member, channelKey)
+        local channelResult = resultByChannel[channelKey]
+        local result = channelResult and channelResult.result
+        if not result then return "|cff808080--|r" end
+        if member.isLocal then return "|cff00bfffYOU|r" end
+        local responder = channelResult.responders["id:" .. member.key] or channelResult.responders["name:" .. member.key]
+        if responder then
+          local receivedAt = tonumber(responder.receivedAt)
+          local receivedTime = receivedAt and type(date) == "function" and date("%H:%M", receivedAt)
+          return "|cff00ff00PONG" .. (receivedTime and ("\n" .. receivedTime) or "") .. "|r"
+        end
+        if not channelApplies(member, channelKey, result) then return "|cff808080--|r" end
+        if not member.online then return "|cff808080OFF|r" end
+        if result.ackWindowOpen or result.status == "WAITING_FOR_ACK" then return "|cffffff00WAIT|r" end
+        if result.status == "SEND_FAILED" or result.status == "NOT_SENT" then return "|cff808080ERR|r" end
+        return "|cffff9900NO PONG|r"
+      end
+      local allRows = {}
+      for _, member in ipairs(roster) do
+        local row = { member.name }
+        for _, definition in ipairs(MATRIX_CHANNELS) do row[#row + 1] = statusFor(member, definition.key) end
+        allRows[#allRows + 1] = row
+      end
+      local totalPages = math.max(1, math.ceil(#allRows / 20))
+      self.channelTestMatrixPage = math.min(math.max(1, self.channelTestMatrixPage or 1), totalPages)
+      local startIndex = ((self.channelTestMatrixPage - 1) * 20) + 1
+      self.channelTestMatrixRows = {}
+      for index = startIndex, math.min(#allRows, startIndex + 19) do
+        self.channelTestMatrixRows[#self.channelTestMatrixRows + 1] = allRows[index]
+      end
+      if #allRows == 0 then self.channelTestMatrixRows[1] = { "Guild roster unavailable", "--", "--", "--", "--", "--", "--", "--" } end
+      self.channelTestMatrix = Dibs.AceGUI.AddTable(shell, channelTest, {
+        { title = "Player", width = 125, minWidth = 120 },
+        { title = "Guild", width = 58, minWidth = 52, wrap = true },
+        { title = "Officer", width = 65, minWidth = 55, wrap = true },
+        { title = "Raid", width = 50, minWidth = 48, wrap = true },
+        { title = "Party", width = 55, minWidth = 50, wrap = true },
+        { title = "Instance", width = 66, minWidth = 58, wrap = true },
+        { title = "Whisper", width = 65, minWidth = 58, wrap = true },
+        { title = latestByChannel.CHANNEL and latestByChannel.CHANNEL.channelName or "Custom",
+          width = 65, minWidth = 58, wrap = true },
+      }, self.channelTestMatrixRows, 300, nil, { fluidColumns = true, widthHint = 520 })
+      local pagination = Dibs.AceGUI.AddInlineGroup(shell, channelTest)
+      self.channelTestPrevious = Dibs.AceGUI.AddButton(shell, pagination, "Previous", function()
+        self.channelTestMatrixPage = math.max(1, self.channelTestMatrixPage - 1)
+        self:Refresh()
+      end, 100)
+      self.channelTestPageLabel = Dibs.AceGUI.AddLabel(shell, pagination,
+        string.format("Page %d / %d (%d guild members)", self.channelTestMatrixPage, totalPages, #allRows))
+      self.channelTestNext = Dibs.AceGUI.AddButton(shell, pagination, "Next", function()
+        self.channelTestMatrixPage = math.min(totalPages, self.channelTestMatrixPage + 1)
+        self:Refresh()
+      end, 100)
+      Dibs.AceGUI.SetDisabled(self.channelTestPrevious, self.channelTestMatrixPage <= 1)
+      Dibs.AceGUI.SetDisabled(self.channelTestNext, self.channelTestMatrixPage >= totalPages)
+      local summaries = {}
+      for _, definition in ipairs(MATRIX_CHANNELS) do
+        local result = resultByChannel[definition.key].result
+        local pongCount = result and #(result.responders or {}) or 0
+        summaries[#summaries + 1] = definition.title .. ": " .. (result
+          and (tostring(pongCount) .. " pong(s), last ping " .. formatDate(result.startedAt)) or "not tested")
+      end
+      self.channelTestSummary = Dibs.AceGUI.AddLabel(shell, channelTest, table.concat(summaries, "\n"), true)
+      scheduleAutoPing()
       return
     end
     if self.playerTab == "requests" then
@@ -1164,13 +1366,17 @@ local function createAceWindow()
   end
 
   shell.onRelease = function()
+    stopAutoPing()
     for _, key in ipairs({
       "aceTabs", "preDibInput", "preDibButton", "preDibStatus", "preDibStatusText", "preDibValue", "devItemText",
       "devRequestButton", "devStatusText", "devStatus", "playerTab", "historyDetail", "historyMode", "historyPage",
       "historyQuery", "eligibilityCharacter", "eligibilityStatus", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
       "developerModeToggle", "channelTestChannel", "channelTestTarget", "channelTestCustomChannelName", "channelTestStatus",
       "channelTestSelector", "channelTestTargetInput", "channelTestCustomChannelInput", "channelTestRunButton",
-      "channelTestRefreshButton", "channelTestResults",
+      "channelTestScanButton", "channelTestRefreshButton", "channelTestAutoPingToggle", "channelTestMatrix",
+      "channelTestMatrixRows", "channelTestMatrixPage", "channelTestPrevious", "channelTestPageLabel",
+      "channelTestNext", "channelTestSummary", "channelTestAutoPingScheduled", "channelTestAutoPingGeneration",
+      "channelTestAutoPingEnabled",
     }) do
       frame[key] = nil
     end
@@ -1186,6 +1392,15 @@ local function createAceWindow()
   frame:Refresh()
   Dibs.AceGUI.SelectTree(tabs, frame.playerTab)
   return frame
+end
+
+function Dibs.PlayerUI.RefreshDiagnostics()
+  local frame = _G.DibsPlayerFrame
+  local shell = frame and frame.dibsAceGUIShell
+  if not frame or frame.playerTab ~= "diagnostics" or type(frame.Refresh) ~= "function"
+    or not shell or shell._dibsActive ~= true or (frame.IsShown and not frame:IsShown()) then return false end
+  frame:Refresh()
+  return true
 end
 
 function Dibs.PlayerUI.CreateWindow()

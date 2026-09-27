@@ -42,27 +42,124 @@ describe("B11c Player UI", function()
       guildRankIndices = { [1] = 0, [2] = 1, [3] = 3 },
     } })
     local frame = dibs.PlayerUI.CreateWindow()
+    frame:Show()
     frame.SelectTab("diagnostics")
     assert_not_nil(frame.developerModeToggle)
+    assert_nil(frame.channelTestAutoPingToggle)
     assert_nil(frame.channelTestRunButton)
     frame.developerModeToggle.callbacks.OnValueChanged(frame.developerModeToggle, "OnValueChanged", true)
     assert_true(dibs.DeveloperMode.IsEnabled())
     assert_not_nil(frame.channelTestRunButton)
+    assert_not_nil(frame.channelTestScanButton)
+    _G.time = function() return 1700000000 end
     local sentBefore = #dibs.Ace3.libs.comm.sent
     frame.channelTestRunButton.callbacks.OnClick(frame.channelTestRunButton, "OnClick")
     assert_equal(sentBefore + 1, #dibs.Ace3.libs.comm.sent)
     local outgoing = dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].payload)
     assert_equal("CHANNEL_TEST", outgoing.type)
     assert_equal("GUILD", outgoing.testChannel)
+    assert_true(frame.channelTestStatus:find(outgoing.testId, 1, true) ~= nil)
+    local playerRow, officerRow
+    for _, row in ipairs(frame.channelTestMatrixRows or {}) do
+      if row[1] == "Player-Realm" then playerRow = row end
+      if row[1] == "Officer-Realm" then officerRow = row end
+    end
+    assert_not_nil(playerRow)
+    assert_true(playerRow[2]:find("YOU", 1, true) ~= nil)
+    assert_not_nil(officerRow)
+    assert_true(officerRow[2]:find("WAIT", 1, true) ~= nil)
     local acknowledgement = assert(dibs.Sync.BuildEnvelope({ type = "CHANNEL_TEST_ACK", testId = outgoing.testId,
-      testChannel = "GUILD", result = "RECEIVED", reasonCode = "CHANNEL_MESSAGE_VALIDATED" }))
+      testChannel = "GUILD", ackTransport = "WHISPER", result = "RECEIVED",
+      reasonCode = "CHANNEL_MESSAGE_VALIDATED" }))
     acknowledgement.senderNameRealm = "Officer-Realm"
     acknowledgement.senderMemberKey = "officer-realm"
-    assert_true(dibs.Sync.Receive(acknowledgement, "Officer-Realm", "GUILD"))
+    assert_true(dibs.Sync.Receive(acknowledgement, "Officer-Realm", "WHISPER"))
+    officerRow = nil
+    for _, row in ipairs(frame.channelTestMatrixRows or {}) do
+      if row[1] == "Officer-Realm" then officerRow = row; break end
+    end
+    assert_not_nil(officerRow)
+    assert_true(officerRow[2]:find("PONG", 1, true) ~= nil)
+    assert_true(officerRow[2]:find(date("%H:%M", 1700000000), 1, true) ~= nil)
+  end)
+
+  it("does not report no-pong for members outside the probed channel audience", function()
+    local _, dibs = setup({ wow = {
+      guildLeader = true,
+      guildMembers = { "Tester-Realm", "Officer-Realm", "Player-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 3 },
+    } })
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame:Show()
+    frame.SelectTab("diagnostics")
+    frame.developerModeToggle.callbacks.OnValueChanged(frame.developerModeToggle, "OnValueChanged", true)
+
+    local sent, testId = dibs.Sync.StartChannelTest("OFFICER")
+    assert_true(sent)
     frame:Refresh()
-    local displayedResults = tostring(frame.channelTestResults and frame.channelTestResults.text or "")
-    assert_true(displayedResults:find("ACK from Officer-Realm: RECEIVED / CHANNEL_MESSAGE_VALIDATED", 1, true) ~= nil,
-      displayedResults)
+    local statuses = {}
+    for _, row in ipairs(frame.channelTestMatrixRows or {}) do statuses[row[1]] = row[3] end
+    assert_true(statuses["Officer-Realm"]:find("--", 1, true) == nil)
+    assert_true(statuses["Player-Realm"]:find("--", 1, true) ~= nil)
+
+    sent = dibs.Sync.StartChannelTest("WHISPER", "Officer-Realm")
+    assert_true(sent)
+    frame:Refresh()
+    local whisperStatuses = {}
+    for _, row in ipairs(frame.channelTestMatrixRows or {}) do whisperStatuses[row[1]] = row[7] end
+    assert_true(whisperStatuses["Officer-Realm"]:find("--", 1, true) == nil)
+    assert_true(whisperStatuses["Player-Realm"]:find("--", 1, true) ~= nil)
+
+    _G.IsInRaid = function() return true end
+    _G.IsInGroup = function() return true end
+    _G.GetNumGroupMembers = function() return 2 end
+    _G.GetRaidRosterInfo = function(index)
+      if index == 1 then return "Tester-Realm" end
+      if index == 2 then return "Officer-Realm" end
+    end
+    sent = dibs.Sync.StartChannelTest("RAID")
+    assert_true(sent)
+    frame:Refresh()
+    local raidStatuses = {}
+    for _, row in ipairs(frame.channelTestMatrixRows or {}) do raidStatuses[row[1]] = row[4] end
+    assert_true(raidStatuses["Officer-Realm"]:find("--", 1, true) == nil)
+    assert_true(raidStatuses["Player-Realm"]:find("--", 1, true) ~= nil)
+    assert_true(type(testId) == "string")
+  end)
+
+  it("limits automatic channel scans to opted-in GM or Officer diagnostics sessions", function()
+    local _, dibs = setup({ wow = {
+      guildLeader = true,
+      guildMembers = { "Tester-Realm", "Officer-Realm", "Player-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 3 },
+    } })
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame:Show()
+    frame.SelectTab("diagnostics")
+    frame.developerModeToggle.callbacks.OnValueChanged(frame.developerModeToggle, "OnValueChanged", true)
+    assert_not_nil(frame.channelTestAutoPingToggle)
+
+    local timerCount = #dibs.Ace3.libs.timer.scheduled
+    frame.channelTestAutoPingToggle.callbacks.OnValueChanged(frame.channelTestAutoPingToggle, "OnValueChanged", true)
+    assert_true(frame.channelTestAutoPingScheduled)
+    assert_equal(timerCount + 3, #dibs.Ace3.libs.timer.scheduled)
+    assert_equal(300, dibs.Ace3.libs.timer.scheduled[#dibs.Ace3.libs.timer.scheduled].delay)
+    local staleCallback = dibs.Ace3.libs.timer.scheduled[#dibs.Ace3.libs.timer.scheduled].callback
+
+    frame.SelectTab("history")
+    assert_false(frame.channelTestAutoPingScheduled)
+    frame.SelectTab("diagnostics")
+    assert_true(frame.channelTestAutoPingScheduled)
+    staleCallback()
+    assert_true(frame.channelTestAutoPingScheduled)
+
+    local activeCallback = dibs.Ace3.libs.timer.scheduled[#dibs.Ace3.libs.timer.scheduled].callback
+    local sentBefore = #dibs.Ace3.libs.comm.sent
+    activeCallback()
+    assert_equal(sentBefore + 2, #dibs.Ace3.libs.comm.sent)
+    assert_true(frame.channelTestAutoPingScheduled)
+    frame.SelectTab("history")
+    assert_false(frame.channelTestAutoPingScheduled)
   end)
 
   it("projects authoritative personal data without administrative or technical details", function()

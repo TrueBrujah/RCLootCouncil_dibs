@@ -18,6 +18,9 @@ local PROPOSAL_RETRY_INTERVAL = 300
 local AWARD_RESERVATION_PAGE_SIZE = 16
 local CHANNEL_TEST_ACK_TIMEOUT = 20
 local CHANNEL_TEST_RESULT_LIMIT = 30
+local CHANNEL_TEST_PENDING_LIMIT = 16
+local CHANNEL_TEST_RESPONSE_TTL = 120
+local CHANNEL_TEST_PEER_WINDOW, CHANNEL_TEST_PEER_LIMIT = 60, 6
 local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 300, 60, 3
 local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 TYPES.CHANNEL_TEST, TYPES.CHANNEL_TEST_ACK = true, true
@@ -637,10 +640,49 @@ end
 
 local function channelTestState()
   Dibs.runtime = Dibs.runtime or {}
-  Dibs.runtime.channelTests = Dibs.runtime.channelTests or { pending = {}, results = {} }
+  Dibs.runtime.channelTests = Dibs.runtime.channelTests or { pending = {}, results = {}, responded = {}, peerWindows = {} }
   local state = Dibs.runtime.channelTests
-  state.pending, state.results = state.pending or {}, state.results or {}
+  state.pending, state.results, state.responded, state.peerWindows = state.pending or {}, state.results or {},
+    state.responded or {}, state.peerWindows or {}
   return state
+end
+
+local function markChannelTestResponded(senderKey, testId)
+  local state, now = channelTestState(), time()
+  for key, respondedAt in pairs(state.responded) do
+    if now - (tonumber(respondedAt) or now) >= CHANNEL_TEST_RESPONSE_TTL then state.responded[key] = nil end
+  end
+  local key = tostring(senderKey) .. ":" .. tostring(testId)
+  if state.responded[key] then return false end
+  state.responded[key] = now
+  local count, oldestKey, oldestAt = 0, nil, math.huge
+  for responseKey, respondedAt in pairs(state.responded) do
+    count = count + 1
+    local timestamp = tonumber(respondedAt) or now
+    if timestamp <= oldestAt then oldestKey, oldestAt = responseKey, timestamp end
+  end
+  if count > 128 and oldestKey then state.responded[oldestKey] = nil end
+  return true
+end
+
+local function allowChannelTestResponse(senderKey)
+  local state, now = channelTestState(), time()
+  for key, window in pairs(state.peerWindows) do
+    if now - (tonumber(window.startedAt) or now) >= CHANNEL_TEST_PEER_WINDOW then state.peerWindows[key] = nil end
+  end
+  local key = tostring(senderKey)
+  local window = state.peerWindows[key]
+  if not window then window = { startedAt = now, count = 0 }; state.peerWindows[key] = window end
+  if window.count >= CHANNEL_TEST_PEER_LIMIT then return false end
+  window.count = window.count + 1
+  local count, oldestKey, oldestAt = 0, nil, math.huge
+  for peerKey, peerWindow in pairs(state.peerWindows) do
+    count = count + 1
+    local timestamp = tonumber(peerWindow.startedAt) or now
+    if timestamp <= oldestAt then oldestKey, oldestAt = peerKey, timestamp end
+  end
+  if count > 128 and oldestKey then state.peerWindows[oldestKey] = nil end
+  return true
 end
 
 local function recordChannelTest(result)
@@ -656,6 +698,32 @@ local function recordChannelTest(result)
       tostring(result.peer or "-"), tostring(result.reasonCode or "none")))
   end
   return result
+end
+
+local function refreshChannelTestUI()
+  local playerUI = Dibs.PlayerUI
+  if playerUI and type(playerUI.RefreshDiagnostics) == "function" then
+    pcall(playerUI.RefreshDiagnostics)
+  end
+end
+
+local function closeChannelTestWindow(state, testId, result)
+  result.ackWindowOpen = false
+  local acknowledged = false
+  for _, responder in ipairs(result.responders or {}) do
+    if responder.result == "RECEIVED" then acknowledged = true; break end
+  end
+  if acknowledged then
+    result.status = "ACKNOWLEDGED"
+    result.ackWindowClosed = true
+  elseif #(result.responders or {}) > 0 then
+    result.status = "REMOTE_REJECTED"
+  else
+    result.status = "NO_ACK"
+    result.reasonCode = "NO_ACK_TIMEOUT_CAUSE_UNKNOWN"
+  end
+  state.pending[testId] = nil
+  recordChannelTest(result)
 end
 
 function Sync.GetChannelTestAvailability(channel, target)
@@ -697,16 +765,13 @@ function Sync.GetChannelTestResults()
   local now = time()
   for testId, result in pairs(state.pending) do
     if now - (tonumber(result.startedAt) or now) >= CHANNEL_TEST_ACK_TIMEOUT then
-      result.status = "NO_ACK"
-      result.reasonCode = "NO_ACK_TIMEOUT_CAUSE_UNKNOWN"
-      state.pending[testId] = nil
-      recordChannelTest(result)
+      closeChannelTestWindow(state, testId, result)
     end
   end
   local results = {}
   for _, result in ipairs(state.results) do results[#results + 1] = copy(result) end
   table.sort(results, function(a, b) return (tonumber(a.startedAt) or 0) > (tonumber(b.startedAt) or 0) end)
-  while #results > 12 do table.remove(results) end
+  while #results > CHANNEL_TEST_RESULT_LIMIT do table.remove(results) end
   return results
 end
 
@@ -724,11 +789,19 @@ function Sync.StartChannelTest(channel, target)
     recordChannelTest({ direction = "SEND", channel = channel, status = "NOT_SENT", reasonCode = reason, startedAt = time() })
     return false, reason
   end
+  local testState, pendingCount = channelTestState(), 0
+  for _ in pairs(testState.pending) do pendingCount = pendingCount + 1 end
+  if pendingCount >= CHANNEL_TEST_PENDING_LIMIT then
+    local limitReason = "CHANNEL_TEST_PENDING_LIMIT"
+    recordChannelTest({ direction = "SEND", channel = channel, status = "NOT_SENT",
+      reasonCode = limitReason, startedAt = time() })
+    return false, limitReason
+  end
   local localMember = localSnapshot()
   if not localMember then return false, "LOCAL_IDENTITY_UNAVAILABLE" end
   local testId = Dibs.NewId("channel-test")
   local result = { testId = testId, direction = "SEND", channel = channel, target = resolvedTarget,
-    channelName = channelName, sender = localMember.displayName, status = "WAITING_FOR_ACK",
+    channelName = channelName, sender = localMember.displayName, status = "WAITING_FOR_ACK", ackWindowOpen = true,
     reasonCode = "ACE_COMM_QUEUED_AWAITING_ACK", startedAt = time() }
   channelTestState().pending[testId] = result
   recordChannelTest(result)
@@ -740,6 +813,15 @@ function Sync.StartChannelTest(channel, target)
     channelTestState().pending[testId] = nil
     recordChannelTest(result)
     return false, result.reasonCode
+  end
+  if Dibs.Ace3 and type(Dibs.Ace3.ScheduleTimer) == "function" then
+    Dibs.Ace3.ScheduleTimer(function()
+      local state = channelTestState()
+      local pending = state.pending[testId]
+      if not pending then return end
+      closeChannelTestWindow(state, testId, pending)
+      refreshChannelTestUI()
+    end, CHANNEL_TEST_ACK_TIMEOUT)
   end
   return true, testId
 end
@@ -754,6 +836,32 @@ function Sync.RunAllChannelTests(whisperTarget, customChannelName)
       results[#results + 1] = { channel = channel, sent = sent, result = result }
     else
       recordChannelTest({ direction = "SEND", channel = channel, status = "SKIPPED", reasonCode = reason, startedAt = time() })
+      results[#results + 1] = { channel = channel, sent = false, result = reason }
+    end
+  end
+  return results
+end
+
+function Sync.RunAvailableChannelTests()
+  local channels = { "GUILD" }
+  local role = localRole()
+  if (role == "gm" or role == "officer") and IsInGuild and IsInGuild() then
+    channels[#channels + 1] = "OFFICER"
+  end
+  if IsInGroup and IsInGroup(_G.LE_PARTY_CATEGORY_INSTANCE) == true then
+    channels[#channels + 1] = "INSTANCE_CHAT"
+  elseif IsInRaid and IsInRaid() == true then
+    channels[#channels + 1] = "RAID"
+  elseif IsInGroup and IsInGroup() == true then
+    channels[#channels + 1] = "PARTY"
+  end
+  local results = {}
+  for _, channel in ipairs(channels) do
+    local available, reason = Sync.GetChannelTestAvailability(channel)
+    if available then
+      local sent, result = Sync.StartChannelTest(channel)
+      results[#results + 1] = { channel = channel, sent = sent, result = result }
+    else
       results[#results + 1] = { channel = channel, sent = false, result = reason }
     end
   end
@@ -1247,36 +1355,38 @@ function Sync.Receive(message, sender, channel)
         status = "REJECTED", reasonCode = "CHANNEL_MISMATCH_EXPECTED_" .. tostring(testChannel), startedAt = time() })
       return false, "CHANNEL_MISMATCH"
     end
-    local ackTarget
     if testChannel == "CHANNEL" then
       if type(message.channelName) ~= "string" or type(GetChannelName) ~= "function" then
         recordChannelTest({ direction = "RECEIVE", channel = testChannel, channelName = message.channelName,
           peer = resolved.displayName, status = "REJECTED", reasonCode = "CUSTOM_CHANNEL_API_UNAVAILABLE", startedAt = time() })
         return false, "CUSTOM_CHANNEL_API_UNAVAILABLE"
       end
-      ackTarget = tonumber(GetChannelName(message.channelName))
-      if not ackTarget or ackTarget < 1 then
+      local channelId = tonumber(GetChannelName(message.channelName))
+      if not channelId or channelId < 1 then
         recordChannelTest({ direction = "RECEIVE", channel = testChannel, channelName = message.channelName,
           peer = resolved.displayName, status = "REJECTED", reasonCode = "CUSTOM_CHANNEL_NOT_JOINED", startedAt = time() })
         return false, "CUSTOM_CHANNEL_NOT_JOINED"
       end
-    elseif testChannel == "WHISPER" then
-      ackTarget = resolved.displayName
     end
-    local senderIsAdmin = resolved.role == "gm" or resolved.role == "officer"
-    local localIsAdmin = localRole() == "gm" or localRole() == "officer"
-    if not senderIsAdmin and not localIsAdmin then
-      local rejectionReason = "CHANNEL_TEST_ADMIN_ENDPOINT_REQUIRED"
-      recordChannelTest({ testId = testId, direction = "RECEIVE", channel = testChannel, peer = resolved.displayName,
-        status = "REJECTED", reasonCode = rejectionReason, startedAt = time() })
-      return false, rejectionReason
+    if not (Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled()) then
+      return false, "DEVELOPER_MODE_REQUIRED"
+    end
+    if not markChannelTestResponded(resolved.memberKey, testId) then
+      return true, "CHANNEL_TEST_DUPLICATE"
+    end
+    if not allowChannelTestResponse(resolved.memberKey) then
+      local reasonCode = "CHANNEL_TEST_RATE_LIMITED"
+      recordChannelTest({ testId = testId, direction = "RECEIVE", channel = testChannel,
+        peer = resolved.displayName, status = "RATE_LIMITED", reasonCode = reasonCode, startedAt = time() })
+      return false, reasonCode
     end
     local sent, sendReason = Sync.Send({ type = "CHANNEL_TEST_ACK", testId = testId,
-      testChannel = testChannel, result = "RECEIVED", reasonCode = "CHANNEL_MESSAGE_VALIDATED" },
-      testChannel, ackTarget)
+      testChannel = testChannel, ackTransport = "WHISPER", result = "RECEIVED",
+      reasonCode = "CHANNEL_MESSAGE_VALIDATED" }, "WHISPER", resolved.displayName)
     recordChannelTest({ testId = testId, direction = "RECEIVE", channel = testChannel,
       peer = resolved.displayName, status = sent and "ACK_QUEUED" or "ACK_SEND_FAILED",
       reasonCode = sent and "CHANNEL_MESSAGE_VALIDATED" or (sendReason or "ACK_SEND_FAILED"), startedAt = time() })
+    refreshChannelTestUI()
     return true, sent and "CHANNEL_TEST_ACK_QUEUED" or "CHANNEL_TEST_ACK_SEND_FAILED"
   end
   if message.type == "CHANNEL_TEST_ACK" then
@@ -1285,18 +1395,25 @@ function Sync.Receive(message, sender, channel)
       or not CHANNEL_TEST_CHANNELS[message.testChannel]
       or (message.result ~= "RECEIVED" and message.result ~= "REJECTED")
       or type(message.reasonCode) ~= "string" then return false, "INVALID_CHANNEL_TEST_ACK" end
-    if (channel or message.testChannel) ~= message.testChannel then return false, "CHANNEL_MISMATCH" end
+    if message.ackTransport == "WHISPER" then
+      if channel ~= "WHISPER" then return false, "CHANNEL_MISMATCH" end
+    elseif message.ackTransport ~= nil or (channel or message.testChannel) ~= message.testChannel then
+      return false, "CHANNEL_MISMATCH"
+    end
     local state = channelTestState()
     local pending = state.pending[testId]
     if not pending then return true, "CHANNEL_TEST_ACK_LATE_OR_UNKNOWN" end
     if pending.channel ~= message.testChannel then return false, "CHANNEL_TEST_ACK_WRONG_CHANNEL" end
+    pending.responders = pending.responders or {}
+    for _, responder in ipairs(pending.responders) do
+      if responder.memberKey == resolved.memberKey then return true, "CHANNEL_TEST_ACK_DUPLICATE" end
+    end
     pending.status = message.result == "RECEIVED" and "ACKNOWLEDGED" or "REMOTE_REJECTED"
     pending.reasonCode = message.reasonCode
-    pending.responders = pending.responders or {}
-    pending.responders[#pending.responders + 1] = { player = resolved.displayName,
+    pending.responders[#pending.responders + 1] = { player = resolved.displayName, memberKey = resolved.memberKey,
       result = message.result, reasonCode = message.reasonCode, receivedAt = time() }
     recordChannelTest(pending)
-    state.pending[testId] = nil
+    refreshChannelTestUI()
     return true, "CHANNEL_TEST_ACK_APPLIED"
   end
   if message.type == "AWARD_RESERVATION_DIGEST" then

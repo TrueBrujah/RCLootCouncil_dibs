@@ -284,7 +284,9 @@ describe("B04 V2 transport", function()
     assert_true(accepted, tostring(reason))
     local responseMessage = dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].payload)
     assert_equal("CHANNEL_TEST_ACK", responseMessage.type)
-    assert_equal("GUILD", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+    assert_equal("WHISPER", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+    assert_equal("Officer-Realm", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
+    assert_equal("WHISPER", responseMessage.ackTransport)
     assert_equal("CHANNEL_MESSAGE_VALIDATED", responseMessage.reasonCode)
 
     local acknowledgement = remote(dibs, { type = "CHANNEL_TEST_ACK", testId = testId,
@@ -348,19 +350,92 @@ describe("B04 V2 transport", function()
     assert_equal("CHANNEL_MESSAGE_VALIDATED", results[1].reasonCode)
   end)
 
-  it("records but does not answer a test between non-admin guild members", function()
+  it("lets an opted-in player answer an officer probe privately and only once", function()
     local dibs = load()
     dibs.Permissions.GetGuildRole = function() return "player" end
+    dibs.DeveloperMode.SetEnabled(true)
     local inbound = remote(dibs, { type = "CHANNEL_TEST", testId = "player-test",
-      testChannel = "GUILD", startedAt = time() }, "Player-Realm")
+      testChannel = "GUILD", startedAt = time() }, "Officer-Realm")
     local sentBefore = #dibs.Ace3.libs.comm.sent
-    local accepted, reason = dibs.Sync.Receive(inbound, "Player-Realm", "GUILD")
-    assert_false(accepted)
-    assert_equal("CHANNEL_TEST_ADMIN_ENDPOINT_REQUIRED", reason)
-    assert_equal(sentBefore, #dibs.Ace3.libs.comm.sent)
+    local accepted, reason = dibs.Sync.Receive(inbound, "Officer-Realm", "GUILD")
+    assert_true(accepted, tostring(reason))
+    assert_equal("CHANNEL_TEST_ACK_QUEUED", reason)
+    assert_equal(sentBefore + 1, #dibs.Ace3.libs.comm.sent)
+    local sent = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
+    assert_equal("WHISPER", sent.channel)
+    assert_equal("Officer-Realm", sent.target)
+    local response = dibs.Ace3.Deserialize(sent.payload)
+    assert_equal("CHANNEL_TEST_ACK", response.type)
+    assert_equal("WHISPER", response.ackTransport)
+    local duplicate = remote(dibs, { type = "CHANNEL_TEST", testId = "player-test",
+      testChannel = "GUILD", startedAt = time() }, "Officer-Realm")
+    local duplicateAccepted, duplicateReason = dibs.Sync.Receive(duplicate, "Officer-Realm", "GUILD")
+    assert_true(duplicateAccepted)
+    assert_equal("CHANNEL_TEST_DUPLICATE", duplicateReason)
+    assert_equal(sentBefore + 1, #dibs.Ace3.libs.comm.sent)
+  end)
+
+  it("aggregates unique private ACKs from several players for one ping", function()
+    local dibs = load()
+    dibs.DeveloperMode.SetEnabled(true)
+    local sent, testId = dibs.Sync.StartChannelTest("GUILD")
+    assert_true(sent)
+    local timeoutCallback = dibs.Ace3.libs.timer.scheduled[#dibs.Ace3.libs.timer.scheduled].callback
+    for _, player in ipairs({ "Officer-Realm", "Player-Realm" }) do
+      local acknowledgement = remote(dibs, { type = "CHANNEL_TEST_ACK", testId = testId,
+        testChannel = "GUILD", ackTransport = "WHISPER", result = "RECEIVED",
+        reasonCode = "CHANNEL_MESSAGE_VALIDATED" }, player)
+      assert_true(dibs.Sync.Receive(acknowledgement, player, "WHISPER"))
+    end
     local results = dibs.Sync.GetChannelTestResults()
-    assert_equal("REJECTED", results[1].status)
-    assert_equal("CHANNEL_TEST_ADMIN_ENDPOINT_REQUIRED", results[1].reasonCode)
+    local combined
+    for _, result in ipairs(results) do if result.testId == testId then combined = result end end
+    assert_not_nil(combined)
+    assert_equal("ACKNOWLEDGED", combined.status)
+    assert_equal(2, #combined.responders)
+    assert_equal("Officer-Realm", combined.responders[1].player)
+    assert_equal("Player-Realm", combined.responders[2].player)
+    local duplicate = remote(dibs, { type = "CHANNEL_TEST_ACK", testId = testId,
+      testChannel = "GUILD", ackTransport = "WHISPER", result = "RECEIVED",
+      reasonCode = "CHANNEL_MESSAGE_VALIDATED" }, "Player-Realm")
+    local accepted, reason = dibs.Sync.Receive(duplicate, "Player-Realm", "WHISPER")
+    assert_true(accepted)
+    assert_equal("CHANNEL_TEST_ACK_DUPLICATE", reason)
+    assert_equal(2, #dibs.Sync.GetChannelTestResults()[1].responders)
+    timeoutCallback()
+    local closed
+    for _, result in ipairs(dibs.Sync.GetChannelTestResults()) do if result.testId == testId then closed = result end end
+    assert_not_nil(closed)
+    assert_false(closed.ackWindowOpen)
+    assert_true(closed.ackWindowClosed)
+  end)
+
+  it("limits diagnostic pongs from one member to six per minute", function()
+    local dibs = load()
+    _G.time = function() return 1700000000 end
+    dibs.Permissions.GetGuildRole = function() return "player" end
+    dibs.DeveloperMode.SetEnabled(true)
+    local sentBefore = #dibs.Ace3.libs.comm.sent
+    for index = 1, 6 do
+      local inbound = remote(dibs, { type = "CHANNEL_TEST", testId = "rate-test-" .. index,
+        testChannel = "GUILD", startedAt = time() }, "Officer-Realm")
+      assert_true(dibs.Sync.Receive(inbound, "Officer-Realm", "GUILD"))
+    end
+    local blocked = remote(dibs, { type = "CHANNEL_TEST", testId = "rate-test-7",
+      testChannel = "GUILD", startedAt = time() }, "Officer-Realm")
+    local accepted, reason = dibs.Sync.Receive(blocked, "Officer-Realm", "GUILD")
+    assert_false(accepted)
+    assert_equal("CHANNEL_TEST_RATE_LIMITED", reason)
+    assert_equal(sentBefore + 6, #dibs.Ace3.libs.comm.sent)
+  end)
+
+  it("bounds the number of local channel tests waiting for responses", function()
+    local dibs = load()
+    dibs.DeveloperMode.SetEnabled(true)
+    for _ = 1, 16 do assert_true(dibs.Sync.StartChannelTest("GUILD")) end
+    local sent, reason = dibs.Sync.StartChannelTest("GUILD")
+    assert_false(sent)
+    assert_equal("CHANNEL_TEST_PENDING_LIMIT", reason)
   end)
 
   it("sends custom-channel confirmations to the locally joined channel", function()
@@ -376,10 +451,11 @@ describe("B04 V2 transport", function()
       testChannel = "CHANNEL", channelName = "DibsTest", startedAt = time() }, "Officer-Realm")
     assert_true(dibs.Sync.Receive(inbound, "Officer-Realm", "CHANNEL"))
     local acknowledgement = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
-    assert_equal("CHANNEL", acknowledgement.channel)
-    assert_equal(4, acknowledgement.target)
+    assert_equal("WHISPER", acknowledgement.channel)
+    assert_equal("Officer-Realm", acknowledgement.target)
     local ackMessage = dibs.Ace3.Deserialize(acknowledgement.payload)
     assert_equal("CHANNEL_TEST_ACK", ackMessage.type)
+    assert_equal("WHISPER", ackMessage.ackTransport)
     assert_true(dibs.Sync.Receive(remote(dibs, { type = "CHANNEL_TEST_ACK", testId = testId,
       testChannel = "CHANNEL", result = "RECEIVED", reasonCode = "CHANNEL_MESSAGE_VALIDATED" }, "Officer-Realm"),
       "Officer-Realm", "CHANNEL"))
