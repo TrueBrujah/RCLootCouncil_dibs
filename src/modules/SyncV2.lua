@@ -714,7 +714,11 @@ function Sync.StartChannelTest(channel, target)
   if not (Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled()) then
     return false, "DEVELOPER_MODE_REQUIRED"
   end
-  if localRole() ~= "gm" and localRole() ~= "officer" then return false, "GUILD_ADMIN_REQUIRED" end
+  local role = localRole()
+  if role ~= "gm" and role ~= "officer" and role ~= "player" then return false, "GUILD_MEMBER_REQUIRED" end
+  if role == "player" and (type(IsInGuild) ~= "function" or IsInGuild() ~= true) then
+    return false, "GUILD_MEMBER_REQUIRED"
+  end
   local available, reason, resolvedTarget, channelName = Sync.GetChannelTestAvailability(channel, target)
   if not available then
     recordChannelTest({ direction = "SEND", channel = channel, status = "NOT_SENT", reasonCode = reason, startedAt = time() })
@@ -1259,13 +1263,12 @@ function Sync.Receive(message, sender, channel)
     elseif testChannel == "WHISPER" then
       ackTarget = resolved.displayName
     end
-    if resolved.role ~= "gm" and resolved.role ~= "officer" then
-      local rejectionReason = "CHANNEL_TEST_OFFICER_REQUIRED"
-      local sent, sendReason = Sync.Send({ type = "CHANNEL_TEST_ACK", testId = testId,
-        testChannel = testChannel, result = "REJECTED", reasonCode = rejectionReason }, testChannel, ackTarget)
+    local senderIsAdmin = resolved.role == "gm" or resolved.role == "officer"
+    local localIsAdmin = localRole() == "gm" or localRole() == "officer"
+    if not senderIsAdmin and not localIsAdmin then
+      local rejectionReason = "CHANNEL_TEST_ADMIN_ENDPOINT_REQUIRED"
       recordChannelTest({ testId = testId, direction = "RECEIVE", channel = testChannel, peer = resolved.displayName,
-        status = "REJECTED", reasonCode = rejectionReason, responseStatus = sent and "ACK_QUEUED" or "ACK_SEND_FAILED",
-        responseReasonCode = sendReason, startedAt = time() })
+        status = "REJECTED", reasonCode = rejectionReason, startedAt = time() })
       return false, rejectionReason
     end
     local sent, sendReason = Sync.Send({ type = "CHANNEL_TEST_ACK", testId = testId,

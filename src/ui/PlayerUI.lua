@@ -92,6 +92,7 @@ local PLAYER_NAV_TREE = {
   { text = "My Dibs", value = "my-dibs" },
   { text = "Requests", value = "requests", module = "requests" },
   { text = "History", value = "history" },
+  { text = "Diagnostics", value = "diagnostics" },
 }
 
 local function moduleEnabled(moduleKey)
@@ -995,6 +996,70 @@ local function createAceWindow()
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
     local view = Dibs.PlayerUI.GetViewModel()
+    if self.playerTab == "diagnostics" then
+      Dibs.AceGUI.AddHeading(shell, tabs, "Diagnostics", "Local sync transport tests and debug controls.")
+      local devEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() or false
+      self.developerModeToggle = Dibs.AceGUI.AddCheckBox(shell, tabs, "Enable Developer Mode", devEnabled, function(value)
+        if Dibs.DeveloperMode and Dibs.DeveloperMode.SetEnabled then Dibs.DeveloperMode.SetEnabled(value) end
+        self:Refresh()
+      end, 240)
+      if not devEnabled then
+        Dibs.AceGUI.AddLabel(shell, tabs, "Enable Developer Mode to show local diagnostic tests. This setting is also controlled by /dibs dev on and /dibs dev off.", true)
+        return
+      end
+
+      local channelTest = Dibs.AceGUI.AddSection(shell, tabs, "Transport channel test",
+        "Sends a harmless probe on the selected channel. A matching ACK confirms that another guild member received it.")
+      local channelOptions = {
+        GUILD = "Guild", OFFICER = "Guild officers", RAID = "Raid", PARTY = "Party",
+        INSTANCE_CHAT = "Instance group", WHISPER = "Whisper", CHANNEL = "Custom joined channel",
+      }
+      self.channelTestChannel = self.channelTestChannel or "GUILD"
+      self.channelTestSelector = Dibs.AceGUI.AddDropdown(shell, channelTest, "Channel", channelOptions, function(value)
+        self.channelTestChannel = value
+        self:Refresh()
+      end, 220)
+      Dibs.AceGUI.SetValue(self.channelTestSelector, self.channelTestChannel)
+      if self.channelTestChannel == "WHISPER" then
+        self.channelTestTargetInput = Dibs.AceGUI.AddEditBox(shell, channelTest, "GM or Officer target", function(value)
+          self.channelTestTarget = value or ""
+        end, 260)
+        setControlText(self.channelTestTargetInput, self.channelTestTarget or "")
+      elseif self.channelTestChannel == "CHANNEL" then
+        self.channelTestCustomChannelInput = Dibs.AceGUI.AddEditBox(shell, channelTest, "Joined channel name", function(value)
+          self.channelTestCustomChannelName = value or ""
+        end, 260)
+        setControlText(self.channelTestCustomChannelInput, self.channelTestCustomChannelName or "")
+      end
+      self.channelTestRunButton = Dibs.AceGUI.AddButton(shell, channelTest, "Test selected channel", function()
+        local target = self.channelTestChannel == "CHANNEL" and self.channelTestCustomChannelName or self.channelTestTarget
+        local sent, result = Dibs.Sync and Dibs.Sync.StartChannelTest
+          and Dibs.Sync.StartChannelTest(self.channelTestChannel or "GUILD", target)
+        self.channelTestStatus = sent and ("Probe queued: " .. tostring(self.channelTestChannel or "GUILD") .. " / " .. tostring(result))
+          or ("Probe not sent: " .. tostring(result or "SYNC_UNAVAILABLE"))
+        self:Refresh()
+      end, 190)
+      self.channelTestRefreshButton = Dibs.AceGUI.AddButton(shell, channelTest, "Refresh results", function()
+        self:Refresh()
+      end, 130)
+      if self.channelTestStatus then Dibs.AceGUI.AddLabel(shell, channelTest, self.channelTestStatus, true) end
+      local resultRows = {}
+      for _, result in ipairs(Dibs.Sync and Dibs.Sync.GetChannelTestResults and Dibs.Sync.GetChannelTestResults() or {}) do
+        resultRows[#resultRows + 1] = string.format("%s | %s | %s:%s%s | peer=%s | reason=%s",
+          date("%H:%M:%S", tonumber(result.startedAt) or time()), tostring(result.direction or "TEST"),
+          tostring(result.channel or "unknown"), tostring(result.status or "unknown"),
+          result.channelName and (" (" .. tostring(result.channelName) .. ")") or "",
+          tostring(result.peer or result.target or "-"), tostring(result.reasonCode or "none"))
+        for _, responder in ipairs(result.responders or {}) do
+          resultRows[#resultRows + 1] = string.format("  ACK from %s: %s / %s", tostring(responder.player),
+            tostring(responder.result), tostring(responder.reasonCode))
+        end
+      end
+      if #resultRows == 0 then resultRows[1] = "No channel tests recorded on this client." end
+      self.channelTestResults = Dibs.AceGUI.AddSelectableText(shell, channelTest, "Local send and receive results",
+        table.concat(resultRows, "\n"), 520, 170)
+      return
+    end
     if self.playerTab == "requests" then
       Dibs.AceGUI.AddHeading(shell, tabs, "Requests", "Your Pre-Dib requests and their current status.")
       local requestRows = {}
@@ -1103,6 +1168,9 @@ local function createAceWindow()
       "aceTabs", "preDibInput", "preDibButton", "preDibStatus", "preDibStatusText", "preDibValue", "devItemText",
       "devRequestButton", "devStatusText", "devStatus", "playerTab", "historyDetail", "historyMode", "historyPage",
       "historyQuery", "eligibilityCharacter", "eligibilityStatus", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
+      "developerModeToggle", "channelTestChannel", "channelTestTarget", "channelTestCustomChannelName", "channelTestStatus",
+      "channelTestSelector", "channelTestTargetInput", "channelTestCustomChannelInput", "channelTestRunButton",
+      "channelTestRefreshButton", "channelTestResults",
     }) do
       frame[key] = nil
     end

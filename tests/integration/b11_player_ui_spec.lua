@@ -21,16 +21,48 @@ local function containsForbiddenValue(value, forbidden)
 end
 
 describe("B11c Player UI", function()
-  it("exposes only the three player navigation views", function()
+  it("exposes the player views and a diagnostics entry", function()
     local _, dibs = setup()
     local navigation = dibs.PlayerUI.GetNavigation()
-    assert_equal(3, #navigation)
+    assert_equal(4, #navigation)
     assert_equal("My Dibs", navigation[1].text)
     assert_equal("Requests", navigation[2].text)
     assert_equal("History", navigation[3].text)
+    assert_equal("Diagnostics", navigation[4].text)
     assert_equal("my-dibs", navigation[1].value)
     assert_equal("requests", navigation[2].value)
     assert_equal("history", navigation[3].value)
+    assert_equal("diagnostics", navigation[4].value)
+  end)
+
+  it("lets a player enable diagnostics and run a sync channel test", function()
+    local _, dibs = setup({ wow = {
+      playerName = "Player-Realm", guildLeader = false,
+      guildMembers = { "GM-Realm", "Officer-Realm", "Player-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 3 },
+    } })
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("diagnostics")
+    assert_not_nil(frame.developerModeToggle)
+    assert_nil(frame.channelTestRunButton)
+    frame.developerModeToggle.callbacks.OnValueChanged(frame.developerModeToggle, "OnValueChanged", true)
+    assert_true(dibs.DeveloperMode.IsEnabled())
+    assert_not_nil(frame.channelTestRunButton)
+    local sentBefore = #dibs.Ace3.libs.comm.sent
+    frame.channelTestRunButton.callbacks.OnClick(frame.channelTestRunButton, "OnClick")
+    assert_equal(sentBefore + 1, #dibs.Ace3.libs.comm.sent)
+    local outgoing = dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].payload)
+    assert_equal("CHANNEL_TEST", outgoing.type)
+    assert_equal("GUILD", outgoing.testChannel)
+    local acknowledgement = assert(dibs.Sync.BuildEnvelope({ type = "CHANNEL_TEST_ACK", testId = outgoing.testId,
+      testChannel = "GUILD", result = "RECEIVED", reasonCode = "CHANNEL_MESSAGE_VALIDATED" }))
+    acknowledgement.senderNameRealm = "Officer-Realm"
+    acknowledgement.senderMemberKey = "officer-realm"
+    assert_true(dibs.Sync.Receive(acknowledgement, "Officer-Realm", "GUILD"))
+    frame:Refresh()
+    local displayedResults = tostring(frame.channelTestResults and frame.channelTestResults.text or "")
+    assert_true(displayedResults:find("ACK from Officer-Realm: RECEIVED / CHANNEL_MESSAGE_VALIDATED", 1, true) ~= nil,
+      displayedResults)
   end)
 
   it("projects authoritative personal data without administrative or technical details", function()
