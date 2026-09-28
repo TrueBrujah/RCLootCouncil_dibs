@@ -5414,6 +5414,8 @@ local function createAceWindow(initialRoute)
     if self.activeTab == "debug" then
       self.debugControls = {}
       Dibs.AceGUI.AddHeading(shell, tabs, "Debug", "Adjust module verbosity and open diagnostic logs.")
+      self.guildScopeLabel = Dibs.AceGUI.AddLabel(shell, tabs,
+        "Guild sync scope: " .. tostring(Dibs.GetGuildKey and Dibs.GetGuildKey() or "unknown"), true)
       local channelTest = Dibs.AceGUI.AddSection(shell, tabs, "Transport channel test",
         "An accepted send is only queued. Replying clients must have Developer Mode enabled; a matching remote ACK confirms probe receipt, not data sync. A timeout cannot distinguish offline, incompatible, or game-filtered traffic.")
       local testChannel = self.channelTestChannel or "GUILD"

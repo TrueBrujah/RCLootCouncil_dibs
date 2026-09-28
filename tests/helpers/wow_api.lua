@@ -154,10 +154,10 @@ function M.install(opts)
     return nil
   end
 
-  _G.GetRealmName = function() return "Realm" end
+  _G.GetRealmName = function() return opts.realmName or "Realm" end
   _G.IsInGuild = function() return inGuild end
   _G.GetGuildInfo = function(unit)
-    if unit == "player" and inGuild then return guildName end
+    if unit == "player" and inGuild then return guildName, nil, nil, opts.guildRealm end
     return nil
   end
   _G.IsGuildLeader = function() return guildLeader end

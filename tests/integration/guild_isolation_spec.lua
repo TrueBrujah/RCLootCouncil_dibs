@@ -28,6 +28,55 @@ describe("Guild data isolation", function()
     assert_equal(false, savedRoot.guilds[guildKeyA].settings.allowPublicPreDibs)
   end)
 
+  it("uses the guild home realm for members on different realms", function()
+    local _, homeRealmClient = loader.load({ wow = {
+      guildName = "Cross Realm Guild", realmName = "Durotan", guildLeader = true,
+    } })
+    local homeRealmKey = homeRealmClient.GetGuildKey()
+    local savedRoot = _G.RCLootCouncil_dibsDB
+    homeRealmClient.GetDB().settings.allowPublicPreDibs = false
+
+    local _, connectedRealmClient = loader.load({ wow = {
+      guildName = "Cross Realm Guild", guildRealm = "Durotan", realmName = "Zul'jin", guildLeader = false,
+    } })
+    assert_equal(homeRealmKey, connectedRealmClient.GetGuildKey())
+    _G.RCLootCouncil_dibsDB = savedRoot
+    assert_equal(false, connectedRealmClient.GetDB().settings.allowPublicPreDibs)
+
+    local _, otherGuild = loader.load({ wow = {
+      guildName = "Cross Realm Guild", guildRealm = "Zul'jin", realmName = "Zul'jin", guildLeader = false,
+    } })
+    assert_true(homeRealmKey ~= otherGuild.GetGuildKey())
+  end)
+
+  it("accepts a guild probe from a member on a different realm", function()
+    local roster = { "Huudada-Durotan", "Itestit-Zul'jin" }
+    local _, sender = loader.load({ withAce3 = true, wow = {
+      playerName = "Huudada-Durotan", guildName = "Cross Realm Guild", realmName = "Durotan",
+      guildMembers = roster, guildRankIndices = { [1] = 0, [2] = 3 },
+    } })
+    sender.DeveloperMode.SetEnabled(true)
+    local envelope = assert(sender.Sync.BuildEnvelope({ type = "CHANNEL_TEST", testId = "cross-realm-probe",
+      testChannel = "GUILD", startedAt = time() }))
+    local senderGuildKey = envelope.guildKey
+
+    local _, receiver = loader.load({ withAce3 = true, wow = {
+      playerName = "Itestit-Zul'jin", guildName = "Cross Realm Guild", guildRealm = "Durotan",
+      realmName = "Zul'jin", guildLeader = false, guildMembers = roster,
+      guildRankIndices = { [1] = 0, [2] = 3 },
+    } })
+    receiver.DeveloperMode.SetEnabled(true)
+    assert_equal(senderGuildKey, receiver.GetGuildKey())
+
+    local payload = receiver.Ace3.Serialize(envelope)
+    local accepted, reason = receiver.Sync.OnAddonMessage("DIBS", payload, "GUILD", "Huudada-Durotan")
+    assert_true(accepted, tostring(reason))
+    assert_equal("CHANNEL_TEST_ACK_QUEUED", reason)
+    local response = receiver.Ace3.Deserialize(receiver.Ace3.libs.comm.sent[#receiver.Ace3.libs.comm.sent].payload)
+    assert_equal("CHANNEL_TEST_ACK", response.type)
+    assert_equal("cross-realm-probe", response.testId)
+  end)
+
   it("isolates alt characters without a guild from each other", function()
     local _, dibsA = loader.load({ wow = { inGuild = false, playerName = "AltOne-Realm" } })
     dibsA.GetDB().settings.allowPublicPreDibs = false

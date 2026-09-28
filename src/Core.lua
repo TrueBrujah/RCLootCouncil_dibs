@@ -167,9 +167,9 @@ end
 function Dibs.GetGuildKey()
   local realm = type(GetRealmName) == "function" and GetRealmName() or "unknown-realm"
   if type(IsInGuild) == "function" and IsInGuild() and type(GetGuildInfo) == "function" then
-    local guildName = GetGuildInfo("player")
+    local guildName, _, _, guildRealm = GetGuildInfo("player")
     if guildName and guildName ~= "" then
-      return normalizeGuildKey(realm, guildName)
+      return normalizeGuildKey(guildRealm and guildRealm ~= "" and guildRealm or realm, guildName)
     end
   end
   return Dibs.GetCharacterScopeKey(Dibs.GetPlayerName and Dibs.GetPlayerName() or "unknown")

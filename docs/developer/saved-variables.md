@@ -12,6 +12,12 @@ RCLootCouncil_dibsDB = {
 }
 ```
 
+For guilded characters, `guildKey` combines the guild name with the guild's
+home realm reported by `GetGuildInfo("player")`; the character realm is used
+when that API value is unavailable. This keeps members of a cross-realm guild
+in the same sync scope. Existing buckets created with a character-realm key
+are retained and are not automatically merged into the guild-home bucket.
+
 The local root is intentionally small and never synchronized:
 
 ```lua

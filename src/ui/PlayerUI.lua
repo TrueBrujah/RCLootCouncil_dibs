@@ -1040,6 +1040,8 @@ local function createAceWindow()
     if self.playerTab ~= "diagnostics" then stopAutoPing() end
     if self.playerTab == "diagnostics" then
       Dibs.AceGUI.AddHeading(shell, tabs, "Diagnostics", "Local sync transport tests and debug controls.")
+      self.guildScopeLabel = Dibs.AceGUI.AddLabel(shell, tabs,
+        "Guild sync scope: " .. tostring(Dibs.GetGuildKey and Dibs.GetGuildKey() or "unknown"), true)
       local devEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() or false
       self.developerModeToggle = Dibs.AceGUI.AddCheckBox(shell, tabs, "Enable Developer Mode", devEnabled, function(value)
         if Dibs.DeveloperMode and Dibs.DeveloperMode.SetEnabled then Dibs.DeveloperMode.SetEnabled(value) end

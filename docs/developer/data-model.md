@@ -1,6 +1,6 @@
 # Data model and state machines
 
-The active database is a guild bucket returned by `Dibs.GetDB()`. The current guild key is derived from guild identity, and the root SavedVariables wrapper is described in [saved-variables.md](saved-variables.md).
+The active database is a guild bucket returned by `Dibs.GetDB()`. The guild key uses the guild's home realm from `GetGuildInfo("player")` when available, falling back to the character realm. Members of one cross-realm guild therefore share a bucket. The root SavedVariables wrapper is described in [saved-variables.md](saved-variables.md).
 
 ## Core records
 
