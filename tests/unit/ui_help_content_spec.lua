@@ -10,7 +10,9 @@ local function loadHelpCatalogs()
   for key, value in pairs(dibs.L or {}) do
     if key:match("^UI_HELP_") or key:match("^SETUP_ASSISTANT_.*_TOOLTIP$")
       or key == "DOC_SETUP_ASSISTANT_LABEL" or key == "DOC_GUILD_SETUP_LABEL"
-      or key == "OFFICER_NAV_GUIDED_SETUP_LABEL" then
+      or key == "OFFICER_NAV_GUIDED_SETUP_LABEL"
+      or key:match("^READINESS_ACTIONS") or key == "READINESS_RUN_CHECK" or key == "READINESS_OPEN_SAFE_REPORT"
+      or key:match("^LOOT_RULES_PRESET") or key == "LOOT_RULES_ENABLE_ALL" or key == "LOOT_RULES_DEFAULT_ONLY" then
       english[key] = value
     end
   end
@@ -82,6 +84,17 @@ describe("localized UI help content", function()
     assert_true(hasText(french.UI_HELP_SETUP_ASSISTANT, "pret pour ce raid"))
     assert_true(hasText(french.UI_HELP_WIZARD, "reste a configurer"))
     assert_true(hasText(french.UI_HELP_GUILD_SETUP, "maitre de guilde"))
+  end)
+
+  it("provides the separated Loot Rules and Raid Readiness actions in both locales", function()
+    local english, french = loadHelpCatalogs()
+    for _, key in ipairs({
+      "READINESS_ACTIONS", "READINESS_ACTIONS_HELP", "READINESS_RUN_CHECK", "READINESS_OPEN_SAFE_REPORT",
+      "LOOT_RULES_PRESET_TITLE", "LOOT_RULES_PRESET_HELP", "LOOT_RULES_ENABLE_ALL", "LOOT_RULES_DEFAULT_ONLY",
+    }) do
+      assert_true(type(english[key]) == "string" and english[key] ~= "", key .. " must have enUS text")
+      assert_true(type(french[key]) == "string" and french[key] ~= "", key .. " must have frFR text")
+    end
   end)
 
   it("provides Rank Rules help in both locales", function()

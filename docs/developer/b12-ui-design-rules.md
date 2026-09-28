@@ -1,14 +1,21 @@
-# B12 UI Design Rules
+# Midnight UI Design System
 
-**Status**: Design gate for B12 planning and implementation
+**Status**: Project-wide design gate
 
-**Scope**: B12 presentation and interaction design only. These rules do not change
-ledger semantics, permissions, policy, synchronization, RCLootCouncil ownership, or
-protected-action boundaries.
+**Scope**: All Player and Officer UI. These rules govern presentation and interaction;
+they do not change ledger semantics, permissions, policy, synchronization, RCLootCouncil
+ownership, or protected-action boundaries.
+
+## Reference Pages
+
+Use **Automatic Dibs** as the reference for dense, repeated roster data; use the
+**Dashboard** for concise status summaries and clear section hierarchy; use **Guided
+Setup** for ordered workflows, explanations, and primary actions. New pages should
+compose these established patterns rather than invent page-specific visual styles.
 
 ## Visual Direction
 
-B12 MUST use one simple Midnight layout across player and Officer surfaces:
+All pages MUST use one simple Midnight layout across Player and Officer surfaces:
 
 - dark translucent window;
 - left navigation;
@@ -23,14 +30,14 @@ B12 MUST use one simple Midnight layout across player and Officer surfaces:
 - consistent spacing.
 
 Prioritize stability, readability, predictable layout, usability, and visual
-consistency in that order. B12 MUST NOT add animations, gradients, elaborate cards,
+consistency in that order. Pages MUST NOT add animations, gradients, elaborate cards,
 custom visual effects, per-page themes, or a second design system. When equivalent
 layout behavior can be implemented with fewer frames and anchors, the simpler
 implementation is required.
 
 ## Layout Contract
 
-Every B12 page MUST fit the shared Midnight shell rather than inventing a page-specific
+Every page MUST fit the shared Midnight shell rather than inventing a page-specific
 composition. Navigation is for selecting a page; the content area owns the selected
 page; the footer remains stable for page status and primary workflow actions.
 
@@ -75,7 +82,7 @@ be contextual rather than occupying permanent table columns.
 
 ### Context Menu Actions
 
-B12 MUST use one shared context-menu implementation, preferably the existing
+All pages MUST use one shared context-menu implementation, preferably the existing
 `MSA-DropDownMenu-1.0` integration while it remains stable with the UI ownership model.
 The menu MUST:
 
@@ -130,7 +137,7 @@ The last five require the applicable authorization, reason, and confirmation flo
 
 ## Acceptance Gates
 
-A B12 UI slice is not complete until focused checks demonstrate:
+A UI slice is not complete until focused checks demonstrate:
 
 1. Player and Officer pages use the same Midnight shell, spacing, text hierarchy, and
    semantic state treatment.
@@ -151,5 +158,6 @@ A B12 UI slice is not complete until focused checks demonstrate:
 
 ## Non-Goals
 
-B12 does not introduce a new visual framework, page-specific themes, decorative motion,
-a second context-menu system, direct accounting writes, or changes to domain authority.
+The UI does not introduce a new visual framework, page-specific themes, decorative
+motion, a second context-menu system, direct accounting writes, or changes to domain
+authority.

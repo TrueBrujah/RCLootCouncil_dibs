@@ -948,7 +948,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   -- embedded lib-st frame supplies its own backdrop for the body; this small
   -- background fills the reserved header band without changing AceGUI's
   -- global theme.
-  if host.frame.CreateTexture then
+  if options.flatBackground ~= true and host.frame.CreateTexture then
     local background = host.frame:CreateTexture(nil, "BACKGROUND")
     if background then
       if background.SetColorTexture then
@@ -1003,12 +1003,6 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     availableWidth = math.max(360, (shell.frame:GetWidth() or desiredWidth) - 220)
   end
   if availableWidth > 0 then availableWidth = availableWidth - 12 end
-  local finalDesiredWidth = 0
-  for _, column in ipairs(tableColumns) do finalDesiredWidth = finalDesiredWidth + column.width end
-  if availableWidth > 0 and finalDesiredWidth > availableWidth then
-    local fitted = Adapter.FitColumnWidths(tableColumns, availableWidth)
-    for index, column in ipairs(tableColumns) do column.width = fitted[index] end
-  end
 
   local rowData = {}
   for _, sourceRow in ipairs(rows or {}) do
@@ -1039,18 +1033,51 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
       column.width = column.baseWidth
     end
   end
-  finalDesiredWidth = 0
-  for _, column in ipairs(tableColumns) do finalDesiredWidth = finalDesiredWidth + column.width end
-  if availableWidth > 0 and finalDesiredWidth > availableWidth then
-    local fitted = Adapter.FitColumnWidths(tableColumns, availableWidth)
-    for index, column in ipairs(tableColumns) do column.width = fitted[index] end
-  end
-
   local visibleRows = math.max(1, math.floor(tableHeight / rowHeight))
+  if options.shrinkToFit then
+    visibleRows = math.min(visibleRows, math.max(1, #rowData))
+    tableHeight = (visibleRows * rowHeight) + 10
+    call(host, "SetHeight", tableHeight + rowHeight)
+  end
+  local hasOverflow = #rowData > visibleRows
+  local columnAvailableWidth = availableWidth
+  if hasOverflow then
+    columnAvailableWidth = columnAvailableWidth - (tonumber(options.scrollbarReserve) or 26)
+  end
+  if columnAvailableWidth > 0 then
+    if options.fluidColumns then
+      local fluidColumns = {}
+      for index, column in ipairs(tableColumns) do
+        local definition = definitions[index] or {}
+        fluidColumns[index] = {
+          width = column.width,
+          minWidth = column.minWidth,
+          priority = column.priority,
+          fixed = column.action or definition.fixed == true,
+          action = column.action,
+          weight = column.action and 0 or (tonumber(definition.weight) or 1),
+        }
+      end
+      local widths = Adapter.AllocateFluidColumnWidths(fluidColumns, columnAvailableWidth, {
+        horizontalPadding = options.horizontalPadding or 0,
+        scrollbarReserve = 0,
+        columnGap = options.columnGap or 0,
+      })
+      for index, column in ipairs(tableColumns) do column.width = widths[index] end
+    else
+      local widths = Adapter.FitColumnWidths(tableColumns, columnAvailableWidth)
+      for index, column in ipairs(tableColumns) do column.width = widths[index] end
+    end
+  end
   local ok, st = pcall(library.CreateST, library, tableColumns, visibleRows, rowHeight,
     options.highlight or { r = 0.22, g = 0.45, b = 0.65, a = 0.35 }, host.frame)
   if not ok or not st then return nil end
   host._dibsScrollingTable = st
+  st.hideScrollbarWhenFits = options.hideScrollbarWhenFits == true
+  if options.flatBackground == true and st.frame then
+    if st.frame.SetBackdropColor then pcall(st.frame.SetBackdropColor, st.frame, 0, 0, 0, 0) end
+    if st.frame.SetBackdropBorderColor then pcall(st.frame.SetBackdropBorderColor, st.frame, 0, 0, 0, 0) end
+  end
   st._dibsColumns = tableColumns
   st._dibsUpdateHeaders = function()
     for _, column in ipairs(tableColumns) do
@@ -1069,14 +1096,40 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   -- measures the host, otherwise the first 300px default becomes permanent
   -- and date/item text is needlessly wrapped in every window.
   local baseOnWidthSet = host._dibsBaseOnWidthSet or host.OnWidthSet
+  local firstWidthCallback = true
   local function applyTableWidth(_, width)
     if type(baseOnWidthSet) == "function" and host.content and tonumber(width) then
       pcall(baseOnWidthSet, host, tonumber(width))
     end
     local available = tonumber(width)
+    if firstWidthCallback then
+      available = math.max(available or 0, tonumber(options.widthHint) or 0)
+      firstWidthCallback = false
+    end
     if not available or available <= 20 then return end
-    available = math.max(240, available - 12)
-    local fitted = Adapter.FitColumnWidths(tableColumns, available)
+    available = math.max(240, available - 12 - (hasOverflow and (tonumber(options.scrollbarReserve) or 26) or 0))
+    local fitted
+    if options.fluidColumns then
+      local fluidColumns = {}
+      for index, column in ipairs(tableColumns) do
+        local definition = definitions[index] or {}
+        fluidColumns[index] = {
+          width = column.baseWidth,
+          minWidth = column.minWidth,
+          priority = column.priority,
+          fixed = column.action or definition.fixed == true,
+          action = column.action,
+          weight = column.action and 0 or (tonumber(definition.weight) or 1),
+        }
+      end
+      fitted = Adapter.AllocateFluidColumnWidths(fluidColumns, available, {
+        horizontalPadding = options.horizontalPadding or 0,
+        scrollbarReserve = 0,
+        columnGap = options.columnGap or 0,
+      })
+    else
+      fitted = Adapter.FitColumnWidths(tableColumns, available)
+    end
     local used = 0
     for index, column in ipairs(tableColumns) do
       column.width = fitted[index]
@@ -1093,7 +1146,10 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
     -- Keep the lib-st header inside the AceGUI host instead of letting it
     -- float into the heading/control row above the table.
     st.frame:SetPoint("TOPLEFT", host.frame, "TOPLEFT", 0, -rowHeight)
-    applyTableWidth(host, host.frame.GetWidth and host.frame:GetWidth() or desiredWidth)
+    local initialWidth = tonumber(host.frame.GetWidth and host.frame:GetWidth()) or 0
+    initialWidth = math.max(initialWidth, tonumber(options.widthHint) or 0)
+    if initialWidth <= 20 then initialWidth = desiredWidth end
+    applyTableWidth(host, initialWidth)
   end
 
   local function sortColumn(index)
@@ -1110,6 +1166,7 @@ function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActi
   local lastActionAt = 0
   st:RegisterEvents({
     OnEnter = function(rowFrame, cellFrame, data, cols, row, realrow, column, table)
+      if options and options.disableCellTooltips then return false end
       local cell = realrow and table:GetCell(realrow, column)
       local value = type(cell) == "table" and cell.value or cell
       showTableCellTooltip(cellFrame, value)

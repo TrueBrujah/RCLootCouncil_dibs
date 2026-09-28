@@ -362,21 +362,46 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_SYNC_PEER
 ---@doc.label-key DOC_SYNC_PEER_STATUS_LABEL
-function Sync.GetPeerStatuses()
+function Sync.GetPeerStatuses(rosterScope)
   local state, rows, now = ensure(), {}, time()
   local roster = {}
   local groupCount = type(GetNumGroupMembers) == "function" and tonumber(GetNumGroupMembers()) or 0
-  if groupCount > 0 and type(UnitFullName) == "function" then
+  local inRaid = type(IsInRaid) == "function" and IsInRaid() == true
+  local scope = type(rosterScope) == "string" and string.upper(rosterScope) or nil
+  local useGroup = scope == "PARTY" or scope == "RAID" or scope == "GROUP"
+  local useGuild = scope == "GUILD"
+  if scope == nil then
+    useGroup = groupCount > 0 and type(UnitFullName) == "function"
+    useGuild = not useGroup
+  end
+  local matchingGroup = (scope == "PARTY" and groupCount > 0 and not inRaid)
+    or (scope == "RAID" and groupCount > 0 and inRaid)
+    or (scope == "GROUP" and groupCount > 0)
+    or (scope == nil and useGroup)
+  if useGroup and matchingGroup and type(UnitFullName) == "function" then
     for index = 1, groupCount do
-      local unit = IsInRaid and IsInRaid() and ("raid" .. index) or (index == 1 and "player" or "party" .. (index - 1))
+      local unit = inRaid and ("raid" .. index) or (index == 1 and "player" or "party" .. (index - 1))
       local name, realm = UnitFullName(unit)
-      if not name and type(UnitName) == "function" then name, realm = UnitName(unit) end
-      if name then
-        local connected = type(UnitIsConnected) ~= "function" or UnitIsConnected(unit) == true
-        roster[#roster + 1] = { name = realm and realm ~= "" and (name .. "-" .. realm) or name, online = connected, rankIndex = 0 }
+      if type(canaccessvalue) == "function" then
+        if canaccessvalue(name) then
+          if name then
+            local memberName = tostring(name)
+            if canaccessvalue(realm) then
+              if realm and realm ~= "" then memberName = memberName .. "-" .. tostring(realm) end
+            end
+            local connected = type(UnitIsConnected) ~= "function" or UnitIsConnected(unit) == true
+            roster[#roster + 1] = { name = memberName, online = connected, rankIndex = 0 }
+          end
+        end
+      else
+        if not name and type(UnitName) == "function" then name, realm = UnitName(unit) end
+        if name then
+          local connected = type(UnitIsConnected) ~= "function" or UnitIsConnected(unit) == true
+          roster[#roster + 1] = { name = realm and realm ~= "" and (name .. "-" .. realm) or name, online = connected, rankIndex = 0 }
+        end
       end
     end
-  elseif type(GetNumGuildMembers) == "function" and type(GetGuildRosterInfo) == "function" then
+  elseif useGuild and type(GetNumGuildMembers) == "function" and type(GetGuildRosterInfo) == "function" then
     local okCount, memberCount = pcall(GetNumGuildMembers, true)
     if not okCount then return rows end
     for index = 1, tonumber(memberCount) or 0 do

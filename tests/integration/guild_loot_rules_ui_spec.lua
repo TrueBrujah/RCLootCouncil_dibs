@@ -32,6 +32,8 @@ describe("Guild-authoritative Loot Rules UI", function()
     for _ in pairs(supported) do expectedCount = expectedCount + 1 end
     gm.OfficerUI.CreateWindow("lootTypes")
     assert_equal(0, gm.Seasons.GetCatalogState().catalogRevision)
+    assert_not_nil(widget("Button", gm.L.LOOT_RULES_ENABLE_ALL))
+    assert_not_nil(widget("Button", gm.L.LOOT_RULES_DEFAULT_ONLY))
     assert_not_nil(widget("Button", "Adopt reviewed Loot Rules"))
     local checkboxes = 0
     for _, candidate in ipairs(_G.__dibsAceWidgets or {}) do

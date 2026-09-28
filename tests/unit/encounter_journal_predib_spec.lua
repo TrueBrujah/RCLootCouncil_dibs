@@ -30,6 +30,22 @@ describe("Encounter Journal Pre-Dibs", function()
     assert_equal("confirmed", request.status)
   end)
 
+  it("tracks the live encounter until its matching end event", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local events = dibs.Ace3.handlers.events
+
+    events.ENCOUNTER_START(dibs.Ace3, "ENCOUNTER_START", 500, "Test Boss", 15, 20)
+    local active = dibs.EncounterJournal.GetActiveEncounter()
+    assert_equal(500, active.encounterID)
+    assert_equal("Test Boss", active.encounterName)
+
+    events.ENCOUNTER_END(dibs.Ace3, "ENCOUNTER_END", 501, "Other Boss", 15, 20, 1)
+    assert_equal(500, dibs.EncounterJournal.GetActiveEncounter().encounterID)
+
+    events.ENCOUNTER_END(dibs.Ace3, "ENCOUNTER_END", 500, "Test Boss", 15, 20, 1)
+    assert_nil(dibs.EncounterJournal.GetActiveEncounter())
+  end)
+
   it("finds a confirmed request again after Adventure Guide rows are rebuilt", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     wow.installEncounterJournalContext({ raidInstanceID = 100 })

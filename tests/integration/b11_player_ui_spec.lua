@@ -38,20 +38,50 @@ describe("B11c Player UI", function()
   it("lets a player enable diagnostics and run a sync channel test", function()
     local _, dibs = setup({ wow = {
       playerName = "Player-Realm", guildLeader = false,
-      guildMembers = { "GM-Realm", "Officer-Realm", "Player-Realm" },
-      guildRankIndices = { [1] = 0, [2] = 1, [3] = 3 },
+      guildMembers = { "GM-Realm", "Officer-Realm", "Player-Realm", "LongPlayerNameForWidth-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 3, [4] = 3 },
     } })
+    local originalAddTable = dibs.AceGUI.AddTable
+    local matrixOptions
+    local matrixParent
+    local matrixColumns
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      if columns[1] and columns[1].title == "Player" then
+        matrixOptions = options
+        matrixParent = parent
+        matrixColumns = columns
+      end
+      return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+    end
     local frame = dibs.PlayerUI.CreateWindow()
     frame:Show()
     frame.SelectTab("diagnostics")
     assert_not_nil(frame.developerModeToggle)
+    assert_not_nil(frame.guildDiagnosticsSection)
     assert_equal("Guild sync scope: realm:testguild", frame.guildScopeLabel.text)
+    assert_true(frame.guildSyncStatusLabel.text:find("Guild sync:", 1, true) ~= nil)
+    assert_true(frame.guildSyncStatusLabel.text:find("Protocol:", 1, true) ~= nil)
+    assert_true(frame.guildSyncStatusLabel.text:find("Guild policy:", 1, true) ~= nil)
     assert_nil(frame.channelTestAutoPingToggle)
     assert_nil(frame.channelTestRunButton)
     frame.developerModeToggle.callbacks.OnValueChanged(frame.developerModeToggle, "OnValueChanged", true)
     assert_true(dibs.DeveloperMode.IsEnabled())
     assert_not_nil(frame.channelTestRunButton)
     assert_not_nil(frame.channelTestScanButton)
+    assert_not_nil(matrixOptions)
+    assert_equal(true, matrixOptions.noScrolling)
+    assert_equal(26, matrixOptions.scrollbarReserve)
+    assert_equal(frame.diagnosticsTablePage.scroll, matrixParent)
+    assert_true(not matrixColumns[8].wrap)
+    assert_true(matrixColumns[8].minWidth >= dibs.AceGUI.MeasureTextWidth(matrixColumns[8].title) + 12)
+    local statusMinimumWidth = 0
+    for index = 2, #matrixColumns do statusMinimumWidth = statusMinimumWidth + matrixColumns[index].minWidth end
+    local measuredPlayerWidth = dibs.AceGUI.MeasureTextWidth("LongPlayerNameForWidth-Realm") + 16
+    assert_equal(math.max(60, math.min(measuredPlayerWidth,
+      matrixOptions.widthHint - statusMinimumWidth - matrixOptions.scrollbarReserve)), matrixColumns[1].width)
+    local minimumColumnsWidth = 0
+    for _, column in ipairs(matrixColumns) do minimumColumnsWidth = minimumColumnsWidth + column.minWidth end
+    assert_true(minimumColumnsWidth <= matrixOptions.widthHint - matrixOptions.scrollbarReserve)
     _G.time = function() return 1700000000 end
     local sentBefore = #dibs.Ace3.libs.comm.sent
     frame.channelTestRunButton.callbacks.OnClick(frame.channelTestRunButton, "OnClick")
@@ -82,6 +112,83 @@ describe("B11c Player UI", function()
     assert_not_nil(officerRow)
     assert_true(officerRow[2]:find("PONG", 1, true) ~= nil)
     assert_true(officerRow[2]:find(date("%H:%M", 1700000000), 1, true) ~= nil)
+  end)
+
+  it("uses player row actions instead of right-click sort menus and shows history details cleanly", function()
+    local _, dibs = setup()
+    local originalGetViewModel = dibs.PlayerUI.GetViewModel
+    dibs.PlayerUI.GetViewModel = function(...)
+      local view = originalGetViewModel(...)
+      view.history = { {
+        date = "2026-09-27", item = "Midnight Blade", action = "SEASON_ALLOCATION",
+        result = "Rank allocation reconciliation", balanceImpact = 2,
+      } }
+      return view
+    end
+    local capturedTables = {}
+    local originalAddTable = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      capturedTables[#capturedTables + 1] = { columns = columns, options = options }
+      return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+    end
+
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("my-dibs")
+    frame:Refresh()
+    local balanceOptions
+    for _, tableInfo in ipairs(capturedTables) do
+      if tableInfo.columns[1].title == "Balance" then balanceOptions = tableInfo.options end
+    end
+    assert_not_nil(balanceOptions)
+    assert_equal(false, balanceOptions.allowTableSort)
+    assert_equal(true, balanceOptions.flatBackground)
+    assert_equal(true, balanceOptions.fluidColumns)
+    assert_equal(true, balanceOptions.shrinkToFit)
+    assert_equal(true, balanceOptions.hideScrollbarWhenFits)
+    assert_true(balanceOptions.widthHint > 300)
+    local overviewMenu = balanceOptions.contextMenu({})
+    assert_equal(3, #overviewMenu)
+    assert_equal("View Requests", overviewMenu[1].text)
+    assert_equal("View History", overviewMenu[2].text)
+    assert_equal("Open Diagnostics", overviewMenu[3].text)
+    overviewMenu[1].callback()
+    assert_equal("requests", frame.playerTab)
+    local requestsOptions
+    for _, tableInfo in ipairs(capturedTables) do
+      if tableInfo.columns[3].title == "Status" then requestsOptions = tableInfo.options end
+    end
+    assert_not_nil(requestsOptions)
+    assert_equal(true, requestsOptions.fluidColumns)
+    assert_equal(true, requestsOptions.shrinkToFit)
+    assert_equal(true, requestsOptions.hideScrollbarWhenFits)
+    assert_true(requestsOptions.widthHint > 300)
+    frame.SelectTab("history")
+
+    local historyOptions
+    for _, tableInfo in ipairs(capturedTables) do
+      if tableInfo.options and tableInfo.options.contextMenu then historyOptions = tableInfo.options end
+    end
+    assert_not_nil(historyOptions)
+    assert_equal(false, historyOptions.allowTableSort)
+    assert_equal(true, historyOptions.flatBackground)
+    assert_equal(true, historyOptions.fluidColumns)
+    assert_equal(true, historyOptions.shrinkToFit)
+    assert_equal(true, historyOptions.hideScrollbarWhenFits)
+    assert_true(historyOptions.widthHint > 300)
+    local menu = historyOptions.contextMenu({ entry = {
+      date = "2026-09-27", item = "Midnight Blade", action = "SEASON_ALLOCATION",
+      result = "Rank allocation reconciliation", balanceImpact = 2,
+    } })
+    assert_equal(1, #menu)
+    assert_equal("View details", menu[1].text)
+    menu[1].callback()
+    assert_not_nil(frame.historyDetailTitle)
+    assert_not_nil(frame.historyDetailCloseButton)
+    assert_true(frame.historyDetailTitle.kind == "Heading" or frame.historyDetailTitle.kind == "Label")
+
+    frame.historyDetailCloseButton.callbacks.OnClick(frame.historyDetailCloseButton, "OnClick")
+    assert_nil(frame.historyDetail)
+    assert_nil(frame.historyDetailTitle)
   end)
 
   it("shows a received probe's reason when local Developer Mode suppresses the reply", function()

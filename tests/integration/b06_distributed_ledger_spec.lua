@@ -131,6 +131,46 @@ describe("B06 coordinator distributed ledger", function()
     assert_equal(digest.lastSeq, peerLedgerRevision)
   end)
 
+  it("filters synchronization peer status by Guild, Party, and Raid roster scope", function()
+    local dibs = load("Coordinator-Realm")
+    local originalGetNumGroupMembers = _G.GetNumGroupMembers
+    local originalIsInRaid = _G.IsInRaid
+    local originalUnitFullName = _G.UnitFullName
+    local originalUnitIsConnected = _G.UnitIsConnected
+    _G.GetNumGroupMembers = function() return 2 end
+    _G.IsInRaid = function() return false end
+    _G.UnitFullName = function(unit)
+      if unit == "player" then return "Coordinator", "Realm" end
+      if unit == "party1" then return "Party-Member", "Realm" end
+    end
+    _G.UnitIsConnected = function() return true end
+
+    local guildPeers = dibs.Sync.GetPeerStatuses("GUILD")
+    local partyPeers = dibs.Sync.GetPeerStatuses("PARTY")
+    local inactiveRaidPeers = dibs.Sync.GetPeerStatuses("RAID")
+    assert_equal(3, #guildPeers)
+    assert_equal(2, #partyPeers)
+    assert_equal("Coordinator-Realm", partyPeers[1].playerName)
+    assert_equal("Party-Member-Realm", partyPeers[2].playerName)
+    assert_equal(0, #inactiveRaidPeers)
+
+    _G.IsInRaid = function() return true end
+    _G.UnitFullName = function(unit)
+      if unit == "raid1" then return "Coordinator", "Realm" end
+      if unit == "raid2" then return "Raid-Member", "Realm" end
+    end
+    local raidPeers = dibs.Sync.GetPeerStatuses("RAID")
+    local inactivePartyPeers = dibs.Sync.GetPeerStatuses("PARTY")
+    assert_equal(2, #raidPeers)
+    assert_equal("Raid-Member-Realm", raidPeers[2].playerName)
+    assert_equal(0, #inactivePartyPeers)
+
+    _G.GetNumGroupMembers = originalGetNumGroupMembers
+    _G.IsInRaid = originalIsInRaid
+    _G.UnitFullName = originalUnitFullName
+    _G.UnitIsConnected = originalUnitIsConnected
+  end)
+
   it("requests a bounded batch when catching up multiple canonical commits", function()
     local coordinator = activateV2()
     local season = coordinator.GetCurrentSeasonId()

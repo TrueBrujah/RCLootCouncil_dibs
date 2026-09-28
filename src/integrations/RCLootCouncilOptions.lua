@@ -394,6 +394,14 @@ local DIBS_SEMANTIC_TEMPLATES = {
   },
 }
 
+local function refreshDibButtonProjection()
+  local integration = Dibs.RCLootCouncil
+  if integration and type(integration.RefreshConfigProjection) == "function" then
+    return integration.RefreshConfigProjection()
+  end
+  return false, false
+end
+
 local function applyDibSemanticTemplate(templateKey)
   if not canEditDibsSettings() then
     setStatus("Only the guild master or an officer may change Dibs settings.")
@@ -427,15 +435,12 @@ local function applyInstallationPreset(templateKey)
     return false
   end
 
-  local integration = Dibs.RCLootCouncil
-  if integration and type(integration.RefreshConfigProjection) == "function" then
-    local available, changed = integration.RefreshConfigProjection()
-    if available then
-      setStatus((templateKey == "progression" and "Curio + Tier Set" or "Standard loot") ..
-        " preset applied; the Dibs button is prepared in the configured RCLootCouncil sets." ..
-        (changed == true and "" or " Existing button configuration was already ready."))
-      return true
-    end
+  local available, changed = refreshDibButtonProjection()
+  if available then
+    setStatus((templateKey == "progression" and "Curio + Tier Set" or "Standard loot") ..
+      " preset applied; the Dibs button is prepared in the configured RCLootCouncil sets." ..
+      (changed == true and "" or " Existing button configuration was already ready."))
+    return true
   end
 
   setStatus((templateKey == "progression" and "Curio + Tier Set" or "Standard loot") ..
@@ -469,6 +474,14 @@ local function buildSetupAssistantStatus()
     ". Additional sets ready: " .. tostring(readyAdditional) .. "/" .. tostring(enabledAdditional) .. "."
 end
 
+Dibs.RCOptions.GetSetupAssistantStatus = buildSetupAssistantStatus
+Dibs.RCOptions.RefreshDibButtonProjection = function()
+  local available, changed = refreshDibButtonProjection()
+  setStatus(available and (changed == true and "Dibs buttons refreshed in RCLootCouncil." or "Dibs buttons were already ready.")
+    or "RCLootCouncil is unavailable; standalone Dibs controls remain active.")
+  return available, changed
+end
+
 local function getEJSubCategoryValues()
   if Dibs.EncounterJournal and Dibs.EncounterJournal.GetSubCategoryMatrixValues then
     return Dibs.EncounterJournal.GetSubCategoryMatrixValues()
@@ -498,6 +511,9 @@ local function getSeasonList()
   end)
   return seasons
 end
+
+Dibs.RCOptions.ApplyInstallationPreset = applyInstallationPreset
+Dibs.RCOptions.CanEditDibsSettings = canEditDibsSettings
 
 local function getCurrentSeasonLabel()
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent() or nil
@@ -1582,21 +1598,6 @@ groups.developer = { type = "group", name = "Developer", order = 9, args = {
 } }
 groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args = {
   status = description(0, integrationStatusText),
-  setup = { type = "group", name = "Installation assistant", order = 0, inline = true, args = {
-    intro = description(1, "Choose a starting policy for your guild. The assistant configures Dibs semantic loot families and prepares the locked Dibs button in RCLootCouncil sets that are already enabled."),
-    status = description(2, buildSetupAssistantStatus),
-    progression = execute(3, "Recommended: Curio + Tier Set", function() applyInstallationPreset("progression") end),
-    standard = execute(4, "Standard loot + collections", function() applyInstallationPreset("broad") end),
-    refresh = execute(5, "Refresh Dibs buttons", function()
-      local integration = Dibs.RCLootCouncil
-      if integration and type(integration.RefreshConfigProjection) == "function" then
-        local available, changed = integration.RefreshConfigProjection()
-        setStatus(available and (changed == true and "Dibs buttons refreshed in RCLootCouncil." or "Dibs buttons were already ready.") or "RCLootCouncil is unavailable; standalone Dibs controls remain active.")
-      else
-        setStatus("RCLootCouncil integration is unavailable; standalone Dibs controls remain active.")
-      end
-    end),
-  } },
   mapping = { type = "group", name = "RCLootCouncil button-set mapping", order = 1, inline = true, args = {
     guide = description(1, buildButtonSetMappingText),
     configured = description(2, buildConfiguredButtonSetsText),
@@ -1623,11 +1624,6 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
       return true
     end,
     set = function(_, key, value) setDibTypeEnabled(key, value) end },
-  templates = { type = "group", name = "Recommended semantic templates", order = 3, inline = true, args = {
-    templateHelp = description(1, "Templates set Dibs semantic families only. The Installation assistant also refreshes the locked Dibs button projection."),
-    progression = execute(2, "Curio + Tier Set", function() applyDibSemanticTemplate("progression") end),
-    broad = execute(3, "Standard loot", function() applyDibSemanticTemplate("broad") end),
-  } },
   readiness = { type = "group", name = "Raid Readiness", order = 3.5, inline = true, args = {
     intro = description(1, "Run a read-only readiness check before raid. The dry-run uses local validation only and never calls RCMLAwardSuccess, FinalizeAward, loot controls, chat traffic, or ledger accounting."),
     status = description(2, function()
@@ -1725,6 +1721,9 @@ groups.debug.args.openLogs = execute(7, "Open debug logs", function() Dibs.Debug
 -- underlying option definitions available to the dedicated Officer page, but
 -- do not render a second editable copy in the generic settings tree.
 groups.integration.args.types.hidden = true
+groups.integration.args.readiness.hidden = true
+groups.integration.args.enable.hidden = true
+groups.integration.args.disable.hidden = true
 for _, key in ipairs({ "ejSubCategoryPolicyIntro", "ejSubCategoryPolicy", "ejSubCategoryMatrixApply", "ejSubCategoryScanNow" }) do
   if groups.settings.args[key] then groups.settings.args[key].hidden = true end
 end

@@ -198,6 +198,66 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("READY_FOR_RAID", dibs.Wizard.GetStatus().overallState)
   end)
 
+  it("applies Dibs loot presets from the Guided Setup rules step", function()
+    local dibs = load("Tester-Realm", true)
+    dibs.Wizard.SetCurrentStepIndex(7)
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    local presetButton
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "Button" and widget.text == "Curio + Tier Set" then presetButton = widget end
+    end
+    assert_not_nil(presetButton)
+    local setupStatus
+    local expectedStatus = dibs.RCOptions.GetSetupAssistantStatus()
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "Label" and widget.text == expectedStatus then
+        setupStatus = widget
+      end
+    end
+    assert_not_nil(setupStatus)
+    local refreshButton
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "Button" and widget.text == "Refresh Dibs buttons" then refreshButton = widget end
+    end
+    assert_not_nil(refreshButton)
+    presetButton.callbacks.OnClick(presetButton, "OnClick")
+
+    local types = dibs.RCOptions.GetLootTypeOptions().types
+    assert_true(types.get(nil, "TOKEN"))
+    assert_true(types.get(nil, "TOKEN_SET"))
+    assert_false(types.get(nil, "MOUNTS"))
+    assert_false(types.get(nil, "default"))
+    assert_equal("wizard", frame.mountedPage)
+  end)
+
+  it("keeps the readiness check and safe report on Raid Readiness", function()
+    local dibs = load("Tester-Realm", true)
+    local runCount, reportMode = 0, nil
+    dibs.Readiness.Run = function()
+      runCount = runCount + 1
+      return { status = "READY_FOR_RAID" }
+    end
+    dibs.Readiness.OpenReport = function(mode)
+      reportMode = mode
+      return {}, {}, nil
+    end
+    dibs.OfficerUI.CreateWindow("setup")
+    local function findButton(text)
+      for _, candidate in ipairs(_G.__dibsAceWidgets or {}) do
+        if candidate.kind == "Button" and candidate.text == text then return candidate end
+      end
+    end
+    local checkButton = findButton(dibs.L.READINESS_RUN_CHECK)
+    local reportButton = findButton(dibs.L.READINESS_OPEN_SAFE_REPORT)
+    assert_not_nil(checkButton)
+    assert_not_nil(reportButton)
+    checkButton.callbacks.OnClick(checkButton, "OnClick")
+    assert_equal(1, runCount)
+    reportButton = findButton(dibs.L.READINESS_OPEN_SAFE_REPORT)
+    reportButton.callbacks.OnClick(reportButton, "OnClick")
+    assert_equal("safe", reportMode)
+  end)
+
   it("preserves missing and surplus allocations from RankRules reconciliation", function()
     local dibs, season = configuredGuild()
     local rules = dibs.RankRules.GetRulesForSeason(season.id)
@@ -430,10 +490,24 @@ describe("Guided Setup Wizard UI", function()
       return widget.kind == "Label" and widget.text:find("Allocation Reconciliation", 1, true) ~= nil
     end))
 
-    dibs.Wizard.SetCurrentStepIndex(13)
+    dibs.SetupAssistant.Evaluate = function() return { status = "UNAVAILABLE", checks = {
+      { id = "raid_context", state = "unavailable", impact = "No raid group is active, so live-session checks cannot run yet.",
+        remediation = "This is expected outside a raid; run the check again after entering the intended raid." },
+    } } end
+    local readinessIndex
+    for stepIndex, step in ipairs(dibs.Wizard.GetStatus().steps) do
+      if step.id == "readiness" then readinessIndex = stepIndex break end
+    end
+    assert_not_nil(readinessIndex)
+    dibs.Wizard.SetCurrentStepIndex(readinessIndex)
     frame:Refresh()
     assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text:find("local_services: Transport unavailable", 1, true) ~= nil
+      return widget.kind == "Label" and widget.text == "Why readiness is blocked:"
+    end))
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text:find(
+        "No raid group is active, so live-session checks cannot run yet. Next: This is expected outside a raid; run the check again after entering the intended raid.",
+        1, true) ~= nil
     end))
   end)
 

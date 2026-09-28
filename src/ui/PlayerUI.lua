@@ -964,6 +964,14 @@ local function createAceWindow()
     frame.playerTab = tab
     if not Dibs.AceGUI.SelectTree(tabs, tab) then frame:Refresh() end
   end
+  local function playerContentWidthHint()
+    local content = tabs.content
+    local width = content and content.GetWidth and tonumber(content:GetWidth()) or 0
+    if width and width > 0 then return width end
+    local windowWidth = shell.frame and shell.frame.GetWidth and tonumber(shell.frame:GetWidth())
+      or (shell.layout and tonumber(shell.layout.width)) or 720
+    return math.max(320, windowWidth - 170 - 48)
+  end
 
   local MATRIX_CHANNELS = {
     { key = "GUILD", title = "Guild" }, { key = "OFFICER", title = "Officer" },
@@ -1022,7 +1030,8 @@ local function createAceWindow()
     Dibs.AceGUI.AddHeader(shell, parent, "Request a Pre-Dib", helpText.UI_HELP_PREDIB)
     frame.preDibInput = Dibs.AceGUI.AddEditBox(shell, parent, "Item ID or item link", function(value)
       frame.preDibValue = value or ""
-    end, 300)
+    end, math.max(300, playerContentWidthHint() - 24))
+    if frame.preDibInput and frame.preDibInput.SetFullWidth then frame.preDibInput:SetFullWidth(true) end
     Dibs.AceGUI.AddTooltip(frame.preDibInput, "Pre-Dib", helpText.UI_HELP_PREDIB_FIELD)
     setControlText(frame.preDibInput, frame.preDibValue)
     local submit = Dibs.AceGUI.AddButton(shell, parent, "Submit request", submitFromInput, 150)
@@ -1039,11 +1048,38 @@ local function createAceWindow()
     local view = Dibs.PlayerUI.GetViewModel()
     if self.playerTab ~= "diagnostics" then stopAutoPing() end
     if self.playerTab == "diagnostics" then
-      Dibs.AceGUI.AddHeading(shell, tabs, "Diagnostics", "Local sync transport tests and debug controls.")
-      self.guildScopeLabel = Dibs.AceGUI.AddLabel(shell, tabs,
+      local diagnosticsPage = Dibs.AceGUI.AddTablePage(shell, tabs, {
+        footer = true, boundsFrame = tabs.content or tabs.frame,
+      })
+      if not diagnosticsPage then return end
+      self.diagnosticsTablePage = diagnosticsPage
+      local diagnosticsHeader = diagnosticsPage.header
+      Dibs.AceGUI.AddHeading(shell, diagnosticsHeader, "Diagnostics", "Local sync transport tests and debug controls.")
+      local syncSection = Dibs.AceGUI.AddSection(shell, diagnosticsHeader, "Guild synchronization",
+        "Current guild scope, synchronization state, and protocol readiness.")
+      self.guildDiagnosticsSection = syncSection
+      self.guildScopeLabel = Dibs.AceGUI.AddLabel(shell, syncSection,
         "Guild sync scope: " .. tostring(Dibs.GetGuildKey and Dibs.GetGuildKey() or "unknown"), true)
+      local syncStatus = Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or {}
+      local syncDetails = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
+      local policyStatus = type(syncDetails.operationalPolicyAdopted) == "boolean"
+        and (syncDetails.operationalPolicyAdopted and "Adopted" or "Not adopted") or "Unknown"
+      local syncLines = {
+        "Guild sync: " .. tostring(syncStatus.state or "Unknown"),
+        "Protocol: " .. tostring(syncStatus.protocolState or "Unknown"),
+        "Guild policy: " .. policyStatus,
+      }
+      if syncStatus.syncBehind then table.insert(syncLines, "Guild data is catching up.") end
+      if syncStatus.reason then table.insert(syncLines, "Sync detail: " .. tostring(syncStatus.reason)) end
+      if syncDetails.lastProtocolMismatch then
+        table.insert(syncLines, "Last protocol mismatch: " .. tostring(syncDetails.lastProtocolMismatch.sender or "unknown peer"))
+      end
+      if syncDetails.lastAddonVersionMismatch then
+        table.insert(syncLines, "Last addon version mismatch: " .. tostring(syncDetails.lastAddonVersionMismatch.sender or "unknown peer"))
+      end
+      self.guildSyncStatusLabel = Dibs.AceGUI.AddLabel(shell, syncSection, table.concat(syncLines, "\n"), true)
       local devEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() or false
-      self.developerModeToggle = Dibs.AceGUI.AddCheckBox(shell, tabs, "Enable Developer Mode", devEnabled, function(value)
+      self.developerModeToggle = Dibs.AceGUI.AddCheckBox(shell, syncSection, "Enable Developer Mode", devEnabled, function(value)
         if Dibs.DeveloperMode and Dibs.DeveloperMode.SetEnabled then Dibs.DeveloperMode.SetEnabled(value) end
         if not value then
           self.channelTestAutoPingEnabled = false
@@ -1059,16 +1095,17 @@ local function createAceWindow()
       if receivedProbe then
         local receivedAt = tonumber(receivedProbe.startedAt)
         local receivedTime = receivedAt and type(date) == "function" and date("%H:%M:%S", receivedAt) or "unknown time"
-        self.channelTestReceivedStatus = Dibs.AceGUI.AddLabel(shell, tabs, string.format("Last received probe: %s from %s at %s (%s).",
+        self.channelTestReceivedStatus = Dibs.AceGUI.AddLabel(shell, syncSection, string.format("Last received probe: %s from %s at %s (%s).",
           tostring(receivedProbe.channel or "unknown channel"), tostring(receivedProbe.peer or "unknown sender"),
           receivedTime, tostring(receivedProbe.reasonCode or receivedProbe.status or "unknown result")), true)
       end
       if not devEnabled then
-        Dibs.AceGUI.AddLabel(shell, tabs, "Enable Developer Mode on both the sender and any client expected to reply. This setting is also controlled by /dibs dev on and /dibs dev off.", true)
+        Dibs.AceGUI.AddLabel(shell, syncSection, "Enable Developer Mode on both the sender and any client expected to reply. This setting is also controlled by /dibs dev on and /dibs dev off.", true)
+        diagnosticsPage.UpdateViewportHeight()
         return
       end
 
-      local channelTest = Dibs.AceGUI.AddSection(shell, tabs, "Transport channel test",
+      local channelTest = Dibs.AceGUI.AddSection(shell, diagnosticsHeader, "Transport channel test",
         "Sends a harmless probe on the selected channel. A matching ACK confirms that another guild member received it.")
       local channelOptions = {
         GUILD = "Guild", OFFICER = "Guild officers", RAID = "Raid", PARTY = "Party",
@@ -1250,18 +1287,40 @@ local function createAceWindow()
         self.channelTestMatrixRows[#self.channelTestMatrixRows + 1] = allRows[index]
       end
       if #allRows == 0 then self.channelTestMatrixRows[1] = { "Guild roster unavailable", "--", "--", "--", "--", "--", "--", "--" } end
-      self.channelTestMatrix = Dibs.AceGUI.AddTable(shell, channelTest, {
-        { title = "Player", width = 125, minWidth = 120 },
-        { title = "Guild", width = 58, minWidth = 52, wrap = true },
-        { title = "Officer", width = 65, minWidth = 55, wrap = true },
-        { title = "Raid", width = 50, minWidth = 48, wrap = true },
-        { title = "Party", width = 55, minWidth = 50, wrap = true },
-        { title = "Instance", width = 66, minWidth = 58, wrap = true },
-        { title = "Whisper", width = 65, minWidth = 58, wrap = true },
-        { title = latestByChannel.CHANNEL and latestByChannel.CHANNEL.channelName or "Custom",
-          width = 65, minWidth = 58, wrap = true },
-      }, self.channelTestMatrixRows, 300, nil, { fluidColumns = true, widthHint = 520 })
-      local pagination = Dibs.AceGUI.AddInlineGroup(shell, channelTest)
+      local measureText = Dibs.AceGUI.MeasureTextWidth or function(text) return #tostring(text or "") * 8 end
+      local matrixWidthHint = playerContentWidthHint()
+      local customTitle = latestByChannel.CHANNEL and latestByChannel.CHANNEL.channelName or "Custom"
+      local customMinimumWidth = math.max(52, math.min(measureText(customTitle) + 12,
+        matrixWidthHint - 26 - (6 * 24) - 60))
+      local matrixChannelColumns = {
+        { title = "Guild", width = 58, minWidth = 24, wrap = true, weight = 1 },
+        { title = "Officer", width = 65, minWidth = 24, wrap = true, weight = 1 },
+        { title = "Raid", width = 50, minWidth = 24, wrap = true, weight = 1 },
+        { title = "Party", width = 55, minWidth = 24, wrap = true, weight = 1 },
+        { title = "Instance", width = 66, minWidth = 24, wrap = true, weight = 1 },
+        { title = "Whisper", width = 65, minWidth = 24, wrap = true, weight = 1 },
+        { title = customTitle, width = 65, minWidth = customMinimumWidth, weight = 1 },
+      }
+      local channelMinimumWidth = 0
+      for _, column in ipairs(matrixChannelColumns) do
+        channelMinimumWidth = channelMinimumWidth + column.minWidth
+      end
+      local measuredPlayerWidth = 120
+      for _, row in ipairs(allRows) do
+        measuredPlayerWidth = math.max(measuredPlayerWidth, measureText(row[1]) + 16)
+      end
+      local maxPlayerWidth = matrixWidthHint - channelMinimumWidth - 26
+      local playerColumnWidth = math.max(60, math.min(measuredPlayerWidth, maxPlayerWidth))
+      local matrixColumns = {
+        { title = "Player", width = playerColumnWidth, minWidth = playerColumnWidth, fixed = true },
+      }
+      for _, column in ipairs(matrixChannelColumns) do matrixColumns[#matrixColumns + 1] = column end
+      self.channelTestMatrix = Dibs.AceGUI.AddTable(shell, diagnosticsPage.scroll, matrixColumns,
+        self.channelTestMatrixRows, 300, nil, {
+        fluidColumns = true, widthHint = matrixWidthHint, allowTableSort = false,
+        noScrolling = true, headerParent = diagnosticsPage.columnHeader, scrollbarReserve = 26,
+      })
+      local pagination = Dibs.AceGUI.AddInlineGroup(shell, diagnosticsPage.footer)
       self.channelTestPrevious = Dibs.AceGUI.AddButton(shell, pagination, "Previous", function()
         self.channelTestMatrixPage = math.max(1, self.channelTestMatrixPage - 1)
         self:Refresh()
@@ -1281,7 +1340,8 @@ local function createAceWindow()
         summaries[#summaries + 1] = definition.title .. ": " .. (result
           and (tostring(pongCount) .. " pong(s), last ping " .. formatDate(result.startedAt)) or "not tested")
       end
-      self.channelTestSummary = Dibs.AceGUI.AddLabel(shell, channelTest, table.concat(summaries, "\n"), true)
+      self.channelTestSummary = Dibs.AceGUI.AddLabel(shell, diagnosticsPage.footer, table.concat(summaries, "\n"), true)
+      diagnosticsPage.UpdateViewportHeight()
       scheduleAutoPing()
       return
     end
@@ -1296,10 +1356,10 @@ local function createAceWindow()
       end
       if #requestRows == 0 then requestRows[1] = { "", view.empty.requests, "", "" } end
       Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Date", width = 145 },
-        { title = "Item", width = 260 },
-        { title = "Status", width = 130 },
-        { title = "Action", width = 90 },
+        { title = "Date", width = 145, minWidth = 100, weight = 1 },
+        { title = "Item", width = 260, minWidth = 140, weight = 3 },
+        { title = "Status", width = 130, minWidth = 88, weight = 2 },
+        { title = "Action", width = 90, minWidth = 80, action = true },
       }, requestRows, 220, function(row)
         if not row.request or not row.request.cancelAllowed then return nil end
         return {
@@ -1311,7 +1371,8 @@ local function createAceWindow()
             self:Refresh()
           end,
         }
-      end)
+      end, { allowTableSort = false, flatBackground = true, fluidColumns = true,
+        widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true, scrollbarReserve = 26 })
       return
     end
     if self.playerTab == "history" then
@@ -1322,12 +1383,19 @@ local function createAceWindow()
       end
       if #historyRows == 0 then historyRows[1] = { "", view.empty.history, "", "", "" } end
       Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Date", width = 145 },
-        { title = "Item", width = 220 },
-        { title = "Action", width = 130 },
-        { title = "Result", width = 190 },
-        { title = "Balance", width = 90 },
+        { title = "Date", width = 145, minWidth = 100, weight = 1 },
+        { title = "Item", width = 220, minWidth = 140, weight = 2 },
+        { title = "Action", width = 130, minWidth = 95, weight = 1 },
+        { title = "Result", width = 190, minWidth = 120, weight = 2 },
+        { title = "Balance", width = 90, minWidth = 70, weight = 1 },
       }, historyRows, 300, nil, {
+        allowTableSort = false,
+        flatBackground = true,
+        fluidColumns = true,
+        widthHint = playerContentWidthHint(),
+        scrollbarReserve = 26,
+        shrinkToFit = true,
+        hideScrollbarWhenFits = true,
         contextMenu = function(row)
           if not row.entry then return nil end
           return {
@@ -1342,23 +1410,46 @@ local function createAceWindow()
         end,
       })
       if self.historyDetail then
-        Dibs.AceGUI.AddHeader(shell, tabs, "History details", self.historyDetail.item)
-        Dibs.AceGUI.AddLabel(shell, tabs,
-          "Date: " .. tostring(self.historyDetail.date) .. "\n" ..
-          "Action: " .. tostring(self.historyDetail.action) .. "\n" ..
-          "Result: " .. tostring(self.historyDetail.result) .. "\n" ..
-          "Balance impact: " .. tostring(self.historyDetail.balanceImpact), true)
+        local detail = self.historyDetail
+        self.historyDetailTitle = Dibs.AceGUI.AddHeading(shell, tabs, "History details", detail.item)
+        Dibs.AceGUI.AddLabel(shell, tabs, "Item: " .. tostring(detail.item or "Unknown item"), true)
+        Dibs.AceGUI.AddLabel(shell, tabs, "Date: " .. tostring(detail.date or "Unknown"), true)
+        Dibs.AceGUI.AddLabel(shell, tabs, "Action: " .. tostring(detail.action or "Unknown"), true)
+        Dibs.AceGUI.AddLabel(shell, tabs, "Result: " .. tostring(detail.result or "Unknown"), true)
+        Dibs.AceGUI.AddLabel(shell, tabs, "Balance impact: " .. tostring(detail.balanceImpact or 0), true)
+        self.historyDetailCloseButton = Dibs.AceGUI.AddButton(shell, tabs, "Close details", function()
+          self.historyDetail = nil
+          self.historyDetailTitle = nil
+          self.historyDetailCloseButton = nil
+          self:Refresh()
+        end, 130)
       end
       return
     end
 
     Dibs.AceGUI.AddHeading(shell, tabs, "My Dibs", "Your balance, active requests, and current guild status.")
     Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Balance", width = 130, tooltip = helpText.UI_HELP_DIB_BALANCE },
-      { title = "Season", width = 230, tooltip = helpText.UI_HELP_SEASON },
-      { title = "Active Pre-Dibs", width = 150, tooltip = helpText.UI_HELP_PREDIB },
-      { title = "Requests", width = 110, tooltip = helpText.UI_HELP_REQUEST_STATUS },
-    }, {{ tostring(view.balance), view.seasonName, tostring(#view.activePreDibs), tostring(view.pendingRequests) }}, 90)
+      { title = "Balance", width = 130, minWidth = 80, weight = 1, tooltip = helpText.UI_HELP_DIB_BALANCE },
+      { title = "Season", width = 230, minWidth = 140, weight = 3, tooltip = helpText.UI_HELP_SEASON },
+      { title = "Active Pre-Dibs", width = 150, minWidth = 100, weight = 1, tooltip = helpText.UI_HELP_PREDIB },
+      { title = "Requests", width = 110, minWidth = 80, weight = 1, tooltip = helpText.UI_HELP_REQUEST_STATUS },
+    }, {{ tostring(view.balance), view.seasonName, tostring(#view.activePreDibs), tostring(view.pendingRequests) }}, 90,
+      nil, {
+        allowTableSort = false,
+        flatBackground = true,
+        fluidColumns = true,
+        widthHint = playerContentWidthHint(),
+        scrollbarReserve = 0,
+        shrinkToFit = true,
+        hideScrollbarWhenFits = true,
+        contextMenu = function()
+          return {
+            { text = "View Requests", callback = function() self.SelectTab("requests") end },
+            { text = "View History", callback = function() self.SelectTab("history") end },
+            { text = "Open Diagnostics", callback = function() self.SelectTab("diagnostics") end },
+          }
+        end,
+      })
     Dibs.AceGUI.AddHeader(shell, tabs, view.status.label, view.status.explanation)
     local activeRows = {}
     for _, request in ipairs(view.activePreDibs or {}) do
@@ -1369,11 +1460,11 @@ local function createAceWindow()
     end
     if #activeRows == 0 then activeRows[1] = { "", view.empty.activePreDibs, "", "", "" } end
     Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Date", width = 145, tooltip = helpText.UI_HELP_DATE },
-      { title = "Item", width = 250, tooltip = helpText.UI_HELP_ITEM },
-      { title = "Status", width = 120, tooltip = helpText.UI_HELP_REQUEST_STATUS },
-      { title = "Difficulty", width = 100, tooltip = helpText.UI_HELP_DIFFICULTY },
-      { title = "Action", width = 90, tooltip = helpText.UI_HELP_ACTION },
+      { title = "Date", width = 145, minWidth = 100, weight = 1, tooltip = helpText.UI_HELP_DATE },
+      { title = "Item", width = 250, minWidth = 140, weight = 3, tooltip = helpText.UI_HELP_ITEM },
+      { title = "Status", width = 120, minWidth = 88, weight = 1, tooltip = helpText.UI_HELP_REQUEST_STATUS },
+      { title = "Difficulty", width = 100, minWidth = 75, weight = 1, tooltip = helpText.UI_HELP_DIFFICULTY },
+      { title = "Action", width = 90, minWidth = 80, action = true, tooltip = helpText.UI_HELP_ACTION },
     }, activeRows, 170, function(row)
       if not row.request then return nil end
       return {
@@ -1384,7 +1475,8 @@ local function createAceWindow()
           self:Refresh()
         end,
       }
-    end)
+    end, { allowTableSort = false, flatBackground = true, fluidColumns = true,
+      widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true, scrollbarReserve = 26 })
     addRequestAction(tabs, view)
   end
 
@@ -1393,12 +1485,14 @@ local function createAceWindow()
     for _, key in ipairs({
       "aceTabs", "preDibInput", "preDibButton", "preDibStatus", "preDibStatusText", "preDibValue", "devItemText",
       "devRequestButton", "devStatusText", "devStatus", "playerTab", "historyDetail", "historyMode", "historyPage",
+      "guildDiagnosticsSection", "guildSyncStatusLabel", "historyDetailSection", "historyDetailCloseButton",
       "historyQuery", "eligibilityCharacter", "eligibilityStatus", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
       "developerModeToggle", "channelTestChannel", "channelTestTarget", "channelTestCustomChannelName", "channelTestStatus",
       "channelTestReceivedStatus",
       "channelTestSelector", "channelTestTargetInput", "channelTestCustomChannelInput", "channelTestRunButton",
       "channelTestScanButton", "channelTestRefreshButton", "channelTestAutoPingToggle", "channelTestMatrix",
       "channelTestMatrixRows", "channelTestMatrixPage", "channelTestPrevious", "channelTestPageLabel",
+      "diagnosticsTablePage",
       "channelTestNext", "channelTestSummary", "channelTestAutoPingScheduled", "channelTestAutoPingGeneration",
       "channelTestAutoPingEnabled",
     }) do

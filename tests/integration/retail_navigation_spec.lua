@@ -53,6 +53,80 @@ describe("Retail Officer navigation lifecycle", function()
     assert_true(#(frame.contentHost.children[1].children or {}) > 0)
   end)
 
+  it("mounts the Pre-Dib Requests list separately from its settings", function()
+    local dibs = setup()
+    local request = dibs.PreDibs.CreatePublic("Tester-Realm", 23001, "Pre-Dib Test Token",
+      dibs.GetCurrentSeasonId(), "test")
+    assert_not_nil(request)
+    local frame = dibs.OfficerUI.CreateWindow("preDibRequests")
+    assert_equal("preDibRequests", frame.selectedRoute)
+    assert_equal("preDibRequests", frame.mountedPage)
+    assert_true(containsText(frame.contentHost, "Pre-Dib Requests"))
+    assert_true(containsText(frame.contentHost, "Date"))
+    assert_true(containsText(frame.contentHost, "Pre-Dib Test Token"))
+    assert_false(containsText(frame.contentHost, "Public pre-dib announce channel"))
+  end)
+
+  it("renders pending awards in the shared table and confirms the selected proposal", function()
+    local dibs = setup()
+    local proposal = {
+      proposalId = "proposal-1", playerName = "Tester-Realm", itemLink = "Test Item",
+      awardRef = "award-1", submittedBy = "Officer-Realm",
+    }
+    dibs.OfficerUI.GetPendingAwardProposals = function() return { proposal } end
+    local confirmedId
+    dibs.OfficerUI.ConfirmPendingAwardProposal = function(proposalId)
+      confirmedId = proposalId
+      return { accepted = true }
+    end
+
+    local frame = dibs.OfficerUI.CreateWindow("pendingAwards")
+    assert_not_nil(frame.pendingAwardsTablePage)
+    assert_not_nil(frame.pendingAwardsPagination)
+    assert_true(containsText(frame.contentHost, "Tester-Realm"))
+    assert_true(containsText(frame.contentHost, "Test Item"))
+    local confirm
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "Button" and widget.text == "Confirm" then confirm = widget break end
+    end
+    assert_not_nil(confirm)
+    confirm.callbacks.OnClick(confirm, "OnClick")
+    assert_equal("proposal-1", confirmedId)
+  end)
+
+  it("switches the synchronization roster view without changing guild sync scope", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow("sync")
+    local selector
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "Dropdown" and widget.label == "Roster view" then selector = widget break end
+    end
+    assert_not_nil(selector)
+
+    local requestedScope
+    dibs.Sync.GetPeerStatuses = function(scope)
+      requestedScope = scope
+      return {}
+    end
+    selector.callbacks.OnValueChanged(selector, "OnValueChanged", "PARTY")
+
+    assert_equal("PARTY", frame.syncRosterScope)
+    assert_equal("PARTY", requestedScope)
+    assert_not_nil(frame.syncTablePage)
+    assert_not_nil(frame.syncRosterPagination)
+    assert_true(containsText(frame.contentHost, "No Party roster is active."))
+    assert_true(containsText(frame.contentHost, "Party"))
+  end)
+
+  it("keeps the RCLootCouncil page focused on integration status and mapping", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow("integration")
+    assert_true(containsText(frame.contentHost, "RCLootCouncil button-set mapping"))
+    assert_false(containsText(frame.contentHost, "Run readiness check"))
+    assert_false(containsText(frame.contentHost, "Enable all loot types"))
+    assert_false(containsText(frame.contentHost, "Default loot type only"))
+  end)
+
   it("keeps the initial TreeGroup selection aligned with the mounted page", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow("requests")

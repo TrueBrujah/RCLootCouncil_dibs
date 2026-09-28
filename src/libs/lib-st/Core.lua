@@ -819,6 +819,20 @@ do
 
 		st.Refresh = function(self)
 			FauxScrollFrame_Update(scrollframe, #st.filtered, st.displayRows, st.rowHeight);
+			if self.hideScrollbarWhenFits then
+				local hasOverflow = #st.filtered > st.displayRows;
+				local function setShown(frame, shown)
+					if not frame then return end
+					local method = shown and frame.Show or frame.Hide;
+					if method then method(frame) end
+				end
+				setShown(scrolltrough, hasOverflow);
+				setShown(scrolltroughborder, hasOverflow);
+				setShown(scrollframe.ScrollBar, hasOverflow);
+				scrollframe:ClearAllPoints();
+				scrollframe:SetPoint("TOPLEFT", f, "TOPLEFT", 0, -4);
+				scrollframe:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", hasOverflow and -26 or -4, 3);
+			end
 			local o = FauxScrollFrame_GetOffset(scrollframe);
 			st.offset = o;
 

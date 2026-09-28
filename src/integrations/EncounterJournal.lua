@@ -45,6 +45,7 @@ local EJ_SUBCATEGORY_MATRIX = {
 local itemDebugCache = {}
 local adventureGuideCatalog = nil
 local adventureGuideCatalogMeta = nil
+local activeEncounter = nil
 
 local function getNowSeconds()
   if type(GetTime) == "function" then
@@ -849,6 +850,21 @@ function Dibs.EncounterJournal.GetCurrentLootContext()
     context.encounterName = encounter["name"] or encounter["encounterName"]
   end
   return context
+end
+
+function Dibs.EncounterJournal.GetActiveEncounter()
+  if type(activeEncounter) ~= "table" then return nil end
+  local encounter = {}
+  for key, value in pairs(activeEncounter) do encounter[key] = value end
+  if type(GetInstanceInfo) == "function" then
+    local ok, instanceName, instanceType, _, _, _, _, instanceID = pcall(GetInstanceInfo)
+    if ok then
+      encounter.instanceName = instanceType == "raid" and tostring(instanceName or "") or nil
+      encounter.instanceType = instanceType
+      encounter.instanceID = instanceType == "raid" and tonumber(instanceID) or nil
+    end
+  end
+  return encounter
 end
 
 function Dibs.EncounterJournal.GetCurrentGameSeason()
@@ -1979,13 +1995,39 @@ do
     end
   end
 
+  local function handleEncounterEvent(_, event, encounterID, encounterName, difficultyID, groupSize, success)
+    local id = tonumber(encounterID)
+    if event == "ENCOUNTER_START" and id and id > 0 then
+      activeEncounter = {
+        encounterID = id,
+        encounterName = tostring(encounterName or "Encounter " .. tostring(id)),
+        difficultyID = tonumber(difficultyID),
+        groupSize = tonumber(groupSize),
+        startedAt = type(time) == "function" and time() or 0,
+      }
+    elseif event == "ENCOUNTER_END" and (not id or not activeEncounter or activeEncounter.encounterID == id) then
+      activeEncounter = nil
+    end
+  end
+
   local registeredWithAce = Dibs.Ace3 and type(Dibs.Ace3.RegisterEvent) == "function"
       and Dibs.Ace3.RegisterEvent("PLAYER_LOGIN", handleBootstrapEvent)
       and Dibs.Ace3.RegisterEvent("ADDON_LOADED", handleBootstrapEvent)
-  if not registeredWithAce then
+  if registeredWithAce then
+    Dibs.Ace3.RegisterEvent("ENCOUNTER_START", handleEncounterEvent)
+    Dibs.Ace3.RegisterEvent("ENCOUNTER_END", handleEncounterEvent)
+  else
     local bootstrap = CreateFrame("Frame")
     bootstrap:RegisterEvent("PLAYER_LOGIN")
     bootstrap:RegisterEvent("ADDON_LOADED")
-    bootstrap:SetScript("OnEvent", handleBootstrapEvent)
+    bootstrap:RegisterEvent("ENCOUNTER_START")
+    bootstrap:RegisterEvent("ENCOUNTER_END")
+    bootstrap:SetScript("OnEvent", function(frame, event, ...)
+      if event == "ENCOUNTER_START" or event == "ENCOUNTER_END" then
+        handleEncounterEvent(frame, event, ...)
+      else
+        handleBootstrapEvent(frame, event, ...)
+      end
+    end)
   end
 end

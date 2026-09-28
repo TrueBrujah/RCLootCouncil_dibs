@@ -64,3 +64,13 @@ Expected: all tests pass (0 failed), including the new specs above.
 	was computed, so every distributed baseline failed verification). Still needed:
 	award-proposal relay across two simultaneous raid groups, season catalog
 	propagation, and status-banner checks.
+- 2026-09-27: Partial cross-realm Retail verification — Huudada-Durotan and
+	Itestit-Zul'jin displayed the same guild sync scope (`durotan:theorderbattalion`);
+	Itestit returned PONG on GUILD, OFFICER, and PARTY, and the Officer Sync view
+	reported the peer Online, Detected, Compatible, and `Up to date`. This closes the
+	cross-realm scope/probe check (T028), but T026 remains open for two-raid award
+	relay, season-catalog propagation, and status-banner scenarios.
+- 2026-09-27: The officer reports adopting the operational policy in live Retail
+	and confirming that workflow works; no screenshot was captured. This is partial
+	evidence for the adopted-policy path, not for the visible adopted/unadopted
+	status banners or protocol/version mismatch banner; those T026 checks remain open.
