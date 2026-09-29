@@ -1,4 +1,5 @@
 package.path = "tests/?.lua;tests/?/init.lua;" .. package.path
+_G.unpack = _G.unpack or table.unpack
 
 local suites = {}
 local currentSuite = nil

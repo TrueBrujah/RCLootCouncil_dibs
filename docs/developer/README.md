@@ -12,6 +12,7 @@ Start with [architecture.md](architecture.md), then use the focused references:
 - [combat-safety.md](combat-safety.md)
 - [naming-conventions.md](naming-conventions.md)
 - [testing.md](testing.md)
+- [releasing.md](releasing.md)
 - [contributing.md](contributing.md)
 - [coverage.md](coverage.md)
 - [Midnight UI Design System](b12-ui-design-rules.md)

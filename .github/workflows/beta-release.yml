@@ -1,0 +1,107 @@
+name: Beta release
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Run addon test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run Fengari tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_files="$(find tests -type f -name '*_spec.lua' -print | sort | paste -sd ';' -)"
+          if [[ -z "$test_files" ]]; then
+            echo "No test specs found under tests/." >&2
+            exit 1
+          fi
+          DIBS_TEST_FILES="$test_files" npx --yes fengari tests/run.lua
+
+  package:
+    name: Build addon package
+    uses: ./.github/workflows/package-addon.yml
+    permissions:
+      contents: read
+
+  beta-tag:
+    name: Tag tested dev build
+    needs:
+      - validate
+      - package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify release tag app configuration
+        shell: bash
+        env:
+          APP_ID: ${{ vars.RELEASE_TAG_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$APP_ID" || -z "$APP_PRIVATE_KEY" ]]; then
+            echo "Configure repository variable RELEASE_TAG_APP_ID and secret RELEASE_TAG_APP_PRIVATE_KEY." >&2
+            exit 1
+          fi
+
+      - name: Create tag-push token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_TAG_APP_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          permission-contents: write
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Check out tested commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Create and push unique beta tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^## Version:[[:space:]]*//p' src/RCLootCouncil_dibs.toc | head -n 1 | tr -d '\r')"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Could not determine a semantic addon version from src/RCLootCouncil_dibs.toc" >&2
+            exit 1
+          fi
+
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          tag="v${version}-beta.${GITHUB_RUN_NUMBER}"
+
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null
+          tag_lookup_status=$?
+          set -e
+          if [[ $tag_lookup_status -eq 0 ]]; then
+            echo "Tag $tag already exists; refusing to create a duplicate." >&2
+            exit 1
+          elif [[ $tag_lookup_status -ne 2 ]]; then
+            echo "Could not check whether tag $tag exists (git ls-remote exit $tag_lookup_status)." >&2
+            exit "$tag_lookup_status"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" "$GITHUB_SHA" -m "Beta build $tag"
+          git push origin "refs/tags/$tag"

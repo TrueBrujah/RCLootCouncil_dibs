@@ -3,10 +3,14 @@
 The automated suite runs in Lua through Fengari with WoW, Ace3, and optional RCLootCouncil doubles:
 
 ```powershell
+$files = (Get-ChildItem -Path tests -Recurse -File -Filter '*_spec.lua' | ForEach-Object { $_.FullName.Substring((Get-Location).Path.Length + 1).Replace('\', '/') }) -join ';'
+$env:DIBS_TEST_FILES = $files
 npx.cmd --yes fengari tests/run.lua
+Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
 ```
 
-Use `DIBS_TEST_FILES` to run a semicolon-separated subset. Tests cover domain
+On Windows, provide `DIBS_TEST_FILES` because Fengari has no shell-based test
+discovery backend there. Use it to run a semicolon-separated subset. Tests cover domain
 policies, ledger invariants, SavedVariables migration, sync validation,
 import/export limits, RC capability degradation, UI callback wiring,
 optional-module navigation and guards, and TOC load integrity. The v0.8.0
