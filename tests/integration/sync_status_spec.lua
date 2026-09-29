@@ -35,7 +35,7 @@ describe("Synchronization status", function()
     local effective, effectiveReason = dibs.LootRules.GetEffectiveValue("TOKEN", "adventureGuide")
     assert_equal(nil, effective)
     assert_equal("GUILD_LOOT_RULES_INCOMPATIBLE", effectiveReason)
-    assert_true(dibs.BuildDebugReport():find("Addon version mismatch: sender=Tester-Realm local=0.8.0 remote=0.7.5 reason=ADDON_UPDATE_REQUIRED", 1, true) ~= nil)
+    assert_true(dibs.BuildDebugReport():find("Addon version mismatch: sender=Tester-Realm local=" .. dibs.VERSION .. " remote=0.7.5 reason=ADDON_UPDATE_REQUIRED", 1, true) ~= nil)
   end)
 
   it("keeps legacy peers observable when they do not send an addon version", function()

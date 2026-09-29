@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 - WoW 12.1.0 and 12.1.5 compatibility - 2026-09-29
+
+- Advertise both WoW interface versions `120100` and `120105` so the addon is
+  recognized by both clients. No gameplay, SavedVariables, or protocol behavior
+  changes.
+
 ## 0.8.0 - Guild Loot Rules and rank allocation reconciliation - 2026-09-26
 
 - Add explicit GM adoption and publication of guild Loot Rules through the
