@@ -34,7 +34,7 @@ loot voting and award finalization.
 
 ## Guild Loot Rules
 
-On DIBS 0.7.x, the Guild Master explicitly adopts the guild's Loot Rules and
+On DIBS 0.8.x, the Guild Master explicitly adopts the guild's Loot Rules and
 publishes later changes. Officers consume the published snapshot read-only;
 local legacy values are not guild authority. Raid Readiness reports one of
 these states:
@@ -48,8 +48,8 @@ these states:
 - `GUILD_LOOT_RULES_INCOMPATIBLE`: update DIBS before relying on shared rules;
 - `UNAVAILABLE`: supported loot types could not be loaded.
 
-The current 0.8.x family is required for synchronization with a 0.8.x guild.
-Clients on 0.7.x must update before they can synchronize with it.
+Guild synchronization requires the 0.8.x family on both sides. Clients on
+0.7.x must update to 0.8.x before they can synchronize with the guild.
 
 ## Rank allocations
 

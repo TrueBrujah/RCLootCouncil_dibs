@@ -52,7 +52,7 @@ finalisation du butin.
 
 ## Regles de butin de guilde
 
-Avec DIBS 0.7.x, le maitre de guilde adopte explicitement les regles de butin
+Avec DIBS 0.8.x, le maitre de guilde adopte explicitement les regles de butin
 de guilde et publie leurs modifications. Les Officers consultent la version
 publiee sans la modifier ; les anciennes valeurs locales ne constituent pas
 une autorite de guilde. Raid Readiness distingue les etats suivants :
@@ -67,8 +67,8 @@ une autorite de guilde. Raid Readiness distingue les etats suivants :
 	regles partagees ;
 - `UNAVAILABLE` : les types de butin pris en charge n'ont pas pu etre charges.
 
-La synchronisation avec une guilde en 0.8.x exige la famille actuelle 0.8.x.
-Les clients en 0.7.x doivent etre mis a jour.
+La synchronisation exige la famille 0.8.x des deux cotes. Les clients en
+0.7.x doivent passer en 0.8.x pour se synchroniser avec la guilde.
 
 ## Allocations par rang
 

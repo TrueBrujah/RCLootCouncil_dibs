@@ -1,7 +1,7 @@
 # RCLootCouncil_dibs
 
 Development compatibility baseline: **0.8.0**. Latest stable publication:
-**0.6.5**.
+**0.8.0**.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -14,15 +14,15 @@ guild Dibs ledger, reservations, permissions, and audit history.
 
 ## Downloads
 
-- [Stable release v0.6.5](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.6.5)
+- [Stable release v0.8.0](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.8.0)
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
-Each release includes a WoW-ready ZIP and a SHA-256 checksum. The 0.6.5 build
-is the current stable publication; development builds use the 0.8.x
-compatibility family and reject 0.7.x peers until they update.
-Live Retail validation remains an operational check documented in the [B12
-Retail evidence record](docs/audits/B12_Retail_Validation_Evidence.md). Two-client
-validation is conditional and is not required for the B12 presentation-only scope.
+Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.0 is
+the current stable publication. Development builds use the 0.8.x compatibility
+family and reject 0.7.x peers until they update. Release validation, including
+the documented deferred historical-confirmation check, is recorded in the
+[release checklist](B12_Release_Candidate_Checklist.md) and
+[release evidence](docs/audits/DIBS_0.8.0_Release_Candidate_Evidence.md).
 
 ## Features
 
@@ -75,13 +75,14 @@ delta, request reference, and canonical event/reference.
 
 ### Installation
 
-1. Download the stable 0.6.5 ZIP, or use the 0.7.x development build when the
-   guild Loot Rules authority feature is required.
-2. Extract it into `World of Warcraft/_retail_/Interface/AddOns/`.
-3. Confirm that the extracted folder is named `RCLootCouncil_dibs` and contains
-   `RCLootCouncil_dibs.toc` directly inside it.
-4. Enable **RCLootCouncil_dibs** on the character-selection AddOns screen.
-5. Reload the interface with `/reload` after installing or updating.
+See the complete illustrated guide:
+
+[Manual installation guide — v0.8.0](docs/INSTALLATION.md)
+
+For a quick reference, download the stable v0.8.0 ZIP, close WoW, and extract
+`RCLootCouncil_dibs` into `World of Warcraft\_retail_\Interface\AddOns\`.
+Enable **RCLootCouncil_dibs** on the character-selection AddOns screen and run
+`/dibs status` after logging in.
 
 Install RCLootCouncil separately when the guild wants the integrated loot
 workflow. RCLootCouncil remains optional for the Dibs core; the bundled addon
