@@ -31,3 +31,23 @@ No other failures were reported in the full suite.
 **PASS** — fresh baseline recorded; the only failure matches the known test, assertion, expected/actual values, and isolated reproduction. No unexplained regression blocks certification work.
 
 Retail certification has not been performed. No Retail result is implied by this automated baseline.
+
+## Phase 2: Post-Fix Release Candidate
+
+- Date: 2026-09-29
+- Source commit: `21f17b3`
+- Addon version: `0.8.0` (`src/Core.lua` and TOC)
+- Full suite: **824 passed, 0 failed (144 files)**.
+- Focused Cosmetic/Loot Rules and RCLootCouncil button suites: **73 passed, 0 failed (4 files)**.
+- B11 Retail UI-003: **9 passed, 0 failed (1 file)**.
+- `git diff --check`: **PASS**.
+- The Pre-Dib heartbeat test now distinguishes its recurring timer from the separate one-second digest timer.
+- The Officer channel-test action preserves and displays both values returned by `Sync.StartChannelTest`.
+- Pylance reports no actionable error in `RCLootCouncil.lua`; it does not recognize the repository's custom `@doc.*` annotations in `OfficerUI.lua`.
+
+### Operator-Reported Retail Validation
+
+- Local environment metadata: WoW `12.1.0.69933`; RCLootCouncil `3.23.3`; operator is not GM.
+- The operator reports all package and Retail checks passed except the positive historical-confirmation path with a current guild member.
+- That path is deferred until the next raid because the operator cannot exercise it beforehand. A non-member receiving `UNKNOWN_ROSTER_MEMBER` is expected fail-closed behavior.
+- The release owner accepts this single validation exception for `v0.8.0`. The positive in-guild path is explicitly not claimed as tested; it remains a follow-up validation.

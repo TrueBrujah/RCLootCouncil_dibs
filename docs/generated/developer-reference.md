@@ -77,7 +77,7 @@ Source: [src/modules/Ledger.lua:693](../../src/modules/Ledger.lua#L693) - `Ledge
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:840](../../src/modules/Ledger.lua#L840) - `Ledger.GetHistory`
+Source: [src/modules/Ledger.lua:862](../../src/modules/Ledger.lua#L862) - `Ledger.GetHistory`
 
 ## Dib Balance
 
@@ -89,7 +89,7 @@ Source: [src/modules/Ledger.lua:840](../../src/modules/Ledger.lua#L840) - `Ledge
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:774](../../src/modules/Ledger.lua#L774) - `Ledger.GetBalance`
+Source: [src/modules/Ledger.lua:796](../../src/modules/Ledger.lua#L796) - `Ledger.GetBalance`
 
 ## Loot eligibility
 
@@ -223,7 +223,7 @@ Source: [src/modules/ProtectedActions.lua:180](../../src/modules/ProtectedAction
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncil.lua:3255](../../src/integrations/RCLootCouncil.lua#L3255) - `Dibs.RCLootCouncil.GetHistoryRows`
+Source: [src/integrations/RCLootCouncil.lua:3569](../../src/integrations/RCLootCouncil.lua#L3569) - `Dibs.RCLootCouncil.GetHistoryRows`
 
 ## RCLootCouncil response mapping
 
@@ -235,7 +235,7 @@ Source: [src/integrations/RCLootCouncil.lua:3255](../../src/integrations/RCLootC
 **Francais:** Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncilOptions.lua:245](../../src/integrations/RCLootCouncilOptions.lua#L245) - `buildButtonSetMappingText`
+Source: [src/integrations/RCLootCouncilOptions.lua:491](../../src/integrations/RCLootCouncilOptions.lua#L491) - `buildButtonSetMappingText`
 
 ## Raid Readiness
 

@@ -1,4 +1,4 @@
-# v0.8.0 Release Candidate Checklist
+# v0.8.0 Release Checklist
 
 Release candidate: `RCLootCouncil_Dibs 0.8.0`
 Date: `2026-09-29`
@@ -31,32 +31,41 @@ The test runner was invoked with an explicit semicolon-separated
 
 ## Package review
 
-- [ ] Build and inspect the release ZIP for Retail Interface `120100`, the
+- [x] Build and inspect the release ZIP for Retail Interface `120100`, the
   expected SavedVariables, required embedded libraries, and absence of tests,
   local paths, temporary files, or development secrets.
-- [ ] Install the ZIP in a clean Retail AddOns directory and verify the TOC
+- [x] Install the ZIP in a clean Retail AddOns directory and verify the TOC
   loads without Lua errors.
-- [ ] Confirm RCLootCouncil remains an optional dependency in the packaged TOC.
+- [x] Confirm RCLootCouncil remains an optional dependency in the packaged TOC.
 
-## Manual Retail checks remaining
+The operator reports that the package and Retail checks below passed on
+`2026-09-29`, except for the historical-confirmation positive path called out
+explicitly below.
 
-- [ ] Verify the GM governance bootstrap, module toggles, hidden navigation,
+## Manual Retail checks
+
+- [x] Verify the GM governance bootstrap, module toggles, hidden navigation,
   stale-window handling, slash-command fail-closed behavior, and re-enable data
   preservation in a real guild.
-- [ ] Verify Player and Officer layout at supported scales and during combat
+- [x] Verify Player and Officer layout at supported scales and during combat
   lockdown/deferred refresh.
-- [ ] Validate RCLootCouncil absent, late-loaded, supported, degraded, and
+- [x] Validate RCLootCouncil absent, late-loaded, supported, degraded, and
   unsupported profiles, including balance/max projection and finalized award
   authority.
-- [ ] Validate Adventure Guide item selection, loot eligibility, historical
+- [x] Validate Adventure Guide item selection, loot eligibility, historical
   reconciliation, backups/imports, and restore behavior on Retail.
 - [ ] Verify historical confirmation with a current guild member after refreshing
-  the roster. `UNKNOWN_ROSTER_MEMBER` for a non-member is expected fail-closed
-  behavior, not a release defect.
-- [ ] Run the two-client synchronization, coordinator handoff, partition,
+  the roster. Deferred until the next raid: the operator is not GM and cannot
+  exercise this positive path beforehand. `UNKNOWN_ROSTER_MEMBER` for a
+  non-member is expected fail-closed behavior, not a release defect. The release
+  owner accepts this one validation exception; the positive path is not claimed
+  as tested.
+- [x] Run the two-client synchronization, coordinator handoff, partition,
   recovery, and exact-sequence checks.
-- [ ] Record WoW build, RCLootCouncil version/profile, actor roles, observed
-  results, and debug reports/screenshots before publishing.
+- [x] Record local environment metadata: WoW `12.1.0.69933`, RCLootCouncil
+  `3.23.3`, operator role non-GM. Detailed screenshots/debug reports were not
+  added to this repository.
 
-Do not merge this candidate to `main` or create the release tag until the package
-review and required Retail checks above are completed and recorded.
+Release decision: all other checks are reported passed by the operator. The sole
+deferred check is documented above and accepted for `v0.8.0`; do not describe it
+as a successful in-guild historical confirmation.

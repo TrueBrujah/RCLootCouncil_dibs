@@ -49,7 +49,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer, player
 
 **English:** Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
-Source: `src/modules/Ledger.lua:840` (`Ledger.GetHistory`)
+Source: `src/modules/Ledger.lua:862` (`Ledger.GetHistory`)
 
 ## Dib Balance (`ledger.balance`)
 
@@ -57,7 +57,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer, player
 
 **English:** Your available Dibs are scoped to this guild and season. A qualifying finalized award or authorized adjustment changes the balance.
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
-Source: `src/modules/Ledger.lua:774` (`Ledger.GetBalance`)
+Source: `src/modules/Ledger.lua:796` (`Ledger.GetBalance`)
 
 ## Loot eligibility (`loot.eligibility`)
 
@@ -145,7 +145,7 @@ Category: `ledger` | Module: `RCLootCouncil` | Audience: developer, gm, officer
 
 **English:** Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
-Source: `src/integrations/RCLootCouncil.lua:3255` (`Dibs.RCLootCouncil.GetHistoryRows`)
+Source: `src/integrations/RCLootCouncil.lua:3569` (`Dibs.RCLootCouncil.GetHistoryRows`)
 
 ## RCLootCouncil response mapping (`rclootcouncil.response.mapping`)
 
@@ -153,7 +153,7 @@ Category: `ledger` | Module: `RCLootCouncilOptions` | Audience: gm, officer
 
 **English:** Maps a RCLootCouncil response to Dibs meaning. Review the mapping with your guild before live loot; this does not change RCLootCouncil history.
 **Francais:** Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange.
-Source: `src/integrations/RCLootCouncilOptions.lua:245` (`buildButtonSetMappingText`)
+Source: `src/integrations/RCLootCouncilOptions.lua:491` (`buildButtonSetMappingText`)
 
 ## Raid Readiness (`setup.assistant.readiness`)
 

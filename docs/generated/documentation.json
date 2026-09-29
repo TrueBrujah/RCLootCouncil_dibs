@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 840,
+        "line": 862,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -306,7 +306,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 774,
+        "line": 796,
         "symbol": "Ledger.GetBalance"
       }
     },
@@ -788,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3255,
+        "line": 3569,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
@@ -831,7 +831,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncilOptions.lua",
-        "line": 245,
+        "line": 491,
         "symbol": "buildButtonSetMappingText"
       }
     },
