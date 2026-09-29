@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - dev
+    paths:
+      - 'src/**'
+      - '.pkgmeta'
 
 permissions:
   contents: read

@@ -18,7 +18,7 @@ Use this checklist for every release. The detailed workflow and package layout a
 
 ## Beta Release
 
-- [ ] Push validated changes to `dev`.
+- [ ] Push validated addon changes under `src/` or a root `.pkgmeta` change to `dev`; documentation/workflow-only pushes do not trigger the beta workflow.
 - [ ] In Actions, confirm **Run addon test suite** and **Build addon package** succeed.
 - [ ] Confirm **Tag tested dev build** succeeds and the generated `v<VERSION>-beta.<RUN_NUMBER>` tag points to the tested commit.
 - [ ] Open the GitHub prerelease and verify the addon ZIP and `.sha256` checksum are present.

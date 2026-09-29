@@ -13,6 +13,8 @@ For the repeatable pre-release, approval, beta, and stable release checklist, se
 
 Examples: `v0.8.1-beta.1` = CurseForge Beta, `v0.8.1-beta.2` = CurseForge Beta, and `v0.8.1` = CurseForge Release. A failed build or test does not create a tag. A rerun refuses to reuse an existing tag; push a new commit to get a new run number.
 
+Automatic beta and `main` package workflows run only when `src/**` or the root `.pkgmeta` changes. Documentation-only and workflow-only pushes do not create a beta. The package workflow can still be started manually or reused by another workflow.
+
 The GitHub release workflow also accepts `-rc.<N>` tags and marks their GitHub Releases as prereleases. CurseForge's native packager may classify an `rc` tag as a Release unless the CurseForge webhook is configured to exclude or map RC tags. Do not push an RC tag while the webhook publishes every tag unless that behavior has been configured.
 
 The tag workflow uses a GitHub App installation token so the tag push triggers the existing tagged release workflow. Configure repository variable `RELEASE_TAG_APP_ID` and secret `RELEASE_TAG_APP_PRIVATE_KEY`; install that App on this repository with only the **Contents: read and write** permission.
@@ -30,7 +32,7 @@ The tag workflow uses a GitHub App installation token so the tag push triggers t
 
 4. The tagged release workflow creates a normal GitHub Release and attaches the package ZIP and checksum. CurseForge's webhook packages the tag as a Release.
 
-A regular push to `main` only runs the package artifact workflow; it does not create a stable tag or publish a CurseForge release. CurseForge selects its channel from tag naming, not the Git branch: `beta` tags are Beta and plain `v<VERSION>` tags are Release. `rc` tags are GitHub prereleases; their CurseForge behavior depends on webhook configuration.
+A push to `main` that changes `src/**` or the root `.pkgmeta` runs the package artifact workflow; it does not create a stable tag or publish a CurseForge release. CurseForge selects its channel from tag naming, not the Git branch: `beta` tags are Beta and plain `v<VERSION>` tags are Release. `rc` tags are GitHub prereleases; their CurseForge behavior depends on webhook configuration.
 
 ## CurseForge package layout
 
