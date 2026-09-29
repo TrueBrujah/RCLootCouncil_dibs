@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Developer Documentation Reference
 
-Addon version: 0.8.0
+Addon version: 0.8.1
 
 ## Guild Ledger status
 
