@@ -3,10 +3,14 @@
 The automated suite runs in Lua through Fengari with WoW, Ace3, and optional RCLootCouncil doubles:
 
 ```powershell
-npx.cmd --yes fengari tests/run.lua
+$files = (Get-ChildItem -Path tests -Recurse -File -Filter '*_spec.lua' | ForEach-Object { $_.FullName.Substring((Get-Location).Path.Length + 1).Replace('\', '/') }) -join ';'
+$env:DIBS_TEST_FILES = $files
+npx.cmd --yes --package=fengari-node-cli fengari tests/run.lua
+Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
 ```
 
-Use `DIBS_TEST_FILES` to run a semicolon-separated subset. Tests cover domain
+On Windows, provide `DIBS_TEST_FILES` because Fengari has no shell-based test
+discovery backend there. Use it to run a semicolon-separated subset. Tests cover domain
 policies, ledger invariants, SavedVariables migration, sync validation,
 import/export limits, RC capability degradation, UI callback wiring,
 optional-module navigation and guards, and TOC load integrity. The v0.8.0
@@ -17,7 +21,7 @@ The First Installation Assistant focused slice is:
 
 ```powershell
 $env:DIBS_TEST_FILES = "tests/contract/setup_assistant_contract_spec.lua;tests/integration/setup_assistant_spec.lua;tests/integration/setup_assistant_ui_spec.lua"
-npx.cmd --yes fengari tests/run.lua
+npx.cmd --yes --package=fengari-node-cli fengari tests/run.lua
 Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
 ```
 
@@ -62,7 +66,7 @@ The guild Loot Rules and rank-allocation reconciliation tests are exercised with
 
 ```powershell
 $env:DIBS_TEST_FILES = "tests/unit/guild_loot_rules_spec.lua;tests/integration/guild_loot_rules_spec.lua;tests/integration/guild_loot_rules_ui_spec.lua;tests/integration/season_catalog_sync_spec.lua;tests/integration/sync_status_spec.lua"
-npx.cmd --yes fengari tests/run.lua
+npx.cmd --yes --package=fengari-node-cli fengari tests/run.lua
 Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
 ```
 

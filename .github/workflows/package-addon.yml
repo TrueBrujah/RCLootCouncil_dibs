@@ -3,9 +3,12 @@ name: Package RCLootCouncil_dibs
 on:
   push:
     branches:
-      - dev
       - main
+    paths:
+      - 'src/**'
+      - '.pkgmeta'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -18,6 +21,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Read addon metadata
         id: metadata

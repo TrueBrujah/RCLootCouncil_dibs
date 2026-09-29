@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 120105
 ## Title: RCLootCouncil_dibs
 ## Notes: Seasonal guild Dibs, Pre-Dibs, audit history, and optional RCLootCouncil integration.
 ## Author: Contributors
