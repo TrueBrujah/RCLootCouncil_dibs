@@ -79,10 +79,9 @@ See the complete illustrated guide:
 
 [Manual installation guide — v0.8.0](docs/INSTALLATION.md)
 
-For a quick reference, download the stable v0.8.0 ZIP, close WoW, and extract
+For a quick reference, download the stable v0.8.0 ZIP and extract
 `RCLootCouncil_dibs` into `World of Warcraft\_retail_\Interface\AddOns\`.
-Enable **RCLootCouncil_dibs** on the character-selection AddOns screen and run
-`/dibs status` after logging in.
+Return to WoW and run `/reload`, then verify the addon with `/dibs status`.
 
 Install RCLootCouncil separately when the guild wants the integrated loot
 workflow. RCLootCouncil remains optional for the Dibs core; the bundled addon
