@@ -25,13 +25,19 @@ local function widget(kind, text)
 end
 
 describe("Guild-authoritative Loot Rules UI", function()
-  it("LRA09 shows dynamic draft controls and an explicit adoption action to the GM", function()
+  it("LRA09 shows semantic draft controls and an explicit adoption action to the GM", function()
     local gm = load("GameMaster-Realm")
-    local supported = gm.RCOptions.GetLootTypeOptions().types.values()
+    local supported = gm.RCOptions.GetSupportedLootRuleTypeValues()
     local expectedCount = 0
-    for _ in pairs(supported) do expectedCount = expectedCount + 1 end
+    for key in pairs(supported) do
+      if key ~= "COSMETIC" then expectedCount = expectedCount + 1 end
+    end
+    local templateId = gm.RCOptions.CreateButtonTemplate("Raid response")
+    assert_not_nil(templateId)
     gm.OfficerUI.CreateWindow("lootTypes")
+    local frame = _G.DibsOfficerFrame
     assert_equal(0, gm.Seasons.GetCatalogState().catalogRevision)
+    assert_not_nil(frame.rcLootTemplateControls.TOKEN)
     assert_not_nil(widget("Button", gm.L.LOOT_RULES_ENABLE_ALL))
     assert_not_nil(widget("Button", gm.L.LOOT_RULES_DEFAULT_ONLY))
     assert_not_nil(widget("Button", "Adopt reviewed Loot Rules"))
@@ -40,6 +46,12 @@ describe("Guild-authoritative Loot Rules UI", function()
       if candidate.kind == "CheckBox" then checkboxes = checkboxes + 1 end
     end
     assert_equal(expectedCount * 2, checkboxes)
+    frame._scripts.OnSizeChanged(frame, 940, 760)
+    assert_equal("WIDE", frame.lootRulesLayoutMode)
+    assert_equal(4, frame.lootRulesColumnCount)
+    assert_not_nil(frame.rcLootTemplateControls.TOKEN)
+    frame.rcLootTemplateControls.TOKEN.callbacks.OnValueChanged(nil, nil, templateId)
+    assert_equal(templateId, gm.RCOptions.GetButtonTemplateAssignment("TOKEN"))
   end)
 
   it("LRA10 publishes GM draft edits only after the explicit action", function()
@@ -58,12 +70,20 @@ describe("Guild-authoritative Loot Rules UI", function()
   it("LRA11 renders adopted authority read-only for an Officer", function()
     local gm = load("GameMaster-Realm")
     adoptPolicy(gm)
+    local templateId = gm.RCOptions.CreateButtonTemplate("Shared assignment")
+    assert_not_nil(templateId)
     local saved = gm.DeepCopy(_G.RCLootCouncil_dibsDB)
     assert_true(gm.LootRules.Adopt())
     local catalog = gm.Seasons.GetCatalogRecord(gm.Seasons.GetCatalogState().catalogRevision)
     local officer = load("Officer-Realm", saved)
     assert_true(officer.Seasons.ApplyCatalog(catalog, "GameMaster-Realm"))
+    local revision = officer.Seasons.GetCatalogState().catalogRevision
     officer.OfficerUI.CreateWindow("lootTypes")
+    local assignment = _G.DibsOfficerFrame.rcLootTemplateControls.TOKEN
+    assert_not_nil(assignment)
+    assert_true(assignment.disabled)
+    assert_equal("default", officer.RCOptions.GetButtonTemplateAssignment("TOKEN"))
+    assert_equal(revision, officer.Seasons.GetCatalogState().catalogRevision)
     assert_not_nil(widget("Label", officer.L.LOOT_RULES_MANAGED_READ_ONLY))
     assert_equal(nil, widget("Button", "Adopt reviewed Loot Rules"))
     assert_equal(nil, widget("Button", "Publish Loot Rules changes"))
@@ -106,6 +126,8 @@ describe("Guild-authoritative Loot Rules UI", function()
     assert_not_nil(resize)
     resize(frame, 940, 760)
     assert_equal("WIDE", frame.lootRulesLayoutMode)
+    assert_equal(6, frame.lootRulesColumnCount)
+    assert_not_nil(frame.rcLootTemplateControls.TOKEN)
     assert_true(frame.lootRulesColumnWidths[1] < 191)
     resize(frame, 700, 760)
     assert_equal("MEDIUM", frame.lootRulesLayoutMode)
@@ -128,7 +150,10 @@ describe("Guild-authoritative Loot Rules UI", function()
       return false
     end
     local tokenCard = frame.lootRulesCards.TOKEN
+    assert_nil(frame.lootRulesCards.COSMETIC)
     assert_true(contains(tokenCard, gm.RCOptions.GetLootTypeOptions().types.values().TOKEN))
+    assert_equal(gm.L.LOOT_TYPE_HELP_TOKEN, gm.RCOptions.GetLootTypeDescription("TOKEN"))
+    assert_not_nil(tokenCard._dibsTooltipAttachment)
     assert_true(contains(tokenCard, gm.L.LOOT_RULES_GROUP_GUILD))
     assert_true(contains(tokenCard, "RC: " .. gm.L.LOOT_RULES_DISABLED))
     assert_true(contains(tokenCard, gm.L.LOOT_RULES_COLUMN_GUIDE .. ": " .. gm.L.LOOT_RULES_ENABLED))

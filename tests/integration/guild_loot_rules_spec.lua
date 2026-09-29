@@ -143,7 +143,7 @@ describe("Guild-authoritative Loot Rules", function()
     assert_equal(prior, projectedValues[2])
   end)
 
-  it("LRA08 makes both consumers use every dynamic authority key and preserves local and unrelated RC data", function()
+  it("LRA08 applies stable semantic authority keys and preserves local and unrelated RC data", function()
     local gm = load("GameMaster-Realm")
     adoptPolicy(gm)
     local savedBeforeAdoption = gm.DeepCopy(_G.RCLootCouncil_dibsDB)
@@ -153,6 +153,8 @@ describe("Guild-authoritative Loot Rules", function()
     local catalog = gm.Seasons.GetCatalogRecord(gm.Seasons.GetCatalogState().catalogRevision)
 
     local target = load("Player-Realm", savedBeforeAdoption, { inRaid = true, instanceType = "raid", instanceId = 123 })
+    target.db.settings.dibAllowedTypes = target.db.settings.dibAllowedTypes or {}
+    target.db.settings.dibRCEnabledTypes = target.db.settings.dibRCEnabledTypes or {}
     local keys = target.LootRules.GetSupportedTypes()
     for _, typeKey in ipairs(keys) do
       local rule = catalog.guildConfiguration.guildLootRules.types[typeKey]
@@ -260,6 +262,7 @@ describe("Guild-authoritative Loot Rules", function()
     assert_equal("GUILD_LOOT_RULES_INCOMPATIBLE", localReason)
 
     gm.Sync.GetSynchronizationStatus = function() return {} end
+    gm.RCOptions.GetSupportedLootRuleTypeValues = nil
     gm.RCOptions.GetLootTypeOptions = function() return nil end
     status = gm.LootRules.GetStatus()
     assert_equal("UNAVAILABLE", status.status)

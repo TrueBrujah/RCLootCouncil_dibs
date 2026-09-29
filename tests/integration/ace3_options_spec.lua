@@ -5,8 +5,23 @@ describe("Ace3 options integration", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
     assert_true(dibs.RCOptions.EnsureRegistered(1))
-    local options = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs
-    assert_not_nil(options)
+    local launcherOptions = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs
+    assert_not_nil(launcherOptions)
+    local launcher = launcherOptions.args.dibsSettings
+    assert_equal(nil, launcher.childGroups)
+    assert_equal("Open Player UI", launcher.args.openPlayerWindow.name)
+    assert_equal("Open Officer UI", launcher.args.openOfficerWindow.name)
+    local launcherCount = 0
+    for _ in pairs(launcher.args) do launcherCount = launcherCount + 1 end
+    assert_equal(2, launcherCount)
+    local playerOpened, officerOpened = false, false
+    dibs.PlayerUI.Toggle = function(forceShow) playerOpened = forceShow end
+    dibs.OfficerUI.Toggle = function(forceShow) officerOpened = forceShow end
+    launcher.args.openPlayerWindow.func()
+    launcher.args.openOfficerWindow.func()
+    assert_true(playerOpened)
+    assert_true(officerOpened)
+    local options = dibs.RCOptions.GetOptionsTable()
     assert_not_nil(options.args.dibsSettings.args.preDibs)
     assert_not_nil(options.args.dibsSettings.args.preDibs.args.mode)
     assert_not_nil(options.args.dibsSettings.args.settings.args.raidEntryDibPromptsEnabled)
@@ -70,7 +85,7 @@ describe("Unified Dibs options", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = wow or { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
     assert_true(dibs.RCOptions.EnsureRegistered(1))
-    return dibs, dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args
+    return dibs, dibs.RCOptions.GetOptionsTable().args.dibsSettings.args
   end
 
   it("keeps Raid Dibs visible and sends to the resolved community stream", function()
@@ -187,7 +202,7 @@ describe("Dibs options compatibility", function()
     })
     assert_true(ruleResult.ok, tostring(ruleResult.diagnostic))
     dibs.RCOptions.EnsureRegistered(1)
-    local assignments = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.assignments.args
+    local assignments = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.assignments.args
     local summary = assignments.assignmentLog.name()
     assert_true(string.find(summary, "Alice-Realm", 1, true) ~= nil)
     assert_true(string.find(summary, "Difference +2", 1, true) ~= nil)
@@ -209,14 +224,14 @@ describe("Dibs options compatibility", function()
     dibs.Ace3.libs.dialog.Open = function(_, name) opened = name end
     dibs.HandleSlashCommand("options")
     assert_equal("RCLootCouncil_dibs", opened)
-    assert_not_nil(dibs.Ace3.libs.config.tables[opened].args.dibsSettings.args.officer)
+    assert_not_nil(dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.officer)
   end)
 
   it("uses the RC type policy setter without changing the ledger", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
     dibs.RCOptions.EnsureRegistered(1)
-    local policy = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.integration.args.types
+    local policy = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.integration.args.types
     local count = #dibs.Ledger.GetTransactions(dibs.GetCurrentSeasonId())
     local revision = dibs.RCLootCouncil.GetTypePolicyRevision()
     policy.set(nil, "MOUNTS", false)
@@ -230,7 +245,7 @@ describe("Dibs options compatibility", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
     dibs.RCOptions.EnsureRegistered(1)
-    local policy = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.integration.args.types
+    local policy = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.integration.args.types
     local values = policy.values()
 
     assert_nil(values.CATALYST)
@@ -257,7 +272,7 @@ describe("Dibs options compatibility", function()
     end
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
     dibs.RCOptions.EnsureRegistered(1)
-    local integration = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.integration
+    local integration = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.integration
     local values = integration.args.types.values()
     assert_nil(values.ARMOR_TOKEN)
     assert_nil(values.CATALYST_ITEMS)
@@ -271,9 +286,12 @@ describe("Dibs options compatibility", function()
     assert_true(guide:find("Items /w special effects -> OTHER", 1, true) ~= nil)
     assert_true(guide:find("Chest, Back", 1, true) ~= nil)
     assert_true(guide:find("Equipment-slot specificity", 1, true) ~= nil)
+    assert_true(integration.args.mapping.order > integration.args.templates.order)
+    assert_nil(integration.args.status.name():find("\n", 1, true))
 
     assert_nil(integration.args.setup)
-    assert_nil(integration.args.templates)
+    assert_not_nil(integration.args.templates)
+    assert_not_nil(integration.args.templates.args.generate)
     assert_true(integration.args.types.hidden)
     assert_true(integration.args.readiness.hidden)
     assert_true(integration.args.enable.hidden)
@@ -293,11 +311,217 @@ describe("Dibs options compatibility", function()
     assert_false(policy.get(nil, "default"))
   end)
 
+  it("renders each template button as a compact horizontal row", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true } })
+    local shell = dibs.AceGUI.CreateWindow("Template row test", 800, 500, { "CENTER", 0, 0 })
+    local controls = {}
+    local options = {
+      name = "",
+      args = {
+        button1 = {
+          type = "group", name = "Button 1", dibsLayout = "FLOW_ROW", titleWidthPx = 58,
+          args = {
+            text = { type = "input", name = "Button", order = 1, widthPx = 160, get = function() return "Need" end },
+            color = { type = "color", name = "Color", order = 2, widthPx = 112, get = function() return 1, 1, 1, 1 end },
+            response = { type = "input", name = "Response", order = 3, widthPx = 165, get = function() return "Need" end },
+            notes = { type = "toggle", name = "Require Notes", order = 4, widthPx = 120, get = function() return false end },
+            up = { type = "execute", name = "Up", order = 5, widthPx = 44, func = function() end },
+            down = { type = "execute", name = "Down", order = 6, widthPx = 52, func = function() end },
+          },
+        },
+      },
+    }
+
+    assert_true(dibs.AceGUI.RenderOptionsGroup(shell, shell.window, options, {
+      scroll = false, renderGroupTitle = false, controlMap = controls,
+    }))
+    assert_equal("Flow", controls.text.parent.layout)
+    assert_equal(controls.text.parent, controls.color.parent)
+    assert_equal(controls.text.parent, controls.response.parent)
+    assert_equal(controls.text.parent, controls.notes.parent)
+    assert_equal(160, controls.text.width)
+    assert_equal(112, controls.color.width)
+    assert_equal(165, controls.response.width)
+    assert_equal(120, controls.notes.width)
+    assert_equal(46, controls.up.width)
+    assert_equal(62, controls.down.width)
+  end)
+
+  it("refreshes options after a range value is committed", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true } })
+    local shell = dibs.AceGUI.CreateWindow("Range refresh test", 800, 500, { "CENTER", 0, 0 })
+    local controls, savedValue, refreshed = {}, nil, false
+    local options = {
+      name = "",
+      args = {
+        count = {
+          type = "range", name = "Count", min = 1, max = 10, step = 1,
+          get = function() return 4 end,
+          set = function(_, value) savedValue = value end,
+        },
+      },
+    }
+
+    assert_true(dibs.AceGUI.RenderOptionsGroup(shell, shell.window, options, {
+      scroll = false, renderGroupTitle = false, controlMap = controls,
+      onChanged = function(_, kind)
+        refreshed = kind == "range"
+      end,
+    }))
+    assert_not_nil(controls.count.callbacks.OnMouseUp)
+    controls.count.callbacks.OnMouseUp(controls.count, "OnMouseUp", 5)
+    assert_equal(5, savedValue)
+    assert_true(refreshed)
+  end)
+
+  it("manages reusable RCLootCouncil templates and per-type assignments", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local templates = dibs.RCOptions.GetButtonTemplateList()
+    assert_equal(1, #templates)
+    assert_equal("Standard", templates[1].name)
+    assert_equal(4, templates[1].count)
+
+    local templateId = dibs.RCOptions.CreateButtonTemplate("Cosmetic responses")
+    assert_not_nil(templateId)
+    assert_true(dibs.RCOptions.RenameButtonTemplate(templateId, "Cosmetic"))
+    assert_true(dibs.RCOptions.SetButtonTemplateCount(templateId, 10))
+    assert_true(dibs.RCOptions.SetButtonTemplateButton(templateId, 1, {
+      text = "Collection", response = "Transmog", color = { 0.2, 0.4, 0.6, 1 }, requireNotes = true,
+    }))
+    assert_true(dibs.RCOptions.MoveButtonTemplateButton(templateId, 1, 1))
+    assert_true(dibs.RCOptions.SetButtonTemplateAssignment("COSMETIC", templateId))
+
+    local template = dibs.RCOptions.GetButtonTemplate(templateId)
+    assert_equal("Cosmetic", template.name)
+    assert_equal(10, template.count)
+    assert_equal("Collection", template.buttons[2].text)
+    assert_equal("Transmog", template.buttons[2].response)
+    assert_equal(0.6, template.buttons[2].color[3])
+    assert_true(template.buttons[2].requireNotes)
+    assert_equal(templateId, dibs.RCOptions.GetButtonTemplateAssignment("COSMETIC"))
+
+    assert_true(dibs.RCOptions.DeleteButtonTemplate(templateId))
+    assert_equal("default", dibs.RCOptions.GetButtonTemplateAssignment("COSMETIC"))
+    assert_equal("default", dibs.RCOptions.GetSelectedButtonTemplate())
+  end)
+
+  it("generates RC button sets from the local Draft without publishing Loot Rules", function()
+    local profile = { maxButtons = 10, enabledButtons = { INVTYPE_HEAD = true }, buttons = {}, responses = {} }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.OPT_MORE_BUTTONS_VALUES = {}
+    rc.RESPONSE_CODE_GENERATORS = { function() return "RARE" end }
+    rc.Getdb = function() return profile end
+    rc.ConfigTableChanged = function(self, changedKeys) self.lastConfigChange = changedKeys end
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+
+    assert_true(dibs.LootRules.SetDraftValue("COSMETIC", "rclootcouncil", true))
+    assert_true(dibs.LootRules.SetDraftValue("COSMETIC", "adventureGuide", false))
+    local generated, result = dibs.RCOptions.GenerateButtonTemplatesFromDraft()
+    assert_true(generated)
+    assert_true(result.appliedSets >= 8)
+    assert_not_nil(result.skippedTypes)
+    assert_equal("Cosmetic Items", rc.OPT_MORE_BUTTONS_VALUES.COSMETIC)
+    assert_equal(2, #rc.RESPONSE_CODE_GENERATORS)
+    local cosmeticGenerator = rc.RESPONSE_CODE_GENERATORS[1]
+    assert_equal("COSMETIC", cosmeticGenerator(nil, profile, 190101, "INVTYPE_NON_EQUIP_IGNORE", 4, 5))
+    assert_nil(cosmeticGenerator(nil, profile, 190102, "INVTYPE_HEAD", 4, 1))
+    local cosmeticEnabled = profile.enabledButtons.COSMETIC
+    profile.enabledButtons.COSMETIC = false
+    assert_nil(cosmeticGenerator(nil, profile, 190101, "INVTYPE_NON_EQUIP_IGNORE", 4, 5))
+    profile.enabledButtons.COSMETIC = cosmeticEnabled
+    assert_equal("RARE", rc.RESPONSE_CODE_GENERATORS[2]())
+    assert_equal("Need", profile.buttons.COSMETIC[1].text)
+    assert_nil(profile.buttons.COSMETIC[1].dibsLocked)
+    assert_equal("Need", profile.responses.COSMETIC[1].text)
+    assert_true(profile.enabledButtons.COSMETIC)
+    assert_equal("Dib", profile.buttons.default[1].text)
+    assert_true(profile.buttons.default[1].dibsLocked)
+    assert_equal("Dib", profile.buttons.TOKEN[1].text)
+    assert_equal("Dib", profile.buttons.RARE[1].text)
+    assert_equal("Dib", profile.buttons.SPECIAL[1].text)
+    assert_equal(5, profile.buttons.INVTYPE_HEAD.numButtons)
+    assert_equal("Dib", profile.buttons.INVTYPE_HEAD[1].text)
+    assert_nil(dibs.LootRules.GetAuthoritySnapshot())
+    assert_true(rc.lastConfigChange.buttons)
+    assert_true(rc.lastConfigChange.responses)
+
+    assert_true(dibs.LootRules.SetDraftValue("COSMETIC", "adventureGuide", true))
+    assert_true(dibs.RCOptions.GenerateButtonTemplatesFromDraft())
+    for index = 1, profile.buttons.COSMETIC.numButtons do
+      assert_nil(profile.buttons.COSMETIC[index].dibsLocked)
+      assert_false(dibs.RCLootCouncil.IsDibResponse(profile.buttons.COSMETIC[index].text))
+      assert_false(dibs.RCLootCouncil.IsDibResponse(profile.responses.COSMETIC[index].text))
+    end
+
+    dibs.RCLootCouncil.Initialize()
+    assert_equal(2, #rc.RESPONSE_CODE_GENERATORS)
+  end)
+
+  it("skips Cosmetic template generation when RCLC lacks classifier extension tables", function()
+    local profile = { maxButtons = 10, buttons = {}, responses = {} }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    rc.ConfigTableChanged = function() end
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+
+    local supported, reason = dibs.RCLootCouncil.GetCosmeticResponseCodeSupport()
+    assert_false(supported)
+    assert_equal("RCLC_COSMETIC_TYPE_UNSUPPORTED", reason)
+    assert_true(dibs.LootRules.SetDraftValue("COSMETIC", "rclootcouncil", true))
+
+    local generated, result = dibs.RCOptions.GenerateButtonTemplatesFromDraft()
+    assert_true(generated)
+    assert_true(#result.skippedTypes > 0)
+    assert_nil(profile.buttons.COSMETIC)
+  end)
+
+  it("omits DIB from a generated set when Draft Adventure Guide is disabled", function()
+    local profile = { maxButtons = 10, buttons = {}, responses = {} }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    rc.ConfigTableChanged = function() end
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    assert_true(dibs.LootRules.SetDraftValue("TOKEN", "adventureGuide", false))
+    assert_true(dibs.LootRules.SetDraftValue("TOKEN_SET", "adventureGuide", false))
+
+    local generated = dibs.RCOptions.GenerateButtonTemplatesFromDraft()
+    assert_true(generated)
+    assert_equal(4, profile.buttons.TOKEN.numButtons)
+    assert_equal("Need", profile.buttons.TOKEN[1].text)
+    assert_equal("Need", profile.responses.TOKEN[1].text)
+  end)
+
+  it("stops before writing when two loot types need different templates in one RC set", function()
+    local profile = { maxButtons = 10, buttons = {}, responses = {} }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    local defaultCount = profile.buttons.default and profile.buttons.default.numButtons
+    local defaultLabel = profile.buttons.default and profile.buttons.default[1] and profile.buttons.default[1].text
+    local templateId = dibs.RCOptions.CreateButtonTemplate("Tier set")
+    assert_true(dibs.RCOptions.SetButtonTemplateAssignment("TOKEN_SET", templateId))
+
+    local generated, reason = dibs.RCOptions.GenerateButtonTemplatesFromDraft()
+    assert_false(generated)
+    assert_equal("AMBIGUOUS_BUTTON_TEMPLATE_MAPPING", reason)
+    assert_equal(defaultCount, profile.buttons.default.numButtons)
+    assert_equal(defaultLabel, profile.buttons.default[1].text)
+    assert_nil(profile.buttons.TOKEN)
+    assert_nil(profile.buttons.RARE)
+
+    assert_true(dibs.RCOptions.SetButtonTemplateAssignment("TOKEN_SET", "default"))
+    assert_true(dibs.LootRules.SetDraftValue("TOKEN", "rclootcouncil", false))
+    local mixedDraft, mixedReason = dibs.RCOptions.GenerateButtonTemplatesFromDraft()
+    assert_false(mixedDraft)
+    assert_equal("AMBIGUOUS_BUTTON_TEMPLATE_MAPPING", mixedReason)
+    assert_equal(defaultCount, profile.buttons.default.numButtons)
+  end)
+
   it("keeps RCLootCouncil dry-run controls in Developer Mode", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
     dibs.RCOptions.EnsureRegistered(1)
-    local readiness = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args.integration.args.readiness.args
+    local readiness = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.integration.args.readiness.args
     assert_true(readiness.dryRunItem.hidden())
     assert_true(readiness.runDryRun.hidden())
     dibs.DeveloperMode.SetEnabled(true)
@@ -373,11 +597,55 @@ describe("Dibs options compatibility", function()
     end
 
     assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS", { strictWhitelist = true }))
-    dibs.RCLootCouncil.SetDibEnabledForType("COSMETIC", true)
-    assert_true(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS", { strictWhitelist = true }))
-    dibs.RCLootCouncil.SetDibEnabledForType("COSMETIC", false)
+    local changed, reason = dibs.RCLootCouncil.SetDibEnabledForType("COSMETIC", true)
+    assert_nil(changed)
+    assert_equal("PERSONAL_ITEM_TYPE", reason)
+    assert_true(dibs.LootRules.SetDraftValue("COSMETIC", "adventureGuide", true))
     assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190002, "COSMETIC_ITEMS", { strictWhitelist = true }))
+    assert_false(dibs.RCLootCouncil.IsDibEnabledForType("COSMETIC"))
 
+    _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
+  end)
+
+  it("classifies localized Retail cosmetic, companion, mount, and housing items by enum", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalGetItemInfoInstant = _G.C_Item.GetItemInfoInstant
+    local itemFacts = {
+      [190101] = { 190101, "Armure", "Apparence", "INVTYPE_NON_EQUIP_IGNORE", nil, 4, 5 },
+      [190102] = { 190102, "Divers", "Familier", "INVTYPE_NON_EQUIP_IGNORE", nil, 15, 2 },
+      [190103] = { 190103, "Divers", "Monture", "INVTYPE_NON_EQUIP_IGNORE", nil, 15, 5 },
+      [190104] = { 190104, "Logement", "Mobilier", "INVTYPE_NON_EQUIP_IGNORE", nil, 20, 0 },
+      [190106] = { 190106, "Divers", "Equipement de monture", "INVTYPE_NON_EQUIP_IGNORE", nil, 15, 6 },
+    }
+    _G.C_Item.GetItemInfoInstant = function(itemID)
+      local facts = itemFacts[tonumber(itemID)]
+      if facts then return unpack(facts) end
+    end
+
+    assert_equal("COSMETIC", dibs.RCLootCouncil.GetItemSemanticFamily(190101, "INVTYPE_NON_EQUIP_IGNORE"))
+    assert_equal("PETS", dibs.RCLootCouncil.GetItemSemanticFamily(190102, "INVTYPE_NON_EQUIP_IGNORE"))
+    assert_equal("MOUNTS", dibs.RCLootCouncil.GetItemSemanticFamily(190103, "INVTYPE_NON_EQUIP_IGNORE"))
+    assert_equal("DECOR", dibs.RCLootCouncil.GetItemSemanticFamily(190104, "INVTYPE_NON_EQUIP_IGNORE"))
+    assert_equal("OTHER", dibs.RCLootCouncil.GetItemSemanticFamily(190106, "INVTYPE_NON_EQUIP_IGNORE"))
+
+    _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
+  end)
+
+  it("uses active guild Loot Rules instead of a conflicting local legacy policy", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalGetItemInfoInstant = _G.C_Item.GetItemInfoInstant
+    local originalGetAuthoritySnapshot = dibs.LootRules.GetAuthoritySnapshot
+    _G.C_Item.GetItemInfoInstant = function()
+      return 190105, "Armure", "Apparence", "INVTYPE_NON_EQUIP_IGNORE", nil, 4, 5
+    end
+    assert_true(dibs.LootRules.SetDraftValue("COSMETIC", "adventureGuide", false))
+    dibs.LootRules.GetAuthoritySnapshot = function()
+      return { types = { COSMETIC = { adventureGuide = true } } }, "GUILD_LOOT_RULES_READY"
+    end
+
+    assert_false(dibs.RCLootCouncil.IsItemDibTypeAllowed(190105, "INVTYPE_NON_EQUIP_IGNORE", { strictWhitelist = true }))
+
+    dibs.LootRules.GetAuthoritySnapshot = originalGetAuthoritySnapshot
     _G.C_Item.GetItemInfoInstant = originalGetItemInfoInstant
   end)
 end)
@@ -393,6 +661,8 @@ describe("Officer loot type controls", function()
     local policy = dibs.RCOptions.GetLootTypeOptions().types
     assert_true(policy.values().COSMETIC ~= nil)
     assert_equal(false, frame.lootTypeControls.TOKEN.value)
+    assert_nil(frame.lootTypeControls.COSMETIC)
+    assert_nil(frame.rcLootTypeControls.COSMETIC)
     frame.lootTypeControls.TOKEN.callbacks.OnValueChanged(nil, nil, true)
     assert_equal(true, policy.get(nil, "TOKEN"))
     policy.set(nil, "MOUNTS", false)
@@ -409,7 +679,7 @@ describe("Player and officer option visibility", function()
     local _, dibs = loader.load({ wow = { guildLeader = false }, rclootcouncil = rc, withAce3 = true })
     dibs.RCOptions.EnsureRegistered(1)
     dibs.Permissions.IsOfficer = function() return false end
-    local groups = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args
+    local groups = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args
     assert_true(groups.officer.hidden())
     assert_true(groups.settings.hidden())
     assert_true(groups.debug.hidden())
@@ -423,7 +693,7 @@ describe("Player and officer option visibility", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
     dibs.RCOptions.EnsureRegistered(1)
-    local groups = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args
+    local groups = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args
     assert_equal(false, groups.officer.hidden())
     assert_nil(groups.overview.args.officer)
     assert_not_nil(groups.officer.args.preDibs)

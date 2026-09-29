@@ -65,7 +65,7 @@ Source: [src/modules/ProtectedActions.lua:277](../../src/modules/ProtectedAction
 
 Scope: `guild-season` | Audit: `true` | Reason required: `true`
 Permission: `ledger.adjust`
-Source: [src/modules/Ledger.lua:686](../../src/modules/Ledger.lua#L686) - `Ledger.AdminAdjust`
+Source: [src/modules/Ledger.lua:693](../../src/modules/Ledger.lua#L693) - `Ledger.AdminAdjust`
 
 ## Dibs audit history
 
@@ -77,7 +77,7 @@ Source: [src/modules/Ledger.lua:686](../../src/modules/Ledger.lua#L686) - `Ledge
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:801](../../src/modules/Ledger.lua#L801) - `Ledger.GetHistory`
+Source: [src/modules/Ledger.lua:840](../../src/modules/Ledger.lua#L840) - `Ledger.GetHistory`
 
 ## Dib Balance
 
@@ -89,7 +89,7 @@ Source: [src/modules/Ledger.lua:801](../../src/modules/Ledger.lua#L801) - `Ledge
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:767](../../src/modules/Ledger.lua#L767) - `Ledger.GetBalance`
+Source: [src/modules/Ledger.lua:774](../../src/modules/Ledger.lua#L774) - `Ledger.GetBalance`
 
 ## Loot eligibility
 
@@ -101,7 +101,7 @@ Source: [src/modules/Ledger.lua:767](../../src/modules/Ledger.lua#L767) - `Ledge
 **Francais:** Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/ui/OfficerUI.lua:400](../../src/ui/OfficerUI.lua#L400) - `Dibs.OfficerUI.GetEligibilityProjection`
+Source: [src/ui/OfficerUI.lua:432](../../src/ui/OfficerUI.lua#L432) - `Dibs.OfficerUI.GetEligibilityProjection`
 
 ## Request audit timeline
 
@@ -149,7 +149,7 @@ Source: [src/modules/Readiness.lua:200](../../src/modules/Readiness.lua#L200) - 
 **Francais:** Indique si vos informations Dibs personnelles sont disponibles. Si certaines fonctions sont limitees ou indisponibles, reessayez plus tard ou contactez un officier; RCLootCouncil est optionnel et le mode Standalone peut rester disponible.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/ui/PlayerUI.lua:372](../../src/ui/PlayerUI.lua#L372) - `Dibs.PlayerUI.GetStatusPresentation`
+Source: [src/ui/PlayerUI.lua:373](../../src/ui/PlayerUI.lua#L373) - `Dibs.PlayerUI.GetStatusPresentation`
 
 ## Announcement channels
 
@@ -223,7 +223,7 @@ Source: [src/modules/ProtectedActions.lua:180](../../src/modules/ProtectedAction
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncil.lua:3433](../../src/integrations/RCLootCouncil.lua#L3433) - `Dibs.RCLootCouncil.GetHistoryRows`
+Source: [src/integrations/RCLootCouncil.lua:3255](../../src/integrations/RCLootCouncil.lua#L3255) - `Dibs.RCLootCouncil.GetHistoryRows`
 
 ## RCLootCouncil response mapping
 
@@ -283,7 +283,7 @@ Source: [src/modules/Governance.lua:423](../../src/modules/Governance.lua#L423) 
 **Francais:** L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:280](../../src/modules/SyncV2.lua#L280) - `Sync.GetPeerStatuses`
+Source: [src/modules/SyncV2.lua:365](../../src/modules/SyncV2.lua#L365) - `Sync.GetPeerStatuses`
 
 ## SyncV2 Protocol State
 
@@ -298,7 +298,7 @@ Source: [src/modules/SyncV2.lua:280](../../src/modules/SyncV2.lua#L280) - `Sync.
 **Reference technique:** SyncV2 peut indiquer LEGACY_LOCAL avant le changement, CUTOVER_PREPARED pendant la preparation de compatibilite des ecrivains, ou V2_ENFORCED apres activation approuvee. ledgerEpoch identifie la generation active du registre canonique; legacyBaselineHash identifie la base historique approuvee.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:498](../../src/modules/SyncV2.lua#L498) - `Sync.SetProtocolState`
+Source: [src/modules/SyncV2.lua:616](../../src/modules/SyncV2.lua#L616) - `Sync.SetProtocolState`
 
 ## Raid Relay service
 
@@ -334,4 +334,4 @@ Source: [src/modules/RaidRelay.lua:105](../../src/modules/RaidRelay.lua#L105) - 
 **Francais:** Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:251](../../src/modules/SyncV2.lua#L251) - `Sync.GetStatus`
+Source: [src/modules/SyncV2.lua:336](../../src/modules/SyncV2.lua#L336) - `Sync.GetStatus`

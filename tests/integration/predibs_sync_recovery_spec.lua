@@ -47,8 +47,16 @@ describe("Pre-Dib recovery sync", function()
     dibs.Ace3.libs.timer.scheduled = {}
     dibs.Sync.heartbeat = nil
     dibs.Sync.OnLifecycle("STARTUP")
-    assert_equal(1, #dibs.Ace3.libs.timer.scheduled)
+    local heartbeat = dibs.Sync.heartbeat
+    assert_not_nil(heartbeat)
+    local heartbeatDelay = dibs.Ace3.libs.timer.scheduled[heartbeat].delay
+    assert_true(heartbeatDelay > 1)
     dibs.Sync.OnLifecycle("STARTUP")
-    assert_equal(1, #dibs.Ace3.libs.timer.scheduled)
+    assert_equal(heartbeat, dibs.Sync.heartbeat)
+    local heartbeatCount = 0
+    for _, timer in ipairs(dibs.Ace3.libs.timer.scheduled) do
+      if timer.delay == heartbeatDelay then heartbeatCount = heartbeatCount + 1 end
+    end
+    assert_equal(1, heartbeatCount)
   end)
 end)

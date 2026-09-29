@@ -16,7 +16,7 @@ describe("B12a shared UI ownership", function()
     dibs.AceGUI.HideContextMenu()
   end)
 
-  it("keeps tooltip ordering, rejects raw parents, and detaches a scrolling table", function()
+  it("keeps tooltip ordering, rejects raw parents, and releases the shared Data Grid", function()
     local _, dibs = loader.load({ withAce3 = true })
     local calls = {}
     _G.GameTooltip = {
@@ -34,34 +34,18 @@ describe("B12a shared UI ownership", function()
 
     local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
     assert_nil(dibs.AceGUI.Create(shell, "SimpleGroup", _G.CreateFrame("Frame")))
-    local tableLibrary = {
-      SORT_ASC = 1, SORT_DSC = 2,
-      CreateST = function(_, columns, _, _, _, parent)
-        local frame = _G.CreateFrame("Frame", nil, parent)
-        frame.ClearAllPoints = function() end
-        local tableObject = {
-          frame = frame, cols = columns,
-          RegisterEvents = function(self, events) self.events = events end,
-          SetDefaultHighlight = function() end, EnableSelection = function() end,
-          SetDisplayCols = function() end, SetData = function() end, SortData = function() end,
-          Show = function() end, Hide = function() end,
-        }
-        return tableObject
-      end,
-    }
-    dibs.Ace3.libs.scrollingTable = tableLibrary
     local host = dibs.AceGUI.AddTable(shell, shell.window, { { title = "Status", width = 120 } }, { { "Ready" } }, 100, nil, { disableContextMenu = true })
     assert_not_nil(host)
-    assert_not_nil(host._dibsScrollingTable)
+    assert_not_nil(host._dibsDataGrid)
     dibs.AceGUI.Clear(shell.window)
-    assert_nil(host._dibsScrollingTable)
+    assert_nil(host._dibsDataGrid)
   end)
 
   it("releases native MSA dropdown labels with their pooled host", function()
     mocks.installMSA()
     local _, dibs = loader.load({ withAce3 = true })
     local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
-    local dropdown = dibs.AceGUI.AddDropdown(shell, shell.window, "Officer pre-dib announce channel", { OFFICER = "Officer" }, function() end)
+    local dropdown = dibs.AceGUI.AddDropdown(shell, shell.window, "Officer pre-dib announce channel", { OFFICER = "Officer" }, function() end, nil, true)
     assert_not_nil(dropdown)
     assert_not_nil(dropdown.host._dibsMSALabel)
     dibs.AceGUI.Clear(shell.window)

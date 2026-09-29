@@ -113,6 +113,22 @@ local function isSubCategoryBlocked(value)
   return type(recommended) == "table" and recommended.allow ~= true
 end
 
+local function isDibAllowedForItem(item, subCategory)
+  local subCategoryKey = normalizeSubCategoryKey(subCategory)
+  if subCategoryKey == "CATALYST" or subCategoryKey == "CATALYSTS" then
+    return false
+  end
+  local rclc = Dibs.RCLootCouncil
+  if type(item) ~= "table" or not tonumber(item.itemID)
+    or type(rclc) ~= "table" or type(rclc.IsItemDibTypeAllowed) ~= "function" then
+    return false
+  end
+  local ok, allowed = pcall(rclc.IsItemDibTypeAllowed, tonumber(item.itemID), item.responseType, {
+    strictWhitelist = true,
+  })
+  return ok and allowed == true
+end
+
 local function setSubCategoryBlocked(value, shouldBlock)
   local key = rememberKnownSubCategory(value)
   local _, blocked = getSubCategorySettings()
@@ -563,10 +579,17 @@ local function getLootScrollButtons()
   -- `lootScroll` is a legacy implementation detail and is intentionally not
   -- part of the current Encounter Journal frame contract. Keep the optional
   -- probe dynamic so current API annotations do not treat it as guaranteed.
-  scanContainer(info["lootScroll"])
-  scanContainer(info["lootContainer"])
-  scanContainer(info["LootContainer"])
-  scanContainer(info["lootFrame"])
+  local function scanNamedLootContainers(source)
+    if type(source) ~= "table" then return end
+    for name, container in pairs(source) do
+      if type(name) == "string" and string.lower(name):find("loot", 1, true) then
+        scanContainer(container)
+      end
+    end
+  end
+
+  scanNamedLootContainers(ej and ej.encounter)
+  scanNamedLootContainers(info)
 
   if #found == 0 then
     return nil
@@ -1537,9 +1560,9 @@ local function onUseDibsClick(actionButton)
     return
   end
 
-  if isSubCategoryBlocked(subCategory) then
+  if not isDibAllowedForItem(item, subCategory) then
     if Dibs and Dibs.Message then
-      Dibs.Message("Dib is blocked for sub-category: " .. tostring(subCategory))
+      Dibs.Message("Dib is disabled for this loot type by guild policy.")
     end
     if type(actionButton.Disable) == "function" then
       actionButton:Disable()
@@ -1666,8 +1689,16 @@ refreshLootRowButtons = function(force)
 
   local publicEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() == true
   local policyRev = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetTypePolicyRevision and Dibs.RCLootCouncil.GetTypePolicyRevision() or 0
+  local guildPolicyVersion = "unavailable"
+  if Dibs.LootRules and type(Dibs.LootRules.GetAuthoritySnapshot) == "function" then
+    local ok, _, authorityStatus, record = pcall(Dibs.LootRules.GetAuthoritySnapshot)
+    if ok then
+      guildPolicyVersion = tostring(authorityStatus or "unknown") .. ":" .. tostring(record and record.catalogRevision or 0)
+    end
+  end
   local signature = buildVisibleLootSignature(buttons)
-  local stateSignature = tostring(signature) .. "|public:" .. tostring(publicEnabled) .. "|rev:" .. tostring(policyRev)
+  local stateSignature = tostring(signature) .. "|public:" .. tostring(publicEnabled)
+    .. "|rev:" .. tostring(policyRev) .. "|guild:" .. guildPolicyVersion
   if not force and Dibs.EncounterJournal.lastStateSignature == stateSignature then
     Dibs.EncounterJournal.lastRefreshAt = now
     return
@@ -1688,7 +1719,7 @@ refreshLootRowButtons = function(force)
       setActionButtonTypeInfo(actionButton, item, debugInfo)
       if type(actionButton) == "table" and type(actionButton.Show) == "function" and type(actionButton.Hide) == "function" then
         if item and item.itemID then
-          if isSubCategoryBlocked(debugInfo and debugInfo.subCategory) then
+          if not isDibAllowedForItem(item, debugInfo and debugInfo.subCategory) then
             actionButton:Hide()
           else
             local request = Dibs.PreDibs and Dibs.PreDibs.GetConfirmedRequestForPlayer

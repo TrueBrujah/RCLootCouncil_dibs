@@ -55,6 +55,65 @@ describe("Encounter Journal Pre-Dibs", function()
     assert_not_nil(dibs.PreDibs.GetConfirmedRequestForPlayer("Tester-Realm", 20003))
   end)
 
+  it("hides Encounter Journal Dibs when a synchronized guild rule disables the item type", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    wow.installEncounterJournalContext({ raidInstanceID = 100 })
+    local types = {}
+    for key in pairs(dibs.RCOptions.GetSupportedLootRuleTypeValues()) do
+      types[key] = { adventureGuide = true, rclootcouncil = true }
+    end
+    local snapshot = assert(dibs.LootRules.NormalizeSnapshot({ schemaVersion = 1, types = types }))
+    local catalogRecord = { catalogRevision = 1 }
+    dibs.LootRules.GetAuthoritySnapshot = function()
+      return snapshot, "GUILD_LOOT_RULES_READY", catalogRecord
+    end
+    _G.C_Item.GetItemInfoInstant = function(itemID)
+      if tonumber(itemID) == 20002 then
+        return "Test Decor", "Housing", "Decor", "", 1, 20, 0
+      end
+    end
+
+    local scheduledTick
+    _G.C_Timer.After = function(_, callback) scheduledTick = callback end
+    dibs.Ace3.ScheduleTimer = nil
+    local lootButton = {
+      itemID = 20002,
+      responseType = "default",
+      IsShown = function() return true end,
+    }
+    local bonusLootButton = {
+      itemID = 20003,
+      responseType = "default",
+      IsShown = function() return true end,
+    }
+    _G.EncounterJournal = {
+      encounter = {
+        info = { lootContainer = { buttons = { lootButton } } },
+        bonusLootContainer = { buttons = { bonusLootButton } },
+      },
+      IsShown = function() return true end,
+      HookScript = function() end,
+    }
+
+    assert_true(dibs.EncounterJournal.AddActionIfAvailable(0))
+    local actionButton = lootButton.__dibsActionButton
+    local bonusActionButton = bonusLootButton.__dibsActionButton
+    assert_true(actionButton:IsShown())
+    assert_true(bonusActionButton:IsShown())
+
+    for _, rule in pairs(snapshot.types) do
+      rule.adventureGuide = false
+    end
+    catalogRecord.catalogRevision = 2
+    assert_true(type(scheduledTick) == "function")
+    scheduledTick()
+
+    assert_false(actionButton:IsShown())
+    assert_false(bonusActionButton:IsShown())
+    actionButton._scripts.OnClick(actionButton)
+    assert_equal(0, #dibs.PreDibs.GetHistory())
+  end)
+
   it("opens a catalog item at its Adventure Guide encounter", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     wow.installEncounterJournalContext({

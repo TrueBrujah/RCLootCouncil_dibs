@@ -218,7 +218,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 686,
+        "line": 693,
         "symbol": "Ledger.AdminAdjust"
       }
     },
@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 801,
+        "line": 840,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -306,7 +306,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 767,
+        "line": 774,
         "symbol": "Ledger.GetBalance"
       }
     },
@@ -350,7 +350,7 @@
       },
       "source": {
         "file": "src/ui/OfficerUI.lua",
-        "line": 400,
+        "line": 432,
         "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
       }
     },
@@ -523,7 +523,7 @@
       },
       "source": {
         "file": "src/ui/PlayerUI.lua",
-        "line": 372,
+        "line": 373,
         "symbol": "Dibs.PlayerUI.GetStatusPresentation"
       }
     },
@@ -788,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3433,
+        "line": 3255,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
@@ -1005,7 +1005,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 280,
+        "line": 365,
         "symbol": "Sync.GetPeerStatuses"
       }
     },
@@ -1047,7 +1047,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 498,
+        "line": 616,
         "symbol": "Sync.SetProtocolState"
       }
     },
@@ -1178,7 +1178,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 251,
+        "line": 336,
         "symbol": "Sync.GetStatus"
       }
     }

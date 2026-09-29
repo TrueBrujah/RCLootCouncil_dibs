@@ -20,6 +20,15 @@ local function findControl(widget, label)
   return nil
 end
 
+local function findWidget(widget, predicate)
+  if type(widget) ~= "table" then return nil end
+  if predicate(widget) then return widget end
+  for _, child in ipairs(widget.children or {}) do
+    local found = findWidget(child, predicate)
+    if found then return found end
+  end
+end
+
 local function setup()
   return loader.load({
     wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Officer-Realm" } },
@@ -59,77 +68,265 @@ describe("B11 Retail UI-004 ownership", function()
     assert_false(dibs.AceGUI.ShowTableCellTooltip({}, nil))
   end)
 
-  it("keeps raw-frame parents out of AceGUI Create and releases one owned lib-st table", function()
+  it("keeps raw-frame parents out of AceGUI Create and renders the shared Data Grid", function()
     local _, dibs = setup()
     local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
     local rawFrame = _G.CreateFrame("Frame")
     assert_nil(dibs.AceGUI.Create(shell, "SimpleGroup", rawFrame))
 
-    local tableCalls = {}
-    dibs.Ace3.libs.scrollingTable = {
-      SORT_ASC = 1,
-      SORT_DSC = 2,
-      CreateST = function(_, columns, _, _, _, parent)
-        local tableFrame = _G.CreateFrame("Frame", nil, parent)
-        tableFrame.ClearAllPoints = function() end
-        tableCalls.parent = parent
-        local scrollingTable = {
-          frame = tableFrame,
-          cols = columns,
-          RegisterEvents = function(self, events) self.events = events end,
-          SetDefaultHighlight = function() end,
-          EnableSelection = function() end,
-          SetDisplayCols = function() end,
-          SetData = function(self, data) self.data = data end,
-          SortData = function() end,
-          Show = function() end,
-          Hide = function(self) self.hidden = true end,
-        }
-        return scrollingTable
-      end,
-    }
-
-    local host = dibs.AceGUI.AddTable(shell, shell.window, {
+    local parent = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    local host = dibs.AceGUI.AddTable(shell, parent, {
       { title = "Status", width = 120 },
-    }, { { "Unavailable" } }, 100, nil, { disableContextMenu = true })
+    }, { { "Unavailable" } }, 100, nil, { noScrolling = true, headerParent = parent })
     assert_not_nil(host)
-    assert_equal(host.frame, tableCalls.parent)
-    assert_not_nil(host._dibsScrollingTable)
-    assert_not_nil(host._dibsScrollingTable.events.OnEnter)
-    dibs.AceGUI.Clear(shell.window)
-    assert_nil(host._dibsScrollingTable)
+    assert_equal(parent, host)
+    assert_not_nil(host._dibsDataGrid)
+    assert_true(#parent.children > 0)
   end)
 
-  it("fits native table columns after localized action sizing", function()
+  it("sizes shared-grid action columns for localized labels", function()
     local _, dibs = setup()
     local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
-    dibs.Ace3.libs.scrollingTable = {
-      SORT_ASC = 1,
-      SORT_DSC = 2,
-      CreateST = function(_, columns, _, _, _, parent)
-        local tableFrame = _G.CreateFrame("Frame", nil, parent)
-        tableFrame.ClearAllPoints = function() end
-        return {
-          frame = tableFrame,
-          RegisterEvents = function() end,
-          SetData = function() end,
-        }
-      end,
-    }
+    local parent = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
 
-    local host = dibs.AceGUI.AddTable(shell, shell.window, {
+    local columns = {
       { title = "Player", width = 150, minWidth = 50, priority = 1 },
       { title = "Action", width = 48, minWidth = 48, action = true },
-    }, { { "Tester-Realm" } }, 100, function()
+    }
+    dibs.AceGUI.AddTable(shell, parent, columns, { { "Tester-Realm" } }, 100, function()
       return { text = "RAPPROCHER", callback = function() end }
-    end, { widthHint = 232 })
+    end, { noScrolling = true, widthHint = 232 })
 
-    local columns = host._dibsScrollingTable._dibsColumns
-    local availableWidth = 220
     local requiredActionWidth = dibs.AceGUI.GetContentSizedActionWidth({ "RAPPROCHER" }, 48)
     assert_true(columns[2].width >= requiredActionWidth)
-    assert_true(columns[1].width < 150)
-    assert_true(columns[1].width + columns[2].width <= availableWidth)
+  end)
+
+  it("keeps the shared grid empty state explicit", function()
+    local _, dibs = setup()
+    local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
+    local parent = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    dibs.AceGUI.AddTable(shell, parent, { { title = "Status", width = 120 } }, {}, nil, nil, {
+      noScrolling = true, emptyText = "No entries",
+    })
+    assert_equal(1, countText(parent, "No entries"))
+  end)
+
+  it("sorts rows, selects once, opens row menus, and releases grid handlers", function()
+    local _, dibs = setup()
+    local msaNames = {
+      "MSA_DropDownMenu_Create", "MSA_DropDownMenu_Initialize", "MSA_DropDownMenu_CreateInfo",
+      "MSA_DropDownMenu_AddButton", "MSA_ToggleDropDownMenu", "MSA_DropDownMenu_SetText",
+      "MSA_DropDownMenu_SetWidth", "MSA_DropDownMenu_JustifyText", "MSA_DropDownMenu_SetSelectedValue",
+    }
+    local previousMSA = {}
+    for _, name in ipairs(msaNames) do previousMSA[name] = _G[name] end
+    local menuState = uiMocks.installMSA()
+    local menuFrame
+    local menuEntries = {}
+    local createMenu = _G.MSA_DropDownMenu_Create
+    local addMenuButton = _G.MSA_DropDownMenu_AddButton
+    _G.MSA_DropDownMenu_Create = function(name, parent)
+      menuFrame = createMenu(name, parent)
+      return menuFrame
+    end
+    _G.MSA_DropDownMenu_AddButton = function(info) menuEntries[#menuEntries + 1] = info end
+    local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
+    local parent = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    local header = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    local rows = { { "Bravo", "10" }, { "Alpha", "2" } }
+    local clickCount = 0
+    local grid = dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Name", width = 120, weight = 2 }, { title = "Score", width = 60, fixed = true },
+    }, rows, 180, nil, {
+      noScrolling = true, fluidColumns = true, headerParent = header,
+      contextMenu = function()
+        return { { text = "Inspect", callback = function() end } }
+      end,
+      onRowClick = function() clickCount = clickCount + 1 end,
+    })
+    local nameHeader = findWidget(header, function(widget) return widget.kind == "Button" and widget.text == "Name" end)
+    assert_not_nil(nameHeader)
+    nameHeader.callbacks.OnClick()
+    assert_equal("Bravo", grid._dibsDataGrid.rows[1][1])
+    nameHeader.callbacks.OnClick()
+    assert_equal("Alpha", grid._dibsDataGrid.rows[1][1])
+
+    local alphaCell = findWidget(parent, function(widget) return widget.text == "Alpha" end)
+    assert_not_nil(alphaCell)
+    alphaCell.frame._scripts.OnMouseUp(alphaCell.frame, "LeftButton")
+    assert_equal(rows[2], grid._dibsDataGrid.selectedRow)
+    assert_equal(1, clickCount)
+    local originalWidth = alphaCell._dibsColumnWidth
+    local contextOpened = alphaCell.frame._scripts.OnMouseUp(alphaCell.frame, "RightButton")
+    local menuShown = menuState.shown > 0
+    if menuFrame and menuFrame._initialize then menuFrame._initialize(menuFrame, 1) end
+    for _, name in ipairs(msaNames) do _G[name] = previousMSA[name] end
+    assert_true(contextOpened)
+    assert_true(menuShown)
+    local sortEntry
+    for _, entry in ipairs(menuEntries) do
+      if entry.text == "Name (A-Z)" then sortEntry = entry end
+    end
+    assert_not_nil(sortEntry)
+    sortEntry.func()
+    assert_equal("Alpha", grid._dibsDataGrid.rows[1][1])
+    shell.frame._scripts.OnSizeChanged(shell.frame, 800, 500)
+    assert_true(alphaCell._dibsColumnWidth > originalWidth)
+
+    dibs.AceGUI.Clear(parent)
+    assert_nil(alphaCell.frame._scripts.OnMouseUp)
+  end)
+
+  it("shows header, status, and full item-link tooltips from grid cells", function()
+    local _, dibs = setup()
+    local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
+    local parent = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    local header = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    local previousTooltip = _G.GameTooltip
+    local tooltip = { lines = {} }
+    function tooltip:SetOwner(owner, anchor) self.owner, self.anchor = owner, anchor end
+    function tooltip:SetText(value) self.title = value end
+    function tooltip:AddLine(value) self.lines[#self.lines + 1] = value end
+    function tooltip:SetHyperlink(value) self.hyperlink = value end
+    function tooltip:Show() self.shown = true end
+    function tooltip:Hide() self.shown = false end
+    _G.GameTooltip = tooltip
+
+    local itemLink = "|cffa335ee|Hitem:280001::::::::::::|h[Warden's Curio]|h|r"
+    dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Item", width = 180, tooltip = "The awarded item." },
+      { title = "Status", width = 100, tooltip = "Current review state." },
+    }, { { itemLink, "Ready" } }, 120, nil, {
+      noScrolling = true, headerParent = header, allowTableSort = false,
+    })
+    local itemHeader = findWidget(header, function(widget) return widget.text == "Item" end)
+    local itemCell = findWidget(parent, function(widget) return widget.text == itemLink end)
+    local statusCell = findWidget(parent, function(widget) return widget.text == "Ready" end)
+    if itemHeader and itemHeader.frame._scripts.OnEnter then itemHeader.frame._scripts.OnEnter(itemHeader.frame) end
+    local headerTitle, headerLine = tooltip.title, tooltip.lines[1]
+    if itemCell and itemCell.frame._scripts.OnEnter then itemCell.frame._scripts.OnEnter(itemCell.frame) end
+    local itemHyperlink = tooltip.hyperlink
+    if statusCell and statusCell.frame._scripts.OnEnter then statusCell.frame._scripts.OnEnter(statusCell.frame) end
+    local statusTitle, statusLine = tooltip.title, tooltip.lines[#tooltip.lines]
+    _G.GameTooltip = previousTooltip
+    assert_not_nil(itemHeader)
+    assert_not_nil(itemCell)
+    assert_not_nil(statusCell)
+    assert_equal("Item", headerTitle)
+    assert_equal("The awarded item.", headerLine)
+    assert_equal(itemLink, itemHyperlink)
+    assert_equal("Ready", statusTitle)
+    assert_equal("Current review state.", statusLine)
+  end)
+
+  it("shows help details from a compact question-mark button", function()
+    local _, dibs = setup()
+    local shell = dibs.PlayerUI.CreateWindow().dibsAceGUIShell
+    local previousTooltip = _G.GameTooltip
+    local tooltip = { lines = {} }
+    function tooltip:SetOwner(owner, anchor) self.owner, self.anchor = owner, anchor end
+    function tooltip:SetText(text) self.title = text end
+    function tooltip:AddLine(text) self.lines[#self.lines + 1] = text end
+    function tooltip:Show() self.shown = true end
+    _G.GameTooltip = tooltip
+
+    local help = dibs.AceGUI.AddHelpButton(shell, shell.window, "Date range", "Select optional start and end dates.")
+    assert_equal("?", help.text)
+    help.frame._scripts.OnEnter(help.frame)
+    assert_equal("Date range", tooltip.title)
+    assert_equal("Select optional start and end dates.", tooltip.lines[1])
+    assert_true(tooltip.shown)
+    _G.GameTooltip = previousTooltip
+  end)
+
+  it("uses the shared select API and releases its dropdown help", function()
+    local _, dibs = setup()
+    local shell = dibs.AceGUI.CreateWindow("Select test", 520, 360)
+    local previousTooltip = _G.GameTooltip
+    local tooltip = { lines = {} }
+    function tooltip:SetOwner(owner, anchor) self.owner, self.anchor = owner, anchor end
+    function tooltip:SetText(value) self.title = value end
+    function tooltip:AddLine(value) self.lines[#self.lines + 1] = value end
+    function tooltip:Show() self.shown = true end
+    function tooltip:Hide() self.shown = false end
+    _G.GameTooltip = tooltip
+
+    local changed
+    local suppliedValues = {
+      all = "All statuses", current = "Needs Reconciliation",
+    }
+    local select = dibs.AceGUI.AddDibsSelect(shell, shell.window, "Status", suppliedValues,
+      function(value) changed = value end, 180, {
+      value = "current", tooltip = "Filters the current roster only.",
+    })
+    assert_not_nil(select)
+    assert_equal("current", select:GetValue())
+    assert_equal("Needs Reconciliation", select:GetText())
+    assert_equal("Status", select._dibsSelectLabel)
+    local replacementValues = { all = "Every status", current = "Needs reconciliation" }
+    select:SetList(replacementValues)
+    assert_equal("All statuses", suppliedValues.all)
+    assert_equal("Needs Reconciliation", suppliedValues.current)
+    assert_equal("current", select:GetValue())
+    assert_equal("Needs reconciliation", select:GetText())
+    select:SetList(suppliedValues)
+    assert_equal("current", select:GetValue())
+    assert_equal("Needs Reconciliation", select:GetText())
+
+    local trigger = select._dibsMSAControl or select.frame
+    local menu = select._dibsSelectWrapper or select
+    menu.callbacks.OnValueChanged(menu, "OnValueChanged", "all")
+    assert_equal("all", changed)
+    assert_equal("All statuses", select:GetText())
+
+    select:SetDisabled(true)
+    assert_true(select.disabled)
+    select:SetDisabled(false)
+    select:SetReadOnly(true)
+    assert_true(select.disabled)
+
+    local tooltipFrame = select._dibsTooltipFrame or select.frame
+    tooltipFrame._scripts.OnEnter(tooltipFrame)
+    assert_equal("Status", tooltip.title)
+    assert_equal("Filters the current roster only.", tooltip.lines[1])
+
+    select:SetReadOnly(false)
+    dibs.AceGUI.Clear(shell.window)
+    assert_nil(select._dibsTooltipAttachment)
+    assert_false(tooltip.shown)
+    _G.GameTooltip = previousTooltip
+  end)
+
+  it("uses AceGUI dropdown widgets even when MSA is available", function()
+    local msaNames = {
+      "MSA_DropDownMenu_Create", "MSA_DropDownMenu_Initialize", "MSA_DropDownMenu_CreateInfo",
+      "MSA_DropDownMenu_AddButton", "MSA_ToggleDropDownMenu", "MSA_DropDownMenu_SetText",
+      "MSA_DropDownMenu_GetText", "MSA_DropDownMenu_SetWidth", "MSA_DropDownMenu_JustifyText",
+      "MSA_DropDownMenu_SetSelectedValue", "MSA_DropDownMenu_ClearAll",
+    }
+    local previous = {}
+    for _, name in ipairs(msaNames) do previous[name] = _G[name] end
+    local msaState = uiMocks.installMSA()
+
+    local _, dibs = setup()
+    local shell = dibs.AceGUI.CreateWindow("MSA select test", 520, 360)
+    local ordinary = dibs.AceGUI.AddDropdown(shell, shell.window, "Ordinary", { all = "All" }, nil, 180)
+    local select = dibs.AceGUI.AddDibsSelect(shell, shell.window, "Status", {
+      all = "All statuses", current = "Needs Reconciliation",
+    }, nil, 180, { value = "current" })
+    assert_equal("Dropdown", ordinary.kind)
+    assert_not_nil(select)
+    assert_equal("Dropdown", select.kind)
+    assert_nil(select._dibsMSAControl)
+    assert_equal(0, msaState.created)
+    assert_equal(0, #select.children)
+    assert_equal("current", select:GetValue())
+    assert_equal("Needs Reconciliation", select:GetText())
+    select:SetValue("all")
+    assert_equal("All statuses", select:GetText())
+
+    dibs.AceGUI.Clear(shell.window)
+    for _, name in ipairs(msaNames) do _G[name] = previous[name] end
   end)
 
   it("keeps Player and Officer trees isolated through repeated close and reopen", function()

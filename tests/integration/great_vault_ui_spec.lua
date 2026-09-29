@@ -1,4 +1,5 @@
 local loader = require("helpers.load_addon")
+local uiMocks = require("helpers.b11_ui_mocks")
 
 describe("Great Vault UI acceptance", function()
   it("documents the manual Vault fallback in slash command help", function()
@@ -71,5 +72,29 @@ describe("Great Vault UI acceptance", function()
     assert_equal(metrics.minHeight, shell.layout.height)
     assert_true(metrics.maxWidth >= metrics.minWidth)
     assert_true(metrics.maxHeight >= metrics.minHeight)
+  end)
+
+  it("uses the shared AceGUI dropdown style for Vault review controls", function()
+    local msaNames = {
+      "MSA_DropDownMenu_Create", "MSA_DropDownMenu_Initialize", "MSA_DropDownMenu_CreateInfo",
+      "MSA_DropDownMenu_AddButton", "MSA_ToggleDropDownMenu", "MSA_DropDownMenu_SetText",
+      "MSA_DropDownMenu_SetWidth", "MSA_DropDownMenu_JustifyText", "MSA_DropDownMenu_SetSelectedValue",
+    }
+    local previous = {}
+    for _, name in ipairs(msaNames) do previous[name] = _G[name] end
+    local msaState = uiMocks.installMSA()
+    local _, dibs = loader.load({
+      withAce3 = true,
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Officer-Realm" } },
+    })
+    local frame = dibs.OfficerUI.CreateWindow()
+    frame.SelectTab("vault")
+
+    assert_equal("Dropdown", frame.vaultAcquisition.kind)
+    assert_equal("Dropdown", frame.vaultDecision.kind)
+    assert_equal("Dropdown", frame.vaultStatusControl.kind)
+    assert_equal(0, msaState.created)
+
+    for _, name in ipairs(msaNames) do _G[name] = previous[name] end
   end)
 end)

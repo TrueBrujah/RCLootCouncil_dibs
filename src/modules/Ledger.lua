@@ -700,6 +700,28 @@ function Ledger.AdminAdjust(playerName, amount, reason, source, seasonId, audit)
 end
 function Ledger.RecordHistoricalAward(playerName, seasonId, awardRef, evidenceId, reason, audit)
   audit = copy(audit or {}); audit.awardRef, audit.evidenceId = awardRef, evidenceId
+  if v2Enforced() then
+    audit.playerName, audit.seasonId = playerName, seasonId
+    audit.amount, audit.reason = 1, reason or "Historical RCLootCouncil award"
+    audit.source = "rclootcouncil_history"
+    local context = { actor = Dibs.GetPlayerName(), action = "ledger.use" }
+    local matchingProposal
+    for _, proposal in ipairs(Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}) do
+      if proposal.status == "PENDING_RECONCILIATION" and proposal.type == "DIB_USED"
+        and proposal.awardRef == awardRef and proposal.evidenceId == evidenceId then
+        if matchingProposal then return nil, "MULTIPLE_MATCHING_PROPOSALS" end
+        matchingProposal = proposal
+      end
+    end
+    local result
+    if matchingProposal then
+      result = Ledger.CommitAwardProposal(context, matchingProposal.proposalId, audit)
+    else
+      result = Ledger.CommitDibUse(context, audit)
+    end
+    if result.accepted then return result.value, result.reasonCode end
+    return nil, result.reasonCode, result.proposal
+  end
   return Ledger.Use(playerName, 1, reason or "Historical RCLootCouncil award", "rclootcouncil_history", seasonId, audit)
 end
 function Ledger.RegisterSeasonAllocation(playerName, seasonId, amount, reason, audit)

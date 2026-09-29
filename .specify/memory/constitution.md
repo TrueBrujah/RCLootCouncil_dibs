@@ -312,7 +312,6 @@ The available embedded library catalog is:
 - AceTab-3.0
 - AceTimer-3.0
 - CallbackHandler-1.0
-- lib-st
 - LibDeflate
 - LibDialog-1.0
 - LibSharedMedia-3.0

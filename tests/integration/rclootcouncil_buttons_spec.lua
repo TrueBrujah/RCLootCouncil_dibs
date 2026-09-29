@@ -1,5 +1,29 @@
 local loader = require("helpers.load_addon")
 
+local function makeVotingApi(columns)
+  local voting = { publicColumns = columns or {}, addColumnCalls = 0 }
+  function voting:GetColumnIndex(name)
+    for index, column in ipairs(self.publicColumns) do
+      if column.colName == name then return index end
+    end
+  end
+  function voting:GetColumn(name)
+    local index = self:GetColumnIndex(name)
+    return index and self.publicColumns[index] or nil
+  end
+  function voting:AddColumn(spec, target, position)
+    self.addColumnCalls = self.addColumnCalls + 1
+    local targetIndex = target and self:GetColumnIndex(target) or nil
+    if target and not targetIndex then error("Column target was not found") end
+    local inserted = {}
+    for key, value in pairs(spec) do inserted[key] = value end
+    local insertAt = targetIndex and targetIndex + (position == "after" and 1 or 0) or #self.publicColumns + 1
+    table.insert(self.publicColumns, insertAt, inserted)
+    return inserted
+  end
+  return voting
+end
+
 describe("RCLootCouncil DIB response projection", function()
   it("adds DIB to the real indexed profile and preserves configured responses", function()
     local profile = {
@@ -88,6 +112,148 @@ describe("RCLootCouncil DIB response projection", function()
     assert_equal("Transmog", profile.responses.default[2].text)
   end)
 
+  it("applies a template with DIB first and caps ordinary choices at nine", function()
+    local profile = { maxButtons = 10, buttons = {}, responses = {} }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    rc.ConfigTableChanged = function() end
+    local _, dibs = loader.load({ rclootcouncil = rc })
+    local template = { count = 10, buttons = {} }
+    for index = 1, 10 do
+      template.buttons[index] = {
+        text = "Button " .. tostring(index),
+        response = "Response " .. tostring(index),
+        color = { 0.1, 0.2, 0.3, 1 },
+        requireNotes = index == 2,
+      }
+    end
+
+    local applied, result = dibs.RCLootCouncil.ApplyButtonTemplate("OTHER", template, "OTHER", true)
+    assert_true(applied)
+    assert_equal(9, result.buttonCount)
+    assert_true(result.dibIncluded)
+    assert_true(result.truncated)
+    assert_equal(10, profile.buttons.OTHER.numButtons)
+    assert_equal("Dib", profile.buttons.OTHER[1].text)
+    assert_true(profile.buttons.OTHER[1].dibsLocked)
+    assert_equal("Dib", profile.responses.OTHER[1].text)
+    assert_equal("Button 1", profile.buttons.OTHER[2].text)
+    assert_equal("Response 1", profile.responses.OTHER[2].text)
+    assert_equal(true, profile.buttons.OTHER[3].requireNotes)
+    assert_equal(0.3, profile.responses.OTHER[2].color[3])
+    assert_equal("Button 9", profile.buttons.OTHER[10].text)
+    assert_nil(profile.buttons.OTHER[11])
+    assert_true(profile.enabledButtons.OTHER)
+  end)
+
+  it("applies all ten template choices without a DIB response", function()
+    local profile = { maxButtons = 10, buttons = {}, responses = {} }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    rc.ConfigTableChanged = function() end
+    local _, dibs = loader.load({ rclootcouncil = rc })
+    local template = { count = 10, buttons = {} }
+    for index = 1, 10 do
+      template.buttons[index] = { text = "Choice " .. index, response = "Reply " .. index }
+    end
+
+    local applied, result = dibs.RCLootCouncil.ApplyButtonTemplate("COSMETIC", template, "COSMETIC", true)
+    assert_true(applied)
+    assert_equal(10, result.buttonCount)
+    assert_false(result.dibIncluded)
+    assert_false(result.truncated)
+    assert_equal("Choice 1", profile.buttons.COSMETIC[1].text)
+    assert_equal("Reply 1", profile.responses.COSMETIC[1].text)
+    assert_equal(10, profile.buttons.COSMETIC.numButtons)
+    assert_true(profile.enabledButtons.COSMETIC)
+  end)
+
+  it("reports unsupported button schemas before template writes", function()
+    local profile = {
+      maxButtons = 10,
+      buttons = { OTHER = { numButtons = 1, [1] = { text = "Original" } } },
+      responses = { OTHER = { numButtons = 1, [1] = { text = "Original" } } },
+    }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    local _, dibs = loader.load({ rclootcouncil = rc })
+    local buttonText = profile.buttons.OTHER[1].text
+    local responseText = profile.responses.OTHER[1].text
+    local supported, reason = dibs.RCOptions.GetButtonTemplateCapability()
+    assert_false(supported)
+    assert_equal("RC_BUTTON_CONFIG_UNSUPPORTED", reason)
+
+    local applied, applyReason = dibs.RCLootCouncil.ApplyButtonTemplate("OTHER", {
+      count = 1, buttons = { { text = "New", response = "New" } },
+    }, "OTHER", false)
+    assert_false(applied)
+    assert_equal("RC_BUTTON_CONFIG_UNSUPPORTED", applyReason)
+    assert_equal(buttonText, profile.buttons.OTHER[1].text)
+    assert_equal(responseText, profile.responses.OTHER[1].text)
+  end)
+
+  it("rejects an incomplete template before changing the RC profile", function()
+    local profile = {
+      maxButtons = 10,
+      buttons = { OTHER = { numButtons = 1, [1] = { text = "Original" } } },
+      responses = { OTHER = { numButtons = 1, [1] = { text = "Original" } } },
+      enabledButtons = { OTHER = false },
+    }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    local _, dibs = loader.load({ rclootcouncil = rc })
+    local beforeButton = profile.buttons.OTHER[1].text
+    local beforeResponse = profile.responses.OTHER[1].text
+    local beforeCount = profile.buttons.OTHER.numButtons
+    local beforeEnabled = profile.enabledButtons.OTHER
+    local applied, reason = dibs.RCLootCouncil.ApplyButtonTemplate("OTHER", {
+      count = 2,
+      buttons = { { text = "Valid", response = "Valid" }, { text = "", response = "Invalid" } },
+    }, "OTHER", true)
+
+    assert_false(applied)
+    assert_equal("INVALID_BUTTON_TEMPLATE", reason)
+    assert_equal(beforeButton, profile.buttons.OTHER[1].text)
+    assert_equal(beforeResponse, profile.responses.OTHER[1].text)
+    assert_equal(beforeCount, profile.buttons.OTHER.numButtons)
+    assert_equal(beforeEnabled, profile.enabledButtons.OTHER)
+  end)
+
+  it("prevalidates every set before applying a multi-set template plan", function()
+    local profile = { maxButtons = 10, buttons = {}, responses = {} }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    rc.ConfigTableChanged = function() end
+    local _, dibs = loader.load({ rclootcouncil = rc })
+    local valid = { count = 1, buttons = { { text = "Need", response = "Need" } } }
+    local invalid = { count = 2, buttons = {
+      { text = "Pass", response = "Pass" }, { text = "", response = "Invalid" },
+    } }
+
+    local applied, reason = dibs.RCLootCouncil.ApplyButtonTemplatePlan({
+      { buttonSetKey = "RARE", template = valid, responseType = "RARE", includeDib = true },
+      { buttonSetKey = "SPECIAL", template = invalid, responseType = "SPECIAL", includeDib = false },
+    })
+    assert_false(applied)
+    assert_equal("INVALID_BUTTON_TEMPLATE", reason)
+    assert_nil(profile.buttons.RARE)
+    assert_nil(profile.responses.RARE)
+    assert_nil(profile.enabledButtons)
+
+    local planned, result = dibs.RCLootCouncil.ApplyButtonTemplatePlan({
+      { buttonSetKey = "RARE", template = valid, responseType = "RARE", includeDib = true },
+      { buttonSetKey = "SPECIAL", template = valid, responseType = "SPECIAL", includeDib = false },
+    })
+    assert_true(planned)
+    assert_equal(2, result.appliedSets)
+    assert_equal("Dib", profile.buttons.RARE[1].text)
+    assert_true(profile.buttons.RARE[1].dibsLocked)
+    assert_equal("Need", profile.buttons.RARE[2].text)
+    assert_equal("Need", profile.buttons.SPECIAL[1].text)
+    assert_equal(2, profile.buttons.RARE.numButtons)
+    assert_equal(1, profile.buttons.SPECIAL.numButtons)
+  end)
+
   it("bounds a corrupted button count before projecting the DIB response", function()
     local profile = {
       maxButtons = 10,
@@ -101,6 +267,94 @@ describe("RCLootCouncil DIB response projection", function()
     assert_equal(10, profile.buttons.default.numButtons)
     assert_equal("Button 1", profile.buttons.default[1].text)
     assert_equal("Button 1", profile.responses.default[1].text)
+  end)
+
+  it("restores shared rules and projects DIB first in buttons and responses", function()
+    local profile = {
+      maxButtons = 10,
+      enabledButtons = { INVTYPE_HEAD = true },
+      buttons = {
+        default = { numButtons = 2, [1] = { text = "Need" }, [2] = { text = "Greed" } },
+        INVTYPE_HEAD = { numButtons = 2, [1] = { text = "Head Need" }, [2] = { text = "Head Offspec" } },
+      },
+      responses = {
+        default = { numButtons = 2, [1] = { text = "Need", sort = 1 }, [2] = { text = "Greed", sort = 2 } },
+        INVTYPE_HEAD = { numButtons = 2, [1] = { text = "Head Need", sort = 1 }, [2] = { text = "Head Offspec", sort = 2 } },
+      },
+    }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    local _, dibs = loader.load({
+      withAce3 = true,
+      rclootcouncil = rc,
+      savedVariables = { settings = {
+        dibAllowedTypes = { default = false, OTHER = false },
+        dibRCEnabledTypes = { default = false, OTHER = false },
+      } },
+    })
+    assert_equal("Need", profile.buttons.default[1].text)
+
+    local legacyTypes = {}
+    for key in pairs(dibs.RCOptions.GetSupportedLootRuleTypeValues()) do
+      if key ~= "COSMETIC" then
+        legacyTypes[key] = { adventureGuide = true, rclootcouncil = true }
+      end
+    end
+    legacyTypes.INVTYPE_HEAD = { adventureGuide = false, rclootcouncil = false }
+    local normalized, reason = dibs.LootRules.NormalizeSnapshot({ schemaVersion = 1, types = legacyTypes })
+    assert_true(type(normalized) == "table", tostring(reason))
+    assert_nil(normalized.types.INVTYPE_HEAD)
+    assert_equal(false, normalized.types.COSMETIC.adventureGuide)
+    dibs.LootRules.GetAuthoritySnapshot = function()
+      return normalized, "GUILD_LOOT_RULES_READY"
+    end
+
+    local refreshed, changed = dibs.RCLootCouncil.RefreshConfigProjection()
+    assert_true(refreshed)
+    assert_true(changed)
+    assert_equal("Dib", profile.buttons.default[1].text)
+    assert_equal("Need", profile.buttons.default[2].text)
+    assert_equal("Dib", profile.responses.default[1].text)
+    assert_equal(1, profile.responses.default[1].sort)
+    assert_equal("Dib", profile.buttons.INVTYPE_HEAD[1].text)
+    assert_equal("Head Need", profile.buttons.INVTYPE_HEAD[2].text)
+    assert_equal("Dib", profile.responses.INVTYPE_HEAD[1].text)
+    assert_equal(1, profile.responses.INVTYPE_HEAD[1].sort)
+  end)
+
+  it("removes stale DIB responses when synchronized guild rules disable every type", function()
+    local profile = {
+      maxButtons = 10,
+      enabledButtons = { TOKEN = true },
+      buttons = {
+        default = { numButtons = 2, [1] = { text = "Dib", dibsLocked = true }, [2] = { text = "Need" } },
+        TOKEN = { numButtons = 2, [1] = { text = "Dib", dibsLocked = true }, [2] = { text = "Token Need" } },
+      },
+      responses = {
+        default = { numButtons = 2, [1] = { text = "Dib", sort = 1 }, [2] = { text = "Need", sort = 2 } },
+        TOKEN = { numButtons = 2, [1] = { text = "Dib", sort = 1 }, [2] = { text = "Token Need", sort = 2 } },
+      },
+    }
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.Getdb = function() return profile end
+    local _, dibs = loader.load({ rclootcouncil = rc })
+
+    local types = {}
+    for key in pairs(dibs.RCOptions.GetSupportedLootRuleTypeValues()) do
+      types[key] = { adventureGuide = false, rclootcouncil = false }
+    end
+    local snapshot = assert(dibs.LootRules.NormalizeSnapshot({ schemaVersion = 1, types = types }))
+    dibs.LootRules.GetAuthoritySnapshot = function()
+      return snapshot, "GUILD_LOOT_RULES_READY", { catalogRevision = 2 }
+    end
+
+    local refreshed, changed = dibs.RCLootCouncil.RefreshConfigProjection()
+    assert_true(refreshed)
+    assert_true(changed)
+    assert_equal("Need", profile.buttons.default[1].text)
+    assert_equal("Need", profile.responses.default[1].text)
+    assert_equal("Token Need", profile.buttons.TOKEN[1].text)
+    assert_equal("Token Need", profile.responses.TOKEN[1].text)
   end)
 
   it("finds the AceDB profile when the addon exposes it through db.profile", function()
@@ -157,46 +411,25 @@ describe("RCLootCouncil DIB response projection", function()
     assert_equal("Tester-Realm", identity)
   end)
 
-  it("passes the lib-st row and cell arguments to the voting Dibs renderer", function()
-    local voting = {
-      addColumnCalls = 0,
-      scrollCols = {
-        { colName = "name", name = "Name" },
-        { colName = "response", name = "Response" },
-      },
-      frame = {
-        st = {
-          cols = {},
-          SetDisplayCols = function(self, cols) self.cols = cols end,
-          Refresh = function() end,
-        },
-      },
-    }
-    function voting:AddColumn(spec, target, position)
-      self.addColumnCalls = self.addColumnCalls + 1
-      local insertAt = #self.scrollCols + 1
-      for index, column in ipairs(self.scrollCols) do
-        if column.colName == target then
-          insertAt = position == "before" and index or index + 1
-          break
-        end
-      end
-      table.insert(self.scrollCols, insertAt, spec)
-      self.frame.st:SetDisplayCols(self.scrollCols)
-      return spec
-    end
+  it("uses the public column API and preserves the voting cell callback contract", function()
+    local voting = makeVotingApi({
+      { colName = "name", name = "Name" },
+      { colName = "response", name = "Response" },
+    })
     local rc = loader.makeRCLootCouncil({ enabled = true })
     rc.GetModule = function(_, name)
       if name == "RCVotingFrame" then return voting end
       return nil
     end
     local _, dibs = loader.load({ rclootcouncil = rc })
-    local dibsColumn
-    for _, column in ipairs(voting.scrollCols) do
-      if column.colName == "dibsRemaining" then dibsColumn = column break end
-    end
+    local dibsColumn = voting:GetColumn("dibsRemaining")
     assert_not_nil(dibsColumn)
     assert_equal(2, voting.addColumnCalls)
+    assert_equal(3, voting:GetColumnIndex("dibsRemaining"))
+    assert_equal(4, voting:GetColumnIndex("dibsConvert"))
+    local integration = dibs.RCLootCouncil.GetVotingIntegrationStatus()
+    assert_equal("ready", integration.status)
+    assert_true(integration.publicColumnApi)
 
     local cell = {
       text = {
@@ -205,55 +438,37 @@ describe("RCLootCouncil DIB response projection", function()
       },
     }
     local row = { name = "Tester-Realm", cols = { [3] = {} } }
-    dibsColumn.DoCellUpdate({}, cell, { row }, voting.scrollCols, 1, 1, 3, true, voting.frame.st)
+    dibsColumn.DoCellUpdate({}, cell, { row }, voting.publicColumns, 1, 1, 3, true, {})
     assert_equal("1/1", cell.text.value)
     assert_equal(1, row.cols[3].value)
     assert_true(dibs.RCLootCouncil.GetDibsColumnValue(row) ~= nil)
   end)
 
-  it("restores both voting columns after late table initialization without duplicates", function()
-    local voting = { addColumnCalls = 0, frame = { st = { cols = {}, SetDisplayCols = function(self, cols) self.cols = cols end, Refresh = function() end } } }
-    function voting:AddColumn(spec, target, position)
-      self.addColumnCalls = self.addColumnCalls + 1
-      assert_true(type(self.scrollCols) == "table")
-      table.insert(self.scrollCols, spec)
-      self.frame.st:SetDisplayCols(self.scrollCols)
-      return spec
-    end
+  it("registers public columns after the base layout becomes available without duplicates", function()
+    local voting = makeVotingApi()
     local rc = loader.makeRCLootCouncil({ enabled = true })
     rc.modules = { RCVotingFrame = voting }
     local _, dibs = loader.load({ rclootcouncil = rc })
 
-    voting.scrollCols = {
+    voting.publicColumns = {
       { colName = "name", name = "Name" },
       { colName = "response", name = "Response" },
     }
     dibs.RCLootCouncil.TryUseRCModule()
+    local successfulCallCount = voting.addColumnCalls
     dibs.RCLootCouncil.TryUseRCModule()
 
-    local counts = { dibsRemaining = 0, dibsConvert = 0 }
-    for _, column in ipairs(voting.scrollCols) do
-      if counts[column.colName] ~= nil then counts[column.colName] = counts[column.colName] + 1 end
-    end
-    assert_equal(1, counts.dibsRemaining)
-    assert_equal(1, counts.dibsConvert)
-    assert_equal(2, voting.addColumnCalls)
-
-    voting.frame.st.cols = {}
-    voting.frame.st:SetDisplayCols(voting.scrollCols)
-    dibs.RCLootCouncil.TryUseRCModule()
-    assert_equal(4, #voting.scrollCols)
-    assert_equal(4, #voting.frame.st.cols)
+    assert_equal(3, voting:GetColumnIndex("dibsRemaining"))
+    assert_equal(4, voting:GetColumnIndex("dibsConvert"))
+    assert_equal(successfulCallCount, voting.addColumnCalls)
+    assert_equal("ready", dibs.RCLootCouncil.GetVotingIntegrationStatus().status)
   end)
 
   it("keeps the read-only Dibs column when Master Looter capability is degraded", function()
-    local voting = {
-      scrollCols = {
-        { colName = "name", name = "Name" },
-        { colName = "response", name = "Response" },
-      },
-      frame = { st = { cols = {}, SetDisplayCols = function(self, cols) self.cols = cols end, Refresh = function() end } },
-    }
+    local voting = makeVotingApi({
+      { colName = "name", name = "Name" },
+      { colName = "response", name = "Response" },
+    })
     local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = {} })
     rc.modules = { RCVotingFrame = voting }
     local _, dibs = loader.load({ rclootcouncil = rc })
@@ -262,12 +477,21 @@ describe("RCLootCouncil DIB response projection", function()
     assert_equal("RC_MASTER_LOOTER_UNVERIFIABLE", capabilities.reasonCode)
     assert_true(dibs.RCLootCouncil.GetUIProjectionStatus().runtimeHooksReady ~= false)
 
-    local counts = { dibsRemaining = 0, dibsConvert = 0 }
-    for _, column in ipairs(voting.scrollCols) do
-      if counts[column.colName] ~= nil then counts[column.colName] = counts[column.colName] + 1 end
-    end
-    assert_equal(1, counts.dibsRemaining)
-    assert_equal(1, counts.dibsConvert)
+    assert_equal(3, voting:GetColumnIndex("dibsRemaining"))
+    assert_equal(4, voting:GetColumnIndex("dibsConvert"))
+  end)
+
+  it("reports unsupported versions without falling back to undocumented columns", function()
+    local voting = {}
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.modules = { RCVotingFrame = voting }
+    local _, dibs = loader.load({ rclootcouncil = rc })
+    local status = dibs.RCLootCouncil.GetVotingIntegrationStatus()
+    assert_true(status.moduleFound)
+    assert_false(status.publicColumnApi)
+    assert_equal("unsupported", status.status)
+    assert_equal("RC_COLUMN_API_UNSUPPORTED", status.reasonCode)
+    assert_equal("3.23.3", status.requiredVersion)
   end)
 
   it("does not use guild rank allocation when the canonical balance is zero", function()

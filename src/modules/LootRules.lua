@@ -6,15 +6,23 @@ local DECISION_FIELDS = { adventureGuide = true, rclootcouncil = true }
 
 local function supportedTypes()
   local optionsApi = Dibs.RCOptions
-  if type(optionsApi) ~= "table" or type(optionsApi.GetLootTypeOptions) ~= "function" then
+  if type(optionsApi) ~= "table" then
     return nil, "GUILD_LOOT_RULES_UNAVAILABLE"
   end
-  local ok, options = pcall(optionsApi.GetLootTypeOptions)
-  if not ok or type(options) ~= "table" or type(options.types) ~= "table" then
-    return nil, "GUILD_LOOT_RULES_UNAVAILABLE"
+  local source
+  if type(optionsApi.GetSupportedLootRuleTypeValues) == "function" then
+    local ok, values = pcall(optionsApi.GetSupportedLootRuleTypeValues)
+    if ok then source = values end
+  else
+    if type(optionsApi.GetLootTypeOptions) ~= "function" then
+      return nil, "GUILD_LOOT_RULES_UNAVAILABLE"
+    end
+    local ok, options = pcall(optionsApi.GetLootTypeOptions)
+    if not ok or type(options) ~= "table" or type(options.types) ~= "table" then
+      return nil, "GUILD_LOOT_RULES_UNAVAILABLE"
+    end
+    source = options.types.values
   end
-
-  local source = options.types.values
   if type(source) == "function" then
     ok, source = pcall(source)
     if not ok then return nil, "GUILD_LOOT_RULES_UNAVAILABLE" end
@@ -40,6 +48,13 @@ local function hasOnlyKeys(value, allowed)
   return true
 end
 
+local function defaultDecision(key, field)
+  if field == "adventureGuide" and string.upper(key):gsub("[%s%-]", "_") == "COSMETIC" then
+    return false
+  end
+  return true
+end
+
 function Dibs.LootRules.GetSupportedTypes()
   return supportedTypes()
 end
@@ -57,20 +72,40 @@ function Dibs.LootRules.NormalizeSnapshot(snapshot)
   if not keys then return nil, supported end
   local normalized = { schemaVersion = SCHEMA_VERSION, types = {} }
   for key, value in pairs(snapshot.types) do
-    if type(key) ~= "string" or not supported[key] then
-      return nil, "UNSUPPORTED_GUILD_LOOT_TYPE"
-    end
+    if type(key) ~= "string" then return nil, "UNSUPPORTED_GUILD_LOOT_TYPE" end
     if type(value) ~= "table" or not hasOnlyKeys(value, { adventureGuide = true, rclootcouncil = true })
       or type(value.adventureGuide) ~= "boolean" or type(value.rclootcouncil) ~= "boolean" then
       return nil, "INVALID_GUILD_LOOT_RULE"
     end
-    normalized.types[key] = {
-      adventureGuide = value.adventureGuide,
-      rclootcouncil = value.rclootcouncil,
-    }
+    local targetKey = supported[key] and key or nil
+    if not targetKey and Dibs.RCOptions.IsLootTypeCompatibilityKey
+      and Dibs.RCOptions.IsLootTypeCompatibilityKey(key) then
+      targetKey = false
+    end
+    if not targetKey and targetKey ~= false and Dibs.RCOptions.GetCanonicalLootTypeKey then
+      local canonicalKey = Dibs.RCOptions.GetCanonicalLootTypeKey(key)
+      if supported[canonicalKey] then targetKey = canonicalKey end
+    end
+    if targetKey == nil then return nil, "UNSUPPORTED_GUILD_LOOT_TYPE" end
+    if targetKey ~= false then
+      local existing = normalized.types[targetKey]
+      if existing and (existing.adventureGuide ~= value.adventureGuide
+        or existing.rclootcouncil ~= value.rclootcouncil) then
+        return nil, "CONFLICTING_GUILD_LOOT_TYPE_ALIASES"
+      end
+      normalized.types[targetKey] = {
+        adventureGuide = value.adventureGuide,
+        rclootcouncil = value.rclootcouncil,
+      }
+    end
   end
   for key in pairs(supported) do
-    if normalized.types[key] == nil then return nil, "INCOMPLETE_GUILD_LOOT_RULES" end
+    if normalized.types[key] == nil then
+      normalized.types[key] = {
+        adventureGuide = defaultDecision(key, "adventureGuide"),
+        rclootcouncil = defaultDecision(key, "rclootcouncil"),
+      }
+    end
   end
   return normalized
 end
@@ -79,13 +114,6 @@ local function settings()
   local db = Dibs.GetDB and Dibs.GetDB() or {}
   db.settings = db.settings or {}
   return db.settings
-end
-
-local function defaultDecision(key, field)
-  if field == "adventureGuide" and string.upper(key):gsub("[%s%-]", "_") == "COSMETIC" then
-    return false
-  end
-  return true
 end
 
 function Dibs.LootRules.GetDraftSnapshot()

@@ -10,7 +10,9 @@ end
 
 local function containsText(widget, text)
   if type(widget) ~= "table" then return false end
-  if tostring(widget.text or widget.label or ""):find(text, 1, true) then return true end
+  if tostring(widget.text or ""):find(text, 1, true)
+    or tostring(widget.label or ""):find(text, 1, true)
+    or tostring(widget._dibsSelectLabel or ""):find(text, 1, true) then return true end
   for _, child in ipairs(widget.children or {}) do
     if containsText(child, text) then return true end
   end
@@ -121,7 +123,7 @@ describe("Retail Officer navigation lifecycle", function()
   it("keeps the RCLootCouncil page focused on integration status and mapping", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow("integration")
-    assert_true(containsText(frame.contentHost, "RCLootCouncil button-set mapping"))
+    assert_true(containsText(frame.contentHost, "Button-set mapping details"))
     assert_false(containsText(frame.contentHost, "Run readiness check"))
     assert_false(containsText(frame.contentHost, "Enable all loot types"))
     assert_false(containsText(frame.contentHost, "Default loot type only"))

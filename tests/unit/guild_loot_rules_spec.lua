@@ -5,13 +5,11 @@ local function load()
 end
 
 local function setSupportedKeys(dibs, keys)
-  dibs.RCOptions.GetLootTypeOptions = function()
-    return { types = { values = function() return keys end } }
-  end
+  dibs.RCOptions.GetSupportedLootRuleTypeValues = function() return keys end
 end
 
 describe("Guild Loot Rules normalization", function()
-  it("normalizes a complete snapshot from the dynamic option keys", function()
+  it("normalizes a complete snapshot from the supported semantic keys", function()
     local dibs = load()
     setSupportedKeys(dibs, { TOKEN = "Curio", OTHER = "Other" })
     local normalized, reason = dibs.LootRules.NormalizeSnapshot({
@@ -28,15 +26,20 @@ describe("Guild Loot Rules normalization", function()
     assert_equal(false, normalized.types.OTHER.rclootcouncil)
   end)
 
-  it("rejects missing or unsupported dynamic keys", function()
+  it("fills missing known categories and rejects unsupported semantic keys", function()
     local dibs = load()
     setSupportedKeys(dibs, { TOKEN = "Curio", OTHER = "Other" })
     local normalized, reason = dibs.LootRules.NormalizeSnapshot({
       schemaVersion = 1,
-      types = { TOKEN = { adventureGuide = true, rclootcouncil = true } },
+      types = {
+        TOKEN = { adventureGuide = true, rclootcouncil = true },
+        INVTYPE_HEAD = { adventureGuide = false, rclootcouncil = false },
+      },
     })
-    assert_equal(nil, normalized)
-    assert_equal("INCOMPLETE_GUILD_LOOT_RULES", reason)
+    assert_true(type(normalized) == "table", tostring(reason))
+    assert_equal(true, normalized.types.OTHER.adventureGuide)
+    assert_equal(true, normalized.types.OTHER.rclootcouncil)
+    assert_nil(normalized.types.INVTYPE_HEAD)
 
     normalized, reason = dibs.LootRules.NormalizeSnapshot({
       schemaVersion = 1,
@@ -70,6 +73,7 @@ describe("Guild Loot Rules normalization", function()
 
   it("reports the option source unavailable instead of accepting a partial snapshot", function()
     local dibs = load()
+    dibs.RCOptions.GetSupportedLootRuleTypeValues = nil
     dibs.RCOptions.GetLootTypeOptions = function() return nil end
     local normalized, reason = dibs.LootRules.NormalizeSnapshot({ schemaVersion = 1, types = {} })
     assert_equal(nil, normalized)
@@ -124,6 +128,7 @@ describe("Guild Loot Rules normalization", function()
     assert_equal("GUILD_LOOT_RULES_NOT_CONFIGURED", dibs.LootRules.GetStatus().status)
     dibs.db.settings.dibAllowedTypes = { TOKEN = false }
     assert_equal("LOCAL_LEGACY_ONLY", dibs.LootRules.GetStatus().status)
+    dibs.RCOptions.GetSupportedLootRuleTypeValues = nil
     dibs.RCOptions.GetLootTypeOptions = function() return nil end
     assert_equal("UNAVAILABLE", dibs.LootRules.GetStatus().status)
   end)

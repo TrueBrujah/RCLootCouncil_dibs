@@ -16,7 +16,7 @@ The central approach is projection-first: `PlayerUI.lua`, `OfficerUI.lua`, `Logs
 
 **Language/Version**: Lua 5.1-compatible World of Warcraft Retail addon runtime.
 
-**Primary Dependencies**: WoW Retail UI APIs; embedded AceAddon/AceEvent/AceTimer/AceGUI/AceConfig services; MSA-DropDownMenu-1.0; lib-st; LibWindow-1.1; optional RCLootCouncil capability/history surfaces; existing Dibs modules and deterministic Fengari test doubles.
+**Primary Dependencies**: WoW Retail UI APIs; embedded AceAddon/AceEvent/AceTimer/AceGUI/AceConfig services; MSA-DropDownMenu-1.0; LibWindow-1.1; the shared DIBS AceGUI Data Grid; optional RCLootCouncil public column/capability/history APIs (v3.23.3+); existing Dibs modules and deterministic Fengari test doubles.
 
 **Storage**: Existing versioned Dibs SavedVariables and local presentation/window-position state. B12c presentation categories are not persisted request fields. B12 does not add a new authoritative store or synchronization payload. Any implementation-time metadata change requires the existing migration, changelog, and version gates.
 

@@ -61,7 +61,7 @@ describe("Raid readiness", function()
   it("exposes officer readiness controls and a player-safe summary", function()
     local dibs = setup({ guildLeader = true })
     assert_true(dibs.RCOptions.EnsureRegistered(1))
-    local args = dibs.Ace3.libs.config.tables.RCLootCouncil_dibs.args.dibsSettings.args
+    local args = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args
     assert_not_nil(args.player.args.readiness)
     assert_not_nil(args.officer.args.integration.args.readiness)
     assert_not_nil(args.officer.args.integration.args.readiness.args.runDryRun)

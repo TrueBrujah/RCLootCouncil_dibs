@@ -25,7 +25,7 @@ The addon uses one global namespace, `Dibs`. `Core.lua` creates the namespace, m
 - **Application adapters:** LootPipeline, RaidRelay, RaidPrompts, Readiness, DryRun, and Sync coordinate workflows.
 - **External integrations:** RCLootCouncil, RCLootCouncilOptions, and EncounterJournal probe optional or Blizzard APIs.
 - **UI:** Midnight, AceGUI, PlayerUI, OfficerUI, HealthUI, SetupAssistant, DataUI, LogsUI, and DebugLogsUI own bounded projections and delegate mutations to existing services.
-- **Embedded/vendor libraries:** `src/libs/**` and `src/embeds.xml` provide Ace3, ScrollingTable, and serializer dependencies. They are not Dibs business modules.
+- **Embedded/vendor libraries:** `src/libs/**` and `src/embeds.xml` provide Ace3, MSA dropdown, and serializer dependencies. Internal DIBS tables use one shared AceGUI Data Grid through `Dibs.AceGUI.AddTable`; the optional RCLootCouncil voting projection uses its public column API and requires RCLootCouncil 3.23.3 or newer. RCLootCouncil may use its own UI libraries independently.
 
 ## Authority boundaries
 

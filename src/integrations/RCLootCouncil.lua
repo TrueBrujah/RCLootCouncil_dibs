@@ -44,7 +44,7 @@ Dibs.RCLootCouncil = Dibs.RCLootCouncil or {}
 -- preventing their dialog frame from intercepting Settings clicks.
 -- Change log 0.3.1-dev (2026-09-07): reuse injected loot buttons after RC
 -- rebuilds its entry list and avoid repeated frame creation during updates.
--- Change log 0.3.0-dev (2026-09-07): correct lib-st cell arguments, release
+-- Change log 0.3.0-dev (2026-09-07): correct voting-column callback arguments, release
 -- UI references after refresh, and keep slash/status output visible.
 -- Change log 0.2.7-dev (2026-09-07): stabilize the options refresh path,
 -- resolve candidate identities for the Dibs voting column, and bound malformed
@@ -82,6 +82,39 @@ local function getRC()
   return getRCAddon() or _G.RCLootCouncil
 end
 
+  local cosmeticResponseCodeGenerator = function(_, db, _, _, itemClassID, itemSubClassID)
+    local itemClasses = Enum and Enum.ItemClass
+    local armorSubclasses = Enum and Enum.ItemArmorSubclass
+    local armorClass = itemClasses and itemClasses.Armor or 4
+    local cosmeticSubclass = armorSubclasses and armorSubclasses.Cosmetic or 5
+    if type(db) == "table" and type(db.enabledButtons) == "table"
+      and db.enabledButtons.COSMETIC == true
+      and itemClassID == armorClass and itemSubClassID == cosmeticSubclass then
+      return "COSMETIC"
+    end
+  end
+
+  local function installCosmeticResponseCodeGenerator(rc)
+    local buttonValues = type(rc) == "table" and rc.OPT_MORE_BUTTONS_VALUES or nil
+    local generators = type(rc) == "table" and rc.RESPONSE_CODE_GENERATORS or nil
+    if type(buttonValues) ~= "table" or type(generators) ~= "table" then
+      return false, "RCLC_COSMETIC_TYPE_UNSUPPORTED"
+    end
+
+    buttonValues.COSMETIC = buttonValues.COSMETIC or _G.ITEM_SUBCLASS_COSMETIC or "Cosmetic Items"
+    for _, generator in ipairs(generators) do
+      if generator == cosmeticResponseCodeGenerator then return true, "READY" end
+    end
+    table.insert(generators, 1, cosmeticResponseCodeGenerator)
+    return true, "READY"
+  end
+
+  function Dibs.RCLootCouncil.GetCosmeticResponseCodeSupport()
+    local rc = getRC()
+    if type(rc) ~= "table" then return false, "RC_INSTANCE_UNAVAILABLE" end
+    return installCosmeticResponseCodeGenerator(rc)
+  end
+
 local function normalizeButtonLabel(value)
   return string.upper(tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
@@ -118,7 +151,7 @@ local function isCosmeticNonDibType(value)
 end
 
 local function isPersonalOrCosmeticNonDibType(value)
-  return isPersonalNonDibType(value)
+  return isPersonalNonDibType(value) or isCosmeticNonDibType(value)
 end
 
 local function isNonDibPolicyType(value)
@@ -200,8 +233,16 @@ local function getDibRCEnabledSettings()
   return db.settings.dibRCEnabledTypes
 end
 
+local function lootRuleTypeKey(responseType)
+  if Dibs.RCOptions and type(Dibs.RCOptions.GetCanonicalLootTypeKey) == "function" then
+    local ok, key = pcall(Dibs.RCOptions.GetCanonicalLootTypeKey, responseType)
+    if ok and key ~= nil then return key end
+  end
+  return canonicalPolicyKey(responseType)
+end
+
 function Dibs.RCLootCouncil.IsRCButtonEnabledForType(responseType)
-  local key = canonicalPolicyKey(responseType)
+  local key = lootRuleTypeKey(responseType)
   if Dibs.LootRules and Dibs.LootRules.GetEffectiveValue then
     local value = Dibs.LootRules.GetEffectiveValue(key, "rclootcouncil")
     if type(value) == "boolean" then return value end
@@ -216,7 +257,7 @@ function Dibs.RCLootCouncil.SetRCButtonEnabledForType(responseType, enabled, act
     or not Dibs.Permissions.Can("settings.modify", actor) then
     return nil, "GUILD_ADMIN_REQUIRED"
   end
-  local key = canonicalPolicyKey(responseType)
+  local key = lootRuleTypeKey(responseType)
   if Dibs.LootRules and Dibs.LootRules.SetDraftValue then
     local changed, changeReason = Dibs.LootRules.SetDraftValue(key, "rclootcouncil", enabled == true)
     if not changed then return nil, changeReason end
@@ -239,12 +280,11 @@ local function nowSeconds()
 end
 
 function Dibs.RCLootCouncil.IsDibEnabledForType(responseType)
-  -- Catalyst currency is personal to the player. It can never be a Dibs
-  -- response, consume a ledger entry, or be enabled by a saved policy.
-  if isPersonalNonDibType(responseType) then
+  -- Personal Catalyst and Cosmetic items can never be Dibs responses.
+  if isPersonalOrCosmeticNonDibType(responseType) then
     return false
   end
-  local key = canonicalPolicyKey(responseType)
+  local key = lootRuleTypeKey(responseType)
   if Dibs.LootRules and Dibs.LootRules.GetEffectiveValue then
     local value = Dibs.LootRules.GetEffectiveValue(key, "adventureGuide")
     return type(value) == "boolean" and value or false
@@ -266,7 +306,7 @@ function Dibs.RCLootCouncil.SetDibEnabledForType(responseType, enabled, actor)
   if isNonDibPolicyType(responseType) then
     return nil, "PERSONAL_ITEM_TYPE"
   end
-  local key = canonicalPolicyKey(responseType)
+  local key = lootRuleTypeKey(responseType)
   if Dibs.LootRules and type(Dibs.LootRules.SetDraftValue) == "function" then
     local changed, reason = Dibs.LootRules.SetDraftValue(key, "adventureGuide", enabled == true)
     if not changed then return nil, reason end
@@ -361,6 +401,33 @@ local function readRuleValueCaseInsensitive(rules, key)
   return nil
 end
 
+local function getActiveTypePolicyRules()
+  local lootRules = Dibs.LootRules
+  if type(lootRules) == "table" and type(lootRules.GetAuthoritySnapshot) == "function" then
+    local ok, authority, status = pcall(lootRules.GetAuthoritySnapshot)
+    if not ok then return {}, true end
+    if type(authority) == "table" and type(authority.types) == "table" then
+      local rules = {}
+      for typeKey, rule in pairs(authority.types) do
+        if type(typeKey) == "string" and type(rule) == "table"
+          and type(rule.adventureGuide) == "boolean" then
+          rules[typeKey] = rule.adventureGuide
+        end
+      end
+      return rules, true
+    end
+    if status ~= "GUILD_LOOT_RULES_NOT_CONFIGURED" then return {}, true end
+  end
+
+  local rules = getDibTypeSettings()
+  return rules, hasConfiguredTypePolicy(rules)
+end
+
+local function itemEnumValue(groupName, valueName, fallback)
+  local group = type(_G.Enum) == "table" and _G.Enum[groupName]
+  return type(group) == "table" and tonumber(group[valueName]) or fallback
+end
+
 local function collectItemTypeCandidates(itemID, responseType)
   local values = {}
   local seen = {}
@@ -386,10 +453,14 @@ local function collectItemTypeCandidates(itemID, responseType)
       local left = string.lower(tostring(line and (line.leftText or line.text or "") or ""))
       if left ~= "" then
         if left:find("housing decor", 1, true)
+          or left:find("decor", 1, true)
           or left:find("furnishing", 1, true)
           or left:find("decoration", 1, true)
         then
           addTypeCandidate(values, seen, "DECOR")
+        end
+        if left:find("cosmetic", 1, true) then
+          addTypeCandidate(values, seen, "COSMETIC")
         end
         if left:find("pattern:", 1, true)
           or left:find("recipe:", 1, true)
@@ -445,24 +516,17 @@ local function collectItemTypeCandidates(itemID, responseType)
       addTypeCandidate(values, seen, "recette")
     end
 
-    -- Miscellaneous (class 15) also contains Tier Set tokens on Retail. Let
-    -- RCLootCouncil's token table win before treating the remaining items as
-    -- mount collection entries.
     local isKnownTierSetToken = targetItem and type(_G.RCTokenTable) == "table"
       and _G.RCTokenTable[targetItem] ~= nil
-    if tonumber(classID) == 15 and not isKnownTierSetToken then
-      addTypeCandidate(values, seen, "MOUNT")
-      addTypeCandidate(values, seen, "MOUNTS")
-      addTypeCandidate(values, seen, "Mount")
-      addTypeCandidate(values, seen, "Mounts")
-      addTypeCandidate(values, seen, "mount")
-      addTypeCandidate(values, seen, "mounts")
-      addTypeCandidate(values, seen, "MONTURE")
-      addTypeCandidate(values, seen, "Monture")
-      addTypeCandidate(values, seen, "monture")
+    if tonumber(classID) == itemEnumValue("ItemClass", "Miscellaneous", 15) and not isKnownTierSetToken then
+      if tonumber(subClassID) == itemEnumValue("ItemMiscellaneousSubclass", "CompanionPet", 2) then
+        addTypeCandidate(values, seen, "PETS")
+      elseif tonumber(subClassID) == itemEnumValue("ItemMiscellaneousSubclass", "Mount", 5) then
+        addTypeCandidate(values, seen, "MOUNTS")
+      end
     end
 
-    if tonumber(classID) == 17 then
+    if tonumber(classID) == itemEnumValue("ItemClass", "Battlepet", 17) then
       addTypeCandidate(values, seen, "PET")
       addTypeCandidate(values, seen, "PETS")
       addTypeCandidate(values, seen, "Pet")
@@ -473,6 +537,17 @@ local function collectItemTypeCandidates(itemID, responseType)
       addTypeCandidate(values, seen, "FAMILIERS")
       addTypeCandidate(values, seen, "familier")
       addTypeCandidate(values, seen, "familiers")
+    end
+
+    if tonumber(classID) == itemEnumValue("ItemClass", "Armor", 4)
+      and tonumber(subClassID) == itemEnumValue("ItemArmorSubclass", "Cosmetic", 5)
+    then
+      addTypeCandidate(values, seen, "COSMETIC")
+    end
+    if tonumber(classID) == itemEnumValue("ItemClass", "Housing", 20)
+      and tonumber(subClassID) == itemEnumValue("ItemHousingSubclass", "Decor", 0)
+    then
+      addTypeCandidate(values, seen, "DECOR")
     end
 
     local classLower = string.lower(tostring(itemClassName or ""))
@@ -495,14 +570,15 @@ local function collectItemTypeCandidates(itemID, responseType)
     end
     if classLower:find("decor", 1, true)
       or subclassLower:find("decor", 1, true)
-      or classLower:find("cosmetic", 1, true)
-      or subclassLower:find("cosmetic", 1, true)
       or classLower:find("housing", 1, true)
       or subclassLower:find("housing", 1, true)
     then
       addTypeCandidate(values, seen, "DECOR")
       addTypeCandidate(values, seen, "Decor")
       addTypeCandidate(values, seen, "decor")
+    end
+    if classLower:find("cosmetic", 1, true) or subclassLower:find("cosmetic", 1, true) then
+      addTypeCandidate(values, seen, "COSMETIC")
     end
     if classLower:find("mount", 1, true) or subclassLower:find("mount", 1, true) then
       addTypeCandidate(values, seen, "MOUNTS")
@@ -608,7 +684,6 @@ local function resolvePriorityCategoryRule(rules, candidates)
       present[canonical] = true
     end
   end
-
   for _, category in ipairs(PRIORITY_CATEGORY_ORDER) do
     if present[category] then
       local value = readRuleValueCaseInsensitive(rules, category)
@@ -639,6 +714,12 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
   end
 
   local candidates = collectItemTypeCandidates(itemID, responseType)
+  for _, candidate in ipairs(candidates) do
+    if isCosmeticNonDibType(candidate) then
+      typeAllowanceCache[cacheKey] = { value = false, at = now }
+      return false
+    end
+  end
   local hasProgressionToken = false
   for _, candidate in ipairs(candidates) do
     local canonical = canonicalPolicyKey(candidate)
@@ -665,23 +746,7 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
       return false
     end
   end
-  local rules = getDibTypeSettings()
-  local policyConfigured = hasConfiguredTypePolicy(rules)
-  local hasCosmeticCandidate = false
-  for _, candidate in ipairs(candidates) do
-    if isCosmeticNonDibType(candidate) then hasCosmeticCandidate = true break end
-  end
-  if hasCosmeticCandidate then
-    local cosmeticRule = readRuleValueCaseInsensitive(rules, "COSMETIC")
-    if cosmeticRule ~= nil then
-      typeAllowanceCache[cacheKey] = { value = cosmeticRule == true, at = now }
-      return cosmeticRule == true
-    end
-    if strictWhitelist then
-      typeAllowanceCache[cacheKey] = { value = false, at = now }
-      return false
-    end
-  end
+  local rules, policyConfigured = getActiveTypePolicyRules()
 
   local priorityDecision, hasPriorityRule = resolvePriorityCategoryRule(rules, candidates)
   if hasPriorityRule then
@@ -690,10 +755,6 @@ function Dibs.RCLootCouncil.IsItemDibTypeAllowed(itemID, responseType, options)
   end
 
   if strictWhitelist and not policyConfigured then
-    if hasCosmeticCandidate then
-      typeAllowanceCache[cacheKey] = { value = false, at = now }
-      return false
-    end
     typeAllowanceCache[cacheKey] = { value = true, at = now }
     return true
   end
@@ -1152,8 +1213,7 @@ local function ensureForcedDibConfigForDB(db)
     local rcButtonEnabled = Dibs.RCLootCouncil.IsRCButtonEnabledForType(typeKey)
     if isPersonalOrCosmeticNonDibType(typeKey) or not dibsEnabled or not rcButtonEnabled then
       -- Do not create or retain an adapter-owned DIB response in a personal
-      -- Catalyst button set or a category disabled by the Adventure Guide
-      -- policy. Existing stale projections are removed once.
+      -- or permanently prohibited category, or where policy disables Dibs.
       if removeDibFromSet(typeButtons, typeResponses) then
         changed = true
       end
@@ -1294,6 +1354,184 @@ local function notifyForcedDibConfigChanged(rc)
     return true
   end
   return false
+end
+
+local function canNotifyForcedDibConfigChanged(rc)
+  if type(rc) == "table" and type(rc.ConfigTableChanged) == "function" then return true end
+  local ml = getRCMLModule(rc)
+  return type(ml) == "table" and type(ml.ConfigTableChanged) == "function"
+end
+
+function Dibs.RCLootCouncil.ApplyButtonTemplate(buttonSetKey, template, responseType, includeDib)
+  if type(buttonSetKey) ~= "string" or buttonSetKey == "" or type(template) ~= "table"
+    or type(template.buttons) ~= "table" then
+    return false, "INVALID_BUTTON_TEMPLATE"
+  end
+  local requestedCount = tonumber(template.count) or #template.buttons
+  requestedCount = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS, math.floor(requestedCount)))
+  if #template.buttons < requestedCount then return false, "INCOMPLETE_BUTTON_TEMPLATE" end
+  local normalizedButtons = {}
+  for index = 1, requestedCount do
+    local source = template.buttons[index]
+    if type(source) ~= "table" then return false, "INVALID_BUTTON_TEMPLATE" end
+    local label = tostring(source.text or ""):match("^%s*(.-)%s*$")
+    local responseText = tostring(source.response or ""):match("^%s*(.-)%s*$")
+    if label == "" or responseText == "" then return false, "INVALID_BUTTON_TEMPLATE" end
+    local color = type(source.color) == "table" and source.color or { 1, 1, 1, 1 }
+    normalizedButtons[index] = {
+      text = label,
+      response = responseText,
+      whisperKey = tostring(source.whisperKey or label):lower(),
+      requireNotes = source.requireNotes == true,
+      color = {
+        tonumber(color[1]) or 1, tonumber(color[2]) or 1,
+        tonumber(color[3]) or 1, tonumber(color[4]) or 1,
+      },
+    }
+  end
+
+  local rc = getRC()
+  if type(rc) ~= "table" then return false, "RC_INSTANCE_UNAVAILABLE" end
+  if not canNotifyForcedDibConfigChanged(rc) then return false, "RC_BUTTON_CONFIG_UNSUPPORTED" end
+  if isCosmeticNonDibType(buttonSetKey) or isCosmeticNonDibType(responseType) then
+    includeDib = false
+  end
+  local profiles = collectRCDBs(rc)
+  if #profiles == 0 then return false, "RC_BUTTON_CONFIG_UNSUPPORTED" end
+
+  local dibCount = includeDib == true and 1 or 0
+  for _, profile in ipairs(profiles) do
+    if type(profile.buttons) ~= "table" or type(profile.responses) ~= "table"
+      or (profile.enabledButtons ~= nil and type(profile.enabledButtons) ~= "table") then
+      return false, "RC_BUTTON_CONFIG_UNSUPPORTED"
+    end
+    local maxButtons = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS,
+      math.floor(tonumber(profile.maxButtons) or FORCED_DIB_MAX_BUTTONS)))
+    if math.min(requestedCount, maxButtons - dibCount) < 1 then return false, "RC_BUTTON_CAPACITY" end
+  end
+
+  local changed = false
+  local updatedProfiles = 0
+  local appliedCount = 0
+  for _, profile in ipairs(profiles) do
+    do
+      local maxButtons = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS,
+        math.floor(tonumber(profile.maxButtons) or FORCED_DIB_MAX_BUTTONS)))
+      local buttonCount = math.min(requestedCount, maxButtons - dibCount)
+
+      local buttons = profile.buttons[buttonSetKey]
+      local responses = profile.responses[buttonSetKey]
+      if type(buttons) ~= "table" then buttons = {}; profile.buttons[buttonSetKey] = buttons end
+      if type(responses) ~= "table" then responses = {}; profile.responses[buttonSetKey] = responses end
+      if buttonSetKey ~= "default" then
+        profile.enabledButtons = profile.enabledButtons or {}
+        profile.enabledButtons[buttonSetKey] = true
+      end
+
+      local outputIndex = 1
+      if dibCount == 1 then
+        local dib = Dibs.RCLootCouncil.GetDibButtonTemplate(responseType)
+        buttons[outputIndex] = {
+          text = dib.text, whisperKey = dib.whisperKey, requireNotes = dib.requireNotes, dibsLocked = true,
+        }
+        responses[outputIndex] = {
+          text = dib.text,
+          color = { dib.color[1], dib.color[2], dib.color[3], dib.color[4] or 1 },
+          sort = outputIndex,
+        }
+        outputIndex = outputIndex + 1
+      end
+
+      for index = 1, buttonCount do
+        local source = normalizedButtons[index]
+        local targetIndex = outputIndex
+        buttons[targetIndex] = {
+          text = source.text,
+          whisperKey = source.whisperKey,
+          requireNotes = source.requireNotes == true,
+        }
+        responses[targetIndex] = {
+          text = source.response,
+          color = { source.color[1], source.color[2], source.color[3], source.color[4] },
+          sort = targetIndex,
+        }
+        outputIndex = outputIndex + 1
+      end
+
+      local activeCount = buttonCount + dibCount
+      trimArrayToCount(buttons, activeCount)
+      trimArrayToCount(responses, activeCount)
+      buttons.numButtons = activeCount
+      responses.numButtons = activeCount
+      updatedProfiles = updatedProfiles + 1
+      appliedCount = math.max(appliedCount, buttonCount)
+      changed = true
+    end
+  end
+
+  if updatedProfiles == 0 then return false, "RC_BUTTON_CONFIG_UNSUPPORTED" end
+  notifyForcedDibConfigChanged(rc)
+  return true, {
+    changed = changed,
+    updatedProfiles = updatedProfiles,
+    buttonCount = appliedCount,
+    dibIncluded = includeDib == true,
+    truncated = appliedCount < requestedCount,
+  }
+end
+
+function Dibs.RCLootCouncil.ApplyButtonTemplatePlan(plan)
+  if type(plan) ~= "table" or #plan == 0 then return false, "INVALID_BUTTON_TEMPLATE_PLAN" end
+  local rc = getRC()
+  if type(rc) ~= "table" then return false, "RC_INSTANCE_UNAVAILABLE" end
+  local profiles = collectRCDBs(rc)
+  if #profiles == 0 then return false, "RC_BUTTON_CONFIG_UNSUPPORTED" end
+
+  local seen = {}
+  for _, entry in ipairs(plan) do
+    if type(entry) ~= "table" or type(entry.buttonSetKey) ~= "string" or entry.buttonSetKey == ""
+      or type(entry.template) ~= "table" or type(entry.template.buttons) ~= "table" then
+      return false, "INVALID_BUTTON_TEMPLATE_PLAN"
+    end
+    if seen[entry.buttonSetKey] then return false, "DUPLICATE_BUTTON_TEMPLATE_TARGET" end
+    seen[entry.buttonSetKey] = true
+    local count = math.floor(tonumber(entry.template.count) or #entry.template.buttons)
+    count = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS, count))
+    if #entry.template.buttons < count then return false, "INCOMPLETE_BUTTON_TEMPLATE" end
+    for index = 1, count do
+      local button = entry.template.buttons[index]
+      if type(button) ~= "table"
+        or tostring(button.text or ""):match("^%s*(.-)%s*$") == ""
+        or tostring(button.response or ""):match("^%s*(.-)%s*$") == "" then
+        return false, "INVALID_BUTTON_TEMPLATE"
+      end
+    end
+    for _, profile in ipairs(profiles) do
+      if type(profile.buttons) ~= "table" or type(profile.responses) ~= "table"
+        or (profile.enabledButtons ~= nil and type(profile.enabledButtons) ~= "table") then
+        return false, "RC_BUTTON_CONFIG_UNSUPPORTED"
+      end
+      local maxButtons = math.max(1, math.min(FORCED_DIB_MAX_BUTTONS,
+        math.floor(tonumber(profile.maxButtons) or FORCED_DIB_MAX_BUTTONS)))
+      local includeDib = entry.includeDib == true
+        and not isCosmeticNonDibType(entry.buttonSetKey)
+        and not isCosmeticNonDibType(entry.responseType)
+      local dibCount = includeDib and 1 or 0
+      if math.min(count, maxButtons - dibCount) < 1 then return false, "RC_BUTTON_CAPACITY" end
+    end
+  end
+
+  local result = { changed = false, updatedProfiles = 0, buttonCount = 0, appliedSets = #plan, truncatedSets = 0 }
+  for _, entry in ipairs(plan) do
+    local applied, details = Dibs.RCLootCouncil.ApplyButtonTemplate(
+      entry.buttonSetKey, entry.template, entry.responseType, entry.includeDib)
+    if not applied then return false, details end
+    result.changed = result.changed or details.changed
+    result.updatedProfiles = math.max(result.updatedProfiles, details.updatedProfiles)
+    result.buttonCount = math.max(result.buttonCount, details.buttonCount)
+    if details.truncated then result.truncatedSets = result.truncatedSets + 1 end
+  end
+  return true, result
 end
 
 local function startForcedConfigWatcher()
@@ -1785,9 +2023,6 @@ local function getVotingFrameModule(rc)
   if type(rc) ~= "table" then return nil end
   local function isVotingFrameModule(module)
     return type(module) == "table"
-      and (type(module.scrollCols) == "table"
-        or type(module.AddColumn) == "function"
-        or type(module.GetFrame) == "function")
   end
   if type(rc.GetActiveModule) == "function" then
     local ok, module = pcall(rc.GetActiveModule, rc, "votingframe")
@@ -1805,7 +2040,6 @@ local function getVotingFrameModule(rc)
       if isVotingFrameModule(rc.modules[key]) then return rc.modules[key] end
     end
   end
-  if isVotingFrameModule(rc.votingFrame) then return rc.votingFrame end
   return nil
 end
 
@@ -2114,57 +2348,27 @@ local function setDibConvertCell(rowFrame, cellFrame, data, cols, row, realrow, 
   end
 end
 
-local function refreshVotingColumns(votingFrame)
-  if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("voting") end
-  if type(votingFrame) ~= "table" then return end
-  if not votingFrame.frame and type(votingFrame.GetFrame) == "function" then
-    pcall(votingFrame.GetFrame, votingFrame)
+local function getVotingColumnIndex(votingFrame, name)
+  if type(votingFrame) ~= "table" or type(votingFrame.GetColumnIndex) ~= "function" then return nil end
+  local ok, index = pcall(votingFrame.GetColumnIndex, votingFrame, name)
+  return ok and tonumber(index) or nil
+end
+
+local function ensureVotingColumn(votingFrame, spec, target)
+  if type(votingFrame.AddColumn) ~= "function" or type(votingFrame.GetColumnIndex) ~= "function" then
+    return false, "RC_COLUMN_API_UNSUPPORTED"
   end
-  local frame = votingFrame.frame
-  if frame and frame.st and type(frame.st.SetDisplayCols) == "function" then
-    pcall(frame.st.SetDisplayCols, frame.st, votingFrame.scrollCols)
-    if type(frame.st.Refresh) == "function" then pcall(frame.st.Refresh, frame.st) end
-  elseif frame and type(frame.UpdateSt) == "function" then
-    pcall(frame.UpdateSt, frame)
-  end
+  if getVotingColumnIndex(votingFrame, spec.colName) then return true end
+  local ok = pcall(votingFrame.AddColumn, votingFrame, spec, target, "after")
+  if not ok then return false, "RC_COLUMN_ADD_FAILED" end
+  if getVotingColumnIndex(votingFrame, spec.colName) then return true end
+  return false, "RC_COLUMN_ADD_FAILED"
 end
 
 local function installVotingFrameColumn()
   local rc = getRC()
   local votingFrame = getVotingFrameModule(rc)
   if type(votingFrame) ~= "table" then return false end
-  -- Do not trust the marker alone: RCLootCouncil can rebuild scrollCols.
-
-  local hasColumn = false
-  if type(votingFrame.scrollCols) == "table" then
-    for _, column in ipairs(votingFrame.scrollCols) do
-      if type(column) == "table" and column.colName == "dibsRemaining" then
-        hasColumn = true
-        break
-      end
-    end
-  end
-  if hasColumn then
-    local rendered = false
-    local tableView = votingFrame.frame and votingFrame.frame.st
-    if tableView and type(tableView.cols) == "table" then
-      for _, column in ipairs(tableView.cols) do
-        if type(column) == "table" and column.colName == "dibsRemaining" then
-          rendered = true
-          break
-        end
-      end
-    end
-    -- RCLootCouncil calls Update frequently while a session is active.  Once
-    -- the scrolling table already uses this spec, refreshing it on every
-    -- Update only rebuilds rows and creates avoidable garbage.
-    if not rendered then
-      refreshVotingColumns(votingFrame)
-    end
-    votingFrame.__dibsRemainingColumnInstalled = true
-    return true
-  end
-
   local spec = {
     colName = "dibsRemaining",
     name = "Dibs",
@@ -2173,33 +2377,9 @@ local function installVotingFrameColumn()
     sortnext = "response",
     DoCellUpdate = setDibsColumnCell,
   }
-
-  local added = false
-  if type(votingFrame.AddColumn) == "function" and type(votingFrame.scrollCols) == "table" then
-    local ok = pcall(votingFrame.AddColumn, votingFrame, spec, "response", "after")
-    if ok then
-      for _, column in ipairs(votingFrame.scrollCols) do
-        if type(column) == "table" and column.colName == spec.colName then added = true break end
-      end
-    end
-  end
-  if not added and type(votingFrame.scrollCols) == "table" then
-    local insertAt = #votingFrame.scrollCols + 1
-    for index, column in ipairs(votingFrame.scrollCols) do
-      if type(column) == "table" and column.colName == "response" then
-        insertAt = index + 1
-        break
-      end
-    end
-    table.insert(votingFrame.scrollCols, insertAt, spec)
-    refreshVotingColumns(votingFrame)
-    if not votingFrame.frame and type(votingFrame.RefreshColumnLayout) == "function" then
-      pcall(votingFrame.RefreshColumnLayout, votingFrame)
-    end
-    added = true
-  end
-
-  votingFrame.__dibsRemainingColumnInstalled = hasColumn or added
+  local added, reason = ensureVotingColumn(votingFrame, spec, "response")
+  votingFrame.__dibsRemainingColumnInstalled = added
+  votingFrame.__dibsColumnApiError = reason
   return added
 end
 
@@ -2207,35 +2387,6 @@ local function installDibConvertColumn()
   local rc = getRC()
   local votingFrame = getVotingFrameModule(rc)
   if type(votingFrame) ~= "table" then return false end
-  -- Do not trust the marker alone: RCLootCouncil can rebuild scrollCols.
-
-  local hasColumn = false
-  if type(votingFrame.scrollCols) == "table" then
-    for _, column in ipairs(votingFrame.scrollCols) do
-      if type(column) == "table" and column.colName == "dibsConvert" then
-        hasColumn = true
-        break
-      end
-    end
-  end
-  if hasColumn then
-    local rendered = false
-    local tableView = votingFrame.frame and votingFrame.frame.st
-    if tableView and type(tableView.cols) == "table" then
-      for _, column in ipairs(tableView.cols) do
-        if type(column) == "table" and column.colName == "dibsConvert" then
-          rendered = true
-          break
-        end
-      end
-    end
-    if not rendered then
-      refreshVotingColumns(votingFrame)
-    end
-    votingFrame.__dibsConvertColumnInstalled = true
-    return true
-  end
-
   local spec = {
     colName = "dibsConvert",
     name = "Convert",
@@ -2244,33 +2395,9 @@ local function installDibConvertColumn()
     sortnext = "response",
     DoCellUpdate = setDibConvertCell,
   }
-
-  local added = false
-  if type(votingFrame.AddColumn) == "function" and type(votingFrame.scrollCols) == "table" then
-    local ok = pcall(votingFrame.AddColumn, votingFrame, spec, "dibsRemaining", "after")
-    if ok then
-      for _, column in ipairs(votingFrame.scrollCols) do
-        if type(column) == "table" and column.colName == spec.colName then added = true break end
-      end
-    end
-  end
-  if not added and type(votingFrame.scrollCols) == "table" then
-    local insertAt = #votingFrame.scrollCols + 1
-    for index, column in ipairs(votingFrame.scrollCols) do
-      if type(column) == "table" and column.colName == "dibsRemaining" then
-        insertAt = index + 1
-        break
-      end
-    end
-    table.insert(votingFrame.scrollCols, insertAt, spec)
-    refreshVotingColumns(votingFrame)
-    if not votingFrame.frame and type(votingFrame.RefreshColumnLayout) == "function" then
-      pcall(votingFrame.RefreshColumnLayout, votingFrame)
-    end
-    added = true
-  end
-
-  votingFrame.__dibsConvertColumnInstalled = hasColumn or added
+  local added, reason = ensureVotingColumn(votingFrame, spec, "dibsRemaining")
+  votingFrame.__dibsConvertColumnInstalled = added
+  if reason then votingFrame.__dibsColumnApiError = reason end
   return added
 end
 
@@ -2279,103 +2406,23 @@ local function installVotingFrameColumns()
   local statusCol = installVotingFrameColumn()
   local convertCol = installDibConvertColumn()
   local votingFrame = getVotingFrameModule(getRC())
-  if type(votingFrame) == "table" and not votingFrame.__dibsOnEnableHooked and type(hooksecurefunc) == "function" then
-    hooksecurefunc(votingFrame, "OnEnable", function()
-      if C_Timer and type(C_Timer.After) == "function" then
-        C_Timer.After(0, function()
-          installVotingFrameColumn()
-          installDibConvertColumn()
-        end)
-      else
+  if type(votingFrame) == "table" and type(hooksecurefunc) == "function" then
+    local function scheduleInstall()
+      local function apply()
         installVotingFrameColumn()
         installDibConvertColumn()
       end
-    end)
-    votingFrame.__dibsOnEnableHooked = true
-  end
-  if type(votingFrame) == "table" and type(hooksecurefunc) == "function" then
-    if not votingFrame.__dibsOnInitializeHooked and type(votingFrame.OnInitialize) == "function" then
-      hooksecurefunc(votingFrame, "OnInitialize", function()
-        if C_Timer and type(C_Timer.After) == "function" then
-          C_Timer.After(0, function()
-            installVotingFrameColumn()
-            installDibConvertColumn()
-          end)
-        else
-          installVotingFrameColumn()
-          installDibConvertColumn()
-        end
-      end)
-      votingFrame.__dibsOnInitializeHooked = true
+      if C_Timer and type(C_Timer.After) == "function" then C_Timer.After(0, apply) else apply() end
     end
-    if not votingFrame.__dibsOnShowHooked and type(votingFrame.Show) == "function" then
-      hooksecurefunc(votingFrame, "Show", function()
-        if C_Timer and type(C_Timer.After) == "function" then
-          C_Timer.After(0, function()
-            installVotingFrameColumn()
-            installDibConvertColumn()
-          end)
-        else
-          installVotingFrameColumn()
-          installDibConvertColumn()
-        end
-      end)
-      votingFrame.__dibsOnShowHooked = true
+    for _, lifecycle in ipairs({
+      { method = "OnInitialize", marker = "__dibsOnInitializeHooked" },
+      { method = "OnEnable", marker = "__dibsOnEnableHooked" },
+    }) do
+      if not votingFrame[lifecycle.marker] and type(votingFrame[lifecycle.method]) == "function" then
+        local ok = pcall(hooksecurefunc, votingFrame, lifecycle.method, scheduleInstall)
+        if ok then votingFrame[lifecycle.marker] = true end
+      end
     end
-    local hookFrameRefresh = function(frame)
-      if type(frame) ~= "table" or frame.__dibsUpdateStHooked or type(frame.UpdateSt) ~= "function" then return end
-      hooksecurefunc(frame, "UpdateSt", function()
-        if C_Timer and type(C_Timer.After) == "function" then
-          C_Timer.After(0, function()
-            installVotingFrameColumn()
-            installDibConvertColumn()
-          end)
-        else
-          installVotingFrameColumn()
-          installDibConvertColumn()
-        end
-      end)
-      frame.__dibsUpdateStHooked = true
-    end
-    if type(votingFrame.GetFrame) == "function" and not votingFrame.__dibsGetFrameHooked then
-      hooksecurefunc(votingFrame, "GetFrame", function(self)
-        hookFrameRefresh(self.frame)
-      end)
-      votingFrame.__dibsGetFrameHooked = true
-    end
-    hookFrameRefresh(votingFrame.frame)
-  end
-  if type(votingFrame) == "table" and not votingFrame.__dibsOnUpdateHooked and type(hooksecurefunc) == "function" then
-    hooksecurefunc(votingFrame, "Update", function()
-      local hasDibsColumn, hasConvertColumn = false, false
-      for _, column in ipairs(votingFrame.scrollCols or {}) do
-        if type(column) == "table" then
-          hasDibsColumn = hasDibsColumn or column.colName == "dibsRemaining"
-          hasConvertColumn = hasConvertColumn or column.colName == "dibsConvert"
-        end
-      end
-      local tableHasDibs, tableHasConvert = false, false
-      local tableView = votingFrame.frame and votingFrame.frame.st
-      for _, column in ipairs(tableView and tableView.cols or {}) do
-        if type(column) == "table" then
-          tableHasDibs = tableHasDibs or column.colName == "dibsRemaining"
-          tableHasConvert = tableHasConvert or column.colName == "dibsConvert"
-        end
-      end
-      if hasDibsColumn and hasConvertColumn and tableHasDibs and tableHasConvert then
-        return
-      end
-      if not votingFrame.__dibsUpdatePending then
-        votingFrame.__dibsUpdatePending = true
-        local function apply()
-          votingFrame.__dibsUpdatePending = nil
-          installVotingFrameColumn()
-          installDibConvertColumn()
-        end
-        if C_Timer and type(C_Timer.After) == "function" then C_Timer.After(0, apply) else apply() end
-      end
-    end)
-    votingFrame.__dibsOnUpdateHooked = true
   end
   return statusCol and convertCol
 end
@@ -2396,35 +2443,27 @@ end
 function Dibs.RCLootCouncil.GetVotingIntegrationStatus()
   local rc = getRC()
   local voting = getVotingFrameModule(rc)
-  local scrollCount = 0
-  local scrollHasDibs = false
-  local renderedHasDibs = false
-  if type(voting) == "table" and type(voting.scrollCols) == "table" then
-    scrollCount = #voting.scrollCols
-    for _, column in ipairs(voting.scrollCols) do
-      if type(column) == "table" and column.colName == "dibsRemaining" then
-        scrollHasDibs = true
-        break
-      end
-    end
-  end
-  if type(voting) == "table" and type(voting.frame) == "table" and type(voting.frame.st) == "table" and type(voting.frame.st.cols) == "table" then
-    for _, column in ipairs(voting.frame.st.cols) do
-      if type(column) == "table" and column.colName == "dibsRemaining" then
-        renderedHasDibs = true
-        break
-      end
-    end
-  end
+  local addColumn = type(voting) == "table" and type(voting.AddColumn) == "function"
+  local getColumnIndex = type(voting) == "table" and type(voting.GetColumnIndex) == "function"
+  local apiSupported = addColumn and getColumnIndex
+  local dibsIndex = apiSupported and getVotingColumnIndex(voting, "dibsRemaining") or nil
+  local convertIndex = apiSupported and getVotingColumnIndex(voting, "dibsConvert") or nil
+  local status = not voting and "unavailable"
+    or not apiSupported and "unsupported"
+    or dibsIndex and convertIndex and "ready"
+    or "pending"
   return {
     moduleFound = type(voting) == "table",
-    addColumn = type(voting) == "table" and type(voting.AddColumn) == "function",
-    scrollColumns = type(voting) == "table" and type(voting.scrollCols) == "table",
-    scrollColumnCount = scrollCount,
-    scrollHasDibs = scrollHasDibs,
-    renderedHasDibs = renderedHasDibs,
-    dibsColumnInstalled = type(voting) == "table" and voting.__dibsRemainingColumnInstalled == true,
-    convertColumnInstalled = type(voting) == "table" and voting.__dibsConvertColumnInstalled == true,
+    status = status,
+    reasonCode = status == "unsupported" and "RC_COLUMN_API_UNSUPPORTED" or nil,
+    requiredVersion = "3.23.3",
+    publicColumnApi = apiSupported,
+    addColumn = addColumn,
+    getColumnIndex = getColumnIndex,
+    dibsColumnInstalled = dibsIndex ~= nil,
+    convertColumnInstalled = convertIndex ~= nil,
+    dibsColumnIndex = dibsIndex,
+    convertColumnIndex = convertIndex,
   }
 end
 
@@ -2498,6 +2537,16 @@ local function stableSessionIdentity(rc)
     end
   end
   return nil
+end
+
+local function hasAwardIdentitySurface(rc, profile)
+  if profile and profile.identitySource == "history" then
+    local ml = getRCMLModule(rc)
+    -- RCLC creates lootTable when the ML module is enabled; validate its row
+    -- and history ID when an award arrives, not during addon initialization.
+    return type(ml) == "table"
+  end
+  return stableSessionIdentity(rc) ~= nil
 end
 
 local function hasHistoryIdentitySurface(rc)
@@ -2599,10 +2648,8 @@ local function reasonDiagnostic(reasonCode)
   return text(key, REASON_DIAGNOSTIC_FALLBACKS[reasonCode] or tostring(reasonCode or "Integration action ignored."))
 end
 
--- B09 deliberately starts with one fixture-only compatibility profile.  No
--- Retail version is promoted to automated award evidence until B10 validates
--- it in a real client.  Requiring both markers prevents a coincidental RC
--- field layout from becoming an implicit compatibility promise.
+-- B09 began with a fixture-only profile. This exact-release pilot candidate
+-- remains unapproved for production until its live Retail checklist passes.
 local AWARD_ADAPTER_PROFILES = {
   DIBS_RCLC_AWARD_TEST_V1 = {
     id = "DIBS_RCLC_AWARD_TEST_V1",
@@ -2611,10 +2658,26 @@ local AWARD_ADAPTER_PROFILES = {
     evidenceSchemaVersion = 1,
     finalStatuses = { awarded = "FINAL_AWARD" },
   },
+  DIBS_RCLC_RETAIL_3_23_3 = {
+    id = "DIBS_RCLC_RETAIL_3_23_3",
+    rcVersion = "3.23.3",
+    metadataVersion = "3.23.3",
+    callback = "RCMLAwardSuccess",
+    evidenceSchemaVersion = 1,
+    finalStatuses = { normal = "FINAL_AWARD" },
+    identitySource = "history",
+  },
 }
 
 local function detectedRCVersion(rc)
   local value = type(rc) == "table" and (rc.version or rc.VERSION or rc.revision) or nil
+  if value == nil then
+    local getMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
+    if type(getMetadata) == "function" then
+      local ok, metadataVersion = pcall(getMetadata, "RCLootCouncil", "Version")
+      if ok then value = metadataVersion end
+    end
+  end
   value = value == nil and nil or tostring(value)
   return value ~= "" and value or nil
 end
@@ -2623,10 +2686,18 @@ local function detectAwardAdapterProfile(rc)
   local version = detectedRCVersion(rc)
   if not version then return nil, "RC_VERSION_UNKNOWN", version end
   local profile = AWARD_ADAPTER_PROFILES[tostring(rc and rc.dibsAdapterProfile or "")]
+  if not profile then
+    for _, candidate in pairs(AWARD_ADAPTER_PROFILES) do
+      if candidate.metadataVersion == version then
+        profile = candidate
+        break
+      end
+    end
+  end
   if not profile then return nil, "RC_VERSION_UNSUPPORTED", version end
   if version ~= profile.rcVersion then return nil, "RC_VERSION_UNSUPPORTED", version end
   if type(rc.RegisterMessage) ~= "function" then return nil, "RC_AWARD_CALLBACK_UNAVAILABLE", version end
-  if not stableSessionIdentity(rc) then return nil, "RC_AWARD_IDENTITY_UNAVAILABLE", version end
+  if not hasAwardIdentitySurface(rc, profile) then return nil, "RC_AWARD_IDENTITY_UNAVAILABLE", version end
   return profile, nil, version
 end
 
@@ -2695,7 +2766,7 @@ local function capabilitySnapshot()
   snapshot.capabilities.masterLooter = playerIdentity(rc.masterLooter) ~= nil
   snapshot.capabilities.awardCallback = type(rc.RegisterMessage) == "function"
     and Dibs.RCLootCouncil.callbackOwner == rc
-  snapshot.capabilities.awardIdentity = stableSessionIdentity(rc) ~= nil
+  snapshot.capabilities.awardIdentity = hasAwardIdentitySurface(rc, profile)
   snapshot.capabilities.responseValidation = type(Dibs.RCLootCouncil.IsDibResponse) == "function"
   snapshot.capabilities.awardEvidence = profile ~= nil and snapshot.capabilities.awardCallback
   snapshot.capabilities.uiProjection = true
@@ -2873,10 +2944,22 @@ function Dibs.RCLootCouncil.ValidateResponse(playerName, itemID, response)
   return Dibs.RCLootCouncil.CanUseDibResponse(playerName, itemID)
 end
 
-local function getAwardIdentity(rc, session, winner, itemID, itemLink)
-  -- The award profile intentionally does not consult RC's mutable loot table
-  -- or history. A profile supplies a session identity and callback session,
-  -- which are sufficient to form a deterministic, replay-safe evidence key.
+local function getAwardIdentity(rc, session, winner, itemID, itemLink, profile, historyId)
+  if profile and profile.identitySource == "history" then
+    local ml = getRCMLModule(rc)
+    local entry = ml and ml.lootTable and ml.lootTable[tonumber(session)]
+    local history = entry and entry.history
+    local historyItemID = history and tonumber(tostring(history.lootWon or ""):match("item:(%d+)"))
+    local historyResponse = history and normalizeDibResponse(history.response, rc)
+    if historyId and history and tostring(history.id) == tostring(historyId)
+      and historyItemID == tonumber(itemID) and historyResponse == "DIB"
+    then
+      return "history:" .. tostring(historyId)
+    end
+    return nil, "AWARD_IDENTITY_UNAVAILABLE"
+  end
+  -- The fixture profile avoids RC's mutable loot table and history. Its stable
+  -- session identity and callback session form a deterministic evidence key.
   local sessionKey = stableSessionIdentity(rc)
   local winnerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
     and Dibs.Permissions.CanonicalPlayerId(winner) or playerNameIdentity(winner)
@@ -2925,7 +3008,7 @@ removeDibFromSet = function(buttons, responses)
   return true
 end
 
-local function normalizeAwardEvidence(callback, session, winner, status, itemLink, responseText)
+local function normalizeAwardEvidence(callback, session, winner, status, itemLink, responseText, historyId)
   local rc = getRC()
   local profile, profileReason, rcVersion = detectAwardAdapterProfile(rc)
   if not profile then return nil, profileReason or "AWARD_EVIDENCE_UNSUPPORTED" end
@@ -2948,7 +3031,7 @@ local function normalizeAwardEvidence(callback, session, winner, status, itemLin
     status = status,
   })
   if not sharedValidation.ok then return nil, sharedValidation.reasonCode or "AWARD_INVALID" end
-  local ref, identityReason = getAwardIdentity(rc, session, winner, itemID, itemLink)
+  local ref, identityReason = getAwardIdentity(rc, session, winner, itemID, itemLink, profile, historyId)
   if not ref then return nil, identityReason or "AWARD_IDENTITY_UNAVAILABLE" end
   local recipient = playerNameIdentity(winner)
   if not recipient or not tostring(winner):find("-", 1, true) then return nil, "AWARD_IDENTITY_UNAVAILABLE" end
@@ -2967,11 +3050,11 @@ end
 -- Narrow award-adapter entry point. It admits only a documented callback from
 -- an exact profile, persists no RC table, and can reach accounting solely via
 -- the protected command boundary.
-function Dibs.RCLootCouncil.HandleAwardCallback(callback, session, winner, status, itemLink, responseText)
+function Dibs.RCLootCouncil.HandleAwardCallback(callback, session, winner, status, itemLink, responseText, historyId)
   if not Dibs.ProtectedActions then return ignoredAward("AWARD_INVALID") end
   local mode = Dibs.Permissions and Dibs.Permissions.GetInstallationMode and Dibs.Permissions.GetInstallationMode() or "AUTO"
   if mode == "STANDALONE" then return ignoredAward("STANDALONE_MODE") end
-  local evidence, reasonCode = normalizeAwardEvidence(callback, session, winner, status, itemLink, responseText)
+  local evidence, reasonCode = normalizeAwardEvidence(callback, session, winner, status, itemLink, responseText, historyId)
   if not evidence then return ignoredAward(reasonCode) end
   local state = adapterEvidenceState()
   local fingerprint = evidenceFingerprint(evidence)
@@ -3005,21 +3088,44 @@ function Dibs.RCLootCouncil.HandleAwardCallback(callback, session, winner, statu
 end
 
 function Dibs.RCLootCouncil.OnAwardSuccess(_, session, winner, status, itemLink, responseText)
+  local rc = getRC()
+  local profile = detectAwardAdapterProfile(rc)
+  if profile and profile.identitySource == "history"
+    and profile.finalStatuses[string.lower(tostring(status or ""))] == "FINAL_AWARD"
+  then
+    local ml = getRCMLModule(rc)
+    local sessionIndex = tonumber(session)
+    local entry = ml and ml.lootTable and sessionIndex and ml.lootTable[sessionIndex]
+    if type(entry) ~= "table" or (entry.history and entry.history.id) then
+      return ignoredAward("AWARD_IDENTITY_UNAVAILABLE")
+    end
+    if type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then
+      return ignoredAward("AWARD_IDENTITY_UNAVAILABLE")
+    end
+    local itemID = tonumber(tostring(itemLink or ""):match("item:(%d+)"))
+    C_Timer.After(0, function()
+      local history = entry.history
+      local historyItemID = history and tonumber(tostring(history.lootWon or ""):match("item:(%d+)"))
+      local historyResponse = history and normalizeDibResponse(history.response, rc) or nil
+      local eventResponse = normalizeDibResponse(responseText, rc)
+      if not history or not history.id or not itemID or historyItemID ~= itemID
+        or not historyResponse or historyResponse ~= eventResponse
+      then
+        ignoredAward("AWARD_IDENTITY_UNAVAILABLE")
+        return
+      end
+      Dibs.RCLootCouncil.HandleAwardCallback("RCMLAwardSuccess", session, winner,
+        status, itemLink, responseText, history.id)
+    end)
+    return { ok = true, pending = true, outcome = "AWARD_EVIDENCE_PENDING", reasonCode = "AWARD_HISTORY_PENDING" }
+  end
   return Dibs.RCLootCouncil.HandleAwardCallback("RCMLAwardSuccess", session, winner, status, itemLink, responseText)
 end
 
 function Dibs.RCLootCouncil.Initialize()
   local rc = getRC()
   if type(rc) ~= "table" then return false end
-  if Dibs.RCLootCouncil.initialized then
-    -- Re-run only idempotent probes when RC modules or frames become
-    -- available after Dibs.  No Dibs state is recreated or migrated here.
-    installForcedDibConfigHook()
-    installLootFrameHook()
-    installVotingFrameColumns()
-    ensureRuntimeHooks(120)
-    return true
-  end
+  installCosmeticResponseCodeGenerator(rc)
   local profile = detectAwardAdapterProfile(rc)
   if profile and type(rc.RegisterMessage) == "function" and Dibs.RCLootCouncil.callbackOwner ~= rc then
     local ok, result = pcall(rc.RegisterMessage, rc, "RCMLAwardSuccess", Dibs.RCLootCouncil.OnAwardSuccess)
@@ -3028,6 +3134,15 @@ function Dibs.RCLootCouncil.Initialize()
     else
       Dibs.RCLootCouncil.callbackOwner = nil
     end
+  end
+  if Dibs.RCLootCouncil.initialized then
+    -- Re-run only idempotent probes when RC modules or frames become
+    -- available after Dibs.  No Dibs state is recreated or migrated here.
+    installForcedDibConfigHook()
+    installLootFrameHook()
+    installVotingFrameColumns()
+    ensureRuntimeHooks(120)
+    return true
   end
   installForcedDibConfigHook()
   installLootFrameHook()

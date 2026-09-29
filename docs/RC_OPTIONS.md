@@ -49,7 +49,7 @@ turn a personal item into a guild Dibs item.
 | Pets | `PETS` | Optional battle-pet/companion family. |
 | Recipes | `RECIPE` | Profession recipes, patterns, plans and formulas. |
 | Decor | `DECOR` | Optional housing family; the default Adventure Guide matrix blocks it. |
-| Cosmetic Items | `COSMETIC` | Cosmetic-only items are not a Dibs progression family. |
+| Cosmetic Items | `COSMETIC` | Cosmetic-only items use a Dibs-installed RCLC response group when the public classifier extension API is available; Draft RC and Adventure Guide remain independent. |
 | Rare items | `OTHER` | RCLC rarity grouping, treated as the configurable Dibs catch-all. |
 | Items /w special effects | `OTHER` | RCLC qualifier, treated as the configurable Dibs catch-all. |
 | Chest, Back, Feet, Finger, Hands, Head, Legs, Neck, Shoulder, Trinket, Waist, Wrist, Weapon | *(none)* | Slot-specific response set; it inherits the semantic Dibs decision. |
@@ -60,6 +60,38 @@ currently configured. The **Curio + Tier Set** template enables only `TOKEN` and
 to disabled. **Standard loot** additionally enables mounts, pets, recipes and
 `OTHER`; it leaves Decor disabled. Ordinary equipment is resolved through
 `OTHER`, so this preset covers normal armor and weapons as well.
+
+## Reusable RCLootCouncil button templates
+
+The RCLootCouncil integration page keeps reusable button templates in the
+current guild's local Dibs settings. Each template has an ordered button count
+and entries for button label, response, color, and Require Notes. Templates can
+be created, renamed, reordered, assigned per semantic loot type in the Officer
+Loot Rules draft, and explicitly generated into the active RCLootCouncil
+profile. Template editing and generation are integration settings: they do not
+publish or alter the guild-authoritative Loot Rules snapshot.
+
+**Generate from Draft Loot Rules** applies templates only to types whose Draft
+RC field is enabled. Draft Adventure Guide decides whether the locked Dibs
+response is included. When included, Dibs is always first and cannot be moved or
+edited; it consumes one of RCLootCouncil's ten button slots, leaving at most
+nine template choices. Without Dibs, a template can use all ten slots. Existing
+RC button groups not selected by the enabled Draft types are left untouched.
+
+RCLootCouncil's item classifier imposes a few mapping limits. `TOKEN` and
+`TOKEN_SET` both resolve to the RC `TOKEN` group, so generation stops before
+writing if their assigned template, Draft RC enablement, or Draft Adventure
+Guide setting differs.
+`OTHER` generates `RARE` and `SPECIAL` and updates only equipment-slot groups
+already enabled in the active RC profile; it does not enable new slots.
+`COSMETIC` is added through RCLootCouncil's public `OPT_MORE_BUTTONS_VALUES`
+and `RESPONSE_CODE_GENERATORS` extension points. The generator matches only
+Retail Armor/Cosmetic (`classID=4`, `subClassID=5`) and only routes items when
+the active RC profile has the Cosmetic group enabled; it runs before generic
+classifiers such as RCLC rarity fallback. If those public extension tables are
+unavailable, Draft RC generation reports the family as skipped.
+Button generation is marked unsupported unless the active profile exposes the
+paired `buttons`/`responses` schema and an RC config-refresh hook.
 
 The **Installation assistant** offers these two starting presets and refreshes
 the locked Dibs projection after applying one. It prepares the Dibs button in
@@ -106,7 +138,7 @@ Raid Dibs is a community stream, distinct from RAID chat. Its selection remains 
 
 ## Retail validation remaining
 
-1. Open `/dibs options` with RCLootCouncil loaded; confirm the correct Dibs subcategory opens and all tree entries fit.
+1. Open `/dibs options` with RCLootCouncil loaded; confirm the correct Dibs subcategory opens and all tree entries fit. Create and edit button templates, assign one per semantic loot type, and generate from Draft; confirm DIB remains first/locked, the nine-plus-one and ten-button limits, disabled types stay untouched, and generation does not publish Loot Rules.
 2. Open Player and Officer from Overview, then return through their options buttons.
 3. Change a template/channel in each surface and reopen the other; verify matching values and preview.
 4. Select Raid Dibs; test with a subscribed community containing that stream. Confirm delivery in the intended channel. Repeat without the stream; verify the selection remains visible and the diagnostic explains the failure.

@@ -86,13 +86,205 @@ local function canEditDibsSettings()
     and Dibs.Permissions.Can("settings.modify") == true
 end
 
+local BUTTON_TEMPLATE_LIMIT = 20
+local BUTTON_TEMPLATE_BUTTON_LIMIT = 10
+local DEFAULT_BUTTON_TEMPLATE_ID = "default"
+
+local function defaultTemplateButton(index)
+  if index == 1 then return { text = "Need", response = "Need", color = { 1, 1, 1, 1 }, requireNotes = false } end
+  if index == 2 then return { text = "Pass", response = "Pass", color = { 1, 1, 1, 1 }, requireNotes = false } end
+  return { text = "Button", response = "Response", color = { 1, 1, 1, 1 }, requireNotes = false }
+end
+
+local function copyButtonTemplate(template)
+  local copy = { name = tostring(template.name or "Button template"), count = math.max(1, math.min(BUTTON_TEMPLATE_BUTTON_LIMIT, math.floor(tonumber(template.count) or 1))), buttons = {} }
+  for index = 1, BUTTON_TEMPLATE_BUTTON_LIMIT do
+    local source = type(template.buttons) == "table" and template.buttons[index] or nil
+    source = type(source) == "table" and source or defaultTemplateButton(index)
+    local color = type(source.color) == "table" and source.color or { 1, 1, 1, 1 }
+    copy.buttons[index] = {
+      text = tostring(source.text or ""),
+      response = tostring(source.response or ""),
+      whisperKey = source.whisperKey and tostring(source.whisperKey) or nil,
+      color = { tonumber(color[1]) or 1, tonumber(color[2]) or 1, tonumber(color[3]) or 1, tonumber(color[4]) or 1 },
+      requireNotes = source.requireNotes == true,
+    }
+  end
+  return copy
+end
+
+local function getButtonTemplateStore()
+  local settings = getDBSettings()
+  local store = settings.rcButtonTemplateStore
+  if type(store) ~= "table" then store = {}; settings.rcButtonTemplateStore = store end
+  if type(store.templates) ~= "table" then store.templates = {} end
+  if type(store.templates[DEFAULT_BUTTON_TEMPLATE_ID]) ~= "table" then
+    local standard = { name = "Standard", count = 4, buttons = {} }
+    for index = 1, BUTTON_TEMPLATE_BUTTON_LIMIT do standard.buttons[index] = defaultTemplateButton(index) end
+    store.templates[DEFAULT_BUTTON_TEMPLATE_ID] = standard
+  end
+  if type(store.assignments) ~= "table" then store.assignments = {} end
+  if type(store.nextId) ~= "number" or store.nextId < 1 then store.nextId = 1 end
+  if type(store.selected) ~= "string" or type(store.templates[store.selected]) ~= "table" then
+    store.selected = DEFAULT_BUTTON_TEMPLATE_ID
+  end
+  return store
+end
+
+local function getButtonTemplateIds(store)
+  local ids = {}
+  for id in pairs(store.templates) do ids[#ids + 1] = id end
+  table.sort(ids, function(first, second)
+    if first == second then return false end
+    if first == DEFAULT_BUTTON_TEMPLATE_ID then return true end
+    if second == DEFAULT_BUTTON_TEMPLATE_ID then return false end
+    local firstName = tostring(store.templates[first].name or first):lower()
+    local secondName = tostring(store.templates[second].name or second):lower()
+    if firstName ~= secondName then return firstName < secondName end
+    return first < second
+  end)
+  return ids
+end
+
+function Dibs.RCOptions.GetButtonTemplateValues()
+  local store, values = getButtonTemplateStore(), {}
+  for _, id in ipairs(getButtonTemplateIds(store)) do values[id] = tostring(store.templates[id].name or id) end
+  return values
+end
+
+function Dibs.RCOptions.GetButtonTemplateList()
+  local store, result = getButtonTemplateStore(), {}
+  for _, id in ipairs(getButtonTemplateIds(store)) do
+    result[#result + 1] = { id = id, name = tostring(store.templates[id].name or id), count = store.templates[id].count }
+  end
+  return result
+end
+
+function Dibs.RCOptions.GetButtonTemplate(templateId)
+  local store = getButtonTemplateStore()
+  local id = templateId or store.selected
+  local template = store.templates[id]
+  return type(template) == "table" and copyButtonTemplate(template) or nil
+end
+
+function Dibs.RCOptions.GetSelectedButtonTemplate()
+  return getButtonTemplateStore().selected
+end
+
+function Dibs.RCOptions.SelectButtonTemplate(templateId)
+  local store = getButtonTemplateStore()
+  if type(store.templates[templateId]) ~= "table" then return false, "UNKNOWN_BUTTON_TEMPLATE" end
+  store.selected = templateId
+  return true
+end
+
+function Dibs.RCOptions.CreateButtonTemplate(name)
+  if not canEditDibsSettings() then return nil, "GUILD_ADMIN_REQUIRED" end
+  local store = getButtonTemplateStore()
+  if #getButtonTemplateIds(store) >= BUTTON_TEMPLATE_LIMIT then return nil, "BUTTON_TEMPLATE_LIMIT" end
+  local id
+  repeat
+    id = "template-" .. tostring(store.nextId)
+    store.nextId = store.nextId + 1
+  until store.templates[id] == nil
+  local template = copyButtonTemplate(store.templates[store.selected] or store.templates[DEFAULT_BUTTON_TEMPLATE_ID])
+  template.name = trimText(name) ~= "" and trimText(name) or ("Button template " .. tostring(store.nextId - 1))
+  store.templates[id] = template
+  store.selected = id
+  return id
+end
+
+function Dibs.RCOptions.RenameButtonTemplate(templateId, name)
+  if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
+  local store = getButtonTemplateStore()
+  local template = store.templates[templateId]
+  local nextName = trimText(name)
+  if type(template) ~= "table" then return false, "UNKNOWN_BUTTON_TEMPLATE" end
+  if nextName == "" then return false, "INVALID_BUTTON_TEMPLATE_NAME" end
+  template.name = nextName
+  return true
+end
+
+function Dibs.RCOptions.DeleteButtonTemplate(templateId)
+  if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
+  local store = getButtonTemplateStore()
+  if type(store.templates[templateId]) ~= "table" then return false, "UNKNOWN_BUTTON_TEMPLATE" end
+  if #getButtonTemplateIds(store) <= 1 then return false, "LAST_BUTTON_TEMPLATE" end
+  store.templates[templateId] = nil
+  local ids = getButtonTemplateIds(store)
+  local fallback = ids[1]
+  if store.selected == templateId then store.selected = fallback end
+  for typeKey, assignedId in pairs(store.assignments) do
+    if assignedId == templateId then store.assignments[typeKey] = fallback end
+  end
+  return true
+end
+
+function Dibs.RCOptions.SetButtonTemplateCount(templateId, count)
+  if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
+  local template = getButtonTemplateStore().templates[templateId]
+  local nextCount = tonumber(count)
+  if type(template) ~= "table" or not nextCount then return false, "INVALID_BUTTON_TEMPLATE" end
+  template.count = math.max(1, math.min(BUTTON_TEMPLATE_BUTTON_LIMIT, math.floor(nextCount)))
+  return true
+end
+
+function Dibs.RCOptions.SetButtonTemplateButton(templateId, index, values)
+  if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
+  local template = getButtonTemplateStore().templates[templateId]
+  index = math.floor(tonumber(index) or 0)
+  if type(template) ~= "table" or index < 1 or index > BUTTON_TEMPLATE_BUTTON_LIMIT or type(values) ~= "table" then
+    return false, "INVALID_BUTTON_TEMPLATE"
+  end
+  local button = template.buttons[index] or defaultTemplateButton(index)
+  if values.text ~= nil then button.text = tostring(values.text) end
+  if values.response ~= nil then button.response = tostring(values.response) end
+  if values.whisperKey ~= nil then button.whisperKey = tostring(values.whisperKey) end
+  if type(values.color) == "table" then
+    button.color = { tonumber(values.color[1]) or 1, tonumber(values.color[2]) or 1,
+      tonumber(values.color[3]) or 1, tonumber(values.color[4]) or 1 }
+  end
+  if values.requireNotes ~= nil then button.requireNotes = values.requireNotes == true end
+  template.buttons[index] = button
+  return true
+end
+
+function Dibs.RCOptions.MoveButtonTemplateButton(templateId, index, offset)
+  if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
+  local template = getButtonTemplateStore().templates[templateId]
+  index, offset = math.floor(tonumber(index) or 0), tonumber(offset)
+  local target = index + (offset and (offset < 0 and -1 or 1) or 0)
+  if type(template) ~= "table" or not offset or math.abs(offset) ~= 1
+    or index < 1 or index > template.count or target < 1 or target > template.count then
+    return false, "INVALID_BUTTON_ORDER"
+  end
+  template.buttons[index], template.buttons[target] = template.buttons[target], template.buttons[index]
+  return true
+end
+
+function Dibs.RCOptions.GetButtonTemplateAssignment(typeKey)
+  local store = getButtonTemplateStore()
+  local id = store.assignments[typeKey]
+  return type(store.templates[id]) == "table" and id or DEFAULT_BUTTON_TEMPLATE_ID
+end
+
+function Dibs.RCOptions.SetButtonTemplateAssignment(typeKey, templateId)
+  if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
+  local store = getButtonTemplateStore()
+  if type(typeKey) ~= "string" or type(store.templates[templateId]) ~= "table" then
+    return false, "INVALID_BUTTON_TEMPLATE_ASSIGNMENT"
+  end
+  store.assignments[typeKey] = templateId
+  return true
+end
+
 local function getDibTypeSettings()
   local settings = getDBSettings()
   settings.dibAllowedTypes = settings.dibAllowedTypes or {}
   return settings.dibAllowedTypes
 end
 
-local function getRCButtonsTable()
+local function getRCProfile()
   local rc = getRCAddon()
   if type(rc) ~= "table" then
     return nil
@@ -113,10 +305,29 @@ local function getRCButtonsTable()
   if profile == nil and type(rc.mldb) == "table" then
     profile = rc.mldb
   end
-  if profile and type(profile.buttons) == "table" then
-    return profile.buttons
+  return type(profile) == "table" and profile or nil
+end
+
+local function getRCButtonsTable()
+  local profile = getRCProfile()
+  return profile and type(profile.buttons) == "table" and profile.buttons or nil
+end
+
+function Dibs.RCOptions.GetButtonTemplateCapability()
+  local rc = getRCAddon()
+  if type(rc) ~= "table" then return false, "RC_INSTANCE_UNAVAILABLE" end
+  local profile = getRCProfile()
+  if type(profile) ~= "table" or type(profile.buttons) ~= "table" or type(profile.responses) ~= "table"
+    or (profile.enabledButtons ~= nil and type(profile.enabledButtons) ~= "table") then
+    return false, "RC_BUTTON_CONFIG_UNSUPPORTED"
   end
-  return nil
+  local hasRefresh = type(rc.ConfigTableChanged) == "function"
+  if not hasRefresh and type(rc.GetModule) == "function" then
+    local ok, ml = pcall(rc.GetModule, rc, "RCLootCouncilML", true)
+    hasRefresh = ok and type(ml) == "table" and type(ml.ConfigTableChanged) == "function"
+  end
+  if not hasRefresh then return false, "RC_BUTTON_CONFIG_UNSUPPORTED" end
+  return true, "READY"
 end
 
 -- RCLootCouncil exposes two different concepts in the Additional Buttons
@@ -207,6 +418,16 @@ local function getButtonSetDefinition(value)
   return RCLC_BUTTON_SET_BY_KEY[canonical]
 end
 
+function Dibs.RCOptions.GetCanonicalLootTypeKey(value)
+  if value ~= nil and Dibs.RCOptions.IsLootTypeCompatibilityKey(value) then return "OTHER" end
+  return canonicalSemanticTypeKey(value)
+end
+
+function Dibs.RCOptions.IsLootTypeCompatibilityKey(value)
+  local definition = getButtonSetDefinition(value)
+  return definition ~= nil and definition.state == "slot"
+end
+
 local function getDibTypeLabel(value)
   local key = normalizeButtonSetKey(value)
   if key == "DEFAULT" then return "Default fallback" end
@@ -232,6 +453,31 @@ local function getDibTypeLabel(value)
     return key:gsub("^INVTYPE_", "") .. " (RCLC slot)"
   end
   return tostring(value)
+end
+
+local LOOT_TYPE_HELP_KEYS = {
+  default = "LOOT_TYPE_HELP_DEFAULT",
+  TOKEN = "LOOT_TYPE_HELP_TOKEN",
+  TOKEN_SET = "LOOT_TYPE_HELP_TOKEN_SET",
+  MOUNTS = "LOOT_TYPE_HELP_MOUNTS",
+  PETS = "LOOT_TYPE_HELP_PETS",
+  RECIPE = "LOOT_TYPE_HELP_RECIPE",
+  DECOR = "LOOT_TYPE_HELP_DECOR",
+  COSMETIC = "LOOT_TYPE_HELP_COSMETIC",
+  OTHER = "LOOT_TYPE_HELP_OTHER",
+}
+
+function Dibs.RCOptions.GetLootTypeDescription(value)
+  local key = canonicalSemanticTypeKey(value)
+  local helpKey = LOOT_TYPE_HELP_KEYS[key]
+  if helpKey and type(helpText[helpKey]) == "string" then return helpText[helpKey] end
+
+  local definition = getButtonSetDefinition(value)
+  if definition and definition.note then return definition.note end
+  if normalizeButtonSetKey(value):match("^INVTYPE_") then
+    return helpText.LOOT_TYPE_HELP_SLOT or "An RCLootCouncil equipment-slot response group; it inherits the item's semantic Dibs type."
+  end
+  return helpText.LOOT_TYPE_HELP_OTHER or "Other eligible loot that does not match a more specific semantic type."
 end
 
 ---@doc.id rclootcouncil.response.mapping
@@ -278,6 +524,109 @@ local function buildConfiguredButtonSetsText()
   return "Configured RCLootCouncil sets: " .. table.concat(labels, ", ")
 end
 
+local BUTTON_TEMPLATE_TARGETS = {
+  default = { "default" },
+  TOKEN = { "TOKEN" },
+  TOKEN_SET = { "TOKEN" },
+  MOUNTS = { "MOUNTS" },
+  PETS = { "PETS" },
+  RECIPE = { "RECIPE" },
+  DECOR = { "DECOR" },
+  COSMETIC = { "COSMETIC" },
+  OTHER = { "RARE", "SPECIAL" },
+}
+
+local function getButtonTemplateTargets(semanticKey)
+  local targets = BUTTON_TEMPLATE_TARGETS[semanticKey]
+  if semanticKey == "COSMETIC" then
+    local integration = Dibs.RCLootCouncil
+    local supported = integration and type(integration.GetCosmeticResponseCodeSupport) == "function"
+      and integration.GetCosmeticResponseCodeSupport()
+    if not supported then return nil end
+  end
+  if semanticKey == "OTHER" then
+    targets = { "RARE", "SPECIAL" }
+    local profile = getRCProfile()
+    local enabledButtons = profile and type(profile.enabledButtons) == "table" and profile.enabledButtons or {}
+    for key, enabled in pairs(enabledButtons) do
+      local definition = enabled == true and getButtonSetDefinition(key) or nil
+      if definition and definition.state == "slot" then targets[#targets + 1] = key end
+    end
+  end
+  return targets
+end
+
+function Dibs.RCOptions.GenerateButtonTemplatesFromDraft()
+  if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
+  if not (Dibs.LootRules and type(Dibs.LootRules.GetDraftSnapshot) == "function") then
+    return false, "GUILD_LOOT_RULES_UNAVAILABLE"
+  end
+  local draft, reason = Dibs.LootRules.GetDraftSnapshot()
+  if type(draft) ~= "table" or type(draft.types) ~= "table" then
+    return false, reason or "GUILD_LOOT_RULES_UNAVAILABLE"
+  end
+
+  local targets, skipped = {}, {}
+  for typeKey, rule in pairs(draft.types) do
+    if type(rule) == "table" then
+      local definition = getButtonSetDefinition(typeKey)
+      if definition and definition.state == "slot" then
+        -- Slot groups inherit the semantic Other template when RC already enables them.
+      else
+        local semanticKey = canonicalSemanticTypeKey(typeKey)
+        local targetKeys = getButtonTemplateTargets(semanticKey)
+        if not targetKeys then
+          if rule.rclootcouncil == true then skipped[#skipped + 1] = tostring(typeKey) end
+        else
+          local templateId = Dibs.RCOptions.GetButtonTemplateAssignment(typeKey)
+          local includeDib = rule.adventureGuide == true and semanticKey ~= "COSMETIC"
+          local enabled = rule.rclootcouncil == true
+          for _, targetKey in ipairs(targetKeys) do
+            local existing = targets[targetKey]
+            if existing and (existing.templateId ~= templateId or existing.includeDib ~= includeDib
+              or existing.enabled ~= enabled) and (existing.enabled or enabled) then
+              return false, "AMBIGUOUS_BUTTON_TEMPLATE_MAPPING", { typeKey = typeKey, buttonSetKey = targetKey }
+            end
+            if not existing then
+              targets[targetKey] = {
+                buttonSetKey = targetKey,
+                templateId = templateId,
+                responseType = targetKey,
+                includeDib = includeDib,
+                enabled = enabled,
+              }
+            end
+          end
+        end
+      end
+    end
+  end
+
+  local targetKeys = {}
+  for targetKey in pairs(targets) do targetKeys[#targetKeys + 1] = targetKey end
+  table.sort(targetKeys)
+  local plan = {}
+  for _, targetKey in ipairs(targetKeys) do
+    local entry = targets[targetKey]
+    if entry.enabled then
+      plan[#plan + 1] = {
+        buttonSetKey = entry.buttonSetKey,
+        template = Dibs.RCOptions.GetButtonTemplate(entry.templateId),
+        responseType = entry.responseType,
+        includeDib = entry.includeDib,
+      }
+    end
+  end
+  if #plan == 0 then return false, "NO_SUPPORTED_DRAFT_BUTTON_SETS", skipped end
+  if not (Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.ApplyButtonTemplatePlan) == "function") then
+    return false, "RC_BUTTON_CONFIG_UNSUPPORTED", skipped
+  end
+  local applied, result = Dibs.RCLootCouncil.ApplyButtonTemplatePlan(plan)
+  if not applied then return false, result, skipped end
+  result.skippedTypes = skipped
+  return true, result
+end
+
 local function getDibTypeValues()
   local values = {
     default = "Default fallback",
@@ -302,8 +651,6 @@ local function getDibTypeValues()
   addValue("OTHER")
   addValue("COSMETIC")
 
-  -- Keep slots and persisted aliases available to the shared options API. The
-  -- Officer Loot Rules page filters these technical keys from its main grid.
   for key in pairs(getDibTypeSettings()) do
     addValue(key)
   end
@@ -320,7 +667,20 @@ local function getDibTypeValues()
   for key in pairs(projection and projection.additional or {}) do
     addValue(key)
   end
+
   return values
+end
+
+local function getSupportedLootRuleTypeValues()
+  local values = {}
+  for _, key in ipairs({ "default", "TOKEN", "TOKEN_SET", "MOUNTS", "PETS", "RECIPE", "DECOR", "OTHER", "COSMETIC" }) do
+    values[key] = getDibTypeLabel(key)
+  end
+  return values
+end
+
+function Dibs.RCOptions.GetSupportedLootRuleTypeValues()
+  return getSupportedLootRuleTypeValues()
 end
 
 local function setDibTypeEnabled(typeKey, enabled)
@@ -353,7 +713,8 @@ local function applyDibTypePreset(allEnabled)
     setStatus("Only the guild master or an officer may change Dibs settings.")
     return
   end
-  local values = getDibTypeValues()
+  local values = getSupportedLootRuleTypeValues()
+  values.COSMETIC = nil
   local settings = getDibTypeSettings()
 
   if allEnabled then
@@ -1366,6 +1727,10 @@ local function integrationStatusText()
     "\n" .. tostring(status.diagnostic or "") ..
     "\nVerified capabilities: " .. (#verified > 0 and table.concat(verified, ", ") or "none")
 end
+local function integrationStatusSummary()
+  local status = integrationStatusText()
+  return status:match("^[^\n]+") or status
+end
 local function auditAction(action, scope, detail)
   local db = Dibs.GetDB()
   db.settings.actionAudit = db.settings.actionAudit or {}
@@ -1384,7 +1749,8 @@ end
 function Dibs.RCOptions.IsOfficerPreviewOnly()
   return Dibs.RCOptions.IsOfficerPreview() and not (Dibs.Permissions and Dibs.Permissions.IsOfficer and Dibs.Permissions.IsOfficer())
 end
--- Window actions live in their corresponding tabs, not in Overview.
+-- Keep the RCLC Dibs category as a small launcher; detailed settings remain
+-- registered for existing internal consumers but are not shown in this panel.
 groups.overview.args.player = nil
 groups.overview.args.officer = nil
 groups.overview.args.integrationStatus = description(4, integrationStatusText)
@@ -1396,6 +1762,20 @@ end)
 groups.overview.args.openOfficerWindow = execute(7, "Open Officer control center", function()
   if Dibs.OfficerUI and Dibs.OfficerUI.Toggle then Dibs.OfficerUI.Toggle(true) end
 end)
+local launcherOptionsTable = {
+  type = "group",
+  name = "RCLootCouncil",
+  args = {
+    dibsSettings = {
+      type = "group",
+      name = OPTIONS_DISPLAY_NAME,
+      args = {
+        openPlayerWindow = execute(1, "Open Player UI", groups.overview.args.openPlayerWindow.func),
+        openOfficerWindow = execute(2, "Open Officer UI", groups.overview.args.openOfficerWindow.func),
+      },
+    },
+  },
+}
 groups.announcements = { type = "group", name = "Announcements", order = 6, args = {
   publicChannel = groups.preDibs.args.preDibAnnouncementChannel,
   officerChannel = groups.preDibs.args.preDibOfficerAnnouncementChannel,
@@ -1596,9 +1976,171 @@ groups.developer = { type = "group", name = "Developer", order = 9, args = {
     setStatus(request and "Test request created." or tostring(reason))
   end),
 } }
+local function refreshButtonTemplateOptions()
+  if LibStub ~= nil then
+    local ok, registry = pcall(LibStub, "AceConfigRegistry-3.0", true)
+    if ok and type(registry) == "table" and type(registry.NotifyChange) == "function" then
+      pcall(registry.NotifyChange, registry, OPTIONS_APP_NAME)
+    end
+  end
+end
+
+local function getSelectedButtonTemplate()
+  return Dibs.RCOptions.GetButtonTemplate(Dibs.RCOptions.GetSelectedButtonTemplate())
+end
+
+local function setTemplateButtonValue(index, field, value)
+  local templateId = Dibs.RCOptions.GetSelectedButtonTemplate()
+  local saved, reason = Dibs.RCOptions.SetButtonTemplateButton(templateId, index, { [field] = value })
+  if not saved then
+    setStatus("Unable to update button template: " .. tostring(reason))
+    return
+  end
+  refreshButtonTemplateOptions()
+end
+
+local buttonTemplateArgs = {
+  capability = description(0, function()
+    local supported, reason = Dibs.RCOptions.GetButtonTemplateCapability()
+    return supported and "Button generation ready for the active RCLootCouncil profile."
+      or ("Button generation unsupported: " .. tostring(reason))
+  end),
+  selected = { type = "select", name = "Template", order = 1, width = "half",
+    values = Dibs.RCOptions.GetButtonTemplateValues,
+    get = Dibs.RCOptions.GetSelectedButtonTemplate,
+    set = function(_, value)
+      local selected, reason = Dibs.RCOptions.SelectButtonTemplate(value)
+      if not selected then setStatus("Unable to select template: " .. tostring(reason)) end
+      refreshButtonTemplateOptions()
+    end,
+  },
+  name = { type = "input", name = "Template name", order = 2, width = "half",
+    get = function()
+      local template = getSelectedButtonTemplate()
+      return template and template.name or ""
+    end,
+    set = function(_, value)
+      local renamed, reason = Dibs.RCOptions.RenameButtonTemplate(
+        Dibs.RCOptions.GetSelectedButtonTemplate(), value)
+      if not renamed then setStatus("Unable to rename template: " .. tostring(reason)) end
+      refreshButtonTemplateOptions()
+    end,
+  },
+  newName = { type = "input", name = "New template name", order = 3, width = "half",
+    get = function() return getState().newButtonTemplateName or "" end,
+    set = function(_, value) getState().newButtonTemplateName = trimText(value) end,
+  },
+  create = execute(4, "Create template", function()
+    local id, reason = Dibs.RCOptions.CreateButtonTemplate(getState().newButtonTemplateName)
+    if not id then setStatus("Unable to create template: " .. tostring(reason)); return end
+    getState().newButtonTemplateName = ""
+    setStatus("Button template created.")
+    refreshButtonTemplateOptions()
+  end),
+  delete = execute(5, "Delete selected template", function()
+    local deleted, reason = Dibs.RCOptions.DeleteButtonTemplate(Dibs.RCOptions.GetSelectedButtonTemplate())
+    if not deleted then setStatus("Unable to delete template: " .. tostring(reason)); return end
+    setStatus("Button template deleted.")
+    refreshButtonTemplateOptions()
+  end),
+  count = { type = "range", name = "Number of template buttons", min = 1, max = BUTTON_TEMPLATE_BUTTON_LIMIT,
+    step = 1, order = 6, width = "full",
+    get = function()
+      local template = getSelectedButtonTemplate()
+      return template and template.count or 1
+    end,
+    set = function(_, value)
+      local saved, reason = Dibs.RCOptions.SetButtonTemplateCount(
+        Dibs.RCOptions.GetSelectedButtonTemplate(), value)
+      if not saved then setStatus("Unable to change button count: " .. tostring(reason)) end
+      refreshButtonTemplateOptions()
+    end,
+  },
+  generate = execute(30, "Generate from Draft Loot Rules", function()
+    local generated, result, detail = Dibs.RCOptions.GenerateButtonTemplatesFromDraft()
+    if not generated then
+      setStatus("Button generation stopped: " .. tostring(result))
+      return
+    end
+    local message = "Generated " .. tostring(result.appliedSets) .. " RCLootCouncil button set(s)."
+    if result.truncatedSets > 0 then message = message .. " Some sets were reduced to RC capacity." end
+    if #result.skippedTypes > 0 then message = message .. " Unsupported loot types skipped: " .. table.concat(result.skippedTypes, ", ") .. "." end
+    setStatus(message)
+    refreshButtonTemplateOptions()
+  end),
+}
+
+for index = 1, BUTTON_TEMPLATE_BUTTON_LIMIT do
+  local buttonIndex = index
+  buttonTemplateArgs["button" .. buttonIndex] = {
+    type = "group", name = "Button " .. buttonIndex, order = 10 + buttonIndex,
+    inline = true, dibsLayout = "FLOW_ROW", titleWidthPx = 72,
+    hidden = function()
+      local template = getSelectedButtonTemplate()
+      return not template or buttonIndex > template.count
+    end,
+    args = {
+      text = { type = "input", name = "Button", order = 1, widthPx = 160,
+        get = function()
+          local template = getSelectedButtonTemplate()
+          return template and template.buttons[buttonIndex].text or ""
+        end,
+        set = function(_, value) setTemplateButtonValue(buttonIndex, "text", value) end,
+      },
+      color = { type = "color", name = "Color", order = 2, hasAlpha = true, widthPx = 112,
+        get = function()
+          local template = getSelectedButtonTemplate()
+          local color = template and template.buttons[buttonIndex].color or { 1, 1, 1, 1 }
+          return color[1], color[2], color[3], color[4]
+        end,
+        set = function(_, red, green, blue, alpha)
+          setTemplateButtonValue(buttonIndex, "color", { red, green, blue, alpha })
+        end,
+      },
+      response = { type = "input", name = "Response", order = 3, widthPx = 165,
+        get = function()
+          local template = getSelectedButtonTemplate()
+          return template and template.buttons[buttonIndex].response or ""
+        end,
+        set = function(_, value) setTemplateButtonValue(buttonIndex, "response", value) end,
+      },
+      requireNotes = { type = "toggle", name = "Require Notes", order = 4, widthPx = 120,
+        get = function()
+          local template = getSelectedButtonTemplate()
+          return template and template.buttons[buttonIndex].requireNotes == true or false
+        end,
+        set = function(_, value) setTemplateButtonValue(buttonIndex, "requireNotes", value == true) end,
+      },
+      moveUp = execute(5, "Up", function()
+        local moved, reason = Dibs.RCOptions.MoveButtonTemplateButton(
+          Dibs.RCOptions.GetSelectedButtonTemplate(), buttonIndex, -1)
+        if not moved then setStatus("Unable to move button: " .. tostring(reason)) end
+        refreshButtonTemplateOptions()
+      end),
+      moveDown = execute(6, "Down", function()
+        local moved, reason = Dibs.RCOptions.MoveButtonTemplateButton(
+          Dibs.RCOptions.GetSelectedButtonTemplate(), buttonIndex, 1)
+        if not moved then setStatus("Unable to move button: " .. tostring(reason)) end
+        refreshButtonTemplateOptions()
+      end),
+    },
+  }
+  buttonTemplateArgs["button" .. buttonIndex].args.moveUp.widthPx = 44
+  buttonTemplateArgs["button" .. buttonIndex].args.moveDown.widthPx = 52
+  buttonTemplateArgs["button" .. buttonIndex].args.moveUp.hidden = function()
+    local template = getSelectedButtonTemplate()
+    return not template or buttonIndex <= 1 or buttonIndex > template.count
+  end
+  buttonTemplateArgs["button" .. buttonIndex].args.moveDown.hidden = function()
+    local template = getSelectedButtonTemplate()
+    return not template or buttonIndex >= template.count
+  end
+end
+
 groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args = {
-  status = description(0, integrationStatusText),
-  mapping = { type = "group", name = "RCLootCouncil button-set mapping", order = 1, inline = true, args = {
+  status = description(0, integrationStatusSummary),
+  diagnostic = description(1, integrationStatusText),
+  mapping = { type = "group", name = "Button-set mapping details", order = 20, inline = false, args = {
     guide = description(1, buildButtonSetMappingText),
     configured = description(2, buildConfiguredButtonSetsText),
   } },
@@ -1624,6 +2166,8 @@ groups.integration = { type = "group", name = "RCLootCouncil", order = 10, args 
       return true
     end,
     set = function(_, key, value) setDibTypeEnabled(key, value) end },
+  templates = { type = "group", name = "Loot button templates", order = 3, inline = true,
+    disabled = function() return not canEditDibsSettings() end, args = buttonTemplateArgs },
   readiness = { type = "group", name = "Raid Readiness", order = 3.5, inline = true, args = {
     intro = description(1, "Run a read-only readiness check before raid. The dry-run uses local validation only and never calls RCMLAwardSuccess, FinalizeAward, loot controls, chat traffic, or ledger accounting."),
     status = description(2, function()
@@ -1840,7 +2384,7 @@ function Dibs.RCOptions.Open()
   end
   Dibs.RCOptions.pendingOpen = nil
   local ace3 = Dibs.Ace3
-  if not ace3 or not ace3.RegisterOptionsTable(OPTIONS_APP_NAME, optionsTable) then return false end
+  if not ace3 or not ace3.RegisterOptionsTable(OPTIONS_APP_NAME, launcherOptionsTable) then return false end
   local addon = getRCAddon()
   local panel = addon and addon.optionsFrame and addon.optionsFrame.dibs
   if panel and _G.Settings and type(_G.Settings.OpenToCategory) == "function" then
@@ -1912,7 +2456,7 @@ local function registerOptions()
     return false
   end
 
-  local okRegister, registerErr = ace3.RegisterOptionsTable(OPTIONS_APP_NAME, optionsTable)
+  local okRegister, registerErr = ace3.RegisterOptionsTable(OPTIONS_APP_NAME, launcherOptionsTable)
   if not okRegister and not tostring(registerErr):find("already registered", 1, true) then
     debugMessage("RegisterOptionsTable failed: " .. tostring(registerErr))
     return false

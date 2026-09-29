@@ -150,12 +150,31 @@ describe("Automatic Dibs table presentation", function()
   end
 
   local function selectStatus(value)
-    local dropdown = findWidget(function(widget)
-      return widget.kind == "Dropdown" and widget.label == "Status"
+    local dibsSelect = findWidget(function(widget)
+      return widget._dibsSelectLabel == "Status"
     end)
-    assert_not_nil(dropdown, "Status dropdown not found")
-    dropdown.callbacks.OnValueChanged(dropdown, "OnValueChanged", value)
+    assert_not_nil(dibsSelect, "Status select not found")
+    dibsSelect.callbacks.OnValueChanged(dibsSelect, "OnValueChanged", value)
   end
+
+  it("uses the shared DIBS select for Status without changing filter behavior", function()
+    local dibs = loadReconciliationRoster()
+    local frame, getCapture = captureAutomaticTable(dibs, 1400)
+    local statusSelect = frame.automaticDibsStatusFilter
+    assert_not_nil(statusSelect)
+    assert_equal("needsReconciliation", statusSelect:GetValue())
+    assert_equal("Needs Reconciliation", statusSelect:GetText())
+    assert_equal("All", statusSelect._dibsSelectValues.all)
+    assert_not_nil(statusSelect._dibsTooltipAttachment)
+
+    selectStatus("ready")
+    assert_equal("ready", frame.automaticDibsFilter)
+    assert_equal(2, #getCapture().rows)
+    selectStatus("surplus")
+    assert_equal("surplus", frame.automaticDibsFilter)
+    assert_equal(1, #getCapture().rows)
+    assert_equal("automaticDibs", frame.activeTab)
+  end)
 
   local function selectPageSize(value)
     local dropdown = findWidget(function(widget)
@@ -860,7 +879,7 @@ describe("Automatic Dibs table presentation", function()
     assert_true(refreshRequested)
     assert_true(frame.automaticDibsRosterLoading)
     assert_not_nil(findWidget(function(widget)
-      return widget.kind == "Dropdown" and widget.label == "Status"
+      return widget._dibsSelectLabel == "Status"
     end))
   end)
 end)

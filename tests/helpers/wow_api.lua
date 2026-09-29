@@ -40,6 +40,7 @@ local function makeFrame()
     ClearAllPoints = function(self) self._points = {}; self._point = nil end,
     Hide = function(self) self._shown = false end,
     Show = function(self) self._shown = true end,
+    SetParent = function(self, parent) self.parent = parent end,
     Raise = function() end,
     SetClampedToScreen = function() end,
     SetToplevel = function() end,
@@ -61,6 +62,7 @@ local function makeFrame()
     IsShown = function(self) return self._shown == true end,
     RegisterEvent = function(self, event) self._events = self._events or {}; self._events[event] = true end,
     SetScript = function(_, name, fn) scripts[name] = fn end,
+    GetScript = function(_, name) return scripts[name] end,
     HookScript = function(_, name, fn)
       local previous = scripts[name]
       if previous then
@@ -78,6 +80,11 @@ local function makeFrame()
         SetTexCoord = function(self, ...) self._texCoord = { ... } end,
         SetSize = function(self, width, height) self._size = { width, height } end,
         SetPoint = function(self, ...) self._point = { ... } end,
+        SetColorTexture = function(self, ...) self._color = { ... } end,
+        SetVertexColor = function(self, ...) self._vertexColor = { ... } end,
+        SetAllPoints = function(self, frame) self._allPoints = frame end,
+        Show = function(self) self._shown = true end,
+        Hide = function(self) self._shown = false end,
       }
     end,
     CreateFontString = function()
@@ -87,8 +94,22 @@ local function makeFrame()
         GetStringWidth = function(self) return #(self._text or "") * 8 end,
         SetWidth = function() end,
         SetJustifyH = function() end,
+        SetJustifyV = function() end,
+        SetWordWrap = function() end,
+        SetTextColor = function(self, ...) self._color = { ... } end,
       }
     end,
+    SetBackdrop = function(self, value) self._backdrop = value end,
+    SetBackdropColor = function(self, ...) self._backdropColor = { ... } end,
+    SetBackdropBorderColor = function(self, ...) self._backdropBorderColor = { ... } end,
+    SetAlpha = function(self, value) self._alpha = value end,
+    Enable = function(self) self._disabled = false end,
+    Disable = function(self) self._disabled = true end,
+    IsEnabled = function(self) return self._disabled ~= true end,
+    EnableKeyboard = function(self, value) self._keyboardEnabled = value end,
+    RegisterForClicks = function(self, ...) self._clicks = { ... } end,
+    SetHighlightTexture = function(self, value) self._highlightTexture = value end,
+    SetPushedTexture = function(self, value) self._pushedTexture = value end,
   }
   return frame
 end
@@ -291,6 +312,11 @@ function M.install(opts)
         return true, true
       end
       return false, false
+    end,
+    GetAddOnMetadata = function(name, field)
+      if name == "RCLootCouncil" and field == "Version" then
+        return opts and opts.rclootcouncilVersion or nil
+      end
     end,
   }
 

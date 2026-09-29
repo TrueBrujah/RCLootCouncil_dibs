@@ -103,13 +103,13 @@ describe("First installation assistant integration", function()
     local calls = 0
     dibs.RCOptions.GetLootTypeOptions = function()
       calls = calls + 1
-      if calls <= 2 then return source end
+      if calls == 1 then return source end
       return nil
     end
     local first = getLootCheck(dibs)
     local second = getLootCheck(dibs)
     assert_equal("ready", first.state)
     assert_equal("unavailable", second.state)
-    assert_equal(4, calls)
+    assert_equal(2, calls)
   end)
 end)

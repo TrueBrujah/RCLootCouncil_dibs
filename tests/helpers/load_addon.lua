@@ -156,12 +156,26 @@ local function makeAce3()
     function widget:GetText() return self.text or "" end
     function widget:SetValue(value) self.value = value end
     function widget:SetDisabled(value) self.disabled = value == true end
+    function widget:SetPulloutWidth(value) self.pulloutWidth = value end
     function widget:DisableButton(value) self.buttonDisabled = value == true end
     function widget:SetCallback(name, callback) self.callbacks[name] = callback end
     function widget:AddChild(child) table.insert(self.children, child); child.parent = self end
     function widget:ReleaseChildren() self.children = {} end
     function widget:Hide() self.frame:Hide() end
     function widget:Show() self.frame:Show() end
+    if kind == "Dropdown" then
+      widget.pullout = {
+        Open = function(self, point, relativeFrame, relativePoint, x, y)
+          self.open = true
+          self.anchor = { point, relativeFrame, relativePoint, x, y }
+          widget.open = true
+        end,
+        Close = function(self)
+          self.open = false
+          widget.open = nil
+        end,
+      }
+    end
     return widget
   end
   return {

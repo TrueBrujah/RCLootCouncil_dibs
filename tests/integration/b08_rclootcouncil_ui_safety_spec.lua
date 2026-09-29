@@ -25,6 +25,22 @@ local function rcWithLoot(opts)
   return rc, loot, entry, native
 end
 
+local function votingApi()
+  local voting = { publicColumns = { { colName = "name" }, { colName = "response" } } }
+  function voting:GetColumnIndex(name)
+    for index, column in ipairs(self.publicColumns) do
+      if column.colName == name then return index end
+    end
+  end
+  function voting:AddColumn(spec, target, position)
+    local targetIndex = self:GetColumnIndex(target)
+    if not targetIndex then error("Column target was not found") end
+    table.insert(self.publicColumns, targetIndex + (position == "after" and 1 or 0), spec)
+    return spec
+  end
+  return voting
+end
+
 describe("B08 RCLootCouncil UI ownership and combat safety", function()
   it("keeps the RC OnClick intact and gives only the Dibs-owned button a Dibs handler", function()
     local rc, loot, entry, native = rcWithLoot()
@@ -40,7 +56,7 @@ describe("B08 RCLootCouncil UI ownership and combat safety", function()
   end)
 
   it("coalesces loot and voting projection work during combat and flushes once after combat", function()
-    local voting = { scrollCols = { { colName = "name" }, { colName = "response" } }, frame = { st = { cols = {}, SetDisplayCols = function(self, cols) self.cols = cols end, Refresh = function(self) self.refreshed = (self.refreshed or 0) + 1 end } } }
+    local voting = votingApi()
     local rc, loot, entry = rcWithLoot({ voting = voting })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { inCombat = true } })
     assert_nil(entry.dibsButton)
@@ -49,10 +65,11 @@ describe("B08 RCLootCouncil UI ownership and combat safety", function()
     dibs.RCLootCouncil.QueueUIRefresh("voting")
     local pending = dibs.RCLootCouncil.GetUIProjectionStatus().pending
     assert_equal(2, #pending)
-    assert_equal(2, #voting.scrollCols)
+    assert_equal(2, #voting.publicColumns)
     wow.setCombat(false); assert_true(dibs.RCLootCouncil.OnCombatEnded())
     assert_not_nil(entry.dibsButton)
-    assert_true(#voting.scrollCols >= 3)
+    assert_equal(3, voting:GetColumnIndex("dibsRemaining"))
+    assert_equal(4, voting:GetColumnIndex("dibsConvert"))
     assert_equal(0, #dibs.RCLootCouncil.GetUIProjectionStatus().pending)
     local button = entry.dibsButton
     assert_true(dibs.RCLootCouncil.OnCombatEnded())

@@ -331,8 +331,8 @@ links and version metadata.
 - **FR-010**: The system MUST recover unusable stored positions without corrupting the
   other window's record or repeatedly restoring during route refreshes.
 - **FR-011**: The system MUST prevent or surface no new self-parent, cyclic-anchor,
-  invalid tooltip argument, lib-st, or dropdown display/domain-value failures during
-  supported UI workflows.
+  invalid tooltip argument, shared Data Grid, or dropdown display/domain-value failures
+  during supported UI workflows.
 - **FR-012**: The system MUST render a non-blank, readable page after normal refresh,
   reload-like initialization, route transitions, and repeated open/close cycles.
 - **FR-013**: The system MUST maintain one owner for each routed page title and optional

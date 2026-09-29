@@ -1,10 +1,10 @@
 --[[
 Module: Dibs.AceGUI
 Layer: UI toolkit adapter
-Purpose: Provide consistent AceGUI container, table, and action helpers.
-Responsibilities: Widget construction, scrolling tables, safe callbacks, and layout sizing.
+Purpose: Provide consistent AceGUI container, Data Grid, and action helpers.
+Responsibilities: Widget construction, grid interactions, safe callbacks, and layout sizing.
 Non-responsibilities: It does not decide business policy or persist data.
-Dependencies: AceGUI-3.0, ScrollingTable, Dibs.Ace3.
+Dependencies: AceGUI-3.0 and Dibs.Ace3.
 Blizzard events: None directly.
 Internal events/messages: Widget callbacks to owning UI controllers.
 SavedVariables: None directly.
@@ -45,6 +45,24 @@ local contextMenuSerial = 0
 local contextMenuFrame
 local refreshState = { queued = false, dirty = false, callbacks = {} }
 
+local function clearTooltipAttachment(widget)
+  local attachment = widget and widget._dibsTooltipAttachment
+  if not attachment then return end
+  local frame = attachment.frame
+  if frame and type(frame.SetScript) == "function" then
+    local currentEnter = type(frame.GetScript) == "function" and frame:GetScript("OnEnter") or nil
+    local currentLeave = type(frame.GetScript) == "function" and frame:GetScript("OnLeave") or nil
+    if currentEnter == attachment.onEnter or type(frame.GetScript) ~= "function" then
+      frame:SetScript("OnEnter", attachment.previousEnter)
+    end
+    if currentLeave == attachment.onLeave or type(frame.GetScript) ~= "function" then
+      frame:SetScript("OnLeave", attachment.previousLeave)
+    end
+  end
+  if GameTooltip and type(GameTooltip.Hide) == "function" then pcall(GameTooltip.Hide, GameTooltip) end
+  widget._dibsTooltipAttachment = nil
+end
+
 function Adapter.HideContextMenu()
   if type(_G.MSA_CloseDropDownMenus) == "function" then
     pcall(_G.MSA_CloseDropDownMenus)
@@ -68,17 +86,6 @@ local function runRefreshes(reason)
   return true
 end
 
-local function getScrollingTable()
-  if Dibs.Ace3 and Dibs.Ace3.libs and Dibs.Ace3.libs.scrollingTable then
-    return Dibs.Ace3.libs.scrollingTable
-  end
-  if type(_G.LibStub) == "function" or type(_G.LibStub) == "table" then
-    local ok, library = pcall(_G.LibStub, "ScrollingTable", true)
-    if ok and library then return library end
-  end
-  return nil
-end
-
 local function call(widget, method, ...)
   if widget and type(widget[method]) == "function" then
     return pcall(widget[method], widget, ...)
@@ -100,6 +107,13 @@ function Adapter.GetLayoutMetrics()
     metrics.tableViewportMinimum = math.max(96, tonumber(sizing.tableViewportMinimum) or 120)
     metrics.buttonHorizontalPadding = 30
     metrics.buttonSizingSafetyMargin = 8
+    metrics.selectHeight = math.max(24, tonumber(sizing.selectHeight) or 28)
+    metrics.selectLabelHeight = math.max(12, tonumber(sizing.selectLabelHeight) or 16)
+    metrics.selectMinWidth = math.max(100, tonumber(sizing.selectMinWidth) or 150)
+    metrics.selectMaxWidth = math.max(180, tonumber(sizing.selectMaxWidth) or 420)
+    metrics.selectPadding = math.max(4, tonumber(sizing.selectPadding) or 8)
+    metrics.selectArrowSize = math.max(10, tonumber(sizing.selectArrowSize) or 14)
+    metrics.selectArrowSpacing = math.max(4, tonumber(sizing.selectArrowSpacing) or 8)
     return metrics
   end
   return {
@@ -109,6 +123,8 @@ function Adapter.GetLayoutMetrics()
     tableVerticalGap = 4, tableFooterHeight = 32, tableViewportMinimum = 120,
     buttonHorizontalPadding = 30,
     buttonSizingSafetyMargin = 8,
+    selectHeight = 28, selectLabelHeight = 16, selectMinWidth = 150,
+    selectMaxWidth = 420, selectPadding = 8, selectArrowSize = 14, selectArrowSpacing = 8,
   }
 end
 
@@ -409,12 +425,18 @@ function Adapter.CreateWindow(title, width, height, point, positionId)
         if height then activeShell.layout.height = height end
       end
       if activeWindow and activeWindow.DoLayout then activeWindow:DoLayout() end
-      if height then
+      if height or width then
         for _, scroll in ipairs(activeShell._dibsResponsiveScrolls) do
           if scroll and type(scroll._dibsViewportUpdater) == "function" then
             pcall(scroll._dibsViewportUpdater)
           elseif scroll and scroll.SetHeight and scroll._dibsResizeOffset then
             scroll:SetHeight(math.max(120, height - scroll._dibsResizeOffset))
+          end
+          if width and scroll and not scroll._dibsViewportUpdater
+            and type(scroll._dibsApplyFluidWidth) == "function" then
+            local availableWidth = scroll.frame and scroll.frame.GetWidth and scroll.frame:GetWidth() or 0
+            if availableWidth <= 0 then availableWidth = math.max(240, width - 220) end
+            pcall(scroll._dibsApplyFluidWidth, availableWidth)
           end
           if scroll and scroll.DoLayout then scroll:DoLayout() end
         end
@@ -534,6 +556,49 @@ local function releaseMSAControls(widget, seen)
   seen = seen or {}
   if seen[widget] then return end
   seen[widget] = true
+  for scriptName, attachment in pairs(widget._dibsGridScripts or {}) do
+    local frame = attachment.frame
+    if frame and type(frame.GetScript) == "function" and type(frame.SetScript) == "function"
+      and frame:GetScript(scriptName) == attachment.handler then
+      frame:SetScript(scriptName, attachment.previous)
+    end
+  end
+  widget._dibsGridScripts = nil
+  clearTooltipAttachment(widget)
+  if widget._dibsGridSelectionTexture then
+    if widget._dibsGridSelectionTexture.Hide then widget._dibsGridSelectionTexture:Hide() end
+    widget._dibsGridSelectionTexture = nil
+  end
+  clearTooltipAttachment(widget._dibsTooltipFrame)
+  widget._dibsTooltipFrame = nil
+  local selectMenu = widget._dibsSelectMenu
+  if selectMenu and selectMenu.open and selectMenu.pullout and type(selectMenu.pullout.Close) == "function" then
+    pcall(selectMenu.pullout.Close, selectMenu.pullout)
+  end
+  widget._dibsSelectMenu = nil
+  widget._dibsSelectLabel = nil
+  widget._dibsSelectWrapper = nil
+  widget._dibsSelectValues = nil
+  local selectTrigger = widget._dibsSelectTrigger
+  if selectTrigger then
+    if selectTrigger.Hide then pcall(selectTrigger.Hide, selectTrigger) end
+    if selectTrigger.ClearAllPoints then pcall(selectTrigger.ClearAllPoints, selectTrigger) end
+    if selectTrigger.SetScript then
+      for _, scriptName in ipairs({ "OnClick", "OnEnter", "OnLeave", "OnFocusGained", "OnFocusLost", "OnKeyDown", "OnKeyUp" }) do
+        pcall(selectTrigger.SetScript, selectTrigger, scriptName, nil)
+      end
+    end
+    if selectTrigger.SetParent then pcall(selectTrigger.SetParent, selectTrigger, nil) end
+    widget._dibsSelectTrigger = nil
+  end
+  local resize = widget._dibsSelectResize
+  if resize and resize.frame and type(resize.frame.SetScript) == "function" then
+    local current = type(resize.frame.GetScript) == "function" and resize.frame:GetScript("OnSizeChanged") or nil
+    if current == resize.handler or type(resize.frame.GetScript) ~= "function" then
+      resize.frame:SetScript("OnSizeChanged", resize.previous)
+    end
+  end
+  widget._dibsSelectResize = nil
   if widget._dibsShell and widget._dibsShell._dibsResponsiveScrolls then
     for index = #widget._dibsShell._dibsResponsiveScrolls, 1, -1 do
       if widget._dibsShell._dibsResponsiveScrolls[index] == widget then
@@ -575,20 +640,6 @@ local function releaseMSAControls(widget, seen)
         end
       end
     end
-  end
-  if widget._dibsScrollingTable then
-    if type(widget._dibsScrollingTable.RegisterEvents) == "function" then
-      pcall(widget._dibsScrollingTable.RegisterEvents, widget._dibsScrollingTable, {}, true)
-    end
-    if type(widget._dibsScrollingTable.Hide) == "function" then
-      pcall(widget._dibsScrollingTable.Hide, widget._dibsScrollingTable)
-    end
-    local tableFrame = widget._dibsScrollingTable.frame
-    if tableFrame then
-      if tableFrame.ClearAllPoints then pcall(tableFrame.ClearAllPoints, tableFrame) end
-      if tableFrame.SetParent then pcall(tableFrame.SetParent, tableFrame, nil) end
-    end
-    widget._dibsScrollingTable = nil
   end
   -- AceGUI reuses SimpleGroup instances.  Restore the widget's original
   -- width handler before returning a table host to the pool; otherwise a
@@ -693,24 +744,38 @@ function Adapter.SetValue(widget, value)
   if widget then call(widget, "SetValue", value) end
 end
 
-function Adapter.AddTooltip(widget, title, description)
+function Adapter.AttachHelp(widget, title, description)
   local frame = widget and (widget.frame or widget)
-  if not frame or type(frame.SetScript) ~= "function" or not GameTooltip or type(GameTooltip.SetOwner) ~= "function" then
+  if not frame or type(frame.SetScript) ~= "function" then
     return widget
   end
-  frame:SetScript("OnEnter", function(self)
+  clearTooltipAttachment(widget)
+  local previousEnter = type(frame.GetScript) == "function" and frame:GetScript("OnEnter") or nil
+  local previousLeave = type(frame.GetScript) == "function" and frame:GetScript("OnLeave") or nil
+  local onEnter = function(self, ...)
+    if previousEnter then previousEnter(self, ...) end
+    if not GameTooltip or type(GameTooltip.SetOwner) ~= "function" then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetText(tostring(title or ""), 1, 0.82, 0, 1)
-    if description and description ~= "" then
+    if description and description ~= "" and GameTooltip.AddLine then
       GameTooltip:AddLine(tostring(description), 1, 1, 1, true)
     end
-    GameTooltip:Show()
-  end)
-  frame:SetScript("OnLeave", function()
-    GameTooltip:Hide()
-  end)
+    if GameTooltip.Show then GameTooltip:Show() end
+  end
+  local onLeave = function(self, ...)
+    if GameTooltip and type(GameTooltip.Hide) == "function" then GameTooltip:Hide() end
+    if previousLeave then previousLeave(self, ...) end
+  end
+  frame:SetScript("OnEnter", onEnter)
+  frame:SetScript("OnLeave", onLeave)
+  widget._dibsTooltipAttachment = {
+    frame = frame, onEnter = onEnter, onLeave = onLeave,
+    previousEnter = previousEnter, previousLeave = previousLeave,
+  }
   return widget
 end
+
+Adapter.AddTooltip = Adapter.AttachHelp
 
 function Adapter.AddHeader(shell, parent, text, description)
   local header = Adapter.AddLabel(shell, parent, text, true)
@@ -845,396 +910,8 @@ function Adapter.ShowContextMenu(entries)
   return true
 end
 
-local function showTableContextMenu(st, rowRecord, columns, options)
-  if not HAS_MSA_DROPDOWN or type(_G.MSA_ToggleDropDownMenu) ~= "function"
-    or type(_G.MSA_DropDownMenu_Initialize) ~= "function" then
-    return false
-  end
-  Adapter.HideContextMenu()
-  if not contextMenuFrame then
-    contextMenuSerial = contextMenuSerial + 1
-    contextMenuFrame = _G.MSA_DropDownMenu_Create("DibsTableContext" .. tostring(contextMenuSerial), _G.UIParent)
-  end
-  if not contextMenuFrame then return false end
-
-  local menuRows = {}
-  local function addMenu(text, callback, disabled)
-    menuRows[#menuRows + 1] = { text = text, callback = callback, disabled = disabled }
-  end
-  if rowRecord then
-    local action = rowRecord._dibsAction
-    if action and type(action.callback) == "function" then
-      addMenu(action.text or "Open", action.callback)
-    end
-    if options and type(options.contextMenu) == "function" then
-      local ok, custom = pcall(options.contextMenu, rowRecord._dibsRow or rowRecord, st)
-      if ok and type(custom) == "table" then
-        for _, entry in ipairs(custom) do
-          if type(entry) == "table" and type(entry.callback) == "function" then
-            addMenu(entry.text or "Action", entry.callback, entry.disabled == true)
-          end
-        end
-      end
-    end
-    if #menuRows > 0 and (not options or options.allowTableSort ~= false) then
-      menuRows[#menuRows + 1] = { isTitle = true, text = "Sort table" }
-    end
-  end
-  if not options or options.allowTableSort ~= false then
-    for index, column in ipairs(columns or {}) do
-      if not column.action then
-      local name = safeContextText(column.title or column.name or ("Column " .. tostring(index)))
-      addMenu(name .. " (A-Z)", function()
-        for i, definition in ipairs(st.cols or {}) do definition.sort = nil end
-        st.cols[index].sort = getScrollingTable().SORT_ASC
-        st:SortData()
-        if st._dibsUpdateHeaders then st._dibsUpdateHeaders() end
-      end)
-      addMenu(name .. " (Z-A)", function()
-        for i, definition in ipairs(st.cols or {}) do definition.sort = nil end
-        st.cols[index].sort = getScrollingTable().SORT_DSC
-        st:SortData()
-        if st._dibsUpdateHeaders then st._dibsUpdateHeaders() end
-      end)
-      end
-    end
-  end
-  if #menuRows == 0 then return false end
-  _G.MSA_DropDownMenu_Initialize(contextMenuFrame, function(_, level)
-    if level ~= 1 then return end
-    for _, entry in ipairs(menuRows) do
-      local info = _G.MSA_DropDownMenu_CreateInfo()
-      info.text = entry.text
-      info.isTitle = entry.isTitle
-      info.disabled = entry.disabled
-      info.notCheckable = true
-      info.func = entry.callback
-      _G.MSA_DropDownMenu_AddButton(info, level)
-    end
-  end, "MENU")
-  _G.MSA_ToggleDropDownMenu(1, nil, contextMenuFrame, "cursor", 0, 0)
-  return true
-end
-
--- Render a real ScrollingTable when lib-st is available. Its native header
--- buttons provide stable column widths, left-click sorting, row selection and
--- right-click menus. The existing AceGUI label grid remains the compatibility
--- fallback used by reduced test clients and older installations.
-function Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
-  local library = getScrollingTable()
-  if not library or type(library.CreateST) ~= "function" or not parent or not parent.frame then
-    return nil
-  end
-  options = options or {}
-  local tableHeight = tonumber(height) or 260
-  local rowHeight = tonumber(options.rowHeight) or 20
-  local definitions = columns or {}
-  if #definitions == 0 then return nil end
-  local host = Adapter.Create(shell, "SimpleGroup", parent)
-  if not host or not host.frame then return nil end
-  call(host, "SetFullWidth", true)
-  -- lib-st owns a native frame that is taller than AceGUI's SimpleGroup
-  -- default. Reserve the same height in the parent layout or the next widget
-  -- is placed over the table (most visible on the Profiles and Data pages).
-  -- Its sortable header is anchored just above that native frame, so include
-  -- one row for the header in the host's allocation as well.
-  call(host, "SetHeight", tableHeight + rowHeight)
-  call(host, "SetLayout", "Fill")
-  -- lib-st owns a native frame rather than an AceGUI child.  An empty Fill
-  -- group otherwise auto-adjusts to zero during a parent reflow, moving the
-  -- next control over the table and producing the intermittent narrow layout.
-  call(host, "SetAutoAdjustHeight", false)
-  -- Give the header the same readable panel treatment as the rows. The
-  -- embedded lib-st frame supplies its own backdrop for the body; this small
-  -- background fills the reserved header band without changing AceGUI's
-  -- global theme.
-  if options.flatBackground ~= true and host.frame.CreateTexture then
-    local background = host.frame:CreateTexture(nil, "BACKGROUND")
-    if background then
-      if background.SetColorTexture then
-        background:SetColorTexture(0.10, 0.11, 0.12, 0.94)
-      elseif background.SetTexture then
-        background:SetTexture("Interface\\ChatFrame\\ChatFrameBackground")
-        if background.SetVertexColor then background:SetVertexColor(0.10, 0.11, 0.12, 0.94) end
-      end
-      if background.SetAllPoints then background:SetAllPoints(host.frame) end
-      host._dibsTableBackground = background
-    end
-  end
-
-  local desiredWidth = 0
-  local tableColumns = {}
-  local actionLabelsByColumn = {}
-  for index, column in ipairs(definitions) do
-    local width = math.max(48, tonumber(column.width) or 100)
-    local action = column.action == true or (index == #definitions and rowActions ~= nil)
-    local title = string.lower(tostring(column.title or column.name or ""))
-    local defaultMinimum = action and Adapter.GetLayoutMetrics().actionMinWidth or 48
-    local defaultPriority = action and 100 or 1
-    if not action and title:find("player", 1, true) then defaultMinimum, defaultPriority = 120, 5 end
-    if not action and title:find("item", 1, true) then defaultMinimum, defaultPriority = 140, 5 end
-    if not action and title:find("status", 1, true) then defaultMinimum, defaultPriority = 88, 5 end
-    local actionLabels = {}
-    for _, label in ipairs(column.actionLabels or {}) do actionLabels[#actionLabels + 1] = label end
-    if action and column.title and column.title ~= "Action" then actionLabels[#actionLabels + 1] = column.title end
-    actionLabelsByColumn[index] = actionLabels
-    local minimumWidth = tonumber(column.minWidth) or defaultMinimum
-    if action and #actionLabels > 0 then
-      minimumWidth = math.max(minimumWidth, Adapter.GetContentSizedActionWidth(actionLabels, minimumWidth))
-      width = math.max(width, minimumWidth)
-    end
-    desiredWidth = desiredWidth + width
-    tableColumns[index] = {
-      name = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
-      baseName = safeContextText(column.title or column.name or ("Column " .. tostring(index))),
-      width = width,
-      baseWidth = width,
-      minWidth = minimumWidth,
-      priority = tonumber(column.priority) or defaultPriority,
-      align = column.align or "LEFT",
-      tooltip = column.tooltip,
-      defaultsort = column.defaultsort,
-      action = action,
-    }
-  end
-
-  local availableWidth = tonumber(options.widthHint) or (host.frame.GetWidth and host.frame:GetWidth() or 0)
-  if availableWidth <= 0 and shell.frame and shell.frame.GetWidth then
-    availableWidth = math.max(360, (shell.frame:GetWidth() or desiredWidth) - 220)
-  end
-  if availableWidth > 0 then availableWidth = availableWidth - 12 end
-
-  local rowData = {}
-  for _, sourceRow in ipairs(rows or {}) do
-    local action = rowActions and rowActions(sourceRow) or nil
-    local cells = {}
-    for index = 1, #tableColumns do
-      local value = sourceRow[index]
-      if index == #tableColumns and action then
-        value = action.text or "Action"
-        actionLabelsByColumn[index] = actionLabelsByColumn[index] or {}
-        actionLabelsByColumn[index][#actionLabelsByColumn[index] + 1] = value
-      end
-      cells[index] = value == nil and "" or value
-    end
-    rowData[#rowData + 1] = { cols = cells, _dibsRow = sourceRow, _dibsAction = action }
-  end
-  if #rowData == 0 then
-    rowData[1] = { cols = {}, _dibsRow = { "No entries" } }
-    for index = 1, #tableColumns do rowData[1].cols[index] = index == 1 and "No entries" or "" end
-  end
-
-  for index, column in ipairs(tableColumns) do
-    if column.action and #(actionLabelsByColumn[index] or {}) > 0 then
-      local requiredWidth = Adapter.GetContentSizedActionWidth(actionLabelsByColumn[index], column.minWidth)
-      column.width = math.max(column.baseWidth, requiredWidth)
-      column.minWidth = math.max(column.minWidth, requiredWidth)
-    else
-      column.width = column.baseWidth
-    end
-  end
-  local visibleRows = math.max(1, math.floor(tableHeight / rowHeight))
-  if options.shrinkToFit then
-    visibleRows = math.min(visibleRows, math.max(1, #rowData))
-    tableHeight = (visibleRows * rowHeight) + 10
-    call(host, "SetHeight", tableHeight + rowHeight)
-  end
-  local hasOverflow = #rowData > visibleRows
-  local columnAvailableWidth = availableWidth
-  if hasOverflow then
-    columnAvailableWidth = columnAvailableWidth - (tonumber(options.scrollbarReserve) or 26)
-  end
-  if columnAvailableWidth > 0 then
-    if options.fluidColumns then
-      local fluidColumns = {}
-      for index, column in ipairs(tableColumns) do
-        local definition = definitions[index] or {}
-        fluidColumns[index] = {
-          width = column.width,
-          minWidth = column.minWidth,
-          priority = column.priority,
-          fixed = column.action or definition.fixed == true,
-          action = column.action,
-          weight = column.action and 0 or (tonumber(definition.weight) or 1),
-        }
-      end
-      local widths = Adapter.AllocateFluidColumnWidths(fluidColumns, columnAvailableWidth, {
-        horizontalPadding = options.horizontalPadding or 0,
-        scrollbarReserve = 0,
-        columnGap = options.columnGap or 0,
-      })
-      for index, column in ipairs(tableColumns) do column.width = widths[index] end
-    else
-      local widths = Adapter.FitColumnWidths(tableColumns, columnAvailableWidth)
-      for index, column in ipairs(tableColumns) do column.width = widths[index] end
-    end
-  end
-  local ok, st = pcall(library.CreateST, library, tableColumns, visibleRows, rowHeight,
-    options.highlight or { r = 0.22, g = 0.45, b = 0.65, a = 0.35 }, host.frame)
-  if not ok or not st then return nil end
-  host._dibsScrollingTable = st
-  st.hideScrollbarWhenFits = options.hideScrollbarWhenFits == true
-  if options.flatBackground == true and st.frame then
-    if st.frame.SetBackdropColor then pcall(st.frame.SetBackdropColor, st.frame, 0, 0, 0, 0) end
-    if st.frame.SetBackdropBorderColor then pcall(st.frame.SetBackdropBorderColor, st.frame, 0, 0, 0, 0) end
-  end
-  st._dibsColumns = tableColumns
-  st._dibsUpdateHeaders = function()
-    for _, column in ipairs(tableColumns) do
-      local marker = column.sort == library.SORT_ASC and "  ^" or (column.sort == library.SORT_DSC and "  v" or "")
-      column.name = column.baseName .. marker
-    end
-    if type(st.SetDisplayCols) == "function" then st:SetDisplayCols(tableColumns) end
-  end
-  if type(st.SetDefaultHighlight) == "function" then
-    pcall(st.SetDefaultHighlight, st, 0.18, 0.42, 0.62, 0.38)
-  end
-  if type(st.EnableSelection) == "function" then st:EnableSelection(true) end
-
-  -- A table is often created before its List/TreeGroup parent receives its
-  -- final width. Reapply the original column proportions whenever AceGUI
-  -- measures the host, otherwise the first 300px default becomes permanent
-  -- and date/item text is needlessly wrapped in every window.
-  local baseOnWidthSet = host._dibsBaseOnWidthSet or host.OnWidthSet
-  local firstWidthCallback = true
-  local function applyTableWidth(_, width)
-    if type(baseOnWidthSet) == "function" and host.content and tonumber(width) then
-      pcall(baseOnWidthSet, host, tonumber(width))
-    end
-    local available = tonumber(width)
-    if firstWidthCallback then
-      available = math.max(available or 0, tonumber(options.widthHint) or 0)
-      firstWidthCallback = false
-    end
-    if not available or available <= 20 then return end
-    available = math.max(240, available - 12 - (hasOverflow and (tonumber(options.scrollbarReserve) or 26) or 0))
-    local fitted
-    if options.fluidColumns then
-      local fluidColumns = {}
-      for index, column in ipairs(tableColumns) do
-        local definition = definitions[index] or {}
-        fluidColumns[index] = {
-          width = column.baseWidth,
-          minWidth = column.minWidth,
-          priority = column.priority,
-          fixed = column.action or definition.fixed == true,
-          action = column.action,
-          weight = column.action and 0 or (tonumber(definition.weight) or 1),
-        }
-      end
-      fitted = Adapter.AllocateFluidColumnWidths(fluidColumns, available, {
-        horizontalPadding = options.horizontalPadding or 0,
-        scrollbarReserve = 0,
-        columnGap = options.columnGap or 0,
-      })
-    else
-      fitted = Adapter.FitColumnWidths(tableColumns, available)
-    end
-    local used = 0
-    for index, column in ipairs(tableColumns) do
-      column.width = fitted[index]
-      used = used + column.width
-    end
-    st._dibsUpdateHeaders()
-    if st.frame and st.frame.SetWidth then st.frame:SetWidth(used) end
-  end
-  host._dibsBaseOnWidthSet = baseOnWidthSet
-  host._dibsTableWidthHandler = applyTableWidth
-  host.OnWidthSet = applyTableWidth
-  if st.frame then
-    st.frame:ClearAllPoints()
-    -- Keep the lib-st header inside the AceGUI host instead of letting it
-    -- float into the heading/control row above the table.
-    st.frame:SetPoint("TOPLEFT", host.frame, "TOPLEFT", 0, -rowHeight)
-    local initialWidth = tonumber(host.frame.GetWidth and host.frame:GetWidth()) or 0
-    initialWidth = math.max(initialWidth, tonumber(options.widthHint) or 0)
-    if initialWidth <= 20 then initialWidth = desiredWidth end
-    applyTableWidth(host, initialWidth)
-  end
-
-  local function sortColumn(index)
-    for i, column in ipairs(tableColumns) do
-      if i ~= index then column.sort = nil end
-    end
-    local column = tableColumns[index]
-    if column.sort == library.SORT_DSC then column.sort = library.SORT_ASC else column.sort = library.SORT_DSC end
-    st:SortData()
-    st._dibsUpdateHeaders()
-  end
-
-  local lastActionRow
-  local lastActionAt = 0
-  st:RegisterEvents({
-    OnEnter = function(rowFrame, cellFrame, data, cols, row, realrow, column, table)
-      if options and options.disableCellTooltips then return false end
-      local cell = realrow and table:GetCell(realrow, column)
-      local value = type(cell) == "table" and cell.value or cell
-      showTableCellTooltip(cellFrame, value)
-      return false
-    end,
-    OnLeave = function()
-      if _G.GameTooltip and type(_G.GameTooltip.Hide) == "function" then _G.GameTooltip:Hide() end
-      return false
-    end,
-    OnClick = function(rowFrame, cellFrame, data, cols, row, realrow, column, table, button)
-      local record = realrow and table:GetRow(realrow)
-      if button == "RightButton" then
-        if options and options.disableContextMenu then return true end
-        return showTableContextMenu(table, record, definitions, options)
-      end
-      if button ~= "LeftButton" then return false end
-      if not realrow then
-        sortColumn(column)
-        return true
-      end
-      if record and record._dibsAction and column == #tableColumns then
-        if type(record._dibsAction.callback) == "function" then record._dibsAction.callback(record._dibsRow or record) end
-        return true
-      end
-      if record and record._dibsAction and type(record._dibsAction.callback) == "function" then
-        local currentTime = type(GetTime) == "function" and GetTime() or (type(time) == "function" and time() or 0)
-        if lastActionRow == realrow and currentTime - lastActionAt <= 0.35 then
-          lastActionRow, lastActionAt = nil, 0
-          record._dibsAction.callback(record._dibsRow or record)
-          return true
-        end
-        lastActionRow, lastActionAt = realrow, currentTime
-      end
-      if table.GetSelection and table.SetSelection then
-        if table:GetSelection() == realrow and table.ClearSelection then table:ClearSelection()
-        else table:SetSelection(realrow) end
-      end
-      if options and type(options.onRowClick) == "function" then
-        options.onRowClick(record and (record._dibsRow or record) or nil, column)
-      end
-      return true
-    end,
-  }, true)
-  st:SetData(rowData, false)
-  local defaultColumn = options.defaultSortColumn
-  if not defaultColumn then
-    for index, column in ipairs(tableColumns) do
-      local title = string.lower(column.baseName or "")
-      if title:find("date", 1, true) or title:find("time", 1, true) then
-        defaultColumn = index
-        break
-      end
-    end
-  end
-  if defaultColumn and tableColumns[defaultColumn] then
-    for index, column in ipairs(tableColumns) do column.sort = nil end
-    tableColumns[defaultColumn].sort = options.defaultSortDirection == "asc" and library.SORT_ASC or library.SORT_DSC
-    st:SortData()
-    st._dibsUpdateHeaders()
-  end
-  if st.frame and st.frame.Show then st.frame:Show() end
-  return host
-end
-
 function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, options)
   options = options or {}
-  local scrolling = not options.noScrolling and Adapter.AddScrollingTable(shell, parent, columns, rows, height, rowActions, options)
-  if scrolling then return scrolling end
   local scroll = options.noScrolling and parent or (parent and parent.type == "ScrollFrame" and parent or Adapter.AddScrollableList(shell, parent, height))
   if not scroll then return nil end
   local definitions = columns or {}
@@ -1319,6 +996,70 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
   end
 
   local renderedGroups = {}
+  local gridRows = {}
+  local headerCells = {}
+  local gridState = { columns = definitions, rows = {}, selectedRow = nil }
+  scroll._dibsDataGrid = gridState
+  local function attachGridScript(widget, scriptName, callback)
+    local frame = widget and widget.frame
+    if not frame or type(frame.SetScript) ~= "function" then return end
+    local previous = type(frame.GetScript) == "function" and frame:GetScript(scriptName) or nil
+    local handler = function(self, ...)
+      if previous then previous(self, ...) end
+      return callback(self, ...)
+    end
+    frame:SetScript(scriptName, handler)
+    widget._dibsGridScripts = widget._dibsGridScripts or {}
+    widget._dibsGridScripts[scriptName] = { frame = frame, handler = handler, previous = previous }
+  end
+
+  local function showDataGridContextMenu(record)
+    local entries = {}
+    local action = record and record.action
+    if action and type(action.callback) == "function" then
+      entries[#entries + 1] = { text = action.text or "Open", callback = action.callback }
+    end
+    if record and type(options.contextMenu) == "function" then
+      local ok, custom = pcall(options.contextMenu, record.source, gridState)
+      if ok and type(custom) == "table" then
+        for _, entry in ipairs(custom) do
+          if type(entry) == "table" and type(entry.callback) == "function" then
+            entries[#entries + 1] = {
+              text = entry.text or "Action", callback = entry.callback, disabled = entry.disabled == true,
+            }
+          end
+        end
+      end
+    end
+    if options.allowTableSort ~= false then
+      for index, column in ipairs(definitions) do
+        if column.sortable ~= false and not column.action then
+          local title = safeContextText(column.title or column.name or ("Column " .. tostring(index)))
+          entries[#entries + 1] = {
+            text = title .. " (A-Z)", callback = function() gridState.Sort(index, "asc") end,
+          }
+          entries[#entries + 1] = {
+            text = title .. " (Z-A)", callback = function() gridState.Sort(index, "desc") end,
+          }
+        end
+      end
+    end
+    return #entries > 0 and Adapter.ShowContextMenu(entries) or false
+  end
+
+  local function updateGridSelection()
+    for _, record in ipairs(gridRows) do
+      local selected = record.source == gridState.selectedRow
+      record.widget._dibsGridSelected = selected
+      local texture = record.widget._dibsGridSelectionTexture
+      if texture then
+        if selected and texture.Show then texture:Show()
+        elseif texture.Hide then texture:Hide() end
+      end
+    end
+  end
+
+  local sortGrid
   local function addGridRow(values, action, header, target)
     local rowGroup = Adapter.Create(shell, "SimpleGroup", target or scroll)
     if not rowGroup then return end
@@ -1326,16 +1067,36 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     call(rowGroup, "SetFullWidth", true)
     call(rowGroup, "SetLayout", "Flow")
     if options.rowHeight then call(rowGroup, "SetHeight", tonumber(options.rowHeight)) end
+    local record = not header and { source = values, action = action, widget = rowGroup } or nil
+    if record then
+      rowGroup._dibsDataGridRow = true
+      gridRows[#gridRows + 1] = record
+      local frame = rowGroup.frame
+      if frame and type(frame.CreateTexture) == "function" then
+        local texture = frame:CreateTexture(nil, "BACKGROUND")
+        local tokens = Adapter.GetPresentationTokens()
+        local primary = tokens and tokens.colors and tokens.colors.PRIMARY or { 0.20, 0.55, 0.82, 1 }
+        if texture and texture.SetColorTexture then
+          texture:SetColorTexture(primary[1], primary[2], primary[3], 0.20)
+          if texture.SetAllPoints then texture:SetAllPoints(frame) end
+          if texture.Hide then texture:Hide() end
+          rowGroup._dibsGridSelectionTexture = texture
+        end
+      end
+    end
     local columnCount = action and math.max(0, #definitions - 1) or #definitions
     for index = 1, columnCount do
       local column = definitions[index]
       local value = header and column.title or values[index]
       local cellAction = not header and options.cellAction and options.cellAction(values, index)
       local cell
-      if header and options.onHeaderClick and column.sortable ~= false and not column.action then
+      if header and column.sortable ~= false and not column.action
+        and (options.onHeaderClick or options.allowTableSort ~= false) then
         cell = Adapter.AddButton(shell, rowGroup, value, function()
-          options.onHeaderClick(column, index)
+          if options.onHeaderClick then options.onHeaderClick(column, index)
+          elseif sortGrid then sortGrid(index) end
         end, widths[index])
+        if cell then headerCells[index] = cell end
       elseif cellAction then
         cell = Adapter.AddButton(shell, rowGroup, cellAction.text or value, cellAction.callback, widths[index],
           Adapter.GetLayoutMetrics().buttonSizingSafetyMargin)
@@ -1350,10 +1111,30 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         cell._dibsColumnWidth = widths[index]
         cell._dibsColumnIndex = index
         call(cell, "SetWidth", cellWidth)
-        if cell.SetJustifyH then cell:SetJustifyH("LEFT") end
+        if cell.SetJustifyH then cell:SetJustifyH(column.align or "LEFT") end
         if not cellAction then
-          local tooltip = options.cellTooltip and options.cellTooltip(values, index) or column.tooltip
-          Adapter.AddTooltip(cell, value, tooltip)
+          local tooltip = header and column.tooltip or (options.cellTooltip and options.cellTooltip(values, index) or column.tooltip)
+          if options.disableCellTooltips ~= true then Adapter.AddTooltip(cell, value, tooltip) end
+          if not header and record then
+            attachGridScript(cell, "OnMouseUp", function(_, mouseButton)
+              if mouseButton == "RightButton" then
+                if options.disableContextMenu then return true end
+                return showDataGridContextMenu(record)
+              end
+              if mouseButton and mouseButton ~= "LeftButton" then return false end
+              gridState.selectedRow = gridState.selectedRow == record.source and nil or record.source
+              updateGridSelection()
+              if type(options.onRowClick) == "function" then options.onRowClick(record.source, index) end
+              return true
+            end)
+            if cell.frame and cell.frame.EnableMouse then cell.frame:EnableMouse(true) end
+            if cell.frame and cell.frame.RegisterForClicks then cell.frame:RegisterForClicks("AnyUp") end
+            if options.disableCellTooltips ~= true and type(value) == "string" and value:find("|Hitem:", 1, true) then
+              attachGridScript(cell, "OnEnter", function(frame)
+                showTableCellTooltip(frame, value)
+              end)
+            end
+          end
         end
       end
     end
@@ -1371,16 +1152,76 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         call(button, "SetWidth", math.max(columnWidth, tonumber(button._dibsRequiredWidth) or 0))
       end
     end
+    return rowGroup
   end
 
-  addGridRow({}, nil, true, options.headerParent)
+  local headerTarget = options.headerParent or scroll
+  addGridRow({}, nil, true, headerTarget)
   if #(rows or {}) == 0 and options.emptyText then
     Adapter.AddLabel(shell, scroll, options.emptyText, true)
   end
-  for rowIndex, row in ipairs(rows or {}) do
+  for _, row in ipairs(rows or {}) do
     local action = rowActions and rowActions(row) or nil
+    gridState.rows[#gridState.rows + 1] = row
     addGridRow(row, action, false)
   end
+  sortGrid = function(index, direction)
+    local column = definitions[index]
+    if not column or column.sortable == false or column.action then return false end
+    if direction ~= "asc" and direction ~= "desc" then
+      direction = gridState.sortColumn == index and (gridState.sortDirection == "asc" and "desc" or "asc") or "desc"
+    end
+    gridState.sortColumn, gridState.sortDirection = index, direction
+    table.sort(gridRows, function(left, right)
+      local leftValue, rightValue = left.source[index], right.source[index]
+      if type(column.sortValue) == "function" then
+        local leftOk, leftSorted = pcall(column.sortValue, left.source)
+        local rightOk, rightSorted = pcall(column.sortValue, right.source)
+        if leftOk then leftValue = leftSorted end
+        if rightOk then rightValue = rightSorted end
+      end
+      local leftNumber, rightNumber = tonumber(leftValue), tonumber(rightValue)
+      local less
+      if leftNumber and rightNumber then less = leftNumber < rightNumber
+      else less = string.lower(tostring(leftValue or "")) < string.lower(tostring(rightValue or "")) end
+      local equal = leftValue == rightValue or tostring(leftValue or "") == tostring(rightValue or "")
+      if equal then return left.originalIndex < right.originalIndex end
+      if direction == "asc" then return less end
+      return not less
+    end)
+    gridState.rows = {}
+    local childPositions = {}
+    for childIndex, child in ipairs(scroll.children or {}) do
+      if child._dibsDataGridRow then childPositions[#childPositions + 1] = childIndex end
+    end
+    for rowIndex, record in ipairs(gridRows) do
+      gridState.rows[rowIndex] = record.source
+      if childPositions[rowIndex] then scroll.children[childPositions[rowIndex]] = record.widget end
+    end
+    for index, cell in pairs(headerCells) do
+      local title = tostring(definitions[index].title or definitions[index].name or ("Column " .. tostring(index)))
+      local marker = index == gridState.sortColumn and (gridState.sortDirection == "asc" and "  ^" or "  v") or ""
+      Adapter.SetText(cell, title .. marker)
+    end
+    updateGridSelection()
+    if scroll.DoLayout then pcall(scroll.DoLayout, scroll) end
+    return true
+  end
+  gridState.Sort = sortGrid
+  gridState.Select = function(row)
+    gridState.selectedRow = gridState.selectedRow == row and nil or row
+    updateGridSelection()
+    return gridState.selectedRow
+  end
+  for rowIndex, record in ipairs(gridRows) do record.originalIndex = rowIndex end
+  local defaultColumn = options.defaultSortColumn
+  if not defaultColumn then
+    for index, column in ipairs(definitions) do
+      local title = string.lower(tostring(column.title or column.name or ""))
+      if title:find("date", 1, true) or title:find("time", 1, true) then defaultColumn = index; break end
+    end
+  end
+  if defaultColumn and options.allowTableSort ~= false then sortGrid(defaultColumn, options.defaultSortDirection or "desc") end
   local function applyAllocatedWidths(nextWidths)
     for _, rowGroup in ipairs(renderedGroups) do
       for index, cell in ipairs(rowGroup.children or {}) do
@@ -1405,8 +1246,15 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     end
     applyAllocatedWidths(nextWidths)
   end
-  if options.fluidColumns then
-    scroll._dibsApplyFluidWidth = applyFluidWidth
+  scroll._dibsApplyFluidWidth = applyFluidWidth
+  if shell then
+    scroll._dibsShell = shell
+    shell._dibsResponsiveScrolls = shell._dibsResponsiveScrolls or {}
+    local alreadyRegistered = false
+    for _, registered in ipairs(shell._dibsResponsiveScrolls) do
+      if registered == scroll then alreadyRegistered = true; break end
+    end
+    if not alreadyRegistered then shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll end
   end
   applyFluidWidth(frameWidth)
   return scroll
@@ -1451,6 +1299,17 @@ function Adapter.AddButton(shell, parent, text, callback, width, sizingSafetyMar
   call(button, "SetCallback", "OnClick", function()
     if callback then callback() end
   end)
+  return button
+end
+
+function Adapter.AddHelpButton(shell, parent, title, description)
+  local button = Adapter.AddButton(shell, parent, "?", function() end, 32)
+  if not button then return nil end
+  call(button, "SetAutoWidth", false)
+  call(button, "SetWidth", 32)
+  button._dibsHelpTitle = tostring(title or "Help")
+  button._dibsHelpDescription = tostring(description or "")
+  Adapter.AddTooltip(button, button._dibsHelpTitle, button._dibsHelpDescription)
   return button
 end
 
@@ -1651,7 +1510,7 @@ function Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
 end
 
 function Adapter.AddDropdown(shell, parent, label, values, callback, width, useMSA)
-  if useMSA ~= false and HAS_MSA_DROPDOWN then
+  if useMSA == true and HAS_MSA_DROPDOWN then
     local dropdown = Adapter.AddMSADropdown(shell, parent, label, values, callback, width)
     if dropdown then return dropdown end
   end
@@ -1677,18 +1536,82 @@ function Adapter.AddDropdown(shell, parent, label, values, callback, width, useM
   return dropdown
 end
 
+function Adapter.AddDibsSelect(shell, parent, label, values, callback, width, options)
+  if type(width) == "table" then options, width = width, width.width end
+  options = type(options) == "table" and options or {}
+  local sourceValues = type(values) == "table" and values or {}
+  local copiedValues = {}
+  for key, value in pairs(sourceValues) do copiedValues[key] = value end
+  if not shell or not parent then return nil end
+
+  local selectedValue = options.value
+  local dropdown = Adapter.AddDropdown(shell, parent, label, copiedValues, function(value)
+    selectedValue = value
+    if callback then callback(value) end
+  end, width, false)
+  if not dropdown then return nil end
+  local setValue, setList, setText, setDisabled = dropdown.SetValue, dropdown.SetList,
+    dropdown.SetText, dropdown.SetDisabled
+  local disabled = options.disabled == true
+  local readOnly = options.readOnly == true
+  local function canonicalValue(value)
+    if copiedValues[value] ~= nil then return value end
+    for key, text in pairs(copiedValues) do
+      if tostring(key) == tostring(value) or tostring(text) == tostring(value) then return key end
+    end
+    return value
+  end
+  dropdown.GetValue = function() return selectedValue end
+  dropdown.GetText = function() return tostring(copiedValues[selectedValue] or selectedValue or "") end
+  dropdown.SetValue = function(_, value)
+    selectedValue = canonicalValue(value)
+    if setValue then pcall(setValue, dropdown, selectedValue) end
+    if setText then pcall(setText, dropdown, copiedValues[selectedValue] or selectedValue or "") end
+  end
+  dropdown.SetList = function(_, nextValues)
+    local replacement = {}
+    for key, value in pairs(type(nextValues) == "table" and nextValues or {}) do
+      replacement[key] = value
+    end
+    for key in pairs(copiedValues) do copiedValues[key] = nil end
+    for key, value in pairs(replacement) do copiedValues[key] = value end
+    if setList then pcall(setList, dropdown, copiedValues) end
+    if selectedValue ~= nil and copiedValues[selectedValue] == nil then selectedValue = nil end
+    if setText then pcall(setText, dropdown, copiedValues[selectedValue] or selectedValue or "") end
+  end
+  dropdown.SetDisabled = function(_, value)
+    disabled = value == true
+    if setDisabled then pcall(setDisabled, dropdown, disabled or readOnly) end
+  end
+  dropdown.SetReadOnly = function(_, value)
+    readOnly = value == true
+    if setDisabled then pcall(setDisabled, dropdown, disabled or readOnly) end
+  end
+  dropdown._dibsSelectLabel = tostring(label or "")
+  dropdown._dibsSelectValues = copiedValues
+  if options.value ~= nil then dropdown:SetValue(options.value) end
+  if disabled or readOnly then dropdown:SetDisabled(true) end
+  if options.tooltip or options.description then
+    Adapter.AttachHelp(dropdown, options.tooltipTitle or label, options.tooltip or options.description)
+  end
+  return dropdown
+end
+
 function Adapter.AddPaginationFooter(shell, page, options)
   if not shell or not page or not page.footer then return nil end
   options = options or {}
   local metrics = Adapter.GetLayoutMetrics()
   local footer = page.footer
   local navigation = Adapter.Create(shell, "SimpleGroup", footer)
-  local pageSizeGroup = Adapter.Create(shell, "SimpleGroup", footer)
-  if not navigation or not pageSizeGroup then return nil end
+  local showPageSize = options.showPageSize ~= false
+  local pageSizeGroup = showPageSize and Adapter.Create(shell, "SimpleGroup", footer) or nil
+  if not navigation or (showPageSize and not pageSizeGroup) then return nil end
   call(navigation, "SetLayout", "Flow")
   call(navigation, "SetAutoAdjustHeight", false)
-  call(pageSizeGroup, "SetLayout", "Flow")
-  call(pageSizeGroup, "SetAutoAdjustHeight", false)
+  if pageSizeGroup then
+    call(pageSizeGroup, "SetLayout", "Flow")
+    call(pageSizeGroup, "SetAutoAdjustHeight", false)
+  end
 
   local previousWidth = Adapter.GetContentSizedActionWidth({ "Previous" }, 72)
   local nextWidth = Adapter.GetContentSizedActionWidth({ "Next" }, 64)
@@ -1700,7 +1623,7 @@ function Adapter.AddPaginationFooter(shell, page, options)
   local pageSizeHeight = math.max(metrics.buttonHeight, 26)
   local footerGap = math.max(12, metrics.tableColumnGap * 3)
   call(navigation, "SetHeight", metrics.buttonHeight)
-  call(pageSizeGroup, "SetHeight", pageSizeHeight)
+  if pageSizeGroup then call(pageSizeGroup, "SetHeight", pageSizeHeight) end
 
   local controls = {}
   controls.previous = Adapter.AddButton(shell, navigation, "Previous", function()
@@ -1712,17 +1635,23 @@ function Adapter.AddPaginationFooter(shell, page, options)
   controls.next = Adapter.AddButton(shell, navigation, "Next", function()
     if options.onNext then options.onNext() end
   end, nextWidth)
-  controls.pageSizeLabel = Adapter.AddLabel(shell, pageSizeGroup, "Rows per page:", false)
-  call(controls.pageSizeLabel, "SetWidth", pageSizeLabelWidth)
-  call(controls.pageSizeLabel, "SetHeight", metrics.buttonHeight)
-  controls.pageSize = Adapter.AddDropdown(shell, pageSizeGroup, "",
-    options.pageSizes or { ["5"] = "5", ["10"] = "10", ["15"] = "15", ["20"] = "20" },
-    options.onPageSizeChanged, pageSizeDropdownWidth, false)
+  if pageSizeGroup then
+    controls.pageSizeLabel = Adapter.AddLabel(shell, pageSizeGroup, "Rows per page:", false)
+    call(controls.pageSizeLabel, "SetWidth", pageSizeLabelWidth)
+    call(controls.pageSizeLabel, "SetHeight", metrics.buttonHeight)
+    controls.pageSize = Adapter.AddDropdown(shell, pageSizeGroup, "",
+      options.pageSizes or { ["5"] = "5", ["10"] = "10", ["15"] = "15", ["20"] = "20" },
+      options.onPageSizeChanged, pageSizeDropdownWidth, false)
+  end
   if controls.pageSize then controls.pageSize._dibsRowsPerPageSelector = true end
   local dropdownHeight = controls.pageSize and controls.pageSize.frame
     and controls.pageSize.frame.GetHeight and tonumber(controls.pageSize.frame:GetHeight()) or nil
-  pageSizeHeight = math.max(pageSizeHeight, dropdownHeight or 0)
-  call(pageSizeGroup, "SetHeight", pageSizeHeight)
+  if pageSizeGroup then
+    pageSizeHeight = math.max(pageSizeHeight, dropdownHeight or 0)
+    call(pageSizeGroup, "SetHeight", pageSizeHeight)
+  else
+    pageSizeHeight = 0
+  end
 
   local function controlWidth(widget, fallback)
     local frame = widget and widget.frame
@@ -1753,29 +1682,30 @@ function Adapter.AddPaginationFooter(shell, page, options)
   end
   local navigationWidth = anchorOneLine(navigation,
     { controls.previous, controls.page, controls.next }, navigationGap)
-  local pageSizeWidth = anchorOneLine(pageSizeGroup,
-    { controls.pageSizeLabel, controls.pageSize }, pageSizeGap)
+  local pageSizeWidth = pageSizeGroup and anchorOneLine(pageSizeGroup,
+    { controls.pageSizeLabel, controls.pageSize }, pageSizeGap) or 0
 
   footer._dibsBaseLayoutFunc = footer.LayoutFunc
   footer._dibsTablePageLayout = function() end
   footer.LayoutFunc = footer._dibsTablePageLayout
   footer._dibsPaginationLayout = function(availableWidth)
-    local inline = (tonumber(availableWidth) or 0) >= navigationWidth + pageSizeWidth + footerGap
-    local footerHeight = math.max(metrics.buttonHeight, pageSizeHeight)
-    if not inline then
+    local inline = not pageSizeGroup
+      or (tonumber(availableWidth) or 0) >= navigationWidth + pageSizeWidth + footerGap
+    local footerHeight = pageSizeGroup and math.max(metrics.buttonHeight, pageSizeHeight) or metrics.buttonHeight
+    if pageSizeGroup and not inline then
       footerHeight = metrics.buttonHeight + metrics.tableVerticalGap + pageSizeHeight
     end
     call(footer, "SetHeight", footerHeight)
     if navigation.frame and navigation.frame.ClearAllPoints then navigation.frame:ClearAllPoints() end
-    if pageSizeGroup.frame and pageSizeGroup.frame.ClearAllPoints then pageSizeGroup.frame:ClearAllPoints() end
+    if pageSizeGroup and pageSizeGroup.frame and pageSizeGroup.frame.ClearAllPoints then pageSizeGroup.frame:ClearAllPoints() end
     if inline then
       if navigation.frame and navigation.frame.SetPoint then navigation.frame:SetPoint("LEFT", footer.frame, "LEFT", 0, 0) end
-      if pageSizeGroup.frame and pageSizeGroup.frame.SetPoint then
+      if pageSizeGroup and pageSizeGroup.frame and pageSizeGroup.frame.SetPoint then
         pageSizeGroup.frame:SetPoint("LEFT", navigation.frame, "RIGHT", footerGap, 0)
       end
     else
       if navigation.frame and navigation.frame.SetPoint then navigation.frame:SetPoint("TOPLEFT", footer.frame, "TOPLEFT", 0, 0) end
-      if pageSizeGroup.frame and pageSizeGroup.frame.SetPoint then
+      if pageSizeGroup and pageSizeGroup.frame and pageSizeGroup.frame.SetPoint then
         pageSizeGroup.frame:SetPoint("TOPLEFT", navigation.frame, "BOTTOMLEFT", 0, -metrics.tableVerticalGap)
       end
     end
@@ -1799,7 +1729,7 @@ function Adapter.AddPaginationFooter(shell, page, options)
     return selectedPage, totalPages
   end
   local initialSize = tostring(options.pageSize or 10)
-  Adapter.SetValue(controls.pageSize, initialSize)
+  if controls.pageSize then Adapter.SetValue(controls.pageSize, initialSize) end
   page.UpdateFooterLayout(page.boundsFrame and page.boundsFrame.GetWidth
     and page.boundsFrame:GetWidth() or page.pagination.navigationWidth + page.pagination.pageSizeWidth + footerGap)
   return page.pagination
@@ -1829,6 +1759,23 @@ function Adapter.AddRange(shell, parent, label, minimum, maximum, step, value, c
     if callback then callback(changed) end
   end)
   return slider
+end
+
+function Adapter.AddColorPicker(shell, parent, label, color, callback, width)
+  local picker = Adapter.Create(shell, "ColorPicker", parent)
+  if not picker then return nil end
+  local values = type(color) == "table" and color or { 1, 1, 1, 1 }
+  call(picker, "SetLabel", label or "")
+  call(picker, "SetHasAlpha", true)
+  call(picker, "SetColor", tonumber(values[1]) or 1, tonumber(values[2]) or 1,
+    tonumber(values[3]) or 1, tonumber(values[4]) or 1)
+  call(picker, "SetWidth", width or 200)
+  local function updateColor(_, _, red, green, blue, alpha)
+    if callback then callback(red, green, blue, alpha or 1) end
+  end
+  call(picker, "SetCallback", "OnValueChanged", updateColor)
+  call(picker, "SetCallback", "OnValueConfirmed", updateColor)
+  return picker
 end
 
 function Adapter.AddTabs(shell, tabs, onSelect)
@@ -1956,11 +1903,17 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   end
 
   local function changed(option, kind)
-    -- Rebuild pages after selection changes and actions.  Text, checkboxes and
-    -- sliders keep their local value so typing or dragging is not interrupted.
-    if context.onChanged and (kind == "select" or kind == "execute") then
+    -- Sliders notify on mouse release, so rebuilding here won't interrupt a drag.
+    if context.onChanged and (kind == "select" or kind == "execute" or kind == "range") then
       context.onChanged(option, kind)
     end
+  end
+
+  local function controlWidth(option, fallback)
+    local width = tonumber(option and option.widthPx)
+    if width and width > 0 then return width end
+    if option and option.width == "double" then return 360 end
+    return fallback
   end
 
   local function sortedKeys(args)
@@ -1986,7 +1939,14 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
 
       if kind == "group" then
         local groupTarget = target
-        if label ~= "" then
+        if option.dibsLayout == "FLOW_ROW" then
+          groupTarget = Adapter.AddInlineGroup(shell, target)
+          local rowTitle = Adapter.AddLabel(shell, groupTarget, label, false)
+          if rowTitle then
+            call(rowTitle, "SetWidth", tonumber(option.titleWidthPx) or 58)
+            Adapter.AddTooltip(rowTitle, label, description)
+          end
+        elseif label ~= "" then
           if option.inline == true or context.flattenInlineGroups == true then
             Adapter.AddHeader(shell, target, label, description)
           else
@@ -2002,7 +1962,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
         local control = Adapter.AddDropdown(shell, target, label, valuesFor(option), function(value)
           setValue(option, nil, value)
           changed(option, kind)
-        end, option.width == "double" and 360 or nil)
+        end, controlWidth(option, nil))
         if control then
           Adapter.SetValue(control, getValue(option))
           Adapter.SetDisabled(control, isDisabled(option))
@@ -2012,7 +1972,20 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
       elseif kind == "range" then
         local control = Adapter.AddRange(shell, target, label, option.min, option.max, option.step, getValue(option), function(value)
           setValue(option, nil, value)
-        end, option.width == "double" and 360 or nil)
+          changed(option, kind)
+        end, controlWidth(option, nil))
+        if control then
+          Adapter.SetDisabled(control, isDisabled(option))
+          Adapter.AddTooltip(control, label, description)
+          register(key, control)
+        end
+      elseif kind == "color" then
+        local ok, red, green, blue, alpha = false, 1, 1, 1, 1
+        if type(option.get) == "function" then ok, red, green, blue, alpha = pcall(option.get, nil) end
+        if not ok then red, green, blue, alpha = 1, 1, 1, 1 end
+        local control = Adapter.AddColorPicker(shell, target, label, { red, green, blue, alpha }, function(r, g, b, a)
+          if type(option.set) == "function" then pcall(option.set, nil, r, g, b, a) end
+        end, controlWidth(option, 180))
         if control then
           Adapter.SetDisabled(control, isDisabled(option))
           Adapter.AddTooltip(control, label, description)
@@ -2021,7 +1994,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
       elseif kind == "toggle" then
         local control = Adapter.AddCheckBox(shell, target, label, getValue(option), function(value)
           setValue(option, nil, value)
-        end, option.width == "double" and 360 or nil)
+        end, controlWidth(option, nil))
         if control then
           Adapter.SetDisabled(control, isDisabled(option))
           Adapter.AddTooltip(control, label, description)
@@ -2030,7 +2003,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
       elseif kind == "input" then
         local control = Adapter.AddEditBox(shell, target, label, function(value)
           setValue(option, nil, value)
-        end, option.width == "double" and 360 or nil)
+        end, controlWidth(option, nil))
         if control then
           Adapter.SetText(control, getValue(option) or "")
           Adapter.SetDisabled(control, isDisabled(option))
@@ -2041,7 +2014,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
         local control = Adapter.AddButton(shell, target, label, function()
           if type(option.func) == "function" then pcall(option.func) end
           changed(option, kind)
-        end, option.width == "half" and 180 or 220)
+        end, controlWidth(option, option.width == "half" and 180 or 220))
         if control then
           Adapter.SetDisabled(control, isDisabled(option))
           Adapter.AddTooltip(control, label, description)

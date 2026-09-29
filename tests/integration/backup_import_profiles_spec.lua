@@ -131,6 +131,22 @@ describe("Backup, import/export and profiles", function()
     assert_true(#(shell.contentHost.children or {}) > 0)
   end)
 
+  it("uses the shared AceGUI dropdown for Data page choices", function()
+    local addMSADropdown = dibs.AceGUI.AddMSADropdown
+    dibs.AceGUI.AddMSADropdown = function() error("Data choices must use AceGUI Dropdown") end
+    dibs.DataUI.Open("backups")
+
+    local backupScope
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "Dropdown" and widget.label == "Backup scope" then
+        backupScope = widget
+        break
+      end
+    end
+    dibs.AceGUI.AddMSADropdown = addMSADropdown
+    assert_not_nil(backupScope)
+  end)
+
   it("wires the visible backup and transfer actions", function()
     local before = #dibs.Backup.List()
     dibs.DataUI.Open("backups")

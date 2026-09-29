@@ -2,8 +2,12 @@
 
 RETAIL_RUNTIME_VALIDATION = PENDING_B10_RELEASE_GATE
 
-Before promoting any real RCLootCouncil version into the B09 adapter matrix,
-validate in Retail:
+The RCLootCouncil 3.23.3 adapter is currently a pilot candidate for controlled
+validation only. Its automatic debit path must be tested in a disposable guild
+with non-production loot. Do not use it for production loot until the B10 gate
+is passed.
+
+Before approving any real RCLootCouncil version for production, validate in Retail:
 
 - Addon absent, disabled, late-loaded, and reloaded; Dibs core remains usable.
 - Each proposed RC version/profile exposes the documented callback signature.

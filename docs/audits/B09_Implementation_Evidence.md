@@ -83,6 +83,9 @@ the B09 guild-authority contract and passes independently.
 
 `RETAIL_RUNTIME_VALIDATION = PENDING_B10_RELEASE_GATE`
 
-Only the fixture profile is enabled for automated evidence. A real Retail
-RCLootCouncil version must not be added to the adapter matrix until the live
-checklist in `B09_Retail_Validation_Checklist.md` is completed during B10.
+At B09 completion, only the fixture profile was enabled. A 3.23.3 pilot
+candidate has since been added from inspection of the installed RCLC source so
+the exact callback/history boundary can be exercised in controlled Retail
+validation. It is not production-approved; complete the live checklist in
+`B09_Retail_Validation_Checklist.md` and the B10 release gate before claiming
+Retail support or using production loot.

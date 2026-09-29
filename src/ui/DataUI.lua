@@ -81,8 +81,8 @@ end
 
 local function addChoice(gui, shell, parent, label, values, callback, width, value)
   local control
-  if gui.AddMSADropdown then control = gui.AddMSADropdown(shell, parent, label, values, callback, width) end
-  if not control and gui.AddDropdown then control = gui.AddDropdown(shell, parent, label, values, callback, width) end
+  if gui.AddDropdown then control = gui.AddDropdown(shell, parent, label, values, callback, width, false) end
+  if not control and gui.AddMSADropdown then control = gui.AddMSADropdown(shell, parent, label, values, callback, width) end
   if control and value ~= nil and gui.SetValue then gui.SetValue(control, value) end
   return control
 end

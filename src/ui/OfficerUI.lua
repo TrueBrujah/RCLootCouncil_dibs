@@ -57,6 +57,37 @@ local function widgetIdentity(widget)
   return widget and tostring(widget) or "nil"
 end
 
+  local function parseHistoryDate(value)
+    local year, month, day = tostring(value or ""):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+    year, month, day = tonumber(year), tonumber(month), tonumber(day)
+    if not year or month < 1 or month > 12 then return nil end
+    local daysInMonth = { 31, (year % 4 == 0 and (year % 100 ~= 0 or year % 400 == 0)) and 29 or 28,
+      31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+    if not day or day < 1 or day > daysInMonth[month] then return nil end
+    return year, month, day
+  end
+
+  local function historyDateTimestamp(value, endOfDay)
+    local year, month, day = parseHistoryDate(value)
+    if not year then return nil end
+    local timestamp = time({ year = year, month = month, day = day, hour = 0, min = 0, sec = 0 })
+    if endOfDay then
+      timestamp = time({ year = year, month = month, day = day + 1, hour = 0, min = 0, sec = 0 }) - 1
+    end
+    return timestamp
+  end
+
+  local function historyCalendarWeekday(year, month, day)
+    if month < 3 then year, month = year - 1, month + 12 end
+    local weekday = (day + math.floor(13 * (month + 1) / 5) + year + math.floor(year / 4)
+      - math.floor(year / 100) + math.floor(year / 400)) % 7
+    return (weekday + 6) % 7
+  end
+
+  local function historyCalendarDate(year, month, day)
+    return string.format("%04d-%02d-%02d", year, month, day)
+  end
+
 local OFFICER_NAV_TREE = {
   { section = "OVERVIEW", text = "Dashboard", value = "overview" },
   { section = "OVERVIEW", text = "Guided Setup", labelKey = "OFFICER_NAV_GUIDED_SETUP_LABEL", value = "wizard" },
@@ -2632,7 +2663,8 @@ local function createAceWindow(initialRoute)
     end
     historyTransferShell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Transfer", 720, 620, { "CENTER", 0, 0 })
     if not historyTransferShell then return nil end
-    historyTransferRoot = Dibs.AceGUI.Create(historyTransferShell, "SimpleGroup", historyTransferShell.window)
+    historyTransferRoot = Dibs.AceGUI.Create(historyTransferShell, "ScrollFrame", historyTransferShell.window)
+      or Dibs.AceGUI.Create(historyTransferShell, "SimpleGroup", historyTransferShell.window)
     if not historyTransferRoot then return nil end
     if historyTransferRoot.SetFullWidth then historyTransferRoot:SetFullWidth(true) end
     if historyTransferRoot.SetFullHeight then historyTransferRoot:SetFullHeight(true) end
@@ -2656,7 +2688,7 @@ local function createAceWindow(initialRoute)
     frame.reconReason = ""
     frame.historyTransferOpen = true
 
-    local page = Dibs.AceGUI.AddScrollableList(transferShell, historyTransferRoot, 540) or historyTransferRoot
+    local page = historyTransferRoot
     Dibs.AceGUI.AddHeading(transferShell, page, "Historical DIB transfer")
     Dibs.AceGUI.AddHeader(transferShell, page, "Review before recording", "The values below come from read-only RCLootCouncil evidence. Technical details stay in this secondary review window.")
     local summary = Dibs.AceGUI.AddSection(transferShell, page, "Award summary", "Human-readable evidence for the normal review path.")
@@ -2717,6 +2749,8 @@ local function createAceWindow(initialRoute)
     Dibs.AceGUI.SetDisabled(confirm, candidate.classification ~= "eligible" or trimText(frame.reconReason) == "")
     Dibs.AceGUI.AddLabel(transferShell, page, "The note is stored in the audit trail with the exact date, time, response, difficulty and vote evidence.", true)
     transferShell.window:Show()
+    if transferShell.window.DoLayout then transferShell.window:DoLayout() end
+    if historyTransferRoot.DoLayout then historyTransferRoot:DoLayout() end
     if transferShell.window.DoLayout then transferShell.window:DoLayout() end
     return true
   end
@@ -5197,11 +5231,26 @@ local function createAceWindow(initialRoute)
 
     if self.activeTab == "history" or self.activeTab == "reconciliation" then
       local helpText = Dibs.L or {}
-      local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
-      Dibs.AceGUI.AddHeader(shell, scroll, "RCLootCouncil History", helpText.UI_HELP_RC_HISTORY)
       local rcStatus = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
-      if not Dibs.RCLootCouncil or type(Dibs.RCLootCouncil.GetHistoryRows) ~= "function" then
-        Dibs.AceGUI.AddLabel(shell, scroll, "History reconciliation is unavailable until RCLootCouncil exposes its read-only history.", true)
+      local hasHistoryApi = Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.GetHistoryRows) == "function"
+      local session = hasHistoryApi and self.reconSessionId
+        and Dibs.RCLootCouncil.GetReconciliationSession(self.reconSessionId, nil) or nil
+      local tablePage, pageHeader
+      if session then
+        tablePage = Dibs.AceGUI.AddTablePage(shell, tabs, {
+          footer = true, boundsFrame = navigation.content,
+        })
+        if not tablePage then return end
+        self.reconciliationTablePage = tablePage
+        pageHeader = tablePage.header
+        Dibs.AceGUI.AddHeading(shell, pageHeader, "RCLootCouncil History", helpText.UI_HELP_RC_HISTORY)
+      else
+        self.reconciliationTablePage = nil
+        pageHeader = Dibs.AceGUI.AddScrollableList(shell, tabs, 660) or tabs
+        Dibs.AceGUI.AddHeader(shell, pageHeader, "RCLootCouncil History", helpText.UI_HELP_RC_HISTORY)
+      end
+      if not hasHistoryApi then
+        Dibs.AceGUI.AddLabel(shell, pageHeader, "History reconciliation is unavailable until RCLootCouncil exposes its read-only history.", true)
         return
       end
       local seasons = getSeasonList()
@@ -5217,36 +5266,118 @@ local function createAceWindow(initialRoute)
       self.reconMode = "manual"
       self.reconInferFinalStatus = self.reconInferFinalStatus ~= false
       self.reconLimit = self.reconLimit or "200"
-      self.reconFromTime = self.reconFromTime or ""
-      self.reconToTime = self.reconToTime or ""
-      local form = Dibs.AceGUI.AddSection(shell, scroll, "Search History", "Use exact response labels. Matching trims whitespace and ignores case; it never performs fuzzy matching.")
-      local seasonControl = Dibs.AceGUI.AddDropdown(shell, form, "Target season", seasonChoices, function(value)
+      self.reconFromDate = self.reconFromDate or ""
+      self.reconToDate = self.reconToDate or ""
+      local form = Dibs.AceGUI.AddSection(shell, pageHeader, "Search History",
+        helpText.UI_HELP_RC_HISTORY_SEARCH_INTRO or "Use exact response labels. Matching trims whitespace and ignores case; it never performs fuzzy matching.")
+      local seasonControl = Dibs.AceGUI.AddDibsSelect(shell, form, "Target season", seasonChoices, function(value)
         self.reconSeasonId = value
         local savedAliases = Dibs.RCLootCouncil.GetReconciliationAliases(value) or {}
         self.reconAliasesText = #savedAliases > 0 and table.concat(savedAliases, ", ") or "DIB"
-      end, 240)
+      end, 240, { tooltip = helpText.UI_HELP_RC_HISTORY_SEASON })
       if self.reconSeasonId then Dibs.AceGUI.SetValue(seasonControl, self.reconSeasonId) end
       local aliases = Dibs.AceGUI.AddEditBox(shell, form, "DIB response aliases (comma separated)", function(value) self.reconAliasesText = value or "" end, 500)
       setControlText(aliases, self.reconAliasesText)
-      Dibs.AceGUI.AddCheckBox(shell, form, "Use recorded RC history when final status is missing", self.reconInferFinalStatus, function(value)
+      Dibs.AceGUI.AttachHelp(aliases, "DIB response aliases", helpText.UI_HELP_RC_HISTORY_ALIASES)
+      local inferStatus = Dibs.AceGUI.AddCheckBox(shell, form, "Infer missing award status from RC history", self.reconInferFinalStatus, function(value)
         self.reconInferFinalStatus = value == true
       end, 500)
+      Dibs.AceGUI.AttachHelp(inferStatus, "Infer missing award status", helpText.UI_HELP_RC_HISTORY_INFER_STATUS)
       local limit = Dibs.AceGUI.AddEditBox(shell, form, "Maximum rows (1-500)", function(value) self.reconLimit = value or "200" end, 150)
       setControlText(limit, self.reconLimit)
-      local fromTime = Dibs.AceGUI.AddEditBox(shell, form, "From timestamp (optional)", function(value) self.reconFromTime = value or "" end, 190)
-      setControlText(fromTime, self.reconFromTime)
-      local toTime = Dibs.AceGUI.AddEditBox(shell, form, "To timestamp (optional)", function(value) self.reconToTime = value or "" end, 190)
-      setControlText(toTime, self.reconToTime)
-      Dibs.AceGUI.AddButton(shell, form, "Save aliases", function()
+      Dibs.AceGUI.AttachHelp(limit, "Maximum rows", helpText.UI_HELP_RC_HISTORY_LIMIT)
+      local dateRange = Dibs.AceGUI.AddSection(shell, form, "Date range", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
+      local fromDateButton = Dibs.AceGUI.AddButton(shell, dateRange,
+        "Start: " .. (self.reconFromDate ~= "" and self.reconFromDate or "Choose date"), function()
+          self.reconCalendarTarget = self.reconCalendarTarget == "from" and nil or "from"
+          if self.reconCalendarTarget then
+            local year, month = parseHistoryDate(self.reconFromDate)
+            if not year then local today = date("*t"); year, month = tonumber(today.year), tonumber(today.month) end
+            self.reconCalendarYear, self.reconCalendarMonth = year, month
+          end
+          self:Refresh()
+        end, 170)
+      local toDateButton = Dibs.AceGUI.AddButton(shell, dateRange,
+        "End: " .. (self.reconToDate ~= "" and self.reconToDate or "Choose date"), function()
+          self.reconCalendarTarget = self.reconCalendarTarget == "to" and nil or "to"
+          if self.reconCalendarTarget then
+            local year, month = parseHistoryDate(self.reconToDate)
+            if not year then local today = date("*t"); year, month = tonumber(today.year), tonumber(today.month) end
+            self.reconCalendarYear, self.reconCalendarMonth = year, month
+          end
+          self:Refresh()
+        end, 170)
+      if self.reconFromDate ~= "" or self.reconToDate ~= "" then
+        local clearDates = Dibs.AceGUI.AddButton(shell, dateRange, "Clear dates", function()
+          self.reconFromDate, self.reconToDate, self.reconCalendarTarget = "", "", nil
+          self:Refresh()
+        end, 100)
+        Dibs.AceGUI.AttachHelp(clearDates, "Clear dates", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
+      end
+      Dibs.AceGUI.AttachHelp(fromDateButton, "Start date", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
+      Dibs.AceGUI.AttachHelp(toDateButton, "End date", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
+      if self.reconCalendarTarget then
+        local today = date("*t")
+        local year = tonumber(self.reconCalendarYear) or tonumber(today.year) or 2026
+        local month = tonumber(self.reconCalendarMonth) or tonumber(today.month) or 1
+        local weekdayNames = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+        local monthNames = { "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" }
+        local calendar = Dibs.AceGUI.AddSection(shell, dateRange,
+          self.reconCalendarTarget == "from" and "Choose start date" or "Choose end date")
+        local monthControls = Dibs.AceGUI.AddInlineGroup(shell, calendar)
+        Dibs.AceGUI.AddButton(shell, monthControls, "Previous month", function()
+          month = month - 1
+          if month < 1 then month, year = 12, year - 1 end
+          self.reconCalendarYear, self.reconCalendarMonth = year, month
+          self:Refresh()
+        end, 110)
+        Dibs.AceGUI.AddLabel(shell, monthControls, monthNames[month] .. " " .. tostring(year), false)
+        Dibs.AceGUI.AddButton(shell, monthControls, "Next month", function()
+          month = month + 1
+          if month > 12 then month, year = 1, year + 1 end
+          self.reconCalendarYear, self.reconCalendarMonth = year, month
+          self:Refresh()
+        end, 110)
+        local weekdayRow = Dibs.AceGUI.AddInlineGroup(shell, calendar)
+        for _, weekdayName in ipairs(weekdayNames) do
+          local label = Dibs.AceGUI.AddLabel(shell, weekdayRow, weekdayName, false)
+          if label and label.SetWidth then label:SetWidth(48) end
+          if label and label.SetJustifyH then label:SetJustifyH("CENTER") end
+        end
+        local monthLengths = { 31, (year % 4 == 0 and (year % 100 ~= 0 or year % 400 == 0)) and 29 or 28,
+          31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+        local firstWeekday = historyCalendarWeekday(year, month, 1)
+        local weekCount = math.ceil((firstWeekday + monthLengths[month]) / 7)
+        for weekIndex = 0, weekCount - 1 do
+          local week = Dibs.AceGUI.AddInlineGroup(shell, calendar)
+          for weekdayIndex = 0, 6 do
+            local day = weekIndex * 7 + weekdayIndex - firstWeekday + 1
+            if day >= 1 and day <= monthLengths[month] then
+              local selectedDate = historyCalendarDate(year, month, day)
+              Dibs.AceGUI.AddButton(shell, week, tostring(day), function()
+                if self.reconCalendarTarget == "from" then self.reconFromDate = selectedDate
+                else self.reconToDate = selectedDate end
+                self.reconCalendarTarget = nil
+                self:Refresh()
+              end, 48)
+            else
+              local blank = Dibs.AceGUI.AddLabel(shell, week, "", false)
+              if blank and blank.SetWidth then blank:SetWidth(48) end
+            end
+          end
+        end
+      end
+      local saveAliases = Dibs.AceGUI.AddButton(shell, form, "Save aliases", function()
         local saved, saveReason = Dibs.RCLootCouncil.SetReconciliationAliases(self.reconSeasonId, self.reconAliasesText, nil)
         self.reconStatus = saved and "Aliases saved." or ("Unable to save aliases: " .. tostring(saveReason or "unknown"))
         self:Refresh()
       end, 120)
-      Dibs.AceGUI.AddButton(shell, form, "Search history (preview)", function()
+      Dibs.AceGUI.AttachHelp(saveAliases, "Save aliases", helpText.UI_HELP_RC_HISTORY_SAVE_ALIASES)
+      local searchButton = Dibs.AceGUI.AddButton(shell, form, "Search history (preview)", function()
         local search = Dibs.LogsUI and Dibs.LogsUI.SearchHistory and Dibs.LogsUI.SearchHistory({
           seasonId = self.reconSeasonId, aliases = self.reconAliasesText, mode = self.reconMode, limit = tonumber(self.reconLimit) or 200,
-          fromTime = trimText(self.reconFromTime) ~= "" and tonumber(self.reconFromTime) or nil,
-          toTime = trimText(self.reconToTime) ~= "" and tonumber(self.reconToTime) or nil,
+          fromTime = historyDateTimestamp(self.reconFromDate, false),
+          toTime = historyDateTimestamp(self.reconToDate, true),
           inferFinalStatus = self.reconInferFinalStatus,
         }) or { ok = false, reasonCode = "HISTORY_UNAVAILABLE" }
         local session = search.session
@@ -5258,102 +5389,220 @@ local function createAceWindow(initialRoute)
         self.reconStatus = search.ok and "History scan complete. No ledger or RCLootCouncil history was changed." or ("Unable to search history: " .. tostring(search.reasonCode or "unknown"))
         self:Refresh()
       end, 190)
+      Dibs.AceGUI.AttachHelp(searchButton, "Search history (preview)", helpText.UI_HELP_RC_HISTORY_PREVIEW)
       if rcStatus.availability ~= "operational" then
         local availability = Dibs.LogsUI and Dibs.LogsUI.GetReconciliationAvailability and Dibs.LogsUI.GetReconciliationAvailability() or {}
-        Dibs.AceGUI.AddLabel(shell, scroll, tostring(availability.label or "Unavailable") .. ": " .. tostring(availability.explanation or "History reconciliation is unavailable."), true)
+        Dibs.AceGUI.AddLabel(shell, pageHeader, tostring(availability.label or "Unavailable") .. ": " .. tostring(availability.explanation or "History reconciliation is unavailable."), true)
       end
-      if self.reconStatus then Dibs.AceGUI.AddLabel(shell, scroll, self.reconStatus, true) end
-      local session = self.reconSessionId and Dibs.RCLootCouncil.GetReconciliationSession(self.reconSessionId, nil) or nil
+      if self.reconStatus then Dibs.AceGUI.AddLabel(shell, pageHeader, self.reconStatus, true) end
       if not session then return end
       local workflow = Dibs.LogsUI and Dibs.LogsUI.BuildReconciliationView and Dibs.LogsUI.BuildReconciliationView(session.sessionId) or {}
       local summary = workflow.summary or {}
       if workflow.stage == "complete" then
-        Dibs.AceGUI.AddHeader(shell, scroll, "Reconciliation complete", "Every candidate in this bounded review has a recorded disposition.")
-        Dibs.AceGUI.AddLabel(shell, scroll, "Confirmed as DIB: " .. tostring(summary.confirmed or 0) .. " | Rejected: " .. tostring(summary.rejected or 0) .. " | Unresolved: " .. tostring(summary.unresolved or 0), true)
+        Dibs.AceGUI.AddHeading(shell, pageHeader, "Reconciliation complete", "Every candidate in this bounded review has a recorded disposition.")
+        Dibs.AceGUI.AddLabel(shell, pageHeader, "Confirmed as DIB: " .. tostring(summary.confirmed or 0) .. " | Rejected: " .. tostring(summary.rejected or 0) .. " | Unresolved: " .. tostring(summary.unresolved or 0), true)
       else
-        Dibs.AceGUI.AddHeader(shell, scroll, "History scan complete", "Review candidates individually. Ambiguous or incomplete evidence cannot be confirmed as a DIB.")
-        Dibs.AceGUI.AddLabel(shell, scroll, "Rows scanned: " .. tostring(summary.rowsScanned or 0) .. " | Possible Dibs: " .. tostring(summary.possibleDibs or 0) .. " | Ignored: " .. tostring(summary.ignored or 0) .. " | Ambiguous: " .. tostring(summary.ambiguous or 0), true)
+        Dibs.AceGUI.AddHeading(shell, pageHeader, "History scan complete", "Review candidates individually. Ambiguous or incomplete evidence cannot be confirmed as a DIB.")
+        Dibs.AceGUI.AddLabel(shell, pageHeader, "Rows scanned: " .. tostring(summary.rowsScanned or 0) .. " | Possible Dibs: " .. tostring(summary.possibleDibs or 0) .. " | Ignored: " .. tostring(summary.ignored or 0) .. " | Ambiguous: " .. tostring(summary.ambiguous or 0), true)
       end
-      Dibs.AceGUI.AddButton(shell, scroll, "Review Candidates", function()
+      local reviewActions = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
+      local editSearch = Dibs.AceGUI.AddButton(shell, reviewActions, "Edit Search", function()
+        self.reconSessionId = nil
+        self:Refresh()
+      end, 120)
+      Dibs.AceGUI.AttachHelp(editSearch, "Edit Search", helpText.UI_HELP_RC_HISTORY_SEARCH_INTRO)
+      local reviewCandidates = Dibs.AceGUI.AddButton(shell, reviewActions, "Review Candidates", function()
         self.reconStage = "review"
         self:Refresh()
       end, 160)
-      -- RCLootCouncil uses a virtualized scrolling table. Keep the Dibs
-      -- preview equally light by rendering one bounded page of rows instead
-      -- of constructing hundreds of AceGUI labels in a single refresh.
+      Dibs.AceGUI.AttachHelp(reviewCandidates, "History results", helpText.UI_HELP_RC_HISTORY_RESULTS)
       local pageSize = 40
       local candidateCount = #(session.candidates or {})
-      local pageCount = math.max(1, math.ceil(candidateCount / pageSize))
-      self.reconPage = math.min(math.max(1, tonumber(self.reconPage) or 1), pageCount)
-      local pageStart = candidateCount > 0 and ((self.reconPage - 1) * pageSize + 1) or 1
-      local pageEnd = math.min(candidateCount, pageStart + pageSize - 1)
-      local candidateRows = {}
+      local candidateRecords = {}
       local projectedById = {}
       for _, projected in ipairs(workflow.candidates or {}) do projectedById[projected.candidateId] = projected end
-      for index = pageStart, pageEnd do
+      for index = 1, candidateCount do
         local candidate = session.candidates[index]
         local projected = projectedById[candidate.candidateId] or {}
-        candidateRows[#candidateRows + 1] = {
-          projected.date or formatHistoryDate(candidate.originalAwardTime, candidate.originalAwardTimeText),
-          projected.status and projected.status.label or "Needs review", projected.winner or "Unknown",
-          projected.item or "Unavailable", projected.difficulty or "Unavailable", projected.encounter or "Unavailable",
-          projected.classification or "unsupported", projected.evidenceSummary or historyReviewLabel(candidate), "", candidate = candidate,
+        candidateRecords[#candidateRecords + 1] = {
+          date = projected.date or formatHistoryDate(candidate.originalAwardTime, candidate.originalAwardTimeText),
+          status = projected.status and projected.status.label or "Needs review",
+          winner = projected.winner or "Unknown",
+          item = projected.item or "Unavailable",
+          difficulty = projected.difficulty or "Unavailable",
+          encounter = projected.encounter or "Unavailable",
+          classification = projected.classification or "unsupported",
+          evidence = projected.evidenceSummary or historyReviewLabel(candidate),
+          candidate = candidate,
         }
       end
-      if #candidateRows == 0 then candidateRows[1] = { "", "No history rows", "", "", "", "", "" } end
-      Dibs.AceGUI.AddTable(shell, scroll, {
-        { title = "Date / time", width = 180, tooltip = "Original RCLootCouncil award date and time." },
-        { title = "Status", width = 100, tooltip = helpText.UI_HELP_RC_HISTORY_STATUS },
-        { title = "Winner", width = 120, tooltip = helpText.UI_HELP_RC_HISTORY_WINNER },
-        { title = "Item", width = 170, tooltip = "Read-only RCLootCouncil item evidence." },
-        { title = "Difficulty", width = 95, tooltip = "Recorded raid difficulty." },
-        { title = "Encounter", width = 150, tooltip = (Dibs.L and Dibs.L.UI_HELP_ENCOUNTER_EVIDENCE) or "Raid instance and boss recorded for this award." },
-        { title = "Classification", width = 125, tooltip = helpText.UI_HELP_RC_HISTORY_CLASSIFICATION },
-        { title = "Evidence", width = 180, tooltip = helpText.UI_HELP_RC_HISTORY_EVIDENCE },
-        { title = "Review", width = 90, tooltip = helpText.UI_HELP_RC_HISTORY_REVIEW },
-      }, candidateRows, 250, function(row)
-        if not row.candidate then return nil end
-        return { text = "Review", callback = function()
-          self.reconSelectedCandidate = row.candidate.candidateId
-          self.transferTechnicalExpanded = false
-          openHistoryTransfer(session, row.candidate)
-        end }
-      end, {
-        allowTableSort = false,
-        contextMenu = function(row)
-          if not row or not row.candidate then return nil end
-          local candidate = row.candidate
-          local entries = {
-            { text = "Review transfer", callback = function()
-              self.transferTechnicalExpanded = false
-              openHistoryTransfer(session, candidate)
-            end },
-            { text = "Show technical evidence", callback = function()
-              self.transferTechnicalExpanded = true
-              openHistoryTransfer(session, candidate)
-            end },
-          }
-          if Dibs.EncounterJournal and type(Dibs.EncounterJournal.OpenLootItem) == "function" then
-            entries[#entries + 1] = { text = "Open Adventure Guide", callback = function() Dibs.EncounterJournal.OpenLootItem(candidate) end }
-          end
-          return entries
+      self.reconPage = math.max(1, tonumber(self.reconPage) or 1)
+      self.reconciliationPagination = Dibs.AceGUI.AddPaginationFooter(shell, tablePage, {
+        pageSize = pageSize, showPageSize = false,
+        onPrevious = function()
+          self.reconPage = math.max(1, self.reconPage - 1)
+          self:Refresh()
+        end,
+        onNext = function()
+          local _, currentPage, totalPages = Dibs.AceGUI.GetPageSlice(candidateRecords, self.reconPage, pageSize)
+          self.reconPage = math.min(totalPages, currentPage + 1)
+          self:Refresh()
         end,
       })
-      local pageControls = Dibs.AceGUI.AddInlineGroup(shell, scroll)
-      local previousPage = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function()
-        self.reconPage = math.max(1, self.reconPage - 1)
-        self:Refresh()
-      end, 90)
-      local pageLabel = Dibs.AceGUI.AddLabel(shell, pageControls,
-        candidateCount > 0 and ("Rows " .. tostring(pageStart) .. "-" .. tostring(pageEnd) .. " of " .. tostring(candidateCount) .. " | Page " .. tostring(self.reconPage) .. "/" .. tostring(pageCount)) or "No history rows")
-      local nextPage = Dibs.AceGUI.AddButton(shell, pageControls, "Next", function()
-        self.reconPage = math.min(pageCount, self.reconPage + 1)
-        self:Refresh()
-      end, 70)
-      Dibs.AceGUI.SetDisabled(previousPage, self.reconPage <= 1)
-      Dibs.AceGUI.SetDisabled(nextPage, self.reconPage >= pageCount)
-      if pageCount == 1 then
-        setControlsVisible({ previousPage, pageLabel, nextPage }, false)
+      local tableHost = Dibs.AceGUI.Create(shell, "SimpleGroup", tablePage.scroll) or tablePage.scroll
+      if tableHost ~= tablePage.scroll then
+        if tableHost.SetFullWidth then tableHost:SetFullWidth(true) end
+        if tableHost.SetLayout then tableHost:SetLayout("List") end
+      end
+      local fieldDefinitions = {
+        date = { title = "Date / time", width = 150, minWidth = 62, weight = 2,
+          tooltip = "Original RCLootCouncil award date and time." },
+        status = { title = "Status", width = 100, minWidth = 58, weight = 1,
+          tooltip = helpText.UI_HELP_RC_HISTORY_STATUS },
+        winner = { title = "Winner", width = 120, minWidth = 68, weight = 2,
+          tooltip = helpText.UI_HELP_RC_HISTORY_WINNER },
+        item = { title = "Item", width = 170, minWidth = 88, weight = 3,
+          tooltip = "Read-only RCLootCouncil item evidence." },
+        difficulty = { title = "Difficulty", width = 95, minWidth = 62, weight = 1,
+          tooltip = "Recorded raid difficulty." },
+        encounter = { title = "Encounter", width = 150, minWidth = 72, weight = 2,
+          tooltip = (Dibs.L and Dibs.L.UI_HELP_ENCOUNTER_EVIDENCE) or "Raid instance and boss recorded for this award." },
+        location = { title = "Difficulty / encounter", width = 150, minWidth = 92, weight = 2,
+          tooltip = "Recorded raid difficulty and encounter." },
+        classification = { title = "Classification", width = 125, minWidth = 82, weight = 2,
+          tooltip = helpText.UI_HELP_RC_HISTORY_CLASSIFICATION },
+        evidence = { title = "Evidence", width = 180, minWidth = 92, weight = 3,
+          tooltip = helpText.UI_HELP_RC_HISTORY_EVIDENCE },
+        winnerItem = { title = "Winner / item", width = 220, minWidth = 128, weight = 4,
+          tooltip = helpText.UI_HELP_RC_HISTORY_WINNER .. " " .. helpText.UI_HELP_RC_HISTORY_EVIDENCE },
+        candidate = { title = "Candidate", width = 240, minWidth = 120, weight = 4,
+          tooltip = helpText.UI_HELP_RC_HISTORY_WINNER .. " " .. helpText.UI_HELP_RC_HISTORY_EVIDENCE },
+        statusClassification = { title = "Status / classification", width = 170, minWidth = 100, weight = 3,
+          tooltip = helpText.UI_HELP_RC_HISTORY_STATUS .. " " .. helpText.UI_HELP_RC_HISTORY_CLASSIFICATION },
+        review = { title = "Review", width = 90, minWidth = 76, fixed = true, action = true,
+          tooltip = helpText.UI_HELP_RC_HISTORY_REVIEW },
+      }
+      local visibleFieldsByMode = {
+        WIDE = { "date", "status", "winner", "item", "difficulty", "encounter", "classification", "evidence", "review" },
+        MEDIUM = { "date", "status", "winner", "item", "location", "classification", "evidence", "review" },
+        COMPACT = { "date", "winnerItem", "status", "classification", "evidence", "review" },
+        NARROW = { "candidate", "statusClassification", "review" },
+      }
+      local metrics = Dibs.AceGUI.GetLayoutMetrics()
+      local renderedMode
+      self.ReflowHistoryTable = function(_, force, widthOverride)
+        local currentWidth = force ~= false and tonumber(widthOverride) or nil
+        if not currentWidth or currentWidth <= 0 then
+          currentWidth = tonumber(tablePage.root.frame and tablePage.root.frame.GetWidth
+            and tablePage.root.frame:GetWidth()) or 0
+        end
+        if currentWidth <= 0 then currentWidth = getOfficerContentWidth(frame, shell, frame._historyResizeWidth) end
+        if currentWidth <= 0 then currentWidth = getOfficerContentWidth(frame, shell, widthOverride) end
+        if currentWidth <= 0 then currentWidth = 760 end
+        local currentMode = currentWidth >= 900 and "WIDE"
+          or (currentWidth >= 700 and "MEDIUM" or (currentWidth >= 500 and "COMPACT" or "NARROW"))
+        if force == false and renderedMode == currentMode then
+          tablePage.UpdateViewportHeight()
+          return
+        end
+        local visibleKeys = visibleFieldsByMode[currentMode]
+        local columns = {}
+        for _, key in ipairs(visibleKeys) do columns[#columns + 1] = fieldDefinitions[key] end
+        local pageRows, currentPage, totalPages, rowCount = Dibs.AceGUI.GetPageSlice(
+          candidateRecords, self.reconPage, pageSize)
+        self.reconPage = currentPage
+        if self.reconciliationPagination then
+          self.reconPage, totalPages = self.reconciliationPagination.UpdateState(currentPage, rowCount, pageSize)
+        end
+        Dibs.AceGUI.Clear(tablePage.columnHeader)
+        Dibs.AceGUI.Clear(tableHost)
+        if #pageRows == 0 then
+          Dibs.AceGUI.AddLabel(shell, tableHost,
+            helpText.UI_EMPTY_RC_HISTORY_CANDIDATES or "No matching history candidates.", true)
+        else
+          local displayRows = {}
+          for _, record in ipairs(pageRows) do
+            local values = {}
+            for index, key in ipairs(visibleKeys) do
+              if key == "location" then
+                values[index] = record.difficulty .. " / " .. record.encounter
+              elseif key == "winnerItem" then
+                values[index] = record.winner .. " / " .. record.item
+              elseif key == "candidate" then
+                values[index] = record.date .. " | " .. record.winner .. " | " .. record.item
+              elseif key == "statusClassification" then
+                values[index] = record.status .. " / " .. record.classification
+              elseif key == "review" then
+                values[index] = ""
+              else
+                values[index] = record[key]
+              end
+            end
+            values.candidate = record.candidate
+            values.historyDetails = record
+            displayRows[#displayRows + 1] = values
+          end
+          Dibs.AceGUI.AddTable(shell, tableHost, columns, displayRows, 430, function(row)
+            if not row.candidate then return nil end
+            return { text = "Review", callback = function()
+              self.reconSelectedCandidate = row.candidate.candidateId
+              self.transferTechnicalExpanded = false
+              openHistoryTransfer(session, row.candidate)
+            end }
+          end, {
+            widthHint = currentWidth, allowTableSort = false, hideScrollbarWhenFits = true,
+            noScrolling = true, fluidColumns = true, flatBackground = true,
+            headerParent = tablePage.columnHeader,
+            horizontalPadding = metrics.tableHorizontalPadding,
+            scrollbarReserve = metrics.tableScrollbarReserve, columnGap = metrics.tableColumnGap,
+            rowHeight = math.max(metrics.rowHeight, metrics.buttonHeight + 8),
+            cellTooltip = function(row, index)
+              local key = visibleKeys[index]
+              local record = row.historyDetails
+              if record and (key == "candidate" or key == "winnerItem" or key == "location" or key == "statusClassification") then
+                return table.concat({
+                  "Date: " .. record.date, "Winner: " .. record.winner, "Item: " .. record.item,
+                  "Difficulty: " .. record.difficulty, "Encounter: " .. record.encounter,
+                  "Status: " .. record.status, "Classification: " .. record.classification,
+                  "Evidence: " .. record.evidence,
+                }, "\n")
+              end
+              return fieldDefinitions[key] and fieldDefinitions[key].tooltip
+            end,
+            emptyText = helpText.UI_EMPTY_RC_HISTORY_CANDIDATES or "No matching history candidates.",
+            contextMenu = function(row)
+              if not row or not row.candidate then return nil end
+              local candidate = row.candidate
+              local entries = {
+                { text = "Review transfer", callback = function()
+                  self.transferTechnicalExpanded = false
+                  openHistoryTransfer(session, candidate)
+                end },
+                { text = "Show technical evidence", callback = function()
+                  self.transferTechnicalExpanded = true
+                  openHistoryTransfer(session, candidate)
+                end },
+              }
+              if Dibs.EncounterJournal and type(Dibs.EncounterJournal.OpenLootItem) == "function" then
+                entries[#entries + 1] = { text = "Open Adventure Guide", callback = function() Dibs.EncounterJournal.OpenLootItem(candidate) end }
+              end
+              return entries
+            end,
+          })
+        end
+        self.historyVisibleFields = visibleKeys
+        self.historyTableColumns = columns
+        self.historyLayoutMode = currentMode
+        tablePage.UpdateViewportHeight()
+        renderedMode = currentMode
+      end
+      self:ReflowHistoryTable(true)
+      if shell.AddResizeHandler and not self._historyResizeHandlerInstalled then
+        self._historyResizeHandlerInstalled = true
+        shell:AddResizeHandler(function(_, width)
+          if self.activeTab ~= "history" and self.activeTab ~= "reconciliation" then return end
+          if type(self.ReflowHistoryTable) == "function" then self:ReflowHistoryTable(false, width) end
+        end)
       end
       return
     end
@@ -5510,8 +5759,16 @@ local function createAceWindow(initialRoute)
       end
       self.lootTypeControls = {}
       self.rcLootTypeControls = {}
+      self.rcLootTemplateControls = {}
       local values = policy and policy.values and policy.values() or {}
-      local keys = lootRules and lootRules.GetSupportedTypes and lootRules.GetSupportedTypes() or {}
+      local supportedKeys = lootRules and lootRules.GetSupportedTypes and lootRules.GetSupportedTypes() or {}
+      local keys = {}
+      for _, typeKey in ipairs(supportedKeys) do
+        local label = tostring(values[typeKey] or typeKey)
+        if string.upper(tostring(typeKey)) ~= "COSMETIC" and not label:match("%(RCLC slot%)$") then
+          keys[#keys + 1] = typeKey
+        end
+      end
       local visibleRules = authority and authority.types
         or (status.status == "LOCAL_LEGACY_ONLY" or status.status == "GUILD_LOOT_RULES_NOT_CONFIGURED")
           and draft and draft.types or nil
@@ -5528,6 +5785,7 @@ local function createAceWindow(initialRoute)
       local localTitle = strings.LOOT_RULES_GROUP_LOCAL or "Local"
       local rcTitle = strings.LOOT_RULES_FIELD_RC or "RC"
       local guideTitle = strings.LOOT_RULES_COLUMN_GUIDE or "Adventure Guide"
+      local templateTitle = "Button template"
 
       local function decision(value)
         return value == true and enabledText or disabledText
@@ -5535,6 +5793,20 @@ local function createAceWindow(initialRoute)
 
       local function readOnlyValue(parent, label, value)
         if parent then Dibs.AceGUI.AddLabel(shell, parent, label .. ": " .. decision(value), true) end
+      end
+
+      local function lootTypeDescription(typeKey)
+        if Dibs.RCOptions and Dibs.RCOptions.GetLootTypeDescription then
+          return Dibs.RCOptions.GetLootTypeDescription(typeKey)
+        end
+        return strings.LOOT_TYPE_HELP_OTHER or "Other eligible loot that does not match a more specific type."
+      end
+
+      local function addLootTypeLabel(parent, typeKey)
+        local labelText = tostring(values[typeKey] or typeKey)
+        local label = Dibs.AceGUI.AddLabel(shell, parent, labelText, true)
+        if label then Dibs.AceGUI.AddTooltip(label, labelText, lootTypeDescription(typeKey)) end
+        return label
       end
 
       local function addDraftCheckbox(parent, typeKey, field, label)
@@ -5550,6 +5822,28 @@ local function createAceWindow(initialRoute)
           self.rcLootTypeControls[typeKey] = control
         else
           self.lootTypeControls[typeKey] = control
+        end
+        return control
+      end
+
+      local function addDraftTemplateAssignment(parent, typeKey)
+        if not parent or not Dibs.RCOptions or not Dibs.RCOptions.GetButtonTemplateValues
+          or not Dibs.RCOptions.SetButtonTemplateAssignment then return nil end
+        local values = Dibs.RCOptions.GetButtonTemplateValues()
+        local selected = Dibs.RCOptions.GetButtonTemplateAssignment(typeKey)
+        local wideLayout = layoutState.mode == "WIDE"
+        local control = Dibs.AceGUI.AddDropdown(shell, parent,
+          wideLayout and "" or "Button template", values, function(templateId)
+          local assigned, reason = Dibs.RCOptions.SetButtonTemplateAssignment(typeKey, templateId)
+          if not assigned then self:SetStatus(tostring(reason)); return end
+          self:Refresh()
+        end, wideLayout and (layoutState.columnCount == 6 and 125 or 180) or 220)
+        if control then
+          Dibs.AceGUI.SetValue(control, selected)
+          if type(control.SetText) == "function" then control:SetText(values[selected] or selected) end
+          Dibs.AceGUI.SetDisabled(control,
+            not (Dibs.RCOptions.CanEditDibsSettings and Dibs.RCOptions.CanEditDibsSettings()))
+          self.rcLootTemplateControls[typeKey] = control
         end
         return control
       end
@@ -5586,6 +5880,7 @@ local function createAceWindow(initialRoute)
 
       local function addDraftFields(parent, typeKey)
         addDraftCheckbox(parent, typeKey, "rclootcouncil", rcTitle)
+        addDraftTemplateAssignment(parent, typeKey)
         addDraftCheckbox(parent, typeKey, "adventureGuide", guideTitle)
       end
 
@@ -5597,7 +5892,7 @@ local function createAceWindow(initialRoute)
 
       local function addMediumType(typeKey)
         local row = Dibs.AceGUI.AddInlineGroup(shell, scroll)
-        Dibs.AceGUI.AddLabel(shell, row, tostring(values[typeKey] or typeKey), true)
+        addLootTypeLabel(row, typeKey)
         local blocks = Dibs.AceGUI.AddInlineGroup(shell, row)
         local rule = visibleRules and visibleRules[typeKey]
         if authority then
@@ -5609,11 +5904,15 @@ local function createAceWindow(initialRoute)
         if isGM then
           local draftBlock = addMediumBlock(blocks, draftTitle, authority ~= nil)
           addDraftFields(draftBlock, typeKey)
+        else
+          local templateBlock = addMediumBlock(blocks, "Button template", false)
+          addDraftTemplateAssignment(templateBlock, typeKey)
         end
       end
 
       local function addNarrowType(typeKey)
-        local card = Dibs.AceGUI.AddSection(shell, scroll, tostring(values[typeKey] or typeKey))
+        local card = Dibs.AceGUI.AddSection(shell, scroll,
+          tostring(values[typeKey] or typeKey), lootTypeDescription(typeKey))
         if not card then return end
         self.lootRulesCards[typeKey] = card
         local rule = visibleRules and visibleRules[typeKey]
@@ -5627,6 +5926,9 @@ local function createAceWindow(initialRoute)
         if authority and isGM then
           addDraftFields(Dibs.AceGUI.AddSection(shell, card, draftTitle), typeKey)
         end
+        if not isGM then
+          addDraftTemplateAssignment(Dibs.AceGUI.AddSection(shell, card, "Button template"), typeKey)
+        end
       end
 
       local function wideHeaders()
@@ -5636,6 +5938,7 @@ local function createAceWindow(initialRoute)
             strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
             strings.LOOT_RULES_COLUMN_GUILD_RC or "Guild RC",
             strings.LOOT_RULES_COLUMN_DRAFT_RC or "Draft RC",
+            templateTitle,
             strings.LOOT_RULES_COLUMN_GUILD_GUIDE or "Guild Adventure Guide",
             strings.LOOT_RULES_COLUMN_DRAFT_GUIDE or "Draft Adventure Guide",
           }
@@ -5643,18 +5946,21 @@ local function createAceWindow(initialRoute)
           labels = {
             strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
             strings.LOOT_RULES_COLUMN_GUILD_RC or "Guild RC",
+            templateTitle,
             strings.LOOT_RULES_COLUMN_GUILD_GUIDE or "Guild Adventure Guide",
           }
         elseif isGM then
           labels = {
             strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
             strings.LOOT_RULES_COLUMN_DRAFT_RC or "Draft RC",
+            templateTitle,
             strings.LOOT_RULES_COLUMN_DRAFT_GUIDE or "Draft Adventure Guide",
           }
         else
           labels = {
             strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
             strings.LOOT_RULES_COLUMN_RC or "RCLootCouncil",
+            templateTitle,
             strings.LOOT_RULES_COLUMN_GUIDE or "Adventure Guide",
           }
         end
@@ -5672,21 +5978,26 @@ local function createAceWindow(initialRoute)
         local function cell(index)
           return addWideColumn(row, index, layoutState.columnCount)
         end
-        Dibs.AceGUI.AddLabel(shell, cell(1), tostring(values[typeKey] or typeKey), true)
+        addLootTypeLabel(cell(1), typeKey)
         if authority and isGM then
           readOnlyValue(cell(2), rcTitle, rule and rule.rclootcouncil)
-          addDraftCheckbox(cell(3), typeKey, "rclootcouncil", "")
-          readOnlyValue(cell(4), guideTitle, rule and rule.adventureGuide)
-          addDraftCheckbox(cell(5), typeKey, "adventureGuide", "")
+          local draftRC = cell(3)
+          addDraftCheckbox(draftRC, typeKey, "rclootcouncil", "")
+          addDraftTemplateAssignment(cell(4), typeKey)
+          readOnlyValue(cell(5), guideTitle, rule and rule.adventureGuide)
+          addDraftCheckbox(cell(6), typeKey, "adventureGuide", "")
         elseif authority then
           readOnlyValue(cell(2), rcTitle, rule and rule.rclootcouncil)
-          readOnlyValue(cell(3), guideTitle, rule and rule.adventureGuide)
+          addDraftTemplateAssignment(cell(3), typeKey)
+          readOnlyValue(cell(4), guideTitle, rule and rule.adventureGuide)
         elseif isGM then
           addDraftCheckbox(cell(2), typeKey, "rclootcouncil", "")
-          addDraftCheckbox(cell(3), typeKey, "adventureGuide", "")
+          addDraftTemplateAssignment(cell(3), typeKey)
+          addDraftCheckbox(cell(4), typeKey, "adventureGuide", "")
         else
           readOnlyValue(cell(2), rcTitle, rule and rule.rclootcouncil)
-          readOnlyValue(cell(3), guideTitle, rule and rule.adventureGuide)
+          addDraftTemplateAssignment(cell(3), typeKey)
+          readOnlyValue(cell(4), guideTitle, rule and rule.adventureGuide)
         end
       end
 
@@ -5695,9 +6006,17 @@ local function createAceWindow(initialRoute)
         local count = layoutState.columnCount or 0
         if count > 0 then
           local usable = math.max(1, contentWidth - count * 12)
-          local first = count == 5 and 0.28 or 0.40
-          widths[1] = usable * first
-          for index = 2, count do widths[index] = usable * ((1 - first) / (count - 1)) end
+          local proportions = count == 6 and { 0.22, 0.14, 0.10, 0.18, 0.18, 0.18 }
+            or count == 4 and { 0.30, 0.18, 0.30, 0.22 }
+            or count == 5 and { 0.28, 0.18, 0.18, 0.18, 0.18 }
+            or nil
+          if proportions then
+            for index, proportion in ipairs(proportions) do widths[index] = usable * proportion end
+          else
+            local first = 0.40
+            widths[1] = usable * first
+            for index = 2, count do widths[index] = usable * ((1 - first) / (count - 1)) end
+          end
         end
         for _, target in ipairs(responsiveTargets) do
           local width = target.kind == "column" and widths[target.index]
@@ -5706,6 +6025,7 @@ local function createAceWindow(initialRoute)
           if width and target.widget and target.widget.SetWidth then target.widget:SetWidth(width) end
         end
         self.lootRulesColumnWidths = widths
+        self.lootRulesColumnCount = count
         self.lootRulesAvailableWidth = contentWidth
       end
 
@@ -6282,12 +6602,12 @@ local function createAceWindow(initialRoute)
         ready = "Ready",
         surplus = "Surplus",
       }
-      self.automaticDibsStatusFilter = Dibs.AceGUI.AddDropdown(shell, pageHeader, "Status",
+      self.automaticDibsStatusFilter = Dibs.AceGUI.AddDibsSelect(shell, pageHeader, "Status",
         statusOptions, function(value)
           self.automaticDibsFilter = value
           self.automaticDibsPage = 1
           if self.RefreshAutomaticDibsTable then self:RefreshAutomaticDibsTable() end
-        end, 240)
+        end, 240, { tooltip = (Dibs.L or {}).UI_HELP_AUTOMATIC_DIBS_FILTER })
       Dibs.AceGUI.SetValue(self.automaticDibsStatusFilter, self.automaticDibsFilter)
       if self.automaticDibsStatus and self.automaticDibsStatus ~= "" then
         Dibs.AceGUI.AddLabel(shell, pageHeader, self.automaticDibsStatus, true)
@@ -6570,8 +6890,8 @@ local function createAceWindow(initialRoute)
       local acquisitionValues, decisionValues = {}, { CONFIRM = "Confirm", REJECT = "Reject", REFERENCE = "Keep as reference" }
       for _, row in ipairs(vaultRows) do acquisitionValues[row.acquisitionId] = row.playerName .. " | " .. tostring(row.projection.verificationState or "UNVERIFIED") .. " | " .. tostring(row.projection.itemID) end
       local reviewControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
-      self.vaultAcquisition = Dibs.AceGUI.AddDropdown(shell, reviewControls, "Record", acquisitionValues, function(value) self.vaultAcquisitionId = value end, 360)
-      self.vaultDecision = Dibs.AceGUI.AddDropdown(shell, reviewControls, "Decision", decisionValues, function(value) self.vaultDecisionValue = value end, 180)
+      self.vaultAcquisition = Dibs.AceGUI.AddDropdown(shell, reviewControls, "Record", acquisitionValues, function(value) self.vaultAcquisitionId = value end, 360, false)
+      self.vaultDecision = Dibs.AceGUI.AddDropdown(shell, reviewControls, "Decision", decisionValues, function(value) self.vaultDecisionValue = value end, 180, false)
       self.vaultReason = Dibs.AceGUI.AddEditBox(shell, reviewControls, "Reason", function(value) self.vaultReasonValue = value end, 360)
       Dibs.AceGUI.AddButton(shell, reviewControls, "Apply review", function()
         local result, reason = Dibs.OfficerUI.ReviewVaultAcquisition(self.vaultAcquisitionId, self.vaultDecisionValue or "CONFIRM", self.vaultReasonValue, nil)
@@ -6579,7 +6899,7 @@ local function createAceWindow(initialRoute)
         if result then self:Refresh() end
       end, 120)
       local statusValues = { ALL = "All statuses", UNVERIFIED = "Unverified", MANUAL_RECORDED = "Manual", LEGACY_RECORDED = "Legacy", AUTOMATIC_CONFIRMED = "Automatic", OFFICER_CONFIRMED = "Officer confirmed", REJECTED = "Rejected", REFERENCE_ONLY = "Reference only" }
-      self.vaultStatusControl = Dibs.AceGUI.AddDropdown(shell, pageHeader, "Status filter", statusValues, function(value) self.vaultStatusFilter = value == "ALL" and nil or value; self.ledgerPage = 1; self:Refresh() end, 220)
+      self.vaultStatusControl = Dibs.AceGUI.AddDropdown(shell, pageHeader, "Status filter", statusValues, function(value) self.vaultStatusFilter = value == "ALL" and nil or value; self.ledgerPage = 1; self:Refresh() end, 220, false)
       Dibs.AceGUI.SetValue(self.vaultStatusControl, self.vaultStatusFilter or "ALL")
     end
     local metrics = Dibs.AceGUI.GetLayoutMetrics()

@@ -607,9 +607,16 @@ local function executeHistoryConfirm(actor, payload, decision)
   audit.importReason = command.reason
   audit.reviewMode = mode
   audit.manualAcknowledgement = command.manualAcknowledgement == true
-  local tx = Dibs.Ledger.RecordHistoricalAward(command.playerName, command.seasonId, command.awardRef, command.evidenceId, command.reason or "Historical RCLootCouncil award", audit)
-  local result = buildResult(tx ~= nil, tx, decision, tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for historical award."))
-  result.outcome = tx and "awarded" or "rejected"
+  local tx, accountingReason, proposal = Dibs.Ledger.RecordHistoricalAward(
+    command.playerName, command.seasonId, command.awardRef, command.evidenceId,
+    command.reason or "Historical RCLootCouncil award", audit)
+  local result = buildResult(tx ~= nil, tx, decision,
+    tx and nil or text("AWARD_CONSUME_FAILED", "Unable to consume Dib for historical award."))
+  if not tx then
+    result.reasonCode = accountingReason or "AWARD_CONSUME_FAILED"
+    result.proposal = proposal
+  end
+  result.outcome = tx and "awarded" or (proposal and "pending" or "rejected")
   return result
 end
 

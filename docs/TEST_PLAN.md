@@ -188,6 +188,14 @@ allocation remains zero after reload and default setup.
 - [ ] Confirm existing responses, labels, colors, and button order are preserved.
 - [ ] Fill the response list to its configured capacity; confirm DIB is not
       inserted by overwriting an active response.
+- [ ] Create, rename and reorder reusable button templates; verify label,
+      response, color and Require Notes persist after reopening the options.
+- [ ] Assign templates by semantic loot type, then generate from Draft RC and
+      Draft Adventure Guide. Confirm DIB is locked first (nine template choices
+      plus DIB), or all ten template choices are available without DIB.
+- [ ] Confirm generation does not publish Loot Rules, leaves Draft RC-disabled
+      groups untouched, reports unsupported Cosmetic mapping, and stops without
+      partial writes when shared TOKEN/TOKEN_SET settings disagree.
 - [ ] Reload the UI and reopen the options; confirm the tabs and scroll position
       remain usable.
 - [ ] Open a real RCLootCouncil voting frame and confirm the Dibs column is visible.

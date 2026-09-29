@@ -8,6 +8,15 @@ local function supportedRC(options)
   return loader.makeRCLootCouncil(options)
 end
 
+local function retailRC()
+  local ml = { lootTable = { [7] = {} } }
+  local rc = loader.makeRCLootCouncil({ enabled = true })
+  rc.GetModule = function(_, name)
+    if name == "RCLootCouncilML" then return ml end
+  end
+  return rc, ml
+end
+
 local roster = { "Coordinator-Realm", "Officer-Realm", "Player-Realm" }
 local ranks = { [1] = 0, [2] = 1, [3] = 3 }
 
@@ -63,6 +72,80 @@ describe("B09 RCLootCouncil versioned award adapter", function()
     assert_equal("DIBS_RCLC_AWARD_TEST_V1", receipt.adapterProfile)
     assert_equal(nil, receipt.raw)
     assert_equal(nil, receipt.winner)
+  end)
+
+  it("accepts Retail 3.23.3 only after its matching history row is written", function()
+    local rc, ml = retailRC()
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = {
+      guildLeader = true, rclootcouncilVersion = "3.23.3",
+    } })
+    local status = dibs.RCLootCouncil.GetAwardAdapterStatus()
+    local before = dibs.Ledger.GetBalance("Tester-Realm")
+    local queued
+    C_Timer.After = function(_, callback) queued = callback end
+
+    local result = dibs.RCLootCouncil.OnAwardSuccess(nil, 7, "Tester-Realm", "normal", "item:19019", "DIB")
+    assert_equal("AVAILABLE", status.state)
+    assert_true(status.awardEvidence)
+    assert_true(result.pending)
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+
+    ml.lootTable[7].history = { id = "1700000000-1", lootWon = "item:19019", response = "DIB" }
+    queued()
+    assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
+    local receipt = dibs.GetDB().rclootcouncilAdapter.evidence["rclc:history:1700000000-1"]
+    assert_equal("DIBS_RCLC_RETAIL_3_23_3", receipt.adapterProfile)
+
+    local duplicate = dibs.RCLootCouncil.HandleAwardCallback(
+      "RCMLAwardSuccess", 7, "Tester-Realm", "normal", "item:19019", "DIB", "1700000000-1")
+    assert_true(duplicate.duplicate)
+    assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
+  end)
+
+  it("registers the award callback before the RCLC ML loot table is initialized", function()
+    local ml = {}
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.GetModule = function(_, name)
+      if name == "RCLootCouncilML" then return ml end
+    end
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = {
+      guildLeader = true, rclootcouncilVersion = "3.23.3",
+    } })
+    assert_not_nil(rc._handlers.RCMLAwardSuccess)
+    assert_true(dibs.RCLootCouncil.GetCapabilities().capabilities.awardEvidence)
+
+    ml.lootTable = { [7] = {} }
+    dibs.RCLootCouncil.Initialize()
+
+    assert_not_nil(rc._handlers.RCMLAwardSuccess)
+    assert_true(dibs.RCLootCouncil.GetCapabilities().capabilities.awardEvidence)
+  end)
+
+  it("fails closed when Retail history is absent or mismatched and on re-awards", function()
+    local rc, ml = retailRC()
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = {
+      guildLeader = true, rclootcouncilVersion = "3.23.3",
+    } })
+    local before = dibs.Ledger.GetBalance("Tester-Realm")
+    local queued
+    C_Timer.After = function(_, callback) queued = callback end
+
+    local missing = dibs.RCLootCouncil.OnAwardSuccess(nil, 7, "Tester-Realm", "normal", "item:19019", "DIB")
+    assert_true(missing.pending)
+    queued()
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+
+    local mismatch = dibs.RCLootCouncil.OnAwardSuccess(nil, 7, "Tester-Realm", "normal", "item:19019", "DIB")
+    assert_true(mismatch.pending)
+    ml.lootTable[7].history = { id = "1700000000-2", lootWon = "item:19020", response = "DIB" }
+    queued()
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
+
+    local reaward = dibs.RCLootCouncil.OnAwardSuccess(nil, 7, "Tester-Realm", "normal", "item:19019", "DIB")
+    assert_true(reaward.ignored)
+    local indirect = dibs.RCLootCouncil.OnAwardSuccess(nil, 8, "Tester-Realm", "indirect", "item:19019", "DIB")
+    assert_true(indirect.ignored)
+    assert_equal(before, dibs.Ledger.GetBalance("Tester-Realm"))
   end)
 
   it("fails closed for unknown callbacks, statuses, ambiguous identity, and malformed items", function()
