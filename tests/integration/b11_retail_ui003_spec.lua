@@ -377,8 +377,16 @@ describe("B11 Retail UI-003", function()
     assert_false(containsText(frame.contentHost, "Protected loot eligibility"))
     assert_false(containsText(frame.contentHost, "Selected request"))
     local sentBefore = #dibs.Ace3.libs.comm.sent
+    local startChannelTest = dibs.Sync.StartChannelTest
+    local expectedResult
+    dibs.Sync.StartChannelTest = function(channel, target)
+      local sent, result = startChannelTest(channel, target)
+      expectedResult = result
+      return sent, result
+    end
     frame.channelTestRunButton.callbacks.OnClick(frame.channelTestRunButton, "OnClick")
     assert_equal(sentBefore + 1, #dibs.Ace3.libs.comm.sent)
     assert_equal("GUILD", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].channel)
+    assert_equal("Probe queued: GUILD / " .. tostring(expectedResult), frame.statusMessage)
   end)
 end)

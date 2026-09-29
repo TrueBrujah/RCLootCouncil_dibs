@@ -6144,8 +6144,10 @@ local function createAceWindow(initialRoute)
       end
       self.channelTestRunButton = Dibs.AceGUI.AddButton(shell, channelTest, "Test selected channel", function()
         local target = self.channelTestChannel == "CHANNEL" and self.channelTestCustomChannelName or self.channelTestTarget
-        local sent, result = Dibs.Sync and Dibs.Sync.StartChannelTest
-          and Dibs.Sync.StartChannelTest(self.channelTestChannel or "GUILD", target)
+        local sent, result
+        if Dibs.Sync and Dibs.Sync.StartChannelTest then
+          sent, result = Dibs.Sync.StartChannelTest(self.channelTestChannel or "GUILD", target)
+        end
         self:SetStatus(sent and ("Probe queued: " .. tostring(self.channelTestChannel or "GUILD") .. " / " .. tostring(result))
           or ("Probe not sent: " .. tostring(result or "SYNC_UNAVAILABLE")))
         self:Refresh()
