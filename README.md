@@ -319,7 +319,7 @@ $files = Get-ChildItem tests -Recurse -File -Filter "*_spec.lua" |
   Sort-Object FullName |
   ForEach-Object { $_.FullName.Replace((Get-Location).Path + "\\", "").Replace("\\", "/") }
 $env:DIBS_TEST_FILES = ($files -join ";")
-npx --yes fengari tests/run.lua
+npx --yes --package=fengari-node-cli fengari tests/run.lua
 ```
 
 See [docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md) and

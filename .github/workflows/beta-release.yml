@@ -32,7 +32,7 @@ jobs:
             echo "No test specs found under tests/." >&2
             exit 1
           fi
-          DIBS_TEST_FILES="$test_files" npx --yes fengari tests/run.lua
+          DIBS_TEST_FILES="$test_files" npx --yes --package=fengari-node-cli fengari tests/run.lua
 
   package:
     name: Build addon package
