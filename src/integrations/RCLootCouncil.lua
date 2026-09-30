@@ -2167,11 +2167,14 @@ local function getCandidateIdentity(rowData)
 end
 
 local function getRemainingDibsText(playerName)
-  if not playerName or not Dibs.Ledger or type(Dibs.Ledger.GetCanonicalPlayerDibsState) ~= "function" then
+  if not playerName or not Dibs.Ledger then
     return "-", 0, nil, nil
   end
   local seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
-  local ok, state = pcall(Dibs.Ledger.GetCanonicalPlayerDibsState, seasonId, playerName)
+  local projection = Dibs.Ledger.GetPlayerDibsProjection or function(name, season)
+    return Dibs.Ledger.GetCanonicalPlayerDibsState(season, name)
+  end
+  local ok, state = pcall(projection, playerName, seasonId)
   if not ok or type(state) ~= "table" then
     return "-", 0, nil, nil
   end
@@ -2860,8 +2863,7 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
   local canonicalBalance = Dibs.Ledger and Dibs.Ledger.GetBalance(name, seasonId) or 0
   local pendingDibReservations = Dibs.Ledger and Dibs.Ledger.GetPendingDibReservations
     and Dibs.Ledger.GetPendingDibReservations(name, seasonId) or 0
-  local availableBalance = Dibs.Ledger and Dibs.Ledger.GetAvailableBalance
-    and Dibs.Ledger.GetAvailableBalance(name, seasonId) or canonicalBalance
+  local availableBalance = math.max(0, (tonumber(canonicalBalance) or 0) - (tonumber(pendingDibReservations) or 0))
   local typeKey = normalizeTypeKey(responseType)
   -- Resolve the semantic item family as well as the RCLC response type. This
   -- prevents a personal Catalyst item from falling through an equip-slot or

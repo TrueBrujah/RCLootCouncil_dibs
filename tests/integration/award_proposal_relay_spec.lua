@@ -257,17 +257,23 @@ describe("Award proposal relay contract across simultaneous raids", function()
     saved = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
 
     local officer = load("Officer2-Realm", saved)
+    local proposalGeneration = officer.Governance.GetAwardProposalGeneration("player-realm")
+    assert_equal(0, officer.Ledger.GetPlayerDibsProjection("Player-Realm", season).pendingDibReservations)
     local proposal = assert(officer.Governance.RecordAwardProposal(nil, {
       playerName = "Player-Realm", itemID = 9, awardRef = "guild-reservation-1", seasonId = season,
     }))
+    assert_true(officer.Governance.GetAwardProposalGeneration("player-realm") > proposalGeneration)
+    assert_equal(1, officer.Ledger.GetPlayerDibsProjection("Player-Realm", season).pendingDibReservations)
     local digest = officer.Sync.BuildAwardReservationDigest()
 
     local raider = load("Player-Realm", saved)
+    assert_equal(0, raider.Ledger.GetPlayerDibsProjection("Player-Realm", season).pendingDibReservations)
     local envelope = assert(raider.Sync.BuildEnvelope(digest))
     envelope.senderNameRealm, envelope.senderMemberKey = "Officer2-Realm", "officer2-realm"
     local accepted, reason = raider.Sync.Receive(envelope, "Officer2-Realm")
     assert_true(accepted, tostring(reason))
     assert_equal(1, raider.Ledger.GetPendingDibReservations("Player-Realm", season))
+    assert_equal(1, raider.Ledger.GetPlayerDibsProjection("Player-Realm", season).pendingDibReservations)
     assert_equal(0, raider.Ledger.GetAvailableBalance("Player-Realm", season))
 
     coordinator = load("Coordinator-Realm", saved)
@@ -277,6 +283,7 @@ describe("Award proposal relay contract across simultaneous raids", function()
     local applied = raider.Ledger.ApplyAwardCommit(result.value, "Coordinator-Realm")
     assert_true(applied.accepted, tostring(applied.reasonCode))
     assert_equal(0, raider.Ledger.GetPendingDibReservations("Player-Realm", season))
+    assert_equal(0, raider.Ledger.GetPlayerDibsProjection("Player-Realm", season).pendingDibReservations)
     assert_equal(0, raider.Ledger.GetBalance("Player-Realm", season))
     assert_equal(0, raider.Ledger.GetAvailableBalance("Player-Realm", season))
   end)

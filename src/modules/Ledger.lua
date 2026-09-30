@@ -34,6 +34,26 @@ local PROTECTED_ACTION_BY_TYPE = {
 }
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
+local MAX_PLAYER_DIBS_PROJECTIONS = 256
+local playerDibsProjections, playerDibsProjectionOrder = {}, {}
+local playerStateProjectionRevisions = setmetatable({}, { __mode = "k" })
+
+local function copyPlayerDibsProjection(projection)
+  local result = {}
+  for key, value in pairs(projection) do result[key] = value end
+  return result
+end
+
+local function rememberPlayerDibsProjection(key, entry)
+  if playerDibsProjections[key] == nil then
+    if #playerDibsProjectionOrder >= MAX_PLAYER_DIBS_PROJECTIONS then
+      local oldest = table.remove(playerDibsProjectionOrder, 1)
+      playerDibsProjections[oldest] = nil
+    end
+    playerDibsProjectionOrder[#playerDibsProjectionOrder + 1] = key
+  end
+  playerDibsProjections[key] = entry
+end
 
 local function ensureState()
   Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
@@ -375,6 +395,7 @@ local function appendValidated(tx)
   local state = ensurePlayerState(tx.memberKey, tx.seasonId); table.insert(state.transactions, tx.transactionId)
   if tx.type == "SEASON_ALLOCATION" then state.allocation = (tonumber(state.allocation) or 0) + tx.amount end
   state.balance = getCurrentBalance(tx.memberKey, tx.seasonId)
+  playerStateProjectionRevisions[state] = (playerStateProjectionRevisions[state] or 0) + 1
   return tx
 end
 
@@ -888,43 +909,123 @@ function Ledger.GetPlayerSeasonState(seasonId, playerGuidOrName)
   local state = Ledger.GetPlayerState(playerName, targetSeason)
   return { seasonId = targetSeason, playerGuid = tostring(playerGuidOrName or state.playerId or playerName), playerName = playerName, currentRankIndex = 0, baseAllocation = tonumber(state.allocation) or 0, transactionDelta = delta, remainingBalance = Ledger.GetBalance(playerName, targetSeason), historySummary = { count = #transactions }, lastComputedAt = time() }
 end
-function Ledger.GetCanonicalPlayerDibsState(seasonId, playerIdentity)
-  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
-  local input = playerIdentity or (Dibs.GetPlayerName and Dibs.GetPlayerName())
-  local canonicalName
-  if Dibs.Identity and type(Dibs.Identity.CanonicalMemberKey) == "function" then
-    canonicalName = Dibs.Identity.CanonicalMemberKey(input)
-    if canonicalName then
-      local resolved = Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember(input)
-      if not resolved or resolved.status ~= "RESOLVED" then
-        return { available = false, balance = nil, canonicalName = nil, reason = resolved and resolved.status or "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
-      end
-      canonicalName = resolved.displayName
-    elseif Dibs.Identity.ResolveRosterMember then
-      local resolved = Dibs.Identity.ResolveRosterMember(input)
-      if not resolved or resolved.status ~= "RESOLVED" then
-        return { available = false, balance = nil, canonicalName = nil, reason = resolved and resolved.status or "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
-      end
-      canonicalName = resolved.displayName
+local function resolvePlayerDibsProjectionIdentity(playerName, targetSeason)
+  local input = playerName or (Dibs.GetPlayerName and Dibs.GetPlayerName())
+  if Dibs.Identity and type(Dibs.Identity.ResolveRosterMember) == "function" then
+    local resolved = Dibs.Identity.ResolveRosterMember(input)
+    if not resolved or resolved.status ~= "RESOLVED" then
+      return nil, { available = false, balance = nil, canonicalBalance = nil, availableBalance = nil,
+        canonicalName = nil, reason = resolved and resolved.status or "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
     end
+    return {
+      canonicalName = resolved.displayName,
+      memberKey = resolved.memberKey,
+      rankIndex = resolved.rankIndex,
+    }
   end
+
+  local canonicalName = Dibs.Identity and Dibs.Identity.NormalizeDisplayName
+    and Dibs.Identity.NormalizeDisplayName(input) or input
+  local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+    and Dibs.Identity.CanonicalMemberKey(input) or normalizeLegacyPlayerKey(canonicalName)
   if not canonicalName or tostring(canonicalName) == "" then
-    return { available = false, balance = nil, canonicalName = nil, reason = "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
+    return nil, { available = false, balance = nil, canonicalBalance = nil, availableBalance = nil,
+      canonicalName = nil, reason = "IDENTITY_UNAVAILABLE", seasonId = targetSeason }
   end
+  local rankInfo = Dibs.RankRules and Dibs.RankRules.GetPlayerRankInfo
+    and Dibs.RankRules.GetPlayerRankInfo(canonicalName)
+  return { canonicalName = canonicalName, memberKey = memberKey, rankIndex = rankInfo and rankInfo.rankIndex }
+end
+
+local function computePlayerDibsProjection(identity, targetSeason)
+  local canonicalName, memberKey = identity.canonicalName, identity.memberKey
+  local canonicalBalance = getCurrentBalance(memberKey, targetSeason)
+  local pendingDibReservations = Ledger.GetPendingDibReservations(canonicalName, targetSeason)
   local rankMaximum
-  if Dibs.RankRules and type(Dibs.RankRules.GetAllocationForPlayer) == "function" then
+  if Dibs.RankRules and type(Dibs.RankRules.GetAllocationForRank) == "function" and identity.rankIndex ~= nil then
+    local rankOk, allocation = pcall(Dibs.RankRules.GetAllocationForRank, targetSeason, identity.rankIndex)
+    if rankOk then rankMaximum = tonumber(allocation) end
+  elseif Dibs.RankRules and type(Dibs.RankRules.GetAllocationForPlayer) == "function" then
     local rankOk, allocation = pcall(Dibs.RankRules.GetAllocationForPlayer, canonicalName, targetSeason)
     if rankOk then rankMaximum = tonumber(allocation) end
   end
-  local ok, state = pcall(Ledger.GetPlayerSeasonState, targetSeason, canonicalName)
-  local canonicalBalance = ok and type(state) == "table" and tonumber(state.remainingBalance) or nil
-  if canonicalBalance == nil then
-    return { available = false, balance = nil, rankMaximum = rankMaximum, canonicalName = canonicalName, reason = "BALANCE_UNAVAILABLE", seasonId = targetSeason }
-  end
-  local pendingDibReservations = Ledger.GetPendingDibReservations(canonicalName, targetSeason)
   return { available = true, balance = canonicalBalance, canonicalBalance = canonicalBalance,
     availableBalance = canonicalBalance - pendingDibReservations, pendingDibReservations = pendingDibReservations,
     rankMaximum = rankMaximum, canonicalName = canonicalName, seasonId = targetSeason }
+end
+
+local function getPlayerDibsProjection(playerName, seasonId, useCache)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local identity, unavailable = resolvePlayerDibsProjectionIdentity(playerName, targetSeason)
+  if not identity then return unavailable end
+  if not identity.memberKey then
+    identity.memberKey = normalizeLegacyPlayerKey(identity.canonicalName)
+  end
+
+  local ledger = ensureState()
+  local playerState = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][identity.memberKey]
+  if not useCache then return computePlayerDibsProjection(identity, targetSeason) end
+
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or ""
+  local cacheKey = tostring(guildKey) .. "|" .. tostring(targetSeason) .. "|" .. tostring(identity.memberKey)
+  local identityGeneration = Dibs.Identity and Dibs.Identity.GetInvalidationGeneration
+    and Dibs.Identity.GetInvalidationGeneration() or 0
+  local proposalGeneration = Dibs.Governance and Dibs.Governance.GetAwardProposalGeneration
+    and Dibs.Governance.GetAwardProposalGeneration(identity.memberKey) or 0
+  local reservationGeneration = Dibs.Sync and Dibs.Sync.GetAwardReservationGeneration
+    and Dibs.Sync.GetAwardReservationGeneration(identity.memberKey) or 0
+  local rankGeneration = Dibs.RankRules and Dibs.RankRules.GetProjectionGeneration
+    and Dibs.RankRules.GetProjectionGeneration(targetSeason) or 0
+  local catalogRevision = Dibs.Seasons and Dibs.Seasons.GetCatalogRevision
+    and Dibs.Seasons.GetCatalogRevision() or 0
+  local seasonGeneration = Dibs.Seasons and Dibs.Seasons.GetCurrentSeasonGeneration
+    and Dibs.Seasons.GetCurrentSeasonGeneration() or 0
+  local viewerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or ""
+  local viewerKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+    and Dibs.Identity.CanonicalMemberKey(viewerName) or tostring(viewerName)
+  local defaultAllocation = Dibs.db and Dibs.db.settings and Dibs.db.settings.defaultAllocation
+  local cached = playerDibsProjections[cacheKey]
+  if cached and cached.playerState == playerState
+    and cached.playerStateRevision == (playerState and playerStateProjectionRevisions[playerState] or 0)
+    and cached.identityGeneration == identityGeneration
+    and cached.proposalGeneration == proposalGeneration
+    and cached.reservationGeneration == reservationGeneration
+    and cached.rankGeneration == rankGeneration
+    and cached.catalogRevision == catalogRevision
+    and cached.seasonGeneration == seasonGeneration
+    and cached.viewerKey == viewerKey
+    and cached.defaultAllocation == defaultAllocation
+    and cached.canonicalName == identity.canonicalName
+    and cached.rankIndex == identity.rankIndex
+  then
+    return copyPlayerDibsProjection(cached.projection)
+  end
+
+  local projection = computePlayerDibsProjection(identity, targetSeason)
+  rememberPlayerDibsProjection(cacheKey, {
+    playerState = playerState,
+    playerStateRevision = playerState and playerStateProjectionRevisions[playerState] or 0,
+    identityGeneration = identityGeneration,
+    proposalGeneration = proposalGeneration,
+    reservationGeneration = reservationGeneration,
+    rankGeneration = rankGeneration,
+    catalogRevision = catalogRevision,
+    seasonGeneration = seasonGeneration,
+    viewerKey = viewerKey,
+    defaultAllocation = defaultAllocation,
+    canonicalName = identity.canonicalName,
+    rankIndex = identity.rankIndex,
+    projection = projection,
+  })
+  return copyPlayerDibsProjection(projection)
+end
+
+function Ledger.GetPlayerDibsProjection(playerName, seasonId)
+  return getPlayerDibsProjection(playerName, seasonId, true)
+end
+
+function Ledger.GetCanonicalPlayerDibsState(seasonId, playerIdentity)
+  return getPlayerDibsProjection(playerIdentity, seasonId, false)
 end
 function Ledger.CalculateCanonicalContentHash(record) return transactionCanonicalHash(record or {}) end
 function Ledger.CalculateCanonicalCommitHash(record) return canonicalCommitHash(record or {}) end

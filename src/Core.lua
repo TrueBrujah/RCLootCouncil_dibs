@@ -1095,7 +1095,7 @@ function Dibs.GetCurrentSeasonId()
   if Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault then
     local season = Dibs.Seasons.GetOrCreateDefault()
     if season then
-      Dibs.db.currentSeasonId = season.id
+      Dibs.Seasons.SetCurrent(season.id)
     end
   end
 

@@ -15,6 +15,7 @@ Related docs: docs/developer/data-model.md, docs/officer/configuration.md.
 
 local Dibs = _G.Dibs
 Dibs.RankRules = Dibs.RankRules or {}
+local projectionGenerations = {}
 
 local function ensureState()
   Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
@@ -47,12 +48,22 @@ function Dibs.RankRules.SetAllocation(seasonId, rankIndex, rankName, allocation)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local rules = Dibs.RankRules.GetRulesForSeason(targetSeason)
   local normalizedIndex = normalizeRankIndex(rankIndex)
-  rules[tostring(normalizedIndex)] = {
+  local key = tostring(normalizedIndex)
+  local nextRule = {
     rankIndex = normalizedIndex,
     rankName = rankName or ("Rank " .. tostring(normalizedIndex)),
     allocation = tonumber(allocation) or 0,
   }
-  return rules[tostring(normalizedIndex)]
+  local previous = rules[key]
+  if not previous or previous.rankName ~= nextRule.rankName or previous.allocation ~= nextRule.allocation then
+    projectionGenerations[targetSeason] = (projectionGenerations[targetSeason] or 0) + 1
+  end
+  rules[key] = nextRule
+  return nextRule
+end
+
+function Dibs.RankRules.GetProjectionGeneration(seasonId)
+  return projectionGenerations[seasonId or Dibs.GetCurrentSeasonId()] or 0
 end
 
 function Dibs.RankRules.GetAllocation(seasonId, rankIndex)
@@ -105,13 +116,13 @@ function Dibs.RankRules.GetPlayerRankInfo(playerName)
   }
 end
 
-function Dibs.RankRules.GetAllocationForPlayer(playerName, seasonId)
+function Dibs.RankRules.GetAllocationForRank(seasonId, rankIndex)
   ensureState()
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
-  local info = Dibs.RankRules.GetPlayerRankInfo(playerName)
-  local allocation = Dibs.RankRules.GetAllocation(targetSeason, info.rankIndex)
+  local normalizedIndex = normalizeRankIndex(rankIndex)
+  local allocation = Dibs.RankRules.GetAllocation(targetSeason, normalizedIndex)
   local rules = Dibs.RankRules.GetRulesForSeason(targetSeason)
-  if rules[tostring(normalizeRankIndex(info.rankIndex))] ~= nil then
+  if rules[tostring(normalizedIndex)] ~= nil then
     return tonumber(allocation) or 0
   end
 
@@ -120,6 +131,12 @@ function Dibs.RankRules.GetAllocationForPlayer(playerName, seasonId)
   end
 
   return Dibs.DEFAULT_DIBS_PER_RANK
+end
+
+function Dibs.RankRules.GetAllocationForPlayer(playerName, seasonId)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local info = Dibs.RankRules.GetPlayerRankInfo(playerName)
+  return Dibs.RankRules.GetAllocationForRank(targetSeason, info.rankIndex)
 end
 
 -- Guild Policy may provide this decision later; current behavior is deliberately not persisted.

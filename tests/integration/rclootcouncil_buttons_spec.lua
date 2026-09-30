@@ -538,21 +538,29 @@ describe("RCLootCouncil DIB response projection", function()
   it("fails closed when the canonical ledger projection is unavailable", function()
     local rc = loader.makeRCLootCouncil({ enabled = true })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildMembers = { "Tester-Realm" } } })
-    local original = dibs.Ledger.GetPlayerSeasonState
-    dibs.Ledger.GetPlayerSeasonState = function() return nil end
+    local original = dibs.Ledger.GetPlayerDibsProjection
+    dibs.Ledger.GetPlayerDibsProjection = function()
+      return { available = false, rankMaximum = 1, canonicalName = "Tester-Realm" }
+    end
     local value, sortValue = dibs.RCLootCouncil.GetDibsColumnValue({ name = "Tester-Realm" })
     assert_equal("-/1", value)
     assert_equal(0, sortValue)
-    dibs.Ledger.GetPlayerSeasonState = original
+    dibs.Ledger.GetPlayerDibsProjection = original
   end)
 
   it("shows available Dibs in RCLootCouncil while PlayerUI retains the canonical balance", function()
     local rc = loader.makeRCLootCouncil({ enabled = true })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildMembers = { "Tester-Realm" } } })
-    local calls = {}
-    local original = dibs.Ledger.GetCanonicalPlayerDibsState
+    local canonicalCalls, projectionCalls = {}, {}
+    local originalCanonical = dibs.Ledger.GetCanonicalPlayerDibsState
+    local originalProjection = dibs.Ledger.GetPlayerDibsProjection
     dibs.Ledger.GetCanonicalPlayerDibsState = function(seasonId, identity)
-      table.insert(calls, { seasonId = seasonId, identity = identity })
+      table.insert(canonicalCalls, { seasonId = seasonId, identity = identity })
+      return { available = true, balance = 2, canonicalBalance = 2, availableBalance = 1,
+        pendingDibReservations = 1, rankMaximum = 3, canonicalName = "Tester-Realm", seasonId = seasonId }
+    end
+    dibs.Ledger.GetPlayerDibsProjection = function(identity, seasonId)
+      table.insert(projectionCalls, { seasonId = seasonId, identity = identity })
       return { available = true, balance = 2, canonicalBalance = 2, availableBalance = 1,
         pendingDibReservations = 1, rankMaximum = 3, canonicalName = "Tester-Realm", seasonId = seasonId }
     end
@@ -561,24 +569,26 @@ describe("RCLootCouncil DIB response projection", function()
     assert_equal(2, summary.balance)
     assert_equal("1/3", value)
     assert_equal(1, sortValue)
-    assert_equal(2, #calls)
-    assert_equal(calls[1].seasonId, calls[2].seasonId)
-    assert_equal(calls[1].identity, "Tester-Realm")
-    assert_equal(calls[2].identity, "Tester-Realm")
+    assert_equal(1, #canonicalCalls)
+    assert_equal(1, #projectionCalls)
+    assert_equal(canonicalCalls[1].seasonId, projectionCalls[1].seasonId)
+    assert_equal(canonicalCalls[1].identity, "Tester-Realm")
+    assert_equal(projectionCalls[1].identity, "Tester-Realm")
     local tooltip = dibs.RCLootCouncil.GetDibsColumnTooltip({ name = "Tester-Realm" })
     assert_true(tooltip:find("Available balance: 1", 1, true) ~= nil)
     assert_true(tooltip:find("Committed balance: 2", 1, true) ~= nil)
     assert_true(tooltip:find("Awaiting coordinator commit: 1 Dibs", 1, true) ~= nil)
     assert_true(tooltip:find("Rank maximum: 3", 1, true) ~= nil)
-    dibs.Ledger.GetCanonicalPlayerDibsState = original
+    dibs.Ledger.GetCanonicalPlayerDibsState = originalCanonical
+    dibs.Ledger.GetPlayerDibsProjection = originalProjection
   end)
 
   it("keeps balance and rank maximum independent in every display state", function()
     local rc = loader.makeRCLootCouncil({ enabled = true })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildMembers = { "Tester-Realm" } } })
-    local original = dibs.Ledger.GetCanonicalPlayerDibsState
+    local original = dibs.Ledger.GetPlayerDibsProjection
     local state = { available = true, balance = 5, rankMaximum = 5, canonicalName = "Tester-Realm", seasonId = dibs.GetCurrentSeasonId() }
-    dibs.Ledger.GetCanonicalPlayerDibsState = function() return state end
+    dibs.Ledger.GetPlayerDibsProjection = function() return state end
     assert_equal("5/5", dibs.RCLootCouncil.GetDibsColumnValue({ name = "Tester-Realm" }))
     state = { available = false, balance = nil, rankMaximum = 3, canonicalName = "Tester-Realm", seasonId = dibs.GetCurrentSeasonId() }
     assert_equal("-/3", dibs.RCLootCouncil.GetDibsColumnValue({ name = "Tester-Realm" }))
@@ -586,7 +596,7 @@ describe("RCLootCouncil DIB response projection", function()
     assert_equal("2/-", dibs.RCLootCouncil.GetDibsColumnValue({ name = "Tester-Realm" }))
     state = { available = false, balance = nil, rankMaximum = nil, canonicalName = "Tester-Realm", seasonId = dibs.GetCurrentSeasonId() }
     assert_equal("-", dibs.RCLootCouncil.GetDibsColumnValue({ name = "Tester-Realm" }))
-    dibs.Ledger.GetCanonicalPlayerDibsState = original
+    dibs.Ledger.GetPlayerDibsProjection = original
   end)
 
   it("does not repeatedly remove a wildcard legacy DIB value", function()

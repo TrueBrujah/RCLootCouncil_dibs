@@ -28,6 +28,13 @@ local CHANNEL_TEST_CHANNELS = { GUILD = true, OFFICER = true, RAID = true, PARTY
 local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, SEASON_CATALOG = true }
 local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
+local awardReservationGenerations = {}
+
+local function bumpAwardReservationGeneration(memberKey)
+  if type(memberKey) == "string" then
+    awardReservationGenerations[memberKey] = (awardReservationGenerations[memberKey] or 0) + 1
+  end
+end
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
 local function trim(value) return type(value) == "string" and value:match("^%s*(.-)%s*$") or nil end
@@ -1049,6 +1056,10 @@ function Sync.GetPendingAwardReservations()
   return reservations
 end
 
+function Sync.GetAwardReservationGeneration(memberKey)
+  return awardReservationGenerations[memberKey] or 0
+end
+
 function Sync.AnnounceAwardReservationDigest()
   local digest = Sync.BuildAwardReservationDigest()
   if #digest.records == 0 then return true, "NO_PENDING_AWARD_RESERVATIONS" end
@@ -1085,6 +1096,7 @@ function Sync.ClearAwardReservation(proposalId, commit)
   tombstone.state, tombstone.updatedAt = "RELEASED", time()
   state.awardReservations[proposalId] = nil
   state.awardReservationTombstones[proposalId] = tombstone
+  bumpAwardReservationGeneration(tombstone.playerMemberKey)
   boundMap(state.awardReservationTombstones, MAX_INDEX)
   return true
 end
@@ -1482,7 +1494,18 @@ function Sync.Receive(message, sender, channel)
         else
           local existing = state.awardReservations[entry.proposalId]
           if not existing or tonumber(entry.updatedAt) >= (tonumber(existing.updatedAt) or 0) then
+            local changed = not existing
+              or existing.playerMemberKey ~= entry.playerMemberKey
+              or existing.seasonId ~= entry.seasonId
+              or existing.amount ~= entry.amount
+              or existing.state ~= entry.state
             state.awardReservations[entry.proposalId] = entry
+            if changed then
+              if existing and existing.playerMemberKey ~= entry.playerMemberKey then
+                bumpAwardReservationGeneration(existing.playerMemberKey)
+              end
+              bumpAwardReservationGeneration(entry.playerMemberKey)
+            end
           end
         end
       end
