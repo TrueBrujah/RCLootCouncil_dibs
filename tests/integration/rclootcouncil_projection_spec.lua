@@ -71,6 +71,35 @@ describe("RCLootCouncil Dibs projections", function()
     assert_equal(1, status.availableBalance)
   end)
 
+  it("scans Pre-Dib history once to derive candidate request and item priority", function()
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })
+    local seasonId = dibs.GetCurrentSeasonId()
+    local requests = {
+      { requestId = "other-player", playerName = "Officer-Realm", itemID = 280001, seasonId = seasonId, status = "confirmed" },
+      { requestId = "candidate-confirmed", playerName = "Tester-Realm", itemID = 280001, seasonId = seasonId, status = "confirmed" },
+      { requestId = "candidate-pending", playerName = "Tester-Realm", itemID = 280001, seasonId = seasonId, status = "pending" },
+      { requestId = "candidate-other-season", playerName = "Tester-Realm", itemID = 280001, seasonId = "old-season", status = "confirmed" },
+      { requestId = "other-item", playerName = "Tester-Realm", itemID = 280002, seasonId = seasonId, status = "confirmed" },
+    }
+    dibs.GetDB().preDibs.requests = requests
+
+    local originalIpairs = ipairs
+    local requestListScans = 0
+    ipairs = function(target)
+      if target == requests then requestListScans = requestListScans + 1 end
+      return originalIpairs(target)
+    end
+    local ok, status = pcall(dibs.RCLootCouncil.GetStatusForCandidate, "Tester-Realm", 280001, "INVTYPE_HEAD")
+    ipairs = originalIpairs
+
+    assert_true(ok, tostring(status))
+    assert_equal(1, requestListScans)
+    assert_true(status.hasPreDib)
+    assert_true(status.hasAnyConfirmedPreDib)
+    assert_equal("candidate-confirmed", status.preDibRequest.requestId)
+  end)
+
   it("reuses Vote Frame and tooltip projections and invalidates them after relevant changes", function()
     local rc = loader.makeRCLootCouncil({ enabled = true })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true } })

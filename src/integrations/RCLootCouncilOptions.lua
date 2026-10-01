@@ -527,7 +527,7 @@ end
 local BUTTON_TEMPLATE_TARGETS = {
   default = { "default" },
   TOKEN = { "TOKEN" },
-  TOKEN_SET = { "TOKEN" },
+  TOKEN_SET = { "ARMOR_TOKEN" },
   MOUNTS = { "MOUNTS" },
   PETS = { "PETS" },
   RECIPE = { "RECIPE" },

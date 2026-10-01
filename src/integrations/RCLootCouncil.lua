@@ -1807,11 +1807,6 @@ local function formatCount(value)
   return string.format("%.1f", number)
 end
 
-local function isDibsButton(button)
-  if type(button) ~= "table" then return false end
-  return button.dibsInjected == true and button.dibsButton == true
-end
-
 local function inCombatLockdown()
   return type(InCombatLockdown) == "function" and InCombatLockdown() == true
 end
@@ -1850,57 +1845,45 @@ local function getButtonEnabled(button)
   return enabled == true
 end
 
+local nativeDibButtonStates = setmetatable({}, { __mode = "k" })
+
+local function isNativeDibResponseButton(button)
+  if type(button) ~= "table" then return false end
+  local label
+  if type(button.GetText) == "function" then
+    local ok, value = pcall(button.GetText, button)
+    if ok then label = value end
+  end
+  if label == nil then label = button.text end
+  return isDibLabel(label)
+end
+
+local function applyDibEligibilityToNativeButton(button, canUseDib)
+  local originalState = nativeDibButtonStates[button]
+  if originalState == nil then
+    local enabled = getButtonEnabled(button)
+    if enabled == nil then return end
+    local alpha
+    if type(button.GetAlpha) == "function" then
+      local ok, value = pcall(button.GetAlpha, button)
+      if ok then alpha = tonumber(value) end
+    end
+    originalState = { enabled = enabled, alpha = alpha }
+    nativeDibButtonStates[button] = originalState
+  end
+  if canUseDib == true then
+    setButtonEnabled(button, originalState.enabled)
+    if originalState.alpha and type(button.SetAlpha) == "function" then
+      button:SetAlpha(originalState.alpha)
+    end
+  else
+    setButtonEnabled(button, false)
+  end
+end
+
 local function applyVoteLockToEntry(entry, locked)
-  -- RC owns its buttons and voting semantics. Dibs projects availability only
-  -- through controls it created; it never enables/disables RC-owned buttons.
+  -- RCLC owns ordinary vote buttons; applyDibsButtonState only gates its DIB response.
   return entry, locked
-end
-
-local function supportsNativeDibResponse(entry)
-  local rc = getRC()
-  if type(rc) ~= "table" or type(rc.GetResponse) ~= "function" then return false end
-  local buttonType = entry and entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
-  local ok, response = pcall(rc.GetResponse, rc, buttonType, "DIB")
-  return ok and type(response) == "table" and response.text ~= nil
-end
-
-local function sendDibResponseFallback(entry)
-  local rc = getRC()
-  if type(rc) ~= "table" or type(rc.SendResponse) ~= "function" then return end
-  local sessions = entry and entry.item and entry.item.sessions
-  if type(sessions) ~= "table" then return end
-  for _, session in ipairs(sessions) do
-    pcall(rc.SendResponse, rc, "group", session, "DIB", nil, nil, entry.item.note)
-  end
-end
-
-local function clickDibsButton(lootFrame, entry)
-  local playerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
-  local itemID = parseItemID(entry and entry.item and entry.item.link)
-  local responseType = entry and entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
-  local status = Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType)
-  if status.canUseDib ~= true then
-    return
-  end
-
-  if type(lootFrame) == "table" and type(lootFrame.OnRoll) == "function" and supportsNativeDibResponse(entry) then
-    local ok = pcall(lootFrame.OnRoll, lootFrame, entry, "DIB")
-    if ok then return end
-  end
-
-  sendDibResponseFallback(entry)
-  if entry and entry.item then
-    entry.item.rolled = true
-  end
-  if type(lootFrame) == "table" and type(lootFrame.Update) == "function" then
-    pcall(lootFrame.Update, lootFrame)
-  end
-end
-
-local function installDibsClickGuard(button)
-  -- Dibs-owned buttons install their handler at creation. Never replace an
-  -- OnClick script on a button discovered in an RC-owned entry.
-  return button
 end
 
 local function installDibsTooltip(button, entry)
@@ -1926,81 +1909,10 @@ local function installDibsTooltip(button, entry)
   if type(button.HookScript) == "function" then
     button:HookScript("OnEnter", show)
     button:HookScript("OnLeave", hide)
-  elseif button.dibsInjected == true then
-    button:SetScript("OnEnter", show)
-    button:SetScript("OnLeave", hide)
   else
     return
   end
   button.__dibsTooltipInstalled = true
-end
-
-local function isPassButton(button)
-  if type(button) ~= "table" then return false end
-  if type(button.GetText) ~= "function" then return false end
-  return normalizeButtonLabel(button:GetText()) == "PASS"
-end
-
-local function placeDibButtonFirst(entry, dibButton)
-  -- Do not reposition RC-owned controls. The Dibs-owned button keeps its own
-  -- point established on creation.
-  return entry, dibButton
-end
-
-local function createDibsButton(entry, lootFrame)
-  if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("loot") end
-  if type(entry) ~= "table" or type(entry.frame) ~= "table" then return nil end
-  if type(CreateFrame) ~= "function" then return nil end
-
-  local button = CreateFrame("Button", nil, entry.frame, "UIPanelButtonTemplate")
-  if type(button.SetText) == "function" then
-    button:SetText("Dib")
-  end
-  if type(button.SetSize) == "function" then
-    button:SetSize(44, 20)
-  end
-  if type(button.SetPoint) == "function" then
-    button:SetPoint("TOPRIGHT", entry.frame, "TOPRIGHT", -36, -28)
-  end
-  if type(button.SetScript) == "function" then
-    button:SetScript("OnClick", function()
-      clickDibsButton(lootFrame, entry)
-    end)
-  end
-  button.dibsButton = true
-  button.dibsInjected = true
-  entry.dibsButton = button
-  table.insert(entry.buttons, button)
-  installDibsTooltip(button, entry)
-  return button
-end
-
-local function ensureDibsButton(entry, lootFrame)
-  if type(entry) ~= "table" then return nil end
-  if entry.type == "roll" then return nil end
-  if type(entry.buttons) ~= "table" then return nil end
-
-  -- RCLootCouncil may rebuild `entry.buttons` on every loot-frame update.
-  -- Keep the injected frame attached to the entry and restore it to the new
-  -- list instead of creating another button (and another closure) each time.
-  local remembered = entry.dibsButton
-  if isDibsButton(remembered) then
-    local present = false
-    for _, button in ipairs(entry.buttons) do
-      if button == remembered then
-        present = true
-        break
-      end
-    end
-    if not present then
-      table.insert(entry.buttons, 1, remembered)
-    end
-    remembered.dibsButton = true
-    installDibsTooltip(remembered, entry)
-    return remembered
-  end
-
-  return createDibsButton(entry, lootFrame)
 end
 
 local function getLootFrameModule(rc)
@@ -2081,8 +1993,6 @@ local function applyDibsButtonState(lootFrame)
   local entries = manager and manager.entries
   if type(entries) ~= "table" then return end
 
-  local showDibs = Dibs.RCLootCouncil.IsAvailable and Dibs.RCLootCouncil.IsAvailable() == true
-
   local playerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
   local seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
   local balanceProjection
@@ -2094,19 +2004,13 @@ local function applyDibsButtonState(lootFrame)
   end
   for _, entry in pairs(entries) do
     if type(entry) == "table" and type(entry.buttons) == "table" then
-      local dibButton = ensureDibsButton(entry, lootFrame)
       local itemID = parseItemID(entry.item and entry.item.link)
       local responseType = entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
       local status = getCandidateStatus(playerName, itemID, responseType, { seasonId = seasonId }, balanceProjection)
-      if dibButton and type(dibButton.Show) == "function" and type(dibButton.Hide) == "function" then
-        dibButton.__dibsEntry = entry
-        dibButton.__dibsLootFrame = lootFrame
-        if showDibs and status.dibTypeEnabled == true then
-          placeDibButtonFirst(entry, dibButton)
-          dibButton:Show()
-          setButtonEnabled(dibButton, status.canUseDib == true)
-        else
-          dibButton:Hide()
+      for _, responseButton in ipairs(entry.buttons) do
+        if isNativeDibResponseButton(responseButton) then
+          applyDibEligibilityToNativeButton(responseButton, status.canUseDib)
+          installDibsTooltip(responseButton, entry)
         end
       end
     end
@@ -2902,13 +2806,17 @@ getCandidateStatus = function(playerName, itemID, responseType, options, balance
     }, name, options.seasonId)
   end
   local publicPreDibsEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() == true
-  local preDib = targetItem and Dibs.PreDibs and Dibs.PreDibs.GetConfirmedRequestForPlayer(name, targetItem) or nil
-  local hasPriority = false
-  if targetItem and Dibs.PreDibs then
+  local preDib, hasPriority
+  if targetItem and Dibs.PreDibs and type(Dibs.PreDibs.GetCandidateRequestSummary) == "function" then
+    preDib, hasPriority = Dibs.PreDibs.GetCandidateRequestSummary(name, targetItem, seasonId)
+  elseif targetItem and Dibs.PreDibs then
+    preDib = Dibs.PreDibs.GetConfirmedRequestForPlayer(name, targetItem)
+    hasPriority = false
     for _, request in ipairs(Dibs.PreDibs.GetRequestsForItem(targetItem)) do
       if request.status == "confirmed" then hasPriority = true break end
     end
   end
+  hasPriority = hasPriority == true
   local lockedOutByPreDib = hasPriority and preDib == nil
   local protectedLootAllowed = not eligibilityDecision
     or eligibilityDecision.outcome == "allow" or eligibilityDecision.outcome == "warn"

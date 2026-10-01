@@ -609,11 +609,14 @@ describe("RCLootCouncil DIB response projection", function()
       playerName = playerName, guildLeader = true, guildMembers = { playerName }, guildRankIndices = { [1] = 0 },
     } })
     assert_true(lootFrame.__dibsButtonHooked)
+    local nativeDibButton = _G.CreateFrame("Button")
+    nativeDibButton:SetText("Dib")
+    nativeDibButton:Enable()
     for index = 1, 4 do
       lootFrame.EntryManager.entries[index] = {
         frame = _G.CreateFrame("Frame"),
         item = { link = "|cffffffff|Hitem:275658::::::::::::|h[Bench item]|h|r", typeCode = "INVTYPE_HEAD" },
-        buttons = {},
+        buttons = { nativeDibButton },
       }
     end
 
@@ -625,11 +628,13 @@ describe("RCLootCouncil DIB response projection", function()
     local originalAvailability = dibs.RCLootCouncil.IsAvailable
     local originalTypePolicy = dibs.RCLootCouncil.IsItemDibTypeAllowed
     local originalPublicPreDibs = dibs.PreDibs.IsPublicEnabled
+    local originalLootRule = true
+    local publicPreDibsEnabled = false
     local originalProjection = dibs.Ledger.GetCanonicalPlayerDibsState
     local originalRemoteReservations = dibs.Sync.GetPendingAwardReservations
     dibs.RCLootCouncil.IsAvailable = function() return true end
-    dibs.RCLootCouncil.IsItemDibTypeAllowed = function() return true end
-    dibs.PreDibs.IsPublicEnabled = function() return false end
+    dibs.RCLootCouncil.IsItemDibTypeAllowed = function() return originalLootRule end
+    dibs.PreDibs.IsPublicEnabled = function() return publicPreDibsEnabled end
     local projections = {}
     dibs.Ledger.GetCanonicalPlayerDibsState = function(currentSeason, identity)
       local projection = originalProjection(currentSeason, identity)
@@ -651,10 +656,16 @@ describe("RCLootCouncil DIB response projection", function()
       assert_equal(expectedPending, projection.pendingDibReservations)
       assert_equal(math.max(0, expectedBalance - expectedPending), projection.availableBalance)
       for _, entry in ipairs(lootFrame.EntryManager.entries) do
-        assert_equal(expectedEnabled, entry.dibsButton:IsEnabled())
+        assert_nil(entry.dibsButton)
+        assert_equal(1, #entry.buttons)
       end
+      assert_equal(expectedEnabled, nativeDibButton:IsEnabled())
     end
 
+    refresh(startingBalance, 0, true)
+    publicPreDibsEnabled = true
+    refresh(startingBalance, 0, false)
+    publicPreDibsEnabled = false
     refresh(startingBalance, 0, true)
 
     local proposal = assert(dibs.Governance.RecordAwardProposal(nil, {
@@ -678,9 +689,15 @@ describe("RCLootCouncil DIB response projection", function()
     assert_not_nil(used)
     refresh(0, 0, false)
 
-    local request = assert(dibs.PreDibs.Create(playerName, itemID, "Bench item", seasonId))
-    assert_not_nil(dibs.PreDibs.Confirm(request.requestId))
+    local publicRequest = assert(dibs.PreDibs.Create(playerName, itemID, "Bench item", seasonId))
+    assert_not_nil(dibs.PreDibs.Confirm(publicRequest.requestId))
     refresh(0, 0, true)
+
+    originalLootRule = false
+    refresh(0, 0, false)
+
+    local request = assert(dibs.PreDibs.Create(playerName, itemID, "Bench item", seasonId))
+    assert_not_nil(request)
 
     dibs.RCLootCouncil.IsAvailable = originalAvailability
     dibs.RCLootCouncil.IsItemDibTypeAllowed = originalTypePolicy
