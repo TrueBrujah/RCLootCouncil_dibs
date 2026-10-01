@@ -1,0 +1,17 @@
+package-as: RCLootCouncil_dibs
+
+enable-nolib-creation: no
+
+move-folders:
+  RCLootCouncil_dibs/src: RCLootCouncil_dibs
+
+ignore:
+  - B12_Release_Candidate_Checklist.md
+  - CONTRIBUTING.md
+  - README.md
+  - RCLootCouncil_dibs.code-workspace
+  - plan-dibsCore.prompt.md
+  - docs
+  - scripts
+  - specs
+  - tests
