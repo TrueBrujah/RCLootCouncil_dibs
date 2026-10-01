@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.8.1",
+  "addonVersion": "0.8.2",
   "concepts": [
     {
       "id": "guild.ledger.status",
@@ -85,7 +85,7 @@
       },
       "source": {
         "file": "src/modules/Seasons.lua",
-        "line": 181,
+        "line": 189,
         "symbol": "Dibs.Seasons.Create"
       }
     },
@@ -173,7 +173,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 277,
+        "line": 278,
         "symbol": "executeLedgerAdjust"
       }
     },
@@ -218,7 +218,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 693,
+        "line": 714,
         "symbol": "Ledger.AdminAdjust"
       }
     },
@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 862,
+        "line": 883,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -306,7 +306,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 796,
+        "line": 817,
         "symbol": "Ledger.GetBalance"
       }
     },
@@ -350,7 +350,7 @@
       },
       "source": {
         "file": "src/ui/OfficerUI.lua",
-        "line": 432,
+        "line": 433,
         "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
       }
     },
@@ -523,7 +523,7 @@
       },
       "source": {
         "file": "src/ui/PlayerUI.lua",
-        "line": 373,
+        "line": 408,
         "symbol": "Dibs.PlayerUI.GetStatusPresentation"
       }
     },
@@ -699,7 +699,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 154,
+        "line": 155,
         "symbol": "executeRankSet"
       }
     },
@@ -744,7 +744,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 180,
+        "line": 181,
         "symbol": "executeRankReconcile"
       }
     },
@@ -788,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3569,
+        "line": 3504,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
@@ -962,7 +962,7 @@
       },
       "source": {
         "file": "src/modules/Governance.lua",
-        "line": 423,
+        "line": 435,
         "symbol": "Governance.GetAuthorityState"
       }
     },
@@ -1005,7 +1005,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 365,
+        "line": 372,
         "symbol": "Sync.GetPeerStatuses"
       }
     },
@@ -1047,7 +1047,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 616,
+        "line": 623,
         "symbol": "Sync.SetProtocolState"
       }
     },
@@ -1178,7 +1178,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 336,
+        "line": 343,
         "symbol": "Sync.GetStatus"
       }
     }
