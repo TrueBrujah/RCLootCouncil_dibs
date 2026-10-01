@@ -2,6 +2,26 @@ local loader = require("helpers.load_addon")
 local wow = require("helpers.wow_api")
 
 describe("Encounter Journal loot catalogue", function()
+  it("invalidates an empty cached catalogue when the Blizzard addon loads", function()
+    local _, dibs = loader.load()
+    _G.EJ_GetInstanceByIndex = nil
+    local emptyCatalog = dibs.EncounterJournal.GetLootCatalog("")
+    assert_equal(0, #emptyCatalog)
+
+    wow.installEncounterJournalContext({
+      preserveCatalogCache = true,
+      raidInstances = { { id = 900, name = "Citadel of Testing" } },
+      encounters = { [900] = { { id = 901, name = "Test Warden" } } },
+      loot = { [901] = { { itemID = 280001, name = "Warden's Curio", link = "|Hitem:280001::::::::::::|h[Warden's Curio]|h|r" } } },
+    })
+    wow.dispatch("ADDON_LOADED", "Blizzard_EncounterJournal")
+
+    local catalog, meta = dibs.EncounterJournal.GetLootCatalog("")
+    assert_true(meta.available)
+    assert_equal(1, #catalog)
+    assert_equal(280001, catalog[1].itemID)
+  end)
+
   it("indexes raid loot and supports name, ID, boss, and type searches", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     wow.installEncounterJournalContext({

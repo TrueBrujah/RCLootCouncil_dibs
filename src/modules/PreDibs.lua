@@ -47,7 +47,7 @@ end
 
 local function announcementDebug(message)
   if Dibs.PreDibs.announcementDebug and Dibs.DebugEnabled and Dibs.DebugEnabled("announce", 4) and Dibs.Message then
-    Dibs.Message("[Announcement Debug] " .. tostring(message))
+    Dibs.Message("[Announcement Debug] " .. tostring(message), { chat = false })
   end
 end
 
@@ -116,7 +116,7 @@ function Dibs.PreDibs.DebugRaidDibs()
   local previous = Dibs.PreDibs.announcementDebug
   Dibs.PreDibs.announcementDebug = true
   local clubId, streamId = Dibs.PreDibs.GetRaidDibsChannel()
-  Dibs.Message("[Announcement Debug] resultat clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId))
+  Dibs.Message("[Announcement Debug] resultat clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId), { chat = false })
   Dibs.PreDibs.announcementDebug = previous
   return clubId, streamId
 end

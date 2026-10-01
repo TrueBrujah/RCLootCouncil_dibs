@@ -146,14 +146,14 @@ local function listSubCategories()
 
   if Dibs and Dibs.Message then
     if #values == 0 then
-      Dibs.Message("EJ sub-categories: none known yet. Run /dibs ejdebug on a loot page first.")
+      Dibs.Message("EJ sub-categories: none known yet. Run /dibs ejdebug on a loot page first.", { chat = false })
       return values
     end
 
-    Dibs.Message("EJ sub-categories (blocked marked with X):")
+    Dibs.Message("EJ sub-categories (blocked marked with X):", { chat = false })
     for _, key in ipairs(values) do
       local marker = blocked[key] == true and "[X]" or "[ ]"
-      Dibs.Message("  " .. marker .. " " .. key)
+      Dibs.Message("  " .. marker .. " " .. key, { chat = false })
     end
   end
 
@@ -192,11 +192,11 @@ local function printSubCategoryMatrix()
   table.sort(keys)
 
   if Dibs and Dibs.Message then
-    Dibs.Message("EJ matrix (allow/block recommendation):")
+    Dibs.Message("EJ matrix (allow/block recommendation):", { chat = false })
     for _, key in ipairs(keys) do
       local allow, note = getMatrixDecision(key)
       local marker = allow and "ALLOW" or "BLOCK"
-      Dibs.Message("  " .. marker .. " " .. tostring(key) .. " - " .. tostring(note))
+      Dibs.Message("  " .. marker .. " " .. tostring(key) .. " - " .. tostring(note), { chat = false })
     end
   end
 end
@@ -1274,9 +1274,9 @@ function Dibs.EncounterJournal.DumpVisibleLootDebug()
     local info = getItemDebugDetailsCached(item)
     local blocked = isSubCategoryBlocked(info.subCategory)
     if Dibs and Dibs.Message then
-      Dibs.Message("EJDBG [" .. tostring(count) .. "] " .. tostring(item.itemName or ("Item " .. tostring(itemID))) .. " | src=" .. tostring(sourceTag) .. " | id=" .. tostring(itemID) .. " | type=" .. tostring(item.responseType or "default") .. " | sub=" .. tostring(info.subCategory or "UNKNOWN") .. " | blocked=" .. tostring(blocked) .. " | equip=" .. tostring(info.equipLoc ~= "" and info.equipLoc or "n/a") .. " | class=" .. tostring(info.className ~= "" and info.className or "n/a") .. " | subclass=" .. tostring(info.subClassName ~= "" and info.subClassName or "n/a"))
+      Dibs.Message("EJDBG [" .. tostring(count) .. "] " .. tostring(item.itemName or ("Item " .. tostring(itemID))) .. " | src=" .. tostring(sourceTag) .. " | id=" .. tostring(itemID) .. " | type=" .. tostring(item.responseType or "default") .. " | sub=" .. tostring(info.subCategory or "UNKNOWN") .. " | blocked=" .. tostring(blocked) .. " | equip=" .. tostring(info.equipLoc ~= "" and info.equipLoc or "n/a") .. " | class=" .. tostring(info.className ~= "" and info.className or "n/a") .. " | subclass=" .. tostring(info.subClassName ~= "" and info.subClassName or "n/a"), { chat = false })
       for lineIndex, tooltipLine in ipairs(info.tooltipLines or {}) do
-        Dibs.Message("EJDBG    tip[" .. tostring(lineIndex) .. "] " .. tostring(tooltipLine))
+        Dibs.Message("EJDBG    tip[" .. tostring(lineIndex) .. "] " .. tostring(tooltipLine), { chat = false })
       end
     end
     return true
@@ -1391,7 +1391,7 @@ function Dibs.EncounterJournal.DumpVisibleLootDebug()
   end
 
   if Dibs and Dibs.Message then
-    Dibs.Message("EJ debug scan complete. Items=" .. tostring(count) .. " (api=" .. tostring(fromApiCount) .. ", encounterScan=" .. tostring(scannedByEncounter) .. ")")
+    Dibs.Message("EJ debug scan complete. Items=" .. tostring(count) .. " (api=" .. tostring(fromApiCount) .. ", encounterScan=" .. tostring(scannedByEncounter) .. ")", { chat = false })
   end
   return count
 end
@@ -2017,6 +2017,9 @@ do
   local function handleBootstrapEvent(_, event, loadedAddon)
     if event == "ADDON_LOADED" and loadedAddon ~= "Blizzard_EncounterJournal" then
       return
+    end
+    if event == "ADDON_LOADED" then
+      Dibs.EncounterJournal.InvalidateLootCatalog()
     end
     if Dibs.Capabilities and Dibs.Capabilities.Retry and Dibs.Capabilities.Get and Dibs.Capabilities.Get("encounter_journal") then
       if event ~= "ADDON_LOADED" then return end

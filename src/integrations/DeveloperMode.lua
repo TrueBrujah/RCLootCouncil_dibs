@@ -28,7 +28,7 @@ local function trim(value)
 end
 
 local function devMessage(text)
-  Dibs.Message("[Dibs DEV] " .. tostring(text))
+  Dibs.Message("[Dibs DEV] " .. tostring(text), { chat = false })
 end
 
 function Dibs.DeveloperMode.IsEnabled()
@@ -109,7 +109,7 @@ end
 
 function Dibs.DeveloperMode.HandleTestItemSlash(rawArgument)
   if Dibs.DeveloperMode.IsEnabled() ~= true then
-    Dibs.Message("Developer Mode is disabled. Use /dibs dev on to enable test commands.")
+    Dibs.Message("Developer Mode is disabled. Use /dibs dev on to enable test commands.", { chat = false })
     return true
   end
 
