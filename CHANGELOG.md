@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.2 - RCLootCouncil button and token template fixes - 2026-10-01
+
+- Use RCLootCouncil's native DIB response button, avoiding a duplicate Dibs button while applying Dibs eligibility.
+- Route Tier Set tokens to their own `ARMOR_TOKEN` response group so their button template can differ from Curio tokens.
+- Reduce repeated Pre-Dib request scans and cache roster lookups used by vote projections.
+- Stabilize RCLootCouncil UI projections, configuration refresh, and related runtime diagnostics.
+
 ## 0.8.1 - WoW 12.1.0 and 12.1.5 compatibility - 2026-09-29
 
 - Advertise both WoW interface versions `120100` and `120105` so the addon is
