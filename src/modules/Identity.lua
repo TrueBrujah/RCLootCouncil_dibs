@@ -191,8 +191,13 @@ function Identity.NormalizeDisplayName(value)
 end
 
 function Identity.ResolveRosterMember(value)
-  local refreshed, reason = Identity.RefreshRoster()
-  if not refreshed then return { status = "ROSTER_UNAVAILABLE", reason = reason } end
+  local rosterApisAvailable = type(IsInGuild) == "function"
+    and type(GetNumGuildMembers) == "function"
+    and type(GetGuildRosterInfo) == "function"
+  if not state.fresh or not rosterApisAvailable or not IsInGuild() then
+    local refreshed, reason = Identity.RefreshRoster()
+    if not refreshed then return { status = "ROSTER_UNAVAILABLE", reason = reason } end
+  end
 
   local key, display, parseReason = parseNameRealm(value)
   if key then

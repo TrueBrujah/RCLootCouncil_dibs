@@ -2071,6 +2071,8 @@ function Dibs.RCLootCouncil.LogPreDibRequest(request, sourceLabel)
   return false, "RC_HISTORY_WRITE_DISABLED"
 end
 
+local getCandidateStatus
+
 local function applyDibsButtonState(lootFrame)
   if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("loot") end
   if type(lootFrame) ~= "table" then return end
@@ -2082,12 +2084,20 @@ local function applyDibsButtonState(lootFrame)
   local showDibs = Dibs.RCLootCouncil.IsAvailable and Dibs.RCLootCouncil.IsAvailable() == true
 
   local playerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
+  local seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
+  local balanceProjection
+  if next(entries) ~= nil and Dibs.Ledger and type(Dibs.Ledger.GetCanonicalPlayerDibsState) == "function" then
+    local ok, projection = pcall(Dibs.Ledger.GetCanonicalPlayerDibsState, seasonId, playerName)
+    if ok and type(projection) == "table" and projection.available == true then
+      balanceProjection = projection
+    end
+  end
   for _, entry in pairs(entries) do
     if type(entry) == "table" and type(entry.buttons) == "table" then
       local dibButton = ensureDibsButton(entry, lootFrame)
       local itemID = parseItemID(entry.item and entry.item.link)
       local responseType = entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
-      local status = Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType)
+      local status = getCandidateStatus(playerName, itemID, responseType, { seasonId = seasonId }, balanceProjection)
       if dibButton and type(dibButton.Show) == "function" and type(dibButton.Hide) == "function" then
         dibButton.__dibsEntry = entry
         dibButton.__dibsLootFrame = lootFrame
@@ -2855,14 +2865,25 @@ function Dibs.RCLootCouncil.CanUseDibResponse(playerName, itemID)
   return status.canUseDib == true
 end
 
-function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType, options)
+getCandidateStatus = function(playerName, itemID, responseType, options, balanceProjection)
   options = type(options) == "table" and options or {}
   local name = playerName or Dibs.GetPlayerName()
   local targetItem = tonumber(itemID)
   local seasonId = options.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
-  local canonicalBalance = Dibs.Ledger and Dibs.Ledger.GetBalance(name, seasonId) or 0
-  local pendingDibReservations = Dibs.Ledger and Dibs.Ledger.GetPendingDibReservations
-    and Dibs.Ledger.GetPendingDibReservations(name, seasonId) or 0
+  local snapshotMatches = type(balanceProjection) == "table" and balanceProjection.available == true
+    and balanceProjection.seasonId == seasonId
+    and string.lower(tostring(balanceProjection.canonicalName or "")) == string.lower(tostring(name or ""))
+    and tonumber(balanceProjection.canonicalBalance or balanceProjection.balance) ~= nil
+    and tonumber(balanceProjection.pendingDibReservations) ~= nil
+  local canonicalBalance, pendingDibReservations
+  if snapshotMatches then
+    canonicalBalance = tonumber(balanceProjection.canonicalBalance or balanceProjection.balance)
+    pendingDibReservations = tonumber(balanceProjection.pendingDibReservations)
+  else
+    canonicalBalance = Dibs.Ledger and Dibs.Ledger.GetBalance(name, seasonId) or 0
+    pendingDibReservations = Dibs.Ledger and Dibs.Ledger.GetPendingDibReservations
+      and Dibs.Ledger.GetPendingDibReservations(name, seasonId) or 0
+  end
   local availableBalance = math.max(0, (tonumber(canonicalBalance) or 0) - (tonumber(pendingDibReservations) or 0))
   local typeKey = normalizeTypeKey(responseType)
   -- Resolve the semantic item family as well as the RCLC response type. This
@@ -2939,6 +2960,10 @@ function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseTy
     semanticFamily = semanticFamily,
     eligibility = eligibilityDecision,
   }
+end
+
+function Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType, options)
+  return getCandidateStatus(playerName, itemID, responseType, options, nil)
 end
 
 function Dibs.RCLootCouncil.ValidateResponse(playerName, itemID, response)
