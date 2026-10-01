@@ -46,7 +46,7 @@ local setStatus
 
 local function debugMessage(message)
   if Dibs and Dibs.RCOptions and Dibs.RCOptions.debug == true and Dibs.Message then
-    Dibs.Message("[RCOptions] " .. tostring(message))
+    Dibs.Message("[RCOptions] " .. tostring(message), { chat = false })
   end
 end
 
@@ -527,7 +527,7 @@ end
 local BUTTON_TEMPLATE_TARGETS = {
   default = { "default" },
   TOKEN = { "TOKEN" },
-  TOKEN_SET = { "TOKEN" },
+  TOKEN_SET = { "ARMOR_TOKEN" },
   MOUNTS = { "MOUNTS" },
   PETS = { "PETS" },
   RECIPE = { "RECIPE" },
@@ -1633,13 +1633,26 @@ local optionsTable = {
               type = "toggle",
               name = "Allow public pre-dibs",
               get = function()
+                if Dibs.PreDibs and type(Dibs.PreDibs.IsPublicEnabled) == "function" then
+                  return Dibs.PreDibs.IsPublicEnabled()
+                end
                 return getDBSettings().allowPublicPreDibs ~= false
               end,
               set = function(_, value)
-                if canEditDibsSettings() then
-                  getDBSettings().allowPublicPreDibs = value == true
-                else
+                if not canEditDibsSettings() then
                   setStatus("Only the guild master or an officer may change Dibs settings.")
+                  return
+                end
+                if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted
+                  and Dibs.OperationalPolicy.IsAdopted() then
+                  local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
+                    and Dibs.ProtectedActions.Execute("predib.public.set", nil, {
+                      enabled = value == true, source = "ace-config",
+                    }) or { ok = false, diagnostic = "Protected actions unavailable." }
+                  setStatus(result.ok and "Public Pre-Dibs availability updated."
+                    or (result.diagnostic or "Unable to change Public Pre-Dibs availability."))
+                else
+                  getDBSettings().allowPublicPreDibs = value == true
                 end
               end,
             },

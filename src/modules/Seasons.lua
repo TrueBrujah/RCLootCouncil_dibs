@@ -18,6 +18,14 @@ Dibs.Seasons = Dibs.Seasons or {}
 
 local CATALOG_SCHEMA, CATALOG_GENESIS_HASH = 1, "GENESIS"
 local ensureState
+local currentSeasonGeneration = 0
+
+local function setCurrentSeason(seasonId)
+  if Dibs.db.currentSeasonId ~= seasonId then
+    currentSeasonGeneration = currentSeasonGeneration + 1
+  end
+  Dibs.db.currentSeasonId = seasonId
+end
 
 local function copy(value)
   return Dibs.DeepCopy and Dibs.DeepCopy(value) or value
@@ -220,7 +228,7 @@ function Dibs.Seasons.Create(name)
   }
 
   Dibs.db.seasons[season.id] = season
-  Dibs.db.currentSeasonId = season.id
+  setCurrentSeason(season.id)
   return season
 end
 
@@ -244,12 +252,12 @@ function Dibs.Seasons.GetCurrent()
   end
   for _, season in pairs(Dibs.db.seasons) do
     if not season.isArchived then
-      Dibs.db.currentSeasonId = season.id
+      setCurrentSeason(season.id)
       return season
     end
   end
 
-  Dibs.db.currentSeasonId = nil
+  setCurrentSeason(nil)
   return nil
 end
 
@@ -266,7 +274,7 @@ end
 function Dibs.Seasons.SetCurrent(seasonId)
   ensureState()
   if Dibs.db.seasons[seasonId] and not Dibs.db.seasons[seasonId].isArchived then
-    Dibs.db.currentSeasonId = seasonId
+    setCurrentSeason(seasonId)
     return true
   end
 
@@ -316,7 +324,7 @@ function Dibs.Seasons.ArchiveSeason(seasonId)
   season.archivedAt = time()
   season.isActive = false
   if Dibs.db.currentSeasonId == seasonId then
-    Dibs.db.currentSeasonId = nil
+    setCurrentSeason(nil)
   end
 
   Dibs.Seasons.GetCurrent()
@@ -337,6 +345,16 @@ end
 
 function Dibs.Seasons.GetCatalogState()
   return copy(catalogState())
+end
+
+function Dibs.Seasons.GetCatalogRevision()
+  ensureState()
+  local catalog = Dibs.db.seasonCatalog
+  return type(catalog) == "table" and tonumber(catalog.catalogRevision) or 0
+end
+
+function Dibs.Seasons.GetCurrentSeasonGeneration()
+  return currentSeasonGeneration
 end
 
 function Dibs.Seasons.GetGuildConfiguration()
@@ -455,7 +473,7 @@ function Dibs.Seasons.ApplyCatalog(record, sender)
   if type(record.rankRules) == "table" then Dibs.db.rankRules = copy(record.rankRules) end
   applyGuildConfiguration(record.guildConfiguration)
   if record.currentSeasonId and Dibs.db.seasons[record.currentSeasonId] and not Dibs.db.seasons[record.currentSeasonId].isArchived then
-    Dibs.db.currentSeasonId = record.currentSeasonId
+    setCurrentSeason(record.currentSeasonId)
   end
   state.catalogRevision, state.hash = record.catalogRevision, record.contentHash
   state.records[tostring(record.catalogRevision)] = copy(record)

@@ -47,7 +47,7 @@ end
 
 local function announcementDebug(message)
   if Dibs.PreDibs.announcementDebug and Dibs.DebugEnabled and Dibs.DebugEnabled("announce", 4) and Dibs.Message then
-    Dibs.Message("[Announcement Debug] " .. tostring(message))
+    Dibs.Message("[Announcement Debug] " .. tostring(message), { chat = false })
   end
 end
 
@@ -116,7 +116,7 @@ function Dibs.PreDibs.DebugRaidDibs()
   local previous = Dibs.PreDibs.announcementDebug
   Dibs.PreDibs.announcementDebug = true
   local clubId, streamId = Dibs.PreDibs.GetRaidDibsChannel()
-  Dibs.Message("[Announcement Debug] resultat clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId))
+  Dibs.Message("[Announcement Debug] resultat clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId), { chat = false })
   Dibs.PreDibs.announcementDebug = previous
   return clubId, streamId
 end
@@ -893,6 +893,30 @@ function Dibs.PreDibs.GetRequestsForItem(itemID)
     end
   end
   return list
+end
+
+function Dibs.PreDibs.GetCandidateRequestSummary(playerName, itemID, seasonId, difficulty)
+  ensureState()
+  local targetPlayer = playerName or Dibs.GetPlayerName()
+  local targetItem = tonumber(itemID) or 0
+  local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
+  local targetDifficulty = difficulty ~= nil and Dibs.PreDibs.NormalizeDifficulty(difficulty) or nil
+  local playerRequest, hasConfirmedRequest = nil, false
+
+  for _, request in ipairs(Dibs.db.preDibs.requests) do
+    if tonumber(request.itemID) == targetItem and request.status == "confirmed" then
+      hasConfirmedRequest = true
+      if not playerRequest and samePlayer(request.playerName, targetPlayer)
+        and request.seasonId == targetSeason
+        and (targetDifficulty == nil or Dibs.PreDibs.NormalizeDifficulty(request.difficulty) == targetDifficulty)
+      then
+        playerRequest = request
+        break
+      end
+    end
+  end
+
+  return playerRequest, hasConfirmedRequest
 end
 
 function Dibs.PreDibs.GetConfirmedRequestForPlayer(playerName, itemID, seasonId, difficulty)

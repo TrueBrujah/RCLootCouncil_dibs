@@ -140,6 +140,7 @@ local function makeAce3()
     table.insert(_G.__dibsAceWidgets, widget)
     function widget:SetTitle(value) self.title = value end
     function widget:SetWidth(value) self.width = value; self.frame:SetWidth(value) end
+    function widget:SetJustifyH(value) self.justifyH = value end
     function widget:SetRelativeWidth(value) self.relWidth = value; self.width = "relative" end
     function widget:SetHeight(value) self.height = value; self.frame:SetHeight(value) end
     function widget:SetAutoWidth(value) self.autoWidth = value end

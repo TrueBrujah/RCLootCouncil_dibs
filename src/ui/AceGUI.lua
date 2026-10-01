@@ -1031,7 +1031,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         end
       end
     end
-    if options.allowTableSort ~= false then
+    if options.allowTableSort == true then
       for index, column in ipairs(definitions) do
         if column.sortable ~= false and not column.action then
           local title = safeContextText(column.title or column.name or ("Column " .. tostring(index)))
@@ -1089,14 +1089,21 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
       local column = definitions[index]
       local value = header and column.title or values[index]
       local cellAction = not header and options.cellAction and options.cellAction(values, index)
+      local sortableHeader = header and column.sortable ~= false and not column.action
+        and (options.onHeaderClick or options.allowTableSort ~= false)
       local cell
-      if header and column.sortable ~= false and not column.action
-        and (options.onHeaderClick or options.allowTableSort ~= false) then
-        cell = Adapter.AddButton(shell, rowGroup, value, function()
-          if options.onHeaderClick then options.onHeaderClick(column, index)
-          elseif sortGrid then sortGrid(index) end
-        end, widths[index])
-        if cell then headerCells[index] = cell end
+      if sortableHeader then
+        cell = Adapter.AddLabel(shell, rowGroup, value, false)
+        if cell then
+          headerCells[index] = cell
+          attachGridScript(cell, "OnMouseUp", function(_, mouseButton)
+            if mouseButton and mouseButton ~= "LeftButton" then return false end
+            if options.onHeaderClick then options.onHeaderClick(column, index)
+            elseif sortGrid then sortGrid(index) end
+            return true
+          end)
+          if cell.frame and cell.frame.EnableMouse then cell.frame:EnableMouse(true) end
+        end
       elseif cellAction then
         cell = Adapter.AddButton(shell, rowGroup, cellAction.text or value, cellAction.callback, widths[index],
           Adapter.GetLayoutMetrics().buttonSizingSafetyMargin)
@@ -1111,7 +1118,12 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         cell._dibsColumnWidth = widths[index]
         cell._dibsColumnIndex = index
         call(cell, "SetWidth", cellWidth)
-        if cell.SetJustifyH then cell:SetJustifyH(column.align or "LEFT") end
+        local justify = column.align or (header and "CENTER" or "LEFT")
+        if cell.SetJustifyH then
+          cell:SetJustifyH(justify)
+        elseif header and cell.text and type(cell.text.SetJustifyH) == "function" then
+          cell.text:SetJustifyH(justify)
+        end
         if not cellAction then
           local tooltip = header and column.tooltip or (options.cellTooltip and options.cellTooltip(values, index) or column.tooltip)
           if options.disableCellTooltips ~= true then Adapter.AddTooltip(cell, value, tooltip) end

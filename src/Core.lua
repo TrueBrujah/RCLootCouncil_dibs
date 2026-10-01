@@ -1095,7 +1095,7 @@ function Dibs.GetCurrentSeasonId()
   if Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault then
     local season = Dibs.Seasons.GetOrCreateDefault()
     if season then
-      Dibs.db.currentSeasonId = season.id
+      Dibs.Seasons.SetCurrent(season.id)
     end
   end
 
@@ -1126,7 +1126,7 @@ function Dibs.GetTimestamp()
   return time()
 end
 
-function Dibs.Message(text)
+function Dibs.Message(text, options)
   local value = tostring(text or "")
   local module, level = value:match("^%[([^%]]+)%]%s*"), nil
   if module then
@@ -1142,6 +1142,7 @@ function Dibs.Message(text)
   local isDiagnostic = value:match("^%[([^%]]*[Dd]ebug[^%]]*)%]") ~= nil
     or value:match("^EJDBG") ~= nil
   if isDiagnostic and Dibs.DebugEnabled and not Dibs.DebugEnabled(module, level) then return end
+  if type(options) == "table" and options.chat == false then return end
   if DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage then
     DEFAULT_CHAT_FRAME:AddMessage("|cff8b5cf6Dibs|r " .. value)
   end
@@ -1284,16 +1285,16 @@ function Dibs.HandleSlashCommand(msg)
       return
     end
     if module == "report" then
-      Dibs.Message(Dibs.BuildDebugReport())
+      Dibs.Message(Dibs.BuildDebugReport(), { chat = false })
       return
     end
     if module == "rc" or module == "projection" then
       if Dibs.RCLootCouncil and Dibs.RCLootCouncil.RefreshConfigProjection then
         local ok, changedOrReason = Dibs.RCLootCouncil.RefreshConfigProjection()
         if ok then
-          Dibs.Message("RCLootCouncil DIB projection refreshed (changed=" .. tostring(changedOrReason == true) .. "). Run /dibs debug report for the detected profile.")
+          Dibs.Message("RCLootCouncil DIB projection refreshed (changed=" .. tostring(changedOrReason == true) .. "). Run /dibs debug report for the detected profile.", { chat = false })
         else
-          Dibs.Message("RCLootCouncil DIB projection unavailable: " .. tostring(changedOrReason))
+          Dibs.Message("RCLootCouncil DIB projection unavailable: " .. tostring(changedOrReason), { chat = false })
         end
       end
       return
@@ -1360,14 +1361,14 @@ function Dibs.HandleSlashCommand(msg)
     if Dibs.DryRun and type(Dibs.DryRun.RunFromSlash) == "function" then
       local result, reason = Dibs.DryRun.RunFromSlash(rest)
       if result then
-        Dibs.Message(Dibs.DryRun.Format(result))
+        Dibs.Message(Dibs.DryRun.Format(result), { chat = false })
       elseif reason == "USAGE" then
-        Dibs.Message("Usage: /dibs dryrun <itemID/link> <winner> <response> <finalized|test|pending> [session]")
+        Dibs.Message("Usage: /dibs dryrun <itemID/link> <winner> <response> <finalized|test|pending> [session]", { chat = false })
       else
-        Dibs.Message("Dry-run unavailable: " .. tostring(reason))
+        Dibs.Message("Dry-run unavailable: " .. tostring(reason), { chat = false })
       end
     else
-      Dibs.Message("Dibs dry-run is unavailable.")
+      Dibs.Message("Dibs dry-run is unavailable.", { chat = false })
     end
     return
   end
@@ -1893,8 +1894,13 @@ local function onRuntimeEvent(event, ...)
       end
       if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("RCLootCouncil lifecycle") end
     end
-    if loadedAddon == "Blizzard_EncounterJournal" and Dibs.Capabilities and Dibs.Capabilities.Retry then
-      Dibs.Capabilities.Retry("encounter_journal", "Blizzard_EncounterJournal_LOADED")
+    if loadedAddon == "Blizzard_EncounterJournal" then
+      if Dibs.EncounterJournal and Dibs.EncounterJournal.InvalidateLootCatalog then
+        Dibs.EncounterJournal.InvalidateLootCatalog()
+      end
+      if Dibs.Capabilities and Dibs.Capabilities.Retry then
+        Dibs.Capabilities.Retry("encounter_journal", "Blizzard_EncounterJournal_LOADED")
+      end
     end
     return
   end

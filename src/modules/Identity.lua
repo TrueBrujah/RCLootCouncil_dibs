@@ -24,6 +24,7 @@ local state = Identity._rosterState or {
 }
 Identity._rosterState = state
 state.displayNames = state.displayNames or {}
+state.invalidationGeneration = tonumber(state.invalidationGeneration) or 0
 
 local function copy(value)
   return Dibs.DeepCopy and Dibs.DeepCopy(value) or value
@@ -116,12 +117,17 @@ end
 
 function Identity.InvalidateRoster(reason)
   state.generation = state.generation + 1
+  state.invalidationGeneration = state.invalidationGeneration + 1
   state.fresh = false
   state.members = {}
   state.shortNames = {}
   state.displayNames = {}
   state.reason = reason or "ROSTER_INVALIDATED"
   return state.generation
+end
+
+function Identity.GetInvalidationGeneration()
+  return state.invalidationGeneration
 end
 
 function Identity.OnRosterChanged()
@@ -159,7 +165,9 @@ function Identity.RefreshRoster()
       end
     end
   end
-  for _, candidates in pairs(shortNames) do table.sort(candidates) end
+  for _, candidates in pairs(shortNames) do
+    if #candidates > 1 then table.sort(candidates) end
+  end
   state.generation = state.generation + 1
   state.fresh = true
   state.members = members
@@ -183,8 +191,13 @@ function Identity.NormalizeDisplayName(value)
 end
 
 function Identity.ResolveRosterMember(value)
-  local refreshed, reason = Identity.RefreshRoster()
-  if not refreshed then return { status = "ROSTER_UNAVAILABLE", reason = reason } end
+  local rosterApisAvailable = type(IsInGuild) == "function"
+    and type(GetNumGuildMembers) == "function"
+    and type(GetGuildRosterInfo) == "function"
+  if not state.fresh or not rosterApisAvailable or not IsInGuild() then
+    local refreshed, reason = Identity.RefreshRoster()
+    if not refreshed then return { status = "ROSTER_UNAVAILABLE", reason = reason } end
+  end
 
   local key, display, parseReason = parseNameRealm(value)
   if key then

@@ -478,6 +478,9 @@ function M.installEncounterJournalContext(opts)
       end,
     }
   end
+  if opts.preserveCatalogCache ~= true and _G.Dibs and _G.Dibs.EncounterJournal and _G.Dibs.EncounterJournal.InvalidateLootCatalog then
+    _G.Dibs.EncounterJournal.InvalidateLootCatalog()
+  end
 end
 
 function M.setGuildRoster(members, rankIndices, options)
@@ -485,6 +488,9 @@ function M.setGuildRoster(members, rankIndices, options)
   guildMembers = members or {}
   guildRankIndices = rankIndices or {}
   if options.guildLeader ~= nil then guildLeader = options.guildLeader == true end
+  if _G.Dibs and _G.Dibs.Identity and _G.Dibs.Identity.OnRosterChanged then
+    _G.Dibs.Identity.OnRosterChanged()
+  end
 end
 
 return M

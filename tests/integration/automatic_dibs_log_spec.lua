@@ -278,6 +278,14 @@ describe("Automatic Dibs table presentation", function()
     local expectedHeaders = { "Player Name", "Guild Rank", "Expected", "Assigned", "Difference", "Status", "Action" }
     assert_equal(#expectedHeaders, #capture.columns)
     for index, header in ipairs(expectedHeaders) do assert_equal(header, capture.columns[index].title) end
+    assert_equal(120, capture.columns[1].minWidth)
+    assert_equal(2, capture.columns[1].weight)
+    for index = 2, 6 do assert_equal("CENTER", capture.columns[index].align) end
+    assert_equal("CENTER", capture.columns[7].align)
+    local headerRow = frame.automaticDibsTablePage.columnHeader.children[1]
+    for _, header in ipairs(headerRow.children or {}) do
+      if header._dibsColumnIndex >= 2 then assert_equal("CENTER", header.justifyH) end
+    end
     local actionColumn = capture.columns[7]
     local reconcileLabel = dibs.L.UI_ACTION_RECONCILE
     local requiredActionWidth = dibs.AceGUI.GetContentSizedActionWidth({ reconcileLabel },
@@ -405,10 +413,10 @@ describe("Automatic Dibs table presentation", function()
 
     frame.automaticDibsPage = 2
     local rankHeader = findWidget(function(widget)
-      return widget.kind == "Button" and widget.text == "Guild Rank"
+      return widget.kind == "Label" and widget.text == "Guild Rank" and widget._dibsColumnIndex == 2
     end)
     assert_not_nil(rankHeader)
-    rankHeader.callbacks.OnClick(rankHeader, "OnClick")
+    rankHeader.frame._scripts.OnMouseUp(rankHeader.frame, "LeftButton")
     local ascending = getCapture()
     assert_equal(1, frame.automaticDibsPage)
     assert_equal("Guild Rank ^", ascending.columns[2].title)
@@ -418,10 +426,10 @@ describe("Automatic Dibs table presentation", function()
     end
 
     local ascendingRankHeader = findWidget(function(widget)
-      return widget.kind == "Button" and widget.text == "Guild Rank ^"
+      return widget.kind == "Label" and widget.text == "Guild Rank ^" and widget._dibsColumnIndex == 2
     end)
     assert_not_nil(ascendingRankHeader)
-    ascendingRankHeader.callbacks.OnClick(ascendingRankHeader, "OnClick")
+    ascendingRankHeader.frame._scripts.OnMouseUp(ascendingRankHeader.frame, "LeftButton")
     local descending = getCapture()
     assert_equal("Guild Rank v", descending.columns[2].title)
     for index = 2, #descending.rows do
@@ -860,7 +868,7 @@ describe("Automatic Dibs table presentation", function()
     assert_equal(frame.automaticDibsTablePage.scroll, compactAction.parent.parent.parent)
     frame.dibsAceGUIShell.frame.GetWidth = function() return 1150 end
     frame:Refresh()
-    assert_equal("MEDIUM", frame.automaticDibsLayoutMode)
+    assert_equal("WIDE", frame.automaticDibsLayoutMode)
     assert_equal(7, #getCapture().columns)
     local mediumAction = findWidget(function(widget)
       return widget.kind == "Button" and widget.text == "RECONCILE"
@@ -990,8 +998,15 @@ describe("Officer Dibs administration", function()
     assert_equal(dibs.AceGUI.GetContentSizedActionWidth({ removeLabel }, 48), captured.columns[5].width)
     assert_equal(addLabel, captured.columns[4].title)
     assert_equal(removeLabel, captured.columns[5].title)
+    assert_equal(130, captured.columns[1].minWidth)
+    assert_equal(2, captured.columns[1].weight)
+    assert_equal("CENTER", captured.columns[2].align)
+    assert_equal("CENTER", captured.columns[3].align)
     assert_true(captured.columns[4].width < dibs.AceGUI.GetLayoutMetrics().actionMinWidth)
     assert_true(captured.columns[5].width < dibs.AceGUI.GetLayoutMetrics().actionMinWidth)
+    local rowMenu = captured.options.contextMenu(captured.rows[1])
+    assert_equal(addLabel, rowMenu[1].text)
+    assert_equal(removeLabel, rowMenu[2].text)
     assert_equal(page.root, page.scroll.parent)
     assert_equal(page.root, page.columnHeader.parent)
     local registeredScrolls = 0
@@ -1048,7 +1063,8 @@ describe("Officer Dibs administration", function()
       for _, testWidth in ipairs({ 1400, 900, 520 }) do
         page.boundsFrame.GetWidth = function() return testWidth end
         page.UpdateViewportHeight()
-        local addColumn, removeColumn = capture.columns[4], capture.columns[5]
+        local addColumnIndex, removeColumnIndex = 4, 5
+        local addColumn, removeColumn = capture.columns[addColumnIndex], capture.columns[removeColumnIndex]
         assert_true(addColumn.fixed and removeColumn.fixed)
         assert_nil(addColumn.weight)
         assert_nil(removeColumn.weight)
@@ -1070,7 +1086,7 @@ describe("Officer Dibs administration", function()
               assert_true(button.frame:GetWidth() >= requiredWidth)
               assert_true(button.frame:GetWidth() >= button._dibsRequiredWidth)
               assert_equal(column.width, button._dibsColumnWidth)
-              assert_equal(button.text == addLabel and 4 or 5, button._dibsColumnIndex)
+              assert_equal(button.text == addLabel and addColumnIndex or removeColumnIndex, button._dibsColumnIndex)
               if button.text == addLabel then addButtons = addButtons + 1
               else removeButtons = removeButtons + 1 end
             end

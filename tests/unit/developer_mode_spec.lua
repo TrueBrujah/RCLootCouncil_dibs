@@ -8,16 +8,10 @@ describe("Developer mode", function()
 
   it("rejects testitem when developer mode is disabled", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
+    for index = #(_G.__dibsMessages or {}), 1, -1 do _G.__dibsMessages[index] = nil end
     dibs.HandleSlashCommand("testitem 275658")
 
-    local found = false
-    for _, line in ipairs(_G.__dibsMessages or {}) do
-      if string.find(line, "Developer Mode is disabled", 1, true) then
-        found = true
-        break
-      end
-    end
-    assert_true(found)
+    assert_nil((_G.__dibsMessages or {})[1])
 
     local txCount = #(dibs.Ledger.GetAllTransactions())
     assert_equal(1, txCount, "only default allocation transaction is expected")
@@ -77,8 +71,21 @@ describe("Developer mode", function()
       end
     end
 
-    assert_true(hasUsage)
-    assert_true(hasInvalid)
+    assert_false(hasUsage)
+    assert_false(hasInvalid)
+  end)
+
+  it("keeps slash help visible while dry-run output stays out of chat", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    for index = #(_G.__dibsMessages or {}), 1, -1 do _G.__dibsMessages[index] = nil end
+    dibs.HandleSlashCommand("help")
+    local helpCount = #(_G.__dibsMessages or {})
+    assert_equal(3, helpCount)
+    assert_true((_G.__dibsMessages[1] or ""):find("Dibs commands", 1, true) ~= nil)
+
+    dibs.HandleSlashCommand("dryrun")
+    dibs.HandleSlashCommand("testitem 275658")
+    assert_equal(helpCount, #(_G.__dibsMessages or {}))
   end)
 
   it("reports sandbox state through dev status and keeps navigation hidden while inactive", function()

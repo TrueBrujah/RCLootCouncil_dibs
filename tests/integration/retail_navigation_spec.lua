@@ -57,6 +57,12 @@ describe("Retail Officer navigation lifecycle", function()
 
   it("mounts the Pre-Dib Requests list separately from its settings", function()
     local dibs = setup()
+    local originalAddTable = dibs.AceGUI.AddTable
+    local requestTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      if options and options.contextMenu then requestTable = { rows = rows, options = options } end
+      return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+    end
     local request = dibs.PreDibs.CreatePublic("Tester-Realm", 23001, "Pre-Dib Test Token",
       dibs.GetCurrentSeasonId(), "test")
     assert_not_nil(request)
@@ -64,9 +70,46 @@ describe("Retail Officer navigation lifecycle", function()
     assert_equal("preDibRequests", frame.selectedRoute)
     assert_equal("preDibRequests", frame.mountedPage)
     assert_true(containsText(frame.contentHost, "Pre-Dib Requests"))
+    assert_true(containsText(frame.contentHost, "Pre-Dib Requests (1)"))
     assert_true(containsText(frame.contentHost, "Date"))
     assert_true(containsText(frame.contentHost, "Pre-Dib Test Token"))
     assert_false(containsText(frame.contentHost, "Public pre-dib announce channel"))
+    assert_not_nil(requestTable)
+    assert_true(requestTable.rows[1][1] ~= "No pre-Dibs for this season.")
+    assert_true(requestTable.rows[1][1] ~= "")
+    assert_equal("Tester-Realm", requestTable.rows[1][2])
+    assert_equal("Confirmed", requestTable.rows[1][3])
+    assert_nil(requestTable.options.emptyText)
+    assert_equal("Page 1 / 1", frame.pageText.text)
+    local menu = requestTable.options.contextMenu(requestTable.rows[1])
+    assert_equal(1, #menu)
+    assert_equal("View details", menu[1].text)
+    menu[1].callback()
+    assert_true(containsText(frame.contentHost, "Pre-Dib details"))
+    assert_true(containsText(frame.contentHost, "Status:"))
+    assert_true(containsText(frame.contentHost, "Close details"))
+  end)
+
+  it("keeps season row menus focused on season actions", function()
+    local dibs = setup()
+    local originalAddTable = dibs.AceGUI.AddTable
+    local seasonTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      if options and options.contextMenu then seasonTable = { rows = rows, options = options } end
+      return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+    end
+    dibs.OfficerUI.CreateWindow("seasons")
+    assert_not_nil(seasonTable)
+    local menu = seasonTable.options.contextMenu(seasonTable.rows[1])
+    local hasDetails, hasRename, hasSort = false, false, false
+    for _, entry in ipairs(menu) do
+      if entry.text == "View details" then hasDetails = true end
+      if entry.text == "Rename" then hasRename = true end
+      if entry.text:find("(A-Z)", 1, true) or entry.text:find("(Z-A)", 1, true) then hasSort = true end
+    end
+    assert_true(hasDetails)
+    assert_true(hasRename)
+    assert_false(hasSort)
   end)
 
   it("renders pending awards in the shared table and confirms the selected proposal", function()
@@ -98,6 +141,12 @@ describe("Retail Officer navigation lifecycle", function()
 
   it("switches the synchronization roster view without changing guild sync scope", function()
     local dibs = setup()
+    local originalAddTable = dibs.AceGUI.AddTable
+    local syncTableOptions
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      if options and options.disableContextMenu then syncTableOptions = options end
+      return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+    end
     local frame = dibs.OfficerUI.CreateWindow("sync")
     local selector
     for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
@@ -116,6 +165,7 @@ describe("Retail Officer navigation lifecycle", function()
     assert_equal("PARTY", requestedScope)
     assert_not_nil(frame.syncTablePage)
     assert_not_nil(frame.syncRosterPagination)
+    assert_true(syncTableOptions and syncTableOptions.disableContextMenu)
     assert_true(containsText(frame.contentHost, "No Party roster is active."))
     assert_true(containsText(frame.contentHost, "Party"))
   end)

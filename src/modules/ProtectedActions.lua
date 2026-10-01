@@ -38,6 +38,7 @@ local VALID_ACTIONS = {
   ["admin.revoke"] = true,
   ["award.finalize"] = true,
   ["predib.mode.set"] = true,
+  ["predib.public.set"] = true,
   ["history.confirm"] = true,
   ["history.reject"] = true,
   ["backup.restore"] = true,
@@ -646,6 +647,14 @@ local function executePreDibModeSet(actor, payload, decision)
   return buildResult(policy ~= nil, policy, decision, reason)
 end
 
+local function executePreDibPublicSet(actor, payload, decision)
+  if not Dibs.OperationalPolicy or type(Dibs.OperationalPolicy.SetPublicPreDibsEnabled) ~= "function" then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  local ok, reason, record = Dibs.OperationalPolicy.SetPublicPreDibsEnabled(payload and payload.enabled, actor)
+  return buildResult(ok == true, record, decision, ok and nil or reason)
+end
+
 local function executeInstallationModeSet(actor, payload, decision)
   if not Dibs.Permissions or not Dibs.Permissions.SetInstallationMode then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
@@ -766,6 +775,7 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "history.confirm" then return executeHistoryConfirm(actor, command, decision) end
   if actionId == "history.reject" then return executeHistoryReject(actor, command, decision) end
   if actionId == "predib.mode.set" then return executePreDibModeSet(actor, command, decision) end
+  if actionId == "predib.public.set" then return executePreDibPublicSet(actor, command, decision) end
   if actionId == "installation.mode.set" then return executeInstallationModeSet(actor, command, decision) end
   if actionId == "backup.restore" then return executeBackupRestore(actor, command, decision) end
   if actionId == "data.import" then return executeDataImport(actor, command, decision) end

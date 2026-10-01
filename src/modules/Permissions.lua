@@ -69,6 +69,7 @@ local ADMIN_ACTIONS = {
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,
   ["predib.mode.set"] = true,
+  ["predib.public.set"] = true,
   ["history.confirm"] = true,
   ["history.reject"] = true,
   ["backup.restore"] = true,
@@ -83,6 +84,7 @@ local ADMIN_ACTIONS = {
 
 local GM_ONLY_ACTIONS = {
   ["settings.modify"] = true,
+  ["predib.public.set"] = true,
   ["installation.mode.set"] = true,
   ["admin.list"] = true,
   ["admin.appoint"] = true,

@@ -38,7 +38,7 @@ end
 
 local function markDevMessage(text)
   if Dibs and Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() then
-    Dibs.Message("[Dibs DEV] " .. tostring(text))
+    Dibs.Message("[Dibs DEV] " .. tostring(text), { chat = false })
   end
 end
 

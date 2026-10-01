@@ -19,6 +19,18 @@ local SCHEMA = 1
 local GENESIS_HASH = "GENESIS"
 local AUTHORITY_SCHEMA = 1
 local MAX_AUTHORITY_AUDIT, MAX_PROPOSALS, MAX_ORPHANS, MAX_RELAY_ATTEMPT_COUNT = 100, 100, 100, 5
+local awardProposalGenerations = {}
+
+local function bumpAwardProposalGeneration(proposal)
+  local memberKey = type(proposal) == "table" and proposal.playerSnapshot and proposal.playerSnapshot.memberKey
+  if type(memberKey) == "string" then
+    awardProposalGenerations[memberKey] = (awardProposalGenerations[memberKey] or 0) + 1
+  end
+end
+
+function Governance.GetAwardProposalGeneration(memberKey)
+  return awardProposalGenerations[memberKey] or 0
+end
 
 local function rejectSandbox()
   if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive() then
@@ -559,6 +571,7 @@ function Governance.RecordAwardProposal(actor, details)
   proposal.contentHash = authorityHash("PROPOSAL", proposalHashContent(proposal))
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
   authority.proposals[proposalId] = proposal
+  bumpAwardProposalGeneration(proposal)
   boundedInsert(authority.auditLog, { action = "AWARD_PROPOSAL", proposalId = proposalId, timestamp = proposal.createdAt }, MAX_AUTHORITY_AUDIT)
   if Dibs.Sync and Dibs.Sync.AnnounceAwardReservationDigest then Dibs.Sync.AnnounceAwardReservationDigest() end
   -- Relay to the current coordinator so a non-coordinator's award is not
@@ -606,6 +619,7 @@ function Governance.MarkAwardProposalCommitted(proposalId, commit)
   local proposal = authorityState(ensureState()).proposals[proposalId]
   if not proposal then return false, "PROPOSAL_NOT_FOUND" end
   proposal.status, proposal.relayStatus = "COMMITTED", "COMMITTED"
+  bumpAwardProposalGeneration(proposal)
   proposal.commitHash = type(commit) == "table" and commit.commitHash or proposal.commitHash
   proposal.committedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
   if Dibs.Sync and Dibs.Sync.ClearAwardReservation then Dibs.Sync.ClearAwardReservation(proposalId, commit) end
@@ -621,6 +635,7 @@ function Governance.ResolveAwardProposal(proposalId, status, reasonCode)
     return proposal.status == status and proposal.resolutionReason == reasonCode, "PROPOSAL_ALREADY_RESOLVED"
   end
   proposal.status, proposal.resolutionReason = status, trim(reasonCode) or "PROPOSAL_REJECTED"
+  bumpAwardProposalGeneration(proposal)
   proposal.resolvedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
   boundedInsert(authorityState(ensureState()).auditLog, {
     action = "AWARD_PROPOSAL_" .. status, proposalId = proposalId,
@@ -665,6 +680,7 @@ function Governance.ReceiveRelayedProposal(proposal, senderDisplayName)
   stored.status, stored.relayStatus = "PENDING_RECONCILIATION", nil
   stored.receivedFrom, stored.receivedAt = trim(senderDisplayName), (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
   authority.proposals[proposal.proposalId] = stored
+  bumpAwardProposalGeneration(stored)
   boundedInsert(authority.auditLog, { action = "AWARD_PROPOSAL_RELAYED", proposalId = proposal.proposalId, timestamp = stored.receivedAt }, MAX_AUTHORITY_AUDIT)
   return true, "PROPOSAL_ACCEPTED"
 end

@@ -144,11 +144,11 @@ describe("B11 Retail UI-004 ownership", function()
       end,
       onRowClick = function() clickCount = clickCount + 1 end,
     })
-    local nameHeader = findWidget(header, function(widget) return widget.kind == "Button" and widget.text == "Name" end)
+    local nameHeader = findWidget(header, function(widget) return widget.kind == "Label" and widget.text == "Name" end)
     assert_not_nil(nameHeader)
-    nameHeader.callbacks.OnClick()
+    nameHeader.frame._scripts.OnMouseUp(nameHeader.frame, "LeftButton")
     assert_equal("Bravo", grid._dibsDataGrid.rows[1][1])
-    nameHeader.callbacks.OnClick()
+    nameHeader.frame._scripts.OnMouseUp(nameHeader.frame, "LeftButton")
     assert_equal("Alpha", grid._dibsDataGrid.rows[1][1])
 
     local alphaCell = findWidget(parent, function(widget) return widget.text == "Alpha" end)
@@ -163,12 +163,14 @@ describe("B11 Retail UI-004 ownership", function()
     for _, name in ipairs(msaNames) do _G[name] = previousMSA[name] end
     assert_true(contextOpened)
     assert_true(menuShown)
+    local inspectEntry
     local sortEntry
     for _, entry in ipairs(menuEntries) do
+      if entry.text == "Inspect" then inspectEntry = entry end
       if entry.text == "Name (A-Z)" then sortEntry = entry end
     end
-    assert_not_nil(sortEntry)
-    sortEntry.func()
+    assert_not_nil(inspectEntry)
+    assert_nil(sortEntry)
     assert_equal("Alpha", grid._dibsDataGrid.rows[1][1])
     shell.frame._scripts.OnSizeChanged(shell.frame, 800, 500)
     assert_true(alphaCell._dibsColumnWidth > originalWidth)
@@ -523,5 +525,43 @@ describe("B11 Retail UI-004 ownership", function()
     dropdown.callbacks.OnValueChanged(dropdown, "OnValueChanged", "Guild")
     assert_equal("GUILD", captured.channel)
     dibs.ProtectedActions.Execute = originalExecute
+  end)
+
+  it("keeps public Pre-Dib availability on the legacy fallback before policy adoption", function()
+    local _, dibs = setup()
+    local toggle = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.officer.args.preDibs.args.allowPublicPreDibs
+    assert_false(dibs.OperationalPolicy.IsAdopted())
+    assert_true(toggle.get())
+    toggle.set(nil, false)
+    assert_false(dibs.PreDibs.IsPublicEnabled())
+    assert_false(dibs.GetDB().settings.allowPublicPreDibs)
+  end)
+
+  it("updates adopted public Pre-Dib availability through a protected action", function()
+    local _, dibs = setup()
+    assert_true(dibs.Governance.AdoptInitial(nil, {
+      reason = "Public Pre-Dib authority test",
+      officerAuthorityRule = { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 },
+      policyWriterRule = { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 },
+    }))
+    assert_true(dibs.OperationalPolicy.AdoptInitial(nil, {
+      allowPublicPreDibs = true,
+      preDibModes = { [dibs.GetCurrentSeasonId()] = "WILD_OPEN" },
+    }, "Public Pre-Dib authority test"))
+    local toggle = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.officer.args.preDibs.args.allowPublicPreDibs
+    local legacyValue = dibs.GetDB().settings.allowPublicPreDibs
+    local revision = dibs.OperationalPolicy.GetState().policyRevision
+    assert_true(toggle.get())
+
+    toggle.set(nil, false)
+    assert_false(toggle.get())
+    assert_false(dibs.PreDibs.IsPublicEnabled())
+    assert_equal(revision + 1, dibs.OperationalPolicy.GetState().policyRevision)
+    assert_equal(legacyValue, dibs.GetDB().settings.allowPublicPreDibs)
+
+    toggle.set(nil, true)
+    assert_true(toggle.get())
+    assert_true(dibs.PreDibs.IsPublicEnabled())
+    assert_equal(revision + 2, dibs.OperationalPolicy.GetState().policyRevision)
   end)
 end)

@@ -28,6 +28,8 @@ describe("Finalize award flow", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local request = dibs.PreDibs.Create("Tester-Realm", 19019, "Item", dibs.GetCurrentSeasonId())
     dibs.PreDibs.Confirm(request.requestId)
+    local originalProjection = dibs.Ledger.GetPlayerDibsProjection
+    dibs.Ledger.GetPlayerDibsProjection = function() error("award finalization must not use the display cache") end
 
     local first = dibs.ProtectedActions.FinalizeAward(nil, {
       awardRef = "award-1",
@@ -36,6 +38,7 @@ describe("Finalize award flow", function()
       sourceStatus = "awarded",
       finalized = true,
     })
+    dibs.Ledger.GetPlayerDibsProjection = originalProjection
     assert_true(first.ok)
 
     local second = dibs.ProtectedActions.FinalizeAward(nil, {

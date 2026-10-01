@@ -49,6 +49,14 @@ describe("Officer target selectors", function()
       encounters = { [900] = { { id = 901, name = "Test Warden" } } },
       loot = { [901] = { { itemID = 280001, name = "Warden's Curio", link = "|Hitem:280001::::::::::::|h[Warden's Curio]|h|r" } } },
     })
+    local catalog, catalogMeta = dibs.EncounterJournal.GetLootCatalog("")
+    assert_equal(1, #catalog)
+    assert_equal(900, catalog[1].instanceID)
+    assert_equal(901, catalog[1].encounterID)
+    assert_equal(280001, catalog[1].itemID)
+    assert_equal("Citadel of Testing", catalog[1].instanceName)
+    assert_equal("Test Warden", catalog[1].bossName)
+    assert_true(catalogMeta.available)
     local request = dibs.Disputes.CreateReport({ category = "wrong_item_player", note = "selector test" })
     assert_not_nil(request)
 
