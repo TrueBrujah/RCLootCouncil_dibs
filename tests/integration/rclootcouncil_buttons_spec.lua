@@ -599,6 +599,96 @@ describe("RCLootCouncil DIB response projection", function()
     dibs.Ledger.GetPlayerDibsProjection = original
   end)
 
+  it("shares one balance snapshot per loot update and re-reads changed sources next update", function()
+    local playerName, itemID = "Tester-Realm", 275658
+    local lootFrame = { EntryManager = { entries = {} } }
+    function lootFrame:Update() self.updateCount = (self.updateCount or 0) + 1 end
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.modules = { RCLootFrame = lootFrame }
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = {
+      playerName = playerName, guildLeader = true, guildMembers = { playerName }, guildRankIndices = { [1] = 0 },
+    } })
+    assert_true(lootFrame.__dibsButtonHooked)
+    for index = 1, 4 do
+      lootFrame.EntryManager.entries[index] = {
+        frame = _G.CreateFrame("Frame"),
+        item = { link = "|cffffffff|Hitem:275658::::::::::::|h[Bench item]|h|r", typeCode = "INVTYPE_HEAD" },
+        buttons = {},
+      }
+    end
+
+    local seasonId = dibs.GetCurrentSeasonId()
+    local granted = dibs.Ledger.Grant(playerName, 1, "RCLC cache test", "test", seasonId)
+    assert_not_nil(granted)
+    local startingBalance = dibs.Ledger.GetBalance(playerName, seasonId)
+    assert_true(startingBalance > 0)
+    local originalAvailability = dibs.RCLootCouncil.IsAvailable
+    local originalTypePolicy = dibs.RCLootCouncil.IsItemDibTypeAllowed
+    local originalPublicPreDibs = dibs.PreDibs.IsPublicEnabled
+    local originalProjection = dibs.Ledger.GetCanonicalPlayerDibsState
+    local originalRemoteReservations = dibs.Sync.GetPendingAwardReservations
+    dibs.RCLootCouncil.IsAvailable = function() return true end
+    dibs.RCLootCouncil.IsItemDibTypeAllowed = function() return true end
+    dibs.PreDibs.IsPublicEnabled = function() return false end
+    local projections = {}
+    dibs.Ledger.GetCanonicalPlayerDibsState = function(currentSeason, identity)
+      local projection = originalProjection(currentSeason, identity)
+      projections[#projections + 1] = projection
+      return projection
+    end
+    local remoteReservations = {}
+    dibs.Sync.GetPendingAwardReservations = function() return remoteReservations end
+
+    local updateHooks = lootFrame.__secureHooks.Update or {}
+    assert_equal(1, #updateHooks)
+    local function refresh(expectedBalance, expectedPending, expectedEnabled)
+      local previousReads = #projections
+      lootFrame:Update()
+      for _, callback in ipairs(updateHooks) do callback(lootFrame) end
+      assert_equal(previousReads + 1, #projections)
+      local projection = projections[#projections]
+      assert_equal(expectedBalance, projection.balance)
+      assert_equal(expectedPending, projection.pendingDibReservations)
+      assert_equal(math.max(0, expectedBalance - expectedPending), projection.availableBalance)
+      for _, entry in ipairs(lootFrame.EntryManager.entries) do
+        assert_equal(expectedEnabled, entry.dibsButton:IsEnabled())
+      end
+    end
+
+    refresh(startingBalance, 0, true)
+
+    local proposal = assert(dibs.Governance.RecordAwardProposal(nil, {
+      playerName = playerName, type = "DIB_USED", amount = -startingBalance, seasonId = seasonId,
+      itemID = itemID, awardRef = "rclc-refresh-proposal",
+    }))
+    refresh(startingBalance, startingBalance, false)
+    assert_true(dibs.Governance.MarkAwardProposalCommitted(proposal.proposalId, {}))
+    refresh(startingBalance, 0, true)
+
+    local memberKey = dibs.Identity.CanonicalMemberKey(playerName)
+    remoteReservations = {{
+      proposalId = "rclc-refresh-remote", playerMemberKey = memberKey,
+      seasonId = seasonId, amount = startingBalance, state = "PENDING",
+    }}
+    refresh(startingBalance, startingBalance, false)
+    remoteReservations = {}
+    refresh(startingBalance, 0, true)
+
+    local used = dibs.Ledger.Use(playerName, startingBalance, "RCLC cache test", "test", seasonId)
+    assert_not_nil(used)
+    refresh(0, 0, false)
+
+    local request = assert(dibs.PreDibs.Create(playerName, itemID, "Bench item", seasonId))
+    assert_not_nil(dibs.PreDibs.Confirm(request.requestId))
+    refresh(0, 0, true)
+
+    dibs.RCLootCouncil.IsAvailable = originalAvailability
+    dibs.RCLootCouncil.IsItemDibTypeAllowed = originalTypePolicy
+    dibs.PreDibs.IsPublicEnabled = originalPublicPreDibs
+    dibs.Ledger.GetCanonicalPlayerDibsState = originalProjection
+    dibs.Sync.GetPendingAwardReservations = originalRemoteReservations
+  end)
+
   it("does not repeatedly remove a wildcard legacy DIB value", function()
     local profile = {
       buttons = {
