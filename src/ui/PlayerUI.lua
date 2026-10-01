@@ -71,6 +71,10 @@ local function formatDate(timestamp)
   return value > 0 and tostring(value) or "Unknown"
 end
 
+local function playerListHeight(rowCount, maximum)
+  return math.min(maximum, math.max(72, 44 + (tonumber(rowCount) or 0) * 32))
+end
+
 local function parseItemInput(raw)
   local text = trimText(raw)
   if text == "" then return nil end
@@ -328,10 +332,38 @@ end
 ---@return table summary Player-scoped balance and request summary.
 function Dibs.PlayerUI.GetSummary(playerName)
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
+  local currentPlayer = playerName or Dibs.GetPlayerName()
   local canonical = Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
-    and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, playerName or Dibs.GetPlayerName()) or nil
-  local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(playerName or Dibs.GetPlayerName()) or {}
-  local acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsForPlayer and Dibs.PreDibs.GetAcquisitionsForPlayer(playerName or Dibs.GetPlayerName()) or {}
+    and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, currentPlayer) or nil
+  local playerState = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(currentPlayer, season and season.id) or {}
+  local transactions = Dibs.Ledger and Dibs.Ledger.GetHistory and Dibs.Ledger.GetHistory(currentPlayer, season and season.id) or {}
+  local used = 0
+  for _, transaction in ipairs(transactions) do
+    local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+    if transaction.type == "DIB_USED" then
+      used = used + math.max(0, -amount)
+    elseif transaction.type == "DIB_REFUNDED" then
+      used = math.max(0, used - math.max(0, amount))
+    end
+  end
+  local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(currentPlayer) or {}
+  local activePreDibs = {}
+  for _, request in ipairs(requests) do
+    if not season or request.seasonId == season.id then activePreDibs[#activePreDibs + 1] = request end
+  end
+  local wonPreDibs = {}
+  local playerKey = string.lower(tostring(currentPlayer or ""))
+  for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}) do
+    if string.lower(tostring(request.playerName or "")) == playerKey and request.status == "fulfilled"
+      and (not season or request.seasonId == season.id) then
+      wonPreDibs[#wonPreDibs + 1] = request
+    end
+  end
+  table.sort(wonPreDibs, function(first, second)
+    return (first.fulfilledAt or first.updatedAt or first.createdAt or 0)
+      > (second.fulfilledAt or second.updatedAt or second.createdAt or 0)
+  end)
+  local acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsForPlayer and Dibs.PreDibs.GetAcquisitionsForPlayer(currentPlayer) or {}
   if Dibs.PreDibs and Dibs.PreDibs.ProjectVaultAcquisition then
     local projected = {}
     for _, acquisition in ipairs(acquisitions) do
@@ -342,14 +374,17 @@ function Dibs.PlayerUI.GetSummary(playerName)
     acquisitions = projected
   end
   local eligibility = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
-    and Dibs.CharacterEligibility.GetSummary(playerName or Dibs.GetPlayerName(), season and season.id) or nil
+    and Dibs.CharacterEligibility.GetSummary(currentPlayer, season and season.id) or nil
 
   return {
     season = season,
-    player = playerName or Dibs.GetPlayerName(),
+    player = currentPlayer,
     balance = canonical and canonical.balance or 0,
     balanceState = canonical,
-    activePreDibs = requests,
+    seasonAllocation = tonumber(playerState.allocation) or 0,
+    seasonUsed = used,
+    activePreDibs = activePreDibs,
+    wonPreDibs = wonPreDibs,
     acquisitions = acquisitions,
     eligibility = eligibility,
     modePolicy = Dibs.PreDibs and Dibs.PreDibs.GetModePolicy and Dibs.PreDibs.GetModePolicy(season and season.id) or nil,
@@ -465,20 +500,35 @@ function Dibs.PlayerUI.GetViewModel(playerName)
       difficulty = request.difficulty and tostring(request.difficulty) or nil,
     })
   end
+  local won = {}
+  for _, request in ipairs(summary.wonPreDibs or {}) do
+    table.insert(won, {
+      requestId = request.requestId,
+      date = formatDate(request.fulfilledAt or request.updatedAt or request.createdAt),
+      item = request.itemName or request.itemLink or ("Item " .. tostring(request.itemID or "?")),
+      difficulty = request.difficulty and tostring(request.difficulty) or nil,
+      status = (Dibs.L or {}).PLAYER_PREDIB_WON_STATUS or "Won",
+      request = request,
+    })
+  end
   local history = projectHistory(summary.player, summary.season and summary.season.id)
   local requests = playerRequestHistory(summary.player, summary.activePreDibs)
   return {
     navigation = Dibs.PlayerUI.GetNavigation(),
     player = summary.player,
     balance = summary.balance,
+    seasonAllocation = summary.seasonAllocation or 0,
+    seasonUsed = summary.seasonUsed or 0,
     seasonName = summary.season and summary.season.name or "No active season",
     activePreDibs = active,
+    wonPreDibs = won,
     requests = requests,
     pendingRequests = #active,
     history = history,
     status = Dibs.PlayerUI.GetStatusPresentation(readiness),
     empty = {
-      activePreDibs = #active == 0 and "No active Pre-Dibs." or nil,
+      activePreDibs = #active == 0 and ((Dibs.L or {}).PLAYER_NO_ACTIVE_PREDIBS or "No active Pre-Dibs this season.") or nil,
+      wonPreDibs = #won == 0 and ((Dibs.L or {}).PLAYER_NO_FULFILLED_PREDIBS or "No won Pre-Dibs this season.") or nil,
       requests = #requests == 0 and "No requests yet." or nil,
       history = #history == 0 and "No history yet." or nil,
     },
@@ -832,8 +882,11 @@ local function createLegacyAceWindow()
       { title = "Value", width = 280, tooltip = "Current value." },
     }, {
       { "Season", tostring(summary.season and summary.season.name or "None") },
-      { "Balance", tostring(summary.balance) },
+      { (Dibs.L or {}).PLAYER_SEASON_ALLOCATION or "Season allocation", tostring(summary.seasonAllocation or 0) },
+      { (Dibs.L or {}).PLAYER_DIBS_USED or "Dibs used", tostring(summary.seasonUsed or 0) },
+      { (Dibs.L or {}).PLAYER_DIBS_REMAINING or "Dibs remaining", tostring(summary.balance) },
       { "Active Pre-Dibs", tostring(#(summary.activePreDibs or {})) },
+      { (Dibs.L or {}).PLAYER_FULFILLED_PREDIBS or "Won Pre-Dibs", tostring(#(summary.wonPreDibs or {})) },
       { "Vault acquisitions", tostring(#(summary.acquisitions or {})) },
       { "Pre-Dib mode", tostring(summary.modePolicy and summary.modePolicy.mode or "WILD_OPEN") },
       { "Protected-loot group", tostring(summary.eligibility and summary.eligibility.groupId or "Not linked") },
@@ -886,29 +939,22 @@ local function createLegacyAceWindow()
       Dibs.AceGUI.SetDisabled(requestMain, next(characterChoices) == nil)
       Dibs.AceGUI.AddLabel(shell, relationshipSection, self.eligibilityStatus or "Declarations stay pending until an Officer reviews them.", true)
     end
-    Dibs.AceGUI.AddLabel(shell, tabs, "My active Pre-Dibs", true)
+    Dibs.AceGUI.AddHeader(shell, tabs, (Dibs.L or {}).PLAYER_ACTIVE_PREDIBS or "Active Pre-Dibs", helpText.UI_HELP_PREDIB)
     local activeRows = {}
-    if #(summary.activePreDibs or {}) == 0 then
-      activeRows[1] = { "", "No active Pre-Dibs.", "", "", "" }
-    else
-      for _, request in ipairs(summary.activePreDibs) do
-        activeRows[#activeRows + 1] = {
-          formatDate(request.createdAt or request.updatedAt),
-          tostring(request.itemName or request.itemLink or ("Item " .. tostring(request.itemID))),
-          tostring(request.difficulty or "Normal"),
-          tostring(request.status),
-          "",
-          request = request,
-        }
-      end
+    for _, request in ipairs(summary.activePreDibs or {}) do
+      activeRows[#activeRows + 1] = {
+        formatDate(request.createdAt or request.updatedAt),
+        tostring(request.itemName or request.itemLink or ("Item " .. tostring(request.itemID))),
+        tostring(request.difficulty or "Normal"), tostring(request.status), "", request = request,
+      }
     end
     Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Date", width = 145, tooltip = "When the Pre-Dib was created." },
+      { title = "Date", width = 145, align = "CENTER", tooltip = "When the Pre-Dib was created." },
       { title = "Item", width = 240, tooltip = "The reserved loot." },
-      { title = "Difficulty", width = 100, tooltip = "Normal, Heroic, or Mythic." },
-      { title = "Status", width = 100, tooltip = "Pending or confirmed." },
+      { title = "Difficulty", width = 100, align = "CENTER", tooltip = "Normal, Heroic, or Mythic." },
+      { title = "Status", width = 100, align = "CENTER", tooltip = "Pending or confirmed." },
       { title = "Action", width = 90, tooltip = "Cancel your request." },
-    }, activeRows, 145, function(row)
+    }, activeRows, playerListHeight(#activeRows, 145), function(row)
       if not row.request then return nil end
       return {
         text = "Cancel",
@@ -920,7 +966,27 @@ local function createLegacyAceWindow()
           frame:Refresh()
         end,
       }
-    end)
+    end, { fluidColumns = true, widthHint = playerContentWidthHint(), scrollbarReserve = 0,
+      columnGap = Dibs.AceGUI.GetLayoutMetrics().tableColumnGap,
+      emptyText = (Dibs.L or {}).PLAYER_NO_ACTIVE_PREDIBS or "No active Pre-Dibs this season." })
+    Dibs.AceGUI.AddHeader(shell, tabs, (Dibs.L or {}).PLAYER_FULFILLED_PREDIBS or "Won Pre-Dibs",
+      "Pre-Dibs fulfilled by a finalized loot award.")
+    local wonRows = {}
+    for _, request in ipairs(summary.wonPreDibs or {}) do
+      wonRows[#wonRows + 1] = {
+        formatDate(request.fulfilledAt or request.updatedAt or request.createdAt),
+        tostring(request.itemName or request.itemLink or ("Item " .. tostring(request.itemID))),
+        tostring(request.difficulty or "Normal"), (Dibs.L or {}).PLAYER_PREDIB_WON_STATUS or "Won",
+      }
+    end
+    Dibs.AceGUI.AddTable(shell, tabs, {
+      { title = "Date", width = 145, align = "CENTER", tooltip = "When the Pre-Dib was fulfilled." },
+      { title = "Item", width = 260, tooltip = "The item won through the fulfilled Pre-Dib." },
+      { title = "Difficulty", width = 110, align = "CENTER", tooltip = helpText.UI_HELP_DIFFICULTY },
+      { title = "Status", width = 100, align = "CENTER", tooltip = helpText.UI_HELP_REQUEST_STATUS },
+    }, wonRows, playerListHeight(#wonRows, 145), nil, { fluidColumns = true, widthHint = playerContentWidthHint(), scrollbarReserve = 0,
+      columnGap = Dibs.AceGUI.GetLayoutMetrics().tableColumnGap,
+      emptyText = (Dibs.L or {}).PLAYER_NO_FULFILLED_PREDIBS or "No won Pre-Dibs this season." })
     self.preDibInput = Dibs.AceGUI.AddEditBox(shell, tabs, "Public pre-dib (item ID or link)", nil, 260)
     Dibs.AceGUI.AddTooltip(self.preDibInput, "Pre-Dib", helpText.UI_HELP_PREDIB_FIELD)
     setControlText(self.preDibInput, self.preDibValue or "")
@@ -1427,13 +1493,13 @@ local function createAceWindow()
       return
     end
 
-    Dibs.AceGUI.AddHeading(shell, tabs, "My Dibs", "Your balance, active requests, and current guild status.")
+    Dibs.AceGUI.AddHeading(shell, tabs, "My Dibs", "Your season allocation, Dibs use, and current balance.")
+    Dibs.AceGUI.AddHeader(shell, tabs, view.seasonName, helpText.UI_HELP_SEASON)
     Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Balance", width = 130, minWidth = 80, weight = 1, tooltip = helpText.UI_HELP_DIB_BALANCE },
-      { title = "Season", width = 230, minWidth = 140, weight = 3, tooltip = helpText.UI_HELP_SEASON },
-      { title = "Active Pre-Dibs", width = 150, minWidth = 100, weight = 1, tooltip = helpText.UI_HELP_PREDIB },
-      { title = "Requests", width = 110, minWidth = 80, weight = 1, tooltip = helpText.UI_HELP_REQUEST_STATUS },
-    }, {{ tostring(view.balance), view.seasonName, tostring(#view.activePreDibs), tostring(view.pendingRequests) }}, 90,
+      { title = helpText.PLAYER_SEASON_ALLOCATION or "Season allocation", width = 180, minWidth = 120, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_SEASON },
+      { title = helpText.PLAYER_DIBS_USED or "Dibs used", width = 150, minWidth = 100, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIB_BALANCE },
+      { title = helpText.PLAYER_DIBS_REMAINING or "Dibs remaining", width = 180, minWidth = 120, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIB_BALANCE },
+    }, {{ tostring(view.seasonAllocation), tostring(view.seasonUsed), tostring(view.balance) }}, 90,
       nil, {
         allowTableSort = false,
         flatBackground = true,
@@ -1458,14 +1524,14 @@ local function createAceWindow()
         request = request,
       }
     end
-    if #activeRows == 0 then activeRows[1] = { "", view.empty.activePreDibs, "", "", "" } end
+    Dibs.AceGUI.AddHeader(shell, tabs, helpText.PLAYER_ACTIVE_PREDIBS or "Active Pre-Dibs", helpText.UI_HELP_PREDIB)
     Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Date", width = 145, minWidth = 100, weight = 1, tooltip = helpText.UI_HELP_DATE },
+      { title = "Date", width = 145, minWidth = 100, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DATE },
       { title = "Item", width = 250, minWidth = 140, weight = 3, tooltip = helpText.UI_HELP_ITEM },
-      { title = "Status", width = 120, minWidth = 88, weight = 1, tooltip = helpText.UI_HELP_REQUEST_STATUS },
-      { title = "Difficulty", width = 100, minWidth = 75, weight = 1, tooltip = helpText.UI_HELP_DIFFICULTY },
+      { title = "Status", width = 120, minWidth = 88, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_REQUEST_STATUS },
+      { title = "Difficulty", width = 100, minWidth = 75, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIFFICULTY },
       { title = "Action", width = 90, minWidth = 80, action = true, tooltip = helpText.UI_HELP_ACTION },
-    }, activeRows, 170, function(row)
+    }, activeRows, playerListHeight(#activeRows, 170), function(row)
       if not row.request then return nil end
       return {
         text = "Cancel",
@@ -1476,7 +1542,22 @@ local function createAceWindow()
         end,
       }
     end, { allowTableSort = false, flatBackground = true, fluidColumns = true,
-      widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true, scrollbarReserve = 26 })
+      widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true,
+      scrollbarReserve = 0, emptyText = view.empty.activePreDibs })
+    local wonRows = {}
+    for _, request in ipairs(view.wonPreDibs or {}) do
+      wonRows[#wonRows + 1] = { request.date, request.item, request.difficulty or "Any", request.status }
+    end
+    Dibs.AceGUI.AddHeader(shell, tabs, helpText.PLAYER_FULFILLED_PREDIBS or "Won Pre-Dibs",
+      "Pre-Dibs fulfilled by a finalized loot award.")
+    Dibs.AceGUI.AddTable(shell, tabs, {
+      { title = "Date", width = 145, minWidth = 100, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DATE },
+      { title = "Item", width = 300, minWidth = 160, weight = 3, tooltip = helpText.UI_HELP_ITEM },
+      { title = "Difficulty", width = 120, minWidth = 80, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIFFICULTY },
+      { title = "Status", width = 110, minWidth = 80, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_REQUEST_STATUS },
+    }, wonRows, playerListHeight(#wonRows, 145), nil, { allowTableSort = false, flatBackground = true, fluidColumns = true,
+      widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true,
+      scrollbarReserve = 0, emptyText = view.empty.wonPreDibs })
     addRequestAction(tabs, view)
   end
 
@@ -1784,14 +1865,14 @@ function Dibs.PlayerUI.CreateWindow()
   devRequestButton:SetScript("OnClick", function()
     local devEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() or false
     if not devEnabled then
-      Dibs.Message("Developer Mode is disabled. Use /dibs dev on to enable test commands.")
+      Dibs.Message("Developer Mode is disabled. Use /dibs dev on to enable test commands.", { chat = false })
       frame:Refresh()
       return
     end
 
     local context = frame.devContext or (Dibs.LootPipeline and Dibs.LootPipeline.GetPendingDevContext and Dibs.LootPipeline.GetPendingDevContext()) or nil
     if not context then
-      Dibs.Message("[Dibs DEV] No injected test item. Use /dibs testitem <itemID>.")
+      Dibs.Message("[Dibs DEV] No injected test item. Use /dibs testitem <itemID>.", { chat = false })
       frame:Refresh()
       return
     end
@@ -1799,14 +1880,14 @@ function Dibs.PlayerUI.CreateWindow()
     if Dibs.LootPipeline and Dibs.LootPipeline.RequestDibFromContext then
       local request, reason = Dibs.LootPipeline.RequestDibFromContext(context)
       if request then
-        Dibs.Message("[Dibs DEV] Test Request Dib created for item " .. tostring(request.itemID) .. ".")
+        Dibs.Message("[Dibs DEV] Test Request Dib created for item " .. tostring(request.itemID) .. ".", { chat = false })
       elseif reason == "INVALID_ITEM" then
-        Dibs.Message("[Dibs DEV] Invalid test item.")
+        Dibs.Message("[Dibs DEV] Invalid test item.", { chat = false })
       else
-        Dibs.Message("[Dibs DEV] Unable to create test Request Dib.")
+        Dibs.Message("[Dibs DEV] Unable to create test Request Dib.", { chat = false })
       end
     else
-      Dibs.Message("[Dibs DEV] Loot pipeline unavailable.")
+      Dibs.Message("[Dibs DEV] Loot pipeline unavailable.", { chat = false })
     end
     frame:Refresh()
   end)
@@ -1854,9 +1935,7 @@ function Dibs.PlayerUI.Show()
     frame:Refresh()
   end
 
-  local summary = Dibs.PlayerUI.GetSummary()
-  Dibs.Message("Dibs: " .. tostring(summary.balance) .. " available")
-  return summary
+  return Dibs.PlayerUI.GetSummary()
 end
 
 function Dibs.PlayerUI.Toggle(forceShow)

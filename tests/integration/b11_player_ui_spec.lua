@@ -21,6 +21,16 @@ local function containsForbiddenValue(value, forbidden)
 end
 
 describe("B11c Player UI", function()
+  it("keeps the balance in the Player window instead of echoing it to chat", function()
+    local _, dibs = setup()
+    for index = #(_G.__dibsMessages or {}), 1, -1 do _G.__dibsMessages[index] = nil end
+
+    local summary = dibs.PlayerUI.Show()
+
+    assert_not_nil(summary)
+    assert_equal(0, #(_G.__dibsMessages or {}))
+  end)
+
   it("exposes the player views and a diagnostics entry", function()
     local _, dibs = setup()
     local navigation = dibs.PlayerUI.GetNavigation()
@@ -137,7 +147,7 @@ describe("B11c Player UI", function()
     frame:Refresh()
     local balanceOptions
     for _, tableInfo in ipairs(capturedTables) do
-      if tableInfo.columns[1].title == "Balance" then balanceOptions = tableInfo.options end
+      if tableInfo.columns[1].title == "Season allocation" then balanceOptions = tableInfo.options end
     end
     assert_not_nil(balanceOptions)
     assert_equal(false, balanceOptions.allowTableSort)
@@ -340,6 +350,92 @@ describe("B11c Player UI", function()
     assert_false(containsForbiddenValue(view, { "RCLootCouncil - Dibs options", "Officer", "GM", "Developer", "hash", "epoch", "root", "evidence" }))
   end)
 
+  it("shows season allocation, net Dibs use, remaining balance, and fulfilled Pre-Dibs separately", function()
+    local _, dibs = setup({ wow = { playerName = "Tester-Realm", guildMembers = { "Tester-Realm" } } })
+    local season = { id = "season-current", name = "Midnight S1" }
+    dibs.Seasons.GetCurrent = function() return season end
+    dibs.Ledger.GetCanonicalPlayerDibsState = function() return { available = true, balance = 3, availableBalance = 3 } end
+    dibs.Ledger.GetPlayerState = function() return { allocation = 5, balance = 3 } end
+    dibs.Ledger.GetHistory = function()
+      return {
+        { type = "SEASON_ALLOCATION", amount = 5, createdAt = 100 },
+        { type = "DIB_USED", amount = -3, createdAt = 200 },
+        { type = "DIB_REFUNDED", amount = 1, createdAt = 250 },
+      }
+    end
+    dibs.PreDibs.GetActiveRequests = function()
+      return {
+        { requestId = "active-current", playerName = "Tester-Realm", itemName = "Current item", seasonId = "season-current", status = "confirmed", createdAt = 200 },
+        { requestId = "active-old", playerName = "Tester-Realm", itemName = "Old item", seasonId = "season-old", status = "pending", createdAt = 100 },
+      }
+    end
+    dibs.PreDibs.GetHistory = function()
+      return {
+        { requestId = "won-current", playerName = "Tester-Realm", itemName = "Won item", seasonId = "season-current", status = "fulfilled", fulfilledAt = 300 },
+        { requestId = "won-old", playerName = "Tester-Realm", itemName = "Old win", seasonId = "season-old", status = "fulfilled", fulfilledAt = 200 },
+        { requestId = "other-player", playerName = "Other-Realm", itemName = "Private win", seasonId = "season-current", status = "fulfilled", fulfilledAt = 400 },
+      }
+    end
+    dibs.PreDibs.GetAcquisitionsForPlayer = function() return {} end
+
+    local summary = dibs.PlayerUI.GetSummary()
+    assert_equal(5, summary.seasonAllocation)
+    assert_equal(2, summary.seasonUsed)
+    assert_equal(3, summary.balance)
+    assert_equal(1, #summary.activePreDibs)
+    assert_equal("active-current", summary.activePreDibs[1].requestId)
+    assert_equal(1, #summary.wonPreDibs)
+    assert_equal("won-current", summary.wonPreDibs[1].requestId)
+
+    local tables = {}
+    local originalAddTable = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      local grid = originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+      tables[#tables + 1] = { columns = columns, rows = rows, height = height, options = options, grid = grid }
+      return grid
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("my-dibs")
+    local metricTable = tables[1]
+    assert_equal(3, #metricTable.columns)
+    assert_equal("5", metricTable.rows[1][1])
+    assert_equal("2", metricTable.rows[1][2])
+    assert_equal("3", metricTable.rows[1][3])
+    for _, column in ipairs(metricTable.columns) do assert_equal("CENTER", column.align) end
+    local activeTable, wonTable
+    for _, tableInfo in ipairs(tables) do
+      if #tableInfo.columns == 5 and tableInfo.columns[5].action then activeTable = tableInfo end
+      if #tableInfo.columns == 4 and tableInfo.columns[4].title == "Status" then wonTable = tableInfo end
+    end
+    assert_not_nil(activeTable)
+    assert_true(activeTable.height < 170)
+    assert_equal(1, #activeTable.rows)
+    assert_equal("Current item", activeTable.rows[1][2])
+    assert_not_nil(wonTable)
+    assert_true(wonTable.height < 145)
+    assert_equal(1, #wonTable.rows)
+    assert_equal("Won item", wonTable.rows[1][2])
+
+    local shell = frame.dibsAceGUIShell
+    local windowFrame = shell.frame
+    assert_not_nil(windowFrame._scripts.OnSizeChanged)
+    windowFrame._scripts.OnSizeChanged(windowFrame, 900, 620)
+    local wideWidths = {}
+    for index, cell in ipairs(metricTable.grid.children[1].children) do
+      wideWidths[index] = cell._dibsColumnWidth
+    end
+    windowFrame._scripts.OnSizeChanged(windowFrame, 650, 620)
+    local narrowWidths = {}
+    for index, cell in ipairs(metricTable.grid.children[1].children) do
+      narrowWidths[index] = cell._dibsColumnWidth
+    end
+    assert_equal(3, #wideWidths)
+    assert_equal(3, #narrowWidths)
+    assert_true(wideWidths[1] > narrowWidths[1])
+    assert_true(wideWidths[2] > narrowWidths[2])
+    assert_true(wideWidths[3] > narrowWidths[3])
+  end)
+
   it("uses intentional empty states and player-safe readiness explanations", function()
     local _, dibs = setup()
     dibs.PlayerUI.GetSummary = function()
@@ -350,7 +446,8 @@ describe("B11c Player UI", function()
       status = "Blocked", reasonCodes = { COORDINATOR_UNAVAILABLE = true },
     } end
     local view = dibs.PlayerUI.GetViewModel()
-    assert_equal("No active Pre-Dibs.", view.empty.activePreDibs)
+    assert_equal("No active Pre-Dibs this season.", view.empty.activePreDibs)
+    assert_equal("No won Pre-Dibs this season.", view.empty.wonPreDibs)
     assert_equal("No history yet.", view.empty.history)
     assert_equal("Dibs temporarily unavailable", view.status.label)
     assert_equal("Guild Dibs is unavailable right now. Try again later or contact an Officer.", view.status.explanation)

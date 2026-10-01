@@ -167,7 +167,7 @@ describe("B11d Officer dashboard", function()
     local window = dibs.OfficerUI.CreateWindow("overview")
     local bossSection, openButton
     for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
-      if widget.kind == "InlineGroup" and widget.title == "Current boss Pre-Dibs" then bossSection = widget end
+      if widget.kind == "InlineGroup" and widget.title == "Pre-Dibs by boss" then bossSection = widget end
       if widget.kind == "Button" and widget.text == "Open Pre-Dibs" then openButton = widget end
     end
     assert_not_nil(bossSection)
@@ -175,6 +175,69 @@ describe("B11d Officer dashboard", function()
     assert_true(#(bossSection.children or {}) >= 3)
     openButton.callbacks.OnClick(openButton, "OnClick")
     assert_equal("preDibRequests", window.activeTab)
+  end)
+
+  it("shows up to five active Pre-Dibs per boss without requiring an active encounter", function()
+    local dibs = setup()
+    dibs.EncounterJournal.GetActiveEncounter = function() return nil end
+    dibs.EncounterJournal.GetLootCatalog = function()
+      return {
+        { itemID = 280011, encounterID = 901, instanceID = 900, itemName = "Warden Curio", bossName = "Test Warden", instanceName = "Citadel" },
+        { itemID = 280012, encounterID = 902, instanceID = 900, itemName = "Archive Token", bossName = "Archive Keeper", instanceName = "Citadel" },
+      }, { available = true }
+    end
+    local requests = {}
+    for index = 1, 7 do
+      requests[index] = {
+        requestId = "warden-" .. tostring(index), seasonId = 7,
+        status = index == 1 and "pending" or "confirmed", playerName = "Player-" .. tostring(index),
+        itemID = 280011, itemName = "Warden Curio", createdAt = 100 + index,
+      }
+    end
+    requests[8] = {
+      requestId = "archive-1", seasonId = 7, status = "confirmed", playerName = "Player-8",
+      itemID = 280012, itemName = "Archive Token", createdAt = 200,
+    }
+    requests[9] = {
+      requestId = "fulfilled", seasonId = 7, status = "fulfilled", playerName = "Player-9",
+      itemID = 280012, itemName = "Archive Token", createdAt = 300,
+    }
+    dibs.PreDibs.GetHistory = function() return requests end
+
+    local dashboard = dibs.OfficerUI.GetDashboardProjection()
+    assert_equal(2, #dashboard.preDibBossGroups)
+    local warden, archive
+    for _, group in ipairs(dashboard.preDibBossGroups) do
+      if group.encounterName == "Test Warden" then warden = group end
+      if group.encounterName == "Archive Keeper" then archive = group end
+    end
+    assert_not_nil(warden)
+    assert_equal(7, warden.activeRequestCount)
+    assert_equal(5, #warden.rows)
+    assert_equal(2, warden.moreCount)
+    assert_not_nil(archive)
+    assert_equal(1, #archive.rows)
+
+    dibs.OfficerUI.CreateWindow("overview")
+    local bossSection
+    local visibleWardenRows = 0
+    local visibleArchiveRows = 0
+    local inWarden = false
+    local inArchive = false
+    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "InlineGroup" and widget.title == "Pre-Dibs by boss" then bossSection = widget end
+    end
+    assert_not_nil(bossSection)
+    for _, widget in ipairs(bossSection.children or {}) do
+      if widget.kind == "Label" then
+        if widget.text:find("Test Warden", 1, true) then inWarden = true; inArchive = false
+        elseif widget.text:find("Archive Keeper", 1, true) then inArchive = true; inWarden = false
+        elseif inWarden and widget.text:find("Warden Curio", 1, true) then visibleWardenRows = visibleWardenRows + 1
+        elseif inArchive and widget.text:find("Archive Token", 1, true) then visibleArchiveRows = visibleArchiveRows + 1 end
+      end
+    end
+    assert_equal(5, visibleWardenRows)
+    assert_equal(1, visibleArchiveRows)
   end)
 
   it("keeps no-season and degraded states readable", function()

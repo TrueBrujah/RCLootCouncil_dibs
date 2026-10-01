@@ -14,6 +14,12 @@ local function findCategory(categories, key)
   return nil
 end
 
+local function findMenuEntry(entries, text)
+  for _, entry in ipairs(entries or {}) do
+    if entry.text == text then return entry end
+  end
+end
+
 describe("B11e request and eligibility UI", function()
   it("projects bounded officer request rows with readable status and next action", function()
     local _, dibs = setup()
@@ -95,5 +101,29 @@ describe("B11e request and eligibility UI", function()
     assert_true(curio.reason ~= "")
     assert_not_nil(curio.currentState)
     assert_true(curio.editable == true)
+  end)
+
+  it("opens category customization from the summary row and keeps custom actions contextual", function()
+    local _, dibs = setup()
+    local originalAddTable = dibs.AceGUI.AddTable
+    local tables = {}
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      tables[#tables + 1] = { rows = rows, options = options }
+      return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+    end
+    local frame = dibs.OfficerUI.CreateWindow("eligibility")
+    local summaryTable = tables[1]
+    assert_not_nil(summaryTable.options.contextMenu)
+    local customize = findMenuEntry(summaryTable.options.contextMenu(summaryTable.rows[1]), "Customize category")
+    assert_not_nil(customize)
+    customize.callback()
+    assert_true(frame.eligibilityAdvanced)
+
+    local customTable = tables[#tables]
+    local actions = customTable.options.contextMenu(customTable.rows[1])
+    assert_not_nil(findMenuEntry(actions, "Allow"))
+    assert_not_nil(findMenuEntry(actions, "Block"))
+    assert_not_nil(findMenuEntry(actions, "Reset to recommended"))
+    assert_not_nil(findMenuEntry(actions, "View reason"))
   end)
 end)
