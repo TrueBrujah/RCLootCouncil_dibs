@@ -1985,6 +1985,116 @@ end
 
 local getCandidateStatus
 
+local function buildLootFramePreDibIndex(seasonId)
+  local index = {}
+  if not Dibs.GetDB then return index end
+  local db = Dibs.GetDB()
+  local requests = db and db.preDibs and db.preDibs.requests
+  if type(requests) ~= "table" then return index end
+
+  for _, request in ipairs(requests) do
+    local itemID = type(request) == "table" and tonumber(request.itemID) or nil
+    local playerName = type(request) == "table" and request.playerName or nil
+    if itemID and itemID > 0 and request.status == "confirmed" then
+      local itemRequests = index[itemID]
+      if not itemRequests then
+        itemRequests = { requests = {}, names = {}, coloredNames = {}, seen = {} }
+        index[itemID] = itemRequests
+      end
+      table.insert(itemRequests.requests, request)
+      if seasonId and request.seasonId == seasonId and playerName and playerName ~= "" then
+        local playerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+          and Dibs.Permissions.CanonicalPlayerId(playerName)
+        local nameKey = playerId or string.lower(tostring(playerName))
+        if not itemRequests.seen[nameKey] then
+          itemRequests.seen[nameKey] = true
+          local displayName = tostring(playerName)
+          table.insert(itemRequests.names, displayName)
+          local classFileName = request.classFileName
+          if not classFileName and Dibs.Identity and Dibs.Identity.ResolveRosterMember then
+            local ok, member = pcall(Dibs.Identity.ResolveRosterMember, playerName)
+            if ok and type(member) == "table" and member.status == "RESOLVED" then
+              classFileName = member.classFileName
+            end
+          end
+          local classColor = _G.RAID_CLASS_COLORS and classFileName and _G.RAID_CLASS_COLORS[classFileName]
+          local colorCode = classColor and classColor.colorStr or "ffffffff"
+          table.insert(itemRequests.coloredNames, "|c" .. colorCode .. displayName .. "|r")
+        end
+      end
+    end
+  end
+  return index
+end
+
+local function samePreDibPlayer(first, second)
+  local canonicalize = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+  local firstId = canonicalize and canonicalize(first)
+  local secondId = canonicalize and canonicalize(second)
+  if firstId and secondId then return firstId == secondId end
+  return string.lower(tostring(first or "")) == string.lower(tostring(second or ""))
+end
+
+local function applyPreDibLabels(lootFrame, entries, preDibIndex)
+  local container = lootFrame.frame and lootFrame.frame.content
+  if type(entries) ~= "table" or #entries == 0 or not container then return end
+
+  local totalHeight = 0
+  local previousEntry
+  for index, entry in ipairs(entries) do
+    local row = type(entry) == "table" and entry.frame or nil
+    if row and type(row.GetHeight) == "function" and type(row.SetHeight) == "function" then
+      local baseHeight = entry.__dibsBaseHeight
+      if not baseHeight then
+        baseHeight = tonumber(row:GetHeight()) or 0
+        entry.__dibsBaseHeight = baseHeight
+      end
+
+      local itemID = parseItemID(entry.item and entry.item.link)
+      local itemRequests = itemID and preDibIndex[itemID]
+      local names = itemRequests and itemRequests.names or nil
+      local labelHeight = 0
+      if names and #names > 0 and type(row.CreateFontString) == "function" then
+        local label = entry.__dibsPreDibLabel
+        if not label then
+          label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+          entry.__dibsPreDibLabel = label
+        end
+        if label then
+          local rowWidth = type(row.GetWidth) == "function" and tonumber(row:GetWidth()) or tonumber(entry.width)
+          label:SetWidth(math.max(1, (rowWidth or 180) - 56))
+          label:SetWordWrap(true)
+          label:SetText("|cffffd100|||||| |rPre-Dib: " .. table.concat(itemRequests.coloredNames or names, ", "))
+          label:SetTextColor(1, 1, 1)
+          labelHeight = type(label.GetStringHeight) == "function" and tonumber(label:GetStringHeight()) or 16
+          if not labelHeight or labelHeight < 1 then labelHeight = 16 end
+          label:SetHeight(labelHeight)
+          if type(label.ClearAllPoints) == "function" then label:ClearAllPoints() end
+          label:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 12, 4)
+          label:Show()
+        end
+      elseif entry.__dibsPreDibLabel then
+        entry.__dibsPreDibLabel:Hide()
+      end
+
+      local rowHeight = baseHeight + (labelHeight > 0 and labelHeight + 8 or 0)
+      row:SetHeight(rowHeight)
+      totalHeight = totalHeight + rowHeight
+      if type(row.ClearAllPoints) == "function" then row:ClearAllPoints() end
+      if index == 1 then
+        row:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+      elseif previousEntry and previousEntry.frame then
+        row:SetPoint("TOPLEFT", previousEntry.frame, "BOTTOMLEFT", 0, 0)
+      end
+      previousEntry = entry
+    end
+  end
+
+  if type(lootFrame.frame.SetHeight) == "function" then
+    lootFrame.frame:SetHeight(totalHeight)
+  end
+end
+
 local function applyDibsButtonState(lootFrame)
   if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("loot") end
   if type(lootFrame) ~= "table" then return end
@@ -1995,6 +2105,7 @@ local function applyDibsButtonState(lootFrame)
 
   local playerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
   local seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
+  local preDibIndex = next(entries) ~= nil and buildLootFramePreDibIndex(seasonId) or {}
   local balanceProjection
   if next(entries) ~= nil and Dibs.Ledger and type(Dibs.Ledger.GetCanonicalPlayerDibsState) == "function" then
     local ok, projection = pcall(Dibs.Ledger.GetCanonicalPlayerDibsState, seasonId, playerName)
@@ -2006,15 +2117,19 @@ local function applyDibsButtonState(lootFrame)
     if type(entry) == "table" and type(entry.buttons) == "table" then
       local itemID = parseItemID(entry.item and entry.item.link)
       local responseType = entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
-      local status = getCandidateStatus(playerName, itemID, responseType, { seasonId = seasonId }, balanceProjection)
       for _, responseButton in ipairs(entry.buttons) do
         if isNativeDibResponseButton(responseButton) then
+          local status = getCandidateStatus(playerName, itemID, responseType, {
+            seasonId = seasonId,
+            confirmedPreDibsByItem = preDibIndex,
+          }, balanceProjection)
           applyDibEligibilityToNativeButton(responseButton, status.canUseDib)
           installDibsTooltip(responseButton, entry)
         end
       end
     end
   end
+  applyPreDibLabels(lootFrame, entries, preDibIndex)
 end
 
 local function installLootFrameHook()
@@ -2807,7 +2922,17 @@ getCandidateStatus = function(playerName, itemID, responseType, options, balance
   end
   local publicPreDibsEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() == true
   local preDib, hasPriority
-  if targetItem and Dibs.PreDibs and type(Dibs.PreDibs.GetCandidateRequestSummary) == "function" then
+  local indexedPreDibs = options.confirmedPreDibsByItem and options.confirmedPreDibsByItem[targetItem]
+  if type(options.confirmedPreDibsByItem) == "table" then
+    if type(indexedPreDibs) == "table" then
+      for _, request in ipairs(indexedPreDibs.requests) do
+        hasPriority = true
+        if not preDib and request.seasonId == seasonId and samePreDibPlayer(request.playerName, name) then
+          preDib = request
+        end
+      end
+    end
+  elseif targetItem and Dibs.PreDibs and type(Dibs.PreDibs.GetCandidateRequestSummary) == "function" then
     preDib, hasPriority = Dibs.PreDibs.GetCandidateRequestSummary(name, targetItem, seasonId)
   elseif targetItem and Dibs.PreDibs then
     preDib = Dibs.PreDibs.GetConfirmedRequestForPlayer(name, targetItem)

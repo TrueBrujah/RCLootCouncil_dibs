@@ -95,7 +95,7 @@ local function shortName(value)
   return string.lower(display)
 end
 
-local function rosterMember(name, rankIndex)
+local function rosterMember(name, rankIndex, className, classFileName)
   local key, display = parseNameRealm(name)
   if not key then
     -- WoW may return an unqualified name for a same-realm roster member.
@@ -109,6 +109,8 @@ local function rosterMember(name, rankIndex)
     memberKey = key,
     displayName = display,
     rankIndex = rankIndex,
+    className = className,
+    classFileName = classFileName,
     -- This is a current-roster observation only. Governance remains GM-only in
     -- B02a; no local SavedVariables rank setting can alter this result.
     role = rankIndex == 0 and "gm" or (rankIndex and rankIndex <= 1 and "officer" or "player"),
@@ -151,9 +153,9 @@ function Identity.RefreshRoster()
 
   local members, shortNames, displayNames = {}, {}, {}
   for index = 1, tonumber(count) or 0 do
-    local success, name, _, rankIndex = pcall(GetGuildRosterInfo, index)
+    local success, name, _, rankIndex, _, className, _, _, _, _, _, classFileName = pcall(GetGuildRosterInfo, index)
     if success and name then
-      local member = rosterMember(name, rankIndex)
+      local member = rosterMember(name, rankIndex, className, classFileName)
       if member then
         members[member.memberKey] = member
         local short = string.lower(member.displayName:match("^([^%-]+)"))
@@ -215,6 +217,8 @@ function Identity.ResolveRosterMember(value)
       memberKey = member.memberKey,
       displayName = member.displayName,
       rankIndex = member.rankIndex,
+      className = member.className,
+      classFileName = member.classFileName,
       role = member.role,
       rosterGeneration = state.generation,
     }
@@ -231,6 +235,8 @@ function Identity.ResolveRosterMember(value)
     memberKey = member.memberKey,
     displayName = member.displayName,
     rankIndex = member.rankIndex,
+    className = member.className,
+    classFileName = member.classFileName,
     role = member.role,
     rosterGeneration = state.generation,
   }
