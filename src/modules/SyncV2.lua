@@ -662,7 +662,14 @@ function Sync.Send(message, channel, target)
   if channel ~= "GUILD" and channel ~= "WHISPER" and not (isChannelTest and CHANNEL_TEST_CHANNELS[channel]) then
     return false, "INVALID_SYNC_CHANNEL"
   end
-  if channel == "WHISPER" and (not trim(target) or #target > 96) then return false, "INVALID_WHISPER_TARGET" end
+  if channel == "WHISPER" then
+    local targetName = trim(target)
+    if not targetName or targetName == "" or #target > 96 then return false, "INVALID_WHISPER_TARGET" end
+    local recipient, targetReason = member(targetName)
+    if not recipient then return false, targetReason end
+    -- Display realms may contain spaces; addon whispers require a qualified wire name.
+    target = recipient.displayName:gsub("%s+", "")
+  end
   if isChannelTest and channel == "CHANNEL"
     and (not finiteInteger(target) or tonumber(target) < 1) then return false, "INVALID_CUSTOM_CHANNEL_ID" end
   Sync.TraceOutgoing(channel, target, message.type)
@@ -1186,9 +1193,12 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   for offset = 1, #encoded, 480 do chunks[#chunks + 1] = encoded:sub(offset, offset + 479) end
   if #chunks < 1 or #chunks > MAX_CHUNKS then return false, "PAYLOAD_TOO_LARGE" end
   local rawHash = hash(encoded)
-  local sent = Sync.Send({ type = "TRANSFER_BEGIN", transferId = transferId, entityType = entityType, entityId = entityId, revision = revision, contentHash = contentHash, payloadHash = rawHash, chunkCount = #chunks }, channel, recipient)
-  if not sent then return false, "SYNC_UNAVAILABLE" end
-  for index, chunk in ipairs(chunks) do if not Sync.Send({ type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, channel, recipient) then return false, "SYNC_UNAVAILABLE" end end
+  local sent, reason = Sync.Send({ type = "TRANSFER_BEGIN", transferId = transferId, entityType = entityType, entityId = entityId, revision = revision, contentHash = contentHash, payloadHash = rawHash, chunkCount = #chunks }, channel, recipient)
+  if not sent then return false, reason end
+  for index, chunk in ipairs(chunks) do
+    sent, reason = Sync.Send({ type = "TRANSFER_CHUNK", transferId = transferId, chunkIndex = index, chunk = chunk }, channel, recipient)
+    if not sent then return false, reason end
+  end
   return Sync.Send({ type = "TRANSFER_END", transferId = transferId, entityType = entityType, entityId = entityId,
     revision = revision, contentHash = contentHash }, channel, recipient)
 end

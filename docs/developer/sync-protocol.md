@@ -55,6 +55,16 @@ award proposals sent to the coordinator, recovery packages, orphaned evidence,
 and explicit sync probes. These exceptions preserve the existing ownership or
 recipient checks; they do not carry shared revision state.
 
+Before queuing a V2 `WHISPER`, the transport resolves the target against the
+current guild roster and sends the full `Name-Realm` address, with realm spaces
+removed. Short names are accepted only when unambiguous; unknown or ambiguous
+targets return an explicit identity error without sending. Display names and
+persisted member keys are not rewritten by this transport normalization.
+This applies to every private transfer frame, response, saved Vault retry, and
+older-peer fallback. Detail transfers preserve the exact send failure reason
+and stop at the first rejected frame rather than reporting every failure as
+`SYNC_UNAVAILABLE`.
+
 No coordinator or canonical Dibs consumption is allowed while the client is
 `SYNC_BEHIND`, `COORDINATOR_UNAVAILABLE`, or `RECOVERY_PENDING`. An award in
 those states is proposal evidence with `PENDING_RECONCILIATION`, not a debit.

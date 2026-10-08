@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Resolve V2 addon whisper recipients against the guild roster and send full
+  `Name-Realm` addresses, including automatic Vault retries. Normalize realm
+  spaces and repeated realm suffixes at the transport boundary, and reject
+  unknown or ambiguous targets before queuing a message. Persisted identities,
+  synchronization permissions, and guild-channel traffic remain unchanged.
+- Preserve specific send failure reasons for private detail transfers instead
+  of masking recipient identity errors as synchronization unavailability.
+
 ## 0.8.1 - WoW 12.1.0 and 12.1.5 compatibility - 2026-09-29
 
 - Advertise both WoW interface versions `120100` and `120105` so the addon is
