@@ -40,6 +40,169 @@ local function transfer(dibs, payload, opts)
 end
 
 describe("B04 V2 transport", function()
+  it("qualifies short whisper targets with the recipient's roster realm", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Officer-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 1 },
+    } })
+    local sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE", requestId = "short-target" }, "WHISPER", "Officer")
+    assert_true(sent, tostring(reason))
+    assert_equal("Officer-OtherRealm", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
+  end)
+
+  it("removes realm spaces from whisper addresses without changing roster identities", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Officer-Area 52" },
+      guildRankIndices = { [1] = 0, [2] = 1 },
+    } })
+    local sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE", requestId = "realm-spaces" }, "WHISPER", "Officer-Area 52")
+    assert_true(sent, tostring(reason))
+    assert_equal("Officer-Area52", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
+    assert_equal("Officer-Area 52", dibs.Identity.ResolveRosterMember("Officer").displayName)
+  end)
+
+  it("qualifies saved short targets during automatic Vault retries", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Owner-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 3 },
+    } })
+    dibs.Sync.GetProtocolState()
+    local pending = { target = "Owner", revision = 1, contentHash = "vault-hash", attempts = 1 }
+    dibs.GetDB().sync.v2.vaultPending["saved-vault"] = pending
+    assert_true(dibs.Sync.OnLifecycle("HEARTBEAT"))
+    local retry
+    for _, sent in ipairs(dibs.Ace3.libs.comm.sent) do
+      local message = dibs.Ace3.Deserialize(sent.payload)
+      if message.type == "VAULT_FETCH" then retry = sent end
+    end
+    assert_not_nil(retry)
+    assert_equal("WHISPER", retry.channel)
+    assert_equal("Owner-OtherRealm", retry.target)
+    assert_equal(2, pending.attempts)
+    assert_equal("Owner", pending.target)
+  end)
+
+  it("uses the normalized roster display for repeated realm suffixes in whisper targets", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Officer-Zul'jin-Zul'jin" },
+      guildRankIndices = { [1] = 0, [2] = 1 },
+    } })
+    local sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE", requestId = "repeated-realm" },
+      "WHISPER", "Officer-Zul'jin-Zul'jin")
+    assert_true(sent, tostring(reason))
+    assert_equal("Officer-Zul'jin", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
+  end)
+
+  it("rejects ambiguous and unknown whisper targets before queuing messages", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Officer-Realm", "Officer-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 1 },
+    } })
+    local sentBefore = #dibs.Ace3.libs.comm.sent
+    local sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE", requestId = "ambiguous" }, "WHISPER", "Officer")
+    assert_false(sent)
+    assert_equal("AMBIGUOUS_IDENTITY", reason)
+    sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE", requestId = "unknown" }, "WHISPER", "Absent")
+    assert_false(sent)
+    assert_equal("UNKNOWN_ROSTER_MEMBER", reason)
+    assert_equal(sentBefore, #dibs.Ace3.libs.comm.sent)
+    sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE", requestId = "qualified" }, "WHISPER", "Officer-OtherRealm")
+    assert_true(sent, tostring(reason))
+    assert_equal("Officer-OtherRealm", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
+  end)
+
+  it("qualifies every frame of every private detail transfer", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Owner-Area 52" },
+      guildRankIndices = { [1] = 0, [2] = 1 },
+    } })
+    local payload = { data = string.rep("x", 1000) }
+    local serialize = dibs.Ace3.Serialize
+    dibs.Ace3.Serialize = function(value)
+      if value == payload then return payload.data end
+      return serialize(value)
+    end
+    for _, entityType in ipairs({ "PREDIB_REQUEST", "VAULT_DETAIL", "LEGACY_RECOVERY_PACKAGE", "AUTHORITY_ORPHAN", "AWARD_PROPOSAL" }) do
+      local before = #dibs.Ace3.libs.comm.sent
+      local sent, reason = dibs.Sync.SendDetail(entityType, "entity", 1, "hash",
+        payload, "Owner")
+      assert_true(sent, tostring(reason))
+      local messages = dibs.Ace3.libs.comm.sent
+      assert_equal("TRANSFER_BEGIN", dibs.Ace3.Deserialize(messages[before + 1].payload).type)
+      assert_equal("TRANSFER_END", dibs.Ace3.Deserialize(messages[#messages].payload).type)
+      local chunks = 0
+      for index = before + 1, #messages do
+        assert_equal("WHISPER", messages[index].channel)
+        assert_equal("Owner-Area52", messages[index].target)
+        if dibs.Ace3.Deserialize(messages[index].payload).type == "TRANSFER_CHUNK" then chunks = chunks + 1 end
+      end
+      assert_true(chunks > 1)
+    end
+  end)
+
+  it("qualifies private responses to a short-name sender from another realm", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Officer-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 1 },
+    } })
+    local probe = remote(dibs, { type = "SYNC_PROBE", requestId = "remote-short" }, "Officer-OtherRealm")
+    local accepted, reason = dibs.Sync.OnAddonMessage("DIBS", dibs.Ace3.Serialize(probe), "WHISPER", "Officer")
+    assert_true(accepted, tostring(reason))
+    local sent = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
+    assert_equal("Officer-OtherRealm", sent.target)
+    assert_equal("SYNC_PROBE_RESPONSE", dibs.Ace3.Deserialize(sent.payload).type)
+  end)
+
+  it("qualifies private fallback transfers for older guild-detail peers", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Owner-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 1 },
+    } })
+    local hello = remote(dibs, { type = "HELLO" }, "Owner-OtherRealm")
+    hello.protocol.capabilities.guildDetail = nil
+    assert_true(dibs.Sync.Receive(hello, "Owner-OtherRealm"))
+    local before = #dibs.Ace3.libs.comm.sent
+    assert_true(dibs.Sync.SendDetail("AWARD_COMMIT", "1:1", 1, "hash", {}, "Owner"))
+    for index = before + 1, #dibs.Ace3.libs.comm.sent do
+      assert_equal("WHISPER", dibs.Ace3.libs.comm.sent[index].channel)
+      assert_equal("Owner-OtherRealm", dibs.Ace3.libs.comm.sent[index].target)
+    end
+  end)
+
+  it("preserves target identity errors from private transfers without queuing frames", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Owner-Realm", "Owner-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 1 },
+    } })
+    local before = #dibs.Ace3.libs.comm.sent
+    for _, case in ipairs({
+      { target = "Owner", reason = "AMBIGUOUS_IDENTITY" },
+      { target = "Absent", reason = "UNKNOWN_ROSTER_MEMBER" },
+      { target = "", reason = "INVALID_WHISPER_TARGET" },
+      { target = "   ", reason = "INVALID_WHISPER_TARGET" },
+    }) do
+      local sent, reason = dibs.Sync.SendDetail("PREDIB_REQUEST", "entity", 1, "hash", {}, case.target)
+      assert_false(sent)
+      assert_equal(case.reason, reason)
+    end
+    assert_equal(before, #dibs.Ace3.libs.comm.sent)
+  end)
+
+  it("preserves a chunk send error and stops the transfer immediately", function()
+    local dibs = load()
+    local send = dibs.Sync.Send
+    dibs.Sync.Send = function(message, channel, target)
+      if message.type == "TRANSFER_CHUNK" then return false, "UNKNOWN_ROSTER_MEMBER" end
+      return send(message, channel, target)
+    end
+    local before = #dibs.Ace3.libs.comm.sent
+    local sent, reason = dibs.Sync.SendDetail("PREDIB_REQUEST", "entity", 1, "hash", {}, "Owner-Realm")
+    assert_false(sent)
+    assert_equal("UNKNOWN_ROSTER_MEMBER", reason)
+    assert_equal(before + 1, #dibs.Ace3.libs.comm.sent)
+    assert_equal("TRANSFER_BEGIN", dibs.Ace3.Deserialize(dibs.Ace3.libs.comm.sent[before + 1].payload).type)
+  end)
+
   it("sends bounded GUILD digests and fetches missing detail by WHISPER", function()
     local dibs = load(); local payload = request(dibs, 2, "cancelled")
     local digest = remote(dibs, { type = "DIGEST", entityType = "PREDIB_INDEX", entityId = "current", revision = 1, contentHash = "index", index = { { requestId = payload.requestId, revision = payload.revision, contentHash = dibs.Sync.CalculateRequestHash(payload), terminal = true } } }, "Officer-Realm")

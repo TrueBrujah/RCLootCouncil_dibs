@@ -21,6 +21,23 @@ describe("Governance bootstrap and identity", function()
     assert_equal("Player-1-TESTER", disagreement.guidWitness)
   end)
 
+  it("includes class metadata in the cached roster identity", function()
+    local dibs = load({ guildMembers = { "Tester-Realm" }, guildRankIndices = { [1] = 0 } })
+    local originalGetGuildRosterInfo = _G.GetGuildRosterInfo
+    _G.GetGuildRosterInfo = function(index)
+      local name, rankName, rankIndex = originalGetGuildRosterInfo(index)
+      return name, rankName, rankIndex, 80, "Shaman", nil, nil, nil, true, nil, "SHAMAN"
+    end
+
+    dibs.Identity.InvalidateRoster("CLASS_CACHE_TEST")
+    local member = dibs.Identity.ResolveRosterMember("Tester-Realm")
+    _G.GetGuildRosterInfo = originalGetGuildRosterInfo
+
+    assert_equal("RESOLVED", member.status)
+    assert_equal("Shaman", member.className)
+    assert_equal("SHAMAN", member.classFileName)
+  end)
+
   it("collapses repeated realm suffixes in canonical identity and display names", function()
     local dibs = load({ guildMembers = { "Tester-Realm", "Manu-Zul'jin-Zul'jin-Zul'jin" },
       guildRankIndices = { [1] = 0, [2] = 3 } })

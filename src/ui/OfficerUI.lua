@@ -4425,7 +4425,7 @@ local function createAceWindow(initialRoute)
               item = 275658,
               winner = Dibs.GetPlayerName and Dibs.GetPlayerName() or "",
               response = "DIB",
-              status = "test",
+              status = "finalized",
               sessionIdentity = "setup-assistant-ui",
             }, { allowPlayer = true })
           end

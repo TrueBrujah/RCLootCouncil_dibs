@@ -706,6 +706,109 @@ describe("RCLootCouncil DIB response projection", function()
     dibs.Sync.GetPendingAwardReservations = originalRemoteReservations
   end)
 
+  it("shows confirmed Pre-Dib names in wrapped loot rows from one cached scan", function()
+    local playerName = "Tester-Realm"
+    local lootFrame = { EntryManager = { entries = {} } }
+    function lootFrame:Update() end
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.modules = { RCLootFrame = lootFrame }
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = {
+      playerName = playerName, guildLeader = true, guildMembers = { playerName }, guildRankIndices = { [1] = 0 },
+    } })
+    lootFrame.frame = _G.CreateFrame("Frame")
+    lootFrame.frame.content = _G.CreateFrame("Frame")
+    lootFrame.frame:SetHeight(140)
+    local originalResolveRosterMember = dibs.Identity.ResolveRosterMember
+    local originalClassColors = _G.RAID_CLASS_COLORS
+    local classByPlayer = {
+      ["Mirael-Dalaran"] = "SHAMAN",
+      ["Thandor-Durotan"] = "PRIEST",
+      ["Elisif-Zuljin"] = "WARRIOR",
+    }
+    dibs.Identity.ResolveRosterMember = function(name)
+      return { status = "RESOLVED", classFileName = classByPlayer[name] }
+    end
+    _G.RAID_CLASS_COLORS = {
+      SHAMAN = { colorStr = "ff0070de" },
+      PRIEST = { colorStr = "ffffffff" },
+      WARRIOR = { colorStr = "ffc79c6e" },
+    }
+    local seasonId = dibs.GetCurrentSeasonId()
+    local requests = {
+      { playerName = "Mirael-Dalaran", itemID = 280001, seasonId = seasonId, status = "confirmed" },
+      { playerName = "Thandor-Durotan", itemID = 280001, seasonId = seasonId, status = "confirmed" },
+      { playerName = "Elisif-Zuljin", itemID = 280001, seasonId = seasonId, status = "confirmed" },
+      { playerName = "Pending-Realm", itemID = 280001, seasonId = seasonId, status = "pending" },
+      { playerName = "Old-Realm", itemID = 280001, seasonId = "old-season", status = "confirmed" },
+    }
+    dibs.GetDB().preDibs.requests = requests
+
+    local entries = {}
+    local nativeDibButton = _G.CreateFrame("Button")
+    nativeDibButton:SetText("Dib")
+    nativeDibButton:Enable()
+    for index, itemID in ipairs({ 280001, 280002 }) do
+      local row = _G.CreateFrame("Frame")
+      row:SetWidth(240)
+      row:SetHeight(70)
+      local entry = {
+        frame = row,
+        width = 240,
+        item = { link = string.format("|Hitem:%d|h[Test]|h", itemID), typeCode = "INVTYPE_HEAD" },
+        buttons = index == 1 and { nativeDibButton } or {},
+      }
+      function row:CreateFontString()
+        local label = {
+          SetWidth = function(self, width) self.width = width end,
+          SetWordWrap = function() end,
+          SetText = function(self, value) self.text = value end,
+          SetTextColor = function() end,
+          SetHeight = function(self, height) self.height = height end,
+          GetStringHeight = function(self)
+            return math.max(14, math.ceil(#(self.text or "") * 7 / self.width) * 14)
+          end,
+          SetPoint = function() end,
+          ClearAllPoints = function() end,
+          Show = function(self) self.shown = true end,
+          Hide = function(self) self.shown = false end,
+        }
+        return label
+      end
+      entries[index] = entry
+    end
+    lootFrame.EntryManager.entries = entries
+
+    local requestScans = 0
+    local originalIpairs = ipairs
+    ipairs = function(target)
+      if target == requests then requestScans = requestScans + 1 end
+      return originalIpairs(target)
+    end
+    local ok, err = pcall(function()
+      for _, callback in ipairs(lootFrame.__secureHooks.Update or {}) do callback(lootFrame) end
+    end)
+    ipairs = originalIpairs
+    dibs.Identity.ResolveRosterMember = originalResolveRosterMember
+    _G.RAID_CLASS_COLORS = originalClassColors
+
+    assert_true(ok, tostring(err))
+    assert_equal(1, requestScans)
+    local label = entries[1].__dibsPreDibLabel
+    assert_not_nil(label)
+    assert_true(label.shown)
+    assert_equal("|cffffd100|||||| |rPre-Dib: ", label.text:sub(1, 28))
+    assert_true(label.text:find("|cff0070deMirael-Dalaran|r", 1, true) ~= nil)
+    assert_true(label.text:find("|cffffffffThandor-Durotan|r", 1, true) ~= nil)
+    assert_true(label.text:find("|cffc79c6eElisif-Zuljin|r", 1, true) ~= nil)
+    assert_true(label.height > 14)
+    assert_false(entries[2].__dibsPreDibLabel ~= nil)
+    assert_equal(70 + label.height + 8, entries[1].frame:GetHeight())
+    assert_equal(70, entries[2].frame:GetHeight())
+    assert_equal(140 + label.height + 8, lootFrame.frame:GetHeight())
+    assert_equal(entries[1].frame, entries[2].frame._point[2])
+    assert_false(nativeDibButton:IsEnabled())
+  end)
+
   it("does not repeatedly remove a wildcard legacy DIB value", function()
     local profile = {
       buttons = {
