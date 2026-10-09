@@ -145,7 +145,7 @@ Category: `ledger` | Module: `RCLootCouncil` | Audience: developer, gm, officer
 
 **English:** Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
-Source: `src/integrations/RCLootCouncil.lua:3504` (`Dibs.RCLootCouncil.GetHistoryRows`)
+Source: `src/integrations/RCLootCouncil.lua:3629` (`Dibs.RCLootCouncil.GetHistoryRows`)
 
 ## RCLootCouncil response mapping (`rclootcouncil.response.mapping`)
 

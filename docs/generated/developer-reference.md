@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Developer Documentation Reference
 
-Addon version: 0.8.2
+Addon version: 0.8.3
 
 ## Guild Ledger status
 
@@ -223,7 +223,7 @@ Source: [src/modules/ProtectedActions.lua:181](../../src/modules/ProtectedAction
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncil.lua:3504](../../src/integrations/RCLootCouncil.lua#L3504) - `Dibs.RCLootCouncil.GetHistoryRows`
+Source: [src/integrations/RCLootCouncil.lua:3629](../../src/integrations/RCLootCouncil.lua#L3629) - `Dibs.RCLootCouncil.GetHistoryRows`
 
 ## RCLootCouncil response mapping
 

@@ -11,7 +11,7 @@ For the repeatable pre-release, approval, beta, and stable release checklist, se
 3. After both succeed, it tags that exact commit as `v<VERSION>-beta.<RUN_NUMBER>` and pushes the tag.
 4. CurseForge's webhook packages the tag as a Beta. The tagged release workflow also creates a prerelease on GitHub.
 
-Examples: `v0.8.2-beta.1` = CurseForge Beta, `v0.8.2-beta.2` = CurseForge Beta, and `v0.8.2` = CurseForge Release. A failed build or test does not create a tag. A rerun refuses to reuse an existing tag; push a new commit to get a new run number.
+Examples: `v0.8.3-beta.1` = CurseForge Beta, `v0.8.3-beta.2` = CurseForge Beta, and `v0.8.3` = CurseForge Release. A failed build or test does not create a tag. A rerun refuses to reuse an existing tag; push a new commit to get a new run number.
 
 Automatic beta and `main` package workflows run only when `src/**` or the root `.pkgmeta` changes. Documentation-only and workflow-only pushes do not create a beta. The package workflow can still be started manually or reused by another workflow.
 
@@ -26,8 +26,8 @@ The tag workflow uses a GitHub App installation token so the tag push triggers t
 3. Create and push the stable tag explicitly, for example:
 
    ```sh
-   git tag -a v0.8.2 -m "RCLootCouncil_dibs 0.8.2"
-   git push origin v0.8.2
+   git tag -a v0.8.3 -m "RCLootCouncil_dibs 0.8.3"
+   git push origin v0.8.3
    ```
 
 4. The tagged release workflow creates a normal GitHub Release and attaches the package ZIP and checksum. CurseForge's webhook packages the tag as a Release.

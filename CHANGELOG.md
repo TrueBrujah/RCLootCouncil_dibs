@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.3 - Guild whisper addressing and Pre-Dib loot rows - 2026-10-08
 
 - Resolve V2 addon whisper recipients against the guild roster and send full
   `Name-Realm` addresses, including automatic Vault retries. Normalize realm
@@ -9,6 +9,8 @@
   synchronization permissions, and guild-channel traffic remain unchanged.
 - Preserve specific send failure reasons for private detail transfers instead
   of masking recipient identity errors as synchronization unavailability.
+- Show confirmed Pre-Dibs in RCLootCouncil loot rows and invalidate cached
+  projections when request state changes.
 
 ## 0.8.2 - RCLootCouncil button and token template fixes - 2026-10-01
 
