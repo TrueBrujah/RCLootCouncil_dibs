@@ -17,9 +17,17 @@ describe("Core API contract", function()
 
     local setRank = dibs.CoreAPI.setRankAllocation({ seasonId = season.id, rankIndex = 1, allocation = 3, rankName = "Officer" })
     assert_equal(3, setRank.allocation)
+    assert_true(setRank.enabled)
 
     local getRank = dibs.CoreAPI.getRankAllocation({ seasonId = season.id, rankIndex = 1 })
     assert_equal(3, getRank.allocation)
+    assert_true(getRank.enabled)
+    setRank = dibs.CoreAPI.setRankAllocation({
+      seasonId = season.id, rankIndex = 1, allocation = 3, rankName = "Officer", enabled = false,
+    })
+    assert_false(setRank.enabled)
+    getRank = dibs.CoreAPI.getRankAllocation({ seasonId = season.id, rankIndex = 1 })
+    assert_false(getRank.enabled)
 
     local txId = "tx-contract-001"
     local append = dibs.CoreAPI.appendTransaction({

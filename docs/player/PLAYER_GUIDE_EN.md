@@ -38,9 +38,9 @@ loot voting and award finalization.
 ## Guild Loot Rules
 
 On DIBS 0.8.x, the Guild Master explicitly adopts the guild's Loot Rules and
-publishes later changes. Officers consume the published snapshot read-only;
-local legacy values are not guild authority. Raid Readiness reports one of
-these states:
+publishes later changes. Verified Officers can edit a local draft and apply the
+Dibs preset, but only the GM can adopt or publish guild-wide rules. Local legacy
+values are not guild authority. Raid Readiness reports one of these states:
 
 - `GUILD_LOOT_RULES_READY`: this client has a valid published snapshot;
 - `LOCAL_LEGACY_ONLY`: local rules remain a pre-adoption fallback, not a shared

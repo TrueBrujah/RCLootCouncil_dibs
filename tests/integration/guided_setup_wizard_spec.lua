@@ -15,9 +15,10 @@ local function stepById(status, id)
   end
 end
 
-local function publishRule(dibs, seasonId, rankIndex, allocation)
+local function publishRule(dibs, seasonId, rankIndex, allocation, enabled)
   local result = dibs.ProtectedActions.Execute("rank.set", nil, {
     seasonId = seasonId, rankIndex = rankIndex, rankName = "Rank " .. rankIndex, allocation = allocation,
+    enabled = enabled,
   })
   assert_true(result.ok, tostring(result.diagnostic))
 end
@@ -286,6 +287,16 @@ describe("Dibs.Wizard status derivation", function()
     _G.GetNumGuildMembers = function() return 0 end
     assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
+  end)
+
+  it("does not warn when Dibs allocation is disabled for every current rank", function()
+    local dibs, season = configuredGuild()
+    for _, rankIndex in ipairs({ 0, 1, 3 }) do
+      publishRule(dibs, season.id, rankIndex, 0, false)
+    end
+    local step = stepById(dibs.Wizard.GetStatus(), "allocationReconciliation")
+    assert_equal("OPTIONAL", step.status)
+    assert_true(step.summary:find("disabled", 1, true) ~= nil)
   end)
 
   it("distinguishes healthy, unavailable, behind, and unknown Sync states", function()

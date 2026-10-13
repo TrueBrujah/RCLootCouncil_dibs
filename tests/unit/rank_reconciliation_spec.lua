@@ -13,9 +13,9 @@ local function activateV2(wow)
   return dibs
 end
 
-local function setRule(dibs, seasonId, rankIndex, rankName, allocation)
+local function setRule(dibs, seasonId, rankIndex, rankName, allocation, enabled)
   local result = dibs.ProtectedActions.Execute("rank.set", nil, {
-    seasonId = seasonId, rankIndex = rankIndex, rankName = rankName, allocation = allocation,
+    seasonId = seasonId, rankIndex = rankIndex, rankName = rankName, allocation = allocation, enabled = enabled,
   })
   assert_true(result.ok, tostring(result.diagnostic))
 end
@@ -98,6 +98,36 @@ describe("Rank allocation reconciliation", function()
     assert_equal(-1, alice.difference)
     assert_equal("KEEP_GRANTED", alice.behavior)
     assert_equal("SURPLUS", alice.status)
+  end)
+
+  it("excludes disabled ranks from reconciliation without changing existing allocations", function()
+    local dibs = activateV2({
+      guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 },
+    })
+    local seasonId = dibs.GetCurrentSeasonId()
+    setRule(dibs, seasonId, 0, "Guild Master", 1)
+    setRule(dibs, seasonId, 3, "Member", 3)
+    dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Existing allocation", {
+      action = "rank.reconcile", actor = "Tester-Realm",
+    })
+    assert_equal(1, dibs.Ledger.GetPlayerState("Alice-Realm", seasonId).allocation)
+
+    setRule(dibs, seasonId, 3, "Member", 3, false)
+    assert_equal(false, dibs.RankRules.GetRankAllocation(seasonId, 3).enabled)
+    assert_equal(0, dibs.RankRules.GetAllocationForRank(seasonId, 3))
+    local rows = dibs.RankRules.GetAllocationReconciliation(seasonId)
+    assert_equal(1, #rows)
+    assert_equal("Tester-Realm", rows[1].playerName)
+
+    local summary = dibs.RankRules.GetRankConfigurationSummary(seasonId)
+    assert_equal("OPTIONAL", summary[2].status)
+    assert_equal(false, summary[2].enabled)
+    assert_equal(0, summary[2].pendingReconciliation)
+
+    setRule(dibs, seasonId, 3, "Member", 4)
+    assert_equal(false, dibs.RankRules.GetRankAllocation(seasonId, 3).enabled)
+    assert_equal(0, dibs.RankRules.GetAllocationForRank(seasonId, 3))
+    assert_equal(1, dibs.Ledger.GetPlayerState("Alice-Realm", seasonId).allocation)
   end)
 
   it("keeps valid rank configuration ready when a member needs a top-up", function()

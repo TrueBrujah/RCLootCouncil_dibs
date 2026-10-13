@@ -69,6 +69,10 @@ reason; non-coordinator actions remain pending until the coordinator commits
 the canonical ledger transaction. Reconcile All processes members independently
 and reports committed, pending, stale, skipped, and failed outcomes.
 
+In **Rank Rules**, disable Dibs for ranks that should not receive starting
+allocations. Members of disabled ranks are omitted from allocation warnings;
+their existing ledger allocations are preserved.
+
 A negative difference is informational only. Previously assigned Dibs stay
 granted after demotion, including Dibs already spent; there is no clawback,
 negative balance adjustment, or debt. The legacy Assignments option remains
@@ -163,8 +167,10 @@ Loot Rules changes** succeeds. A failed publication leaves the prior catalog
 revision effective. Do not tell the raid a change is active until the success
 state is shown.
 
-Officers see the adopted values read-only. Local legacy maps remain preserved
-for recovery and do not override an adopted snapshot. DIBS derives supported
+Verified Officers can edit the local draft and apply the Dibs loot-policy
+preset. Officers cannot adopt or publish the guild-wide rules; those actions
+remain GM-only. Local legacy maps remain preserved for recovery and do not
+override an adopted snapshot. DIBS derives supported
 keys from the existing RCLootCouncil option source, and the same guild values
 drive Adventure Guide eligibility and Dibs response buttons.
 

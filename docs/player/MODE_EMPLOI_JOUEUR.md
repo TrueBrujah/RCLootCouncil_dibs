@@ -57,9 +57,10 @@ finalisation du butin.
 ## Regles de butin de guilde
 
 Avec DIBS 0.8.x, le maitre de guilde adopte explicitement les regles de butin
-de guilde et publie leurs modifications. Les Officers consultent la version
-publiee sans la modifier ; les anciennes valeurs locales ne constituent pas
-une autorite de guilde. Raid Readiness distingue les etats suivants :
+de guilde et publie leurs modifications. Les officiers verifies peuvent
+modifier un brouillon local et appliquer le preset Dibs, mais seul le GM peut
+adopter ou publier les regles de guilde. Les anciennes valeurs locales ne
+constituent pas une autorite de guilde. Raid Readiness distingue les etats suivants :
 
 - `GUILD_LOOT_RULES_READY` : une version de guilde valide est presente ;
 - `LOCAL_LEGACY_ONLY` : les anciennes regles restent un repli local avant

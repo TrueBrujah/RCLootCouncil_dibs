@@ -259,6 +259,14 @@ local function stepAllocationReconciliation()
   local seasonId = call(Dibs.GetCurrentSeasonId)
   local rows = call(Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation, seasonId)
   if type(rows) ~= "table" or #rows == 0 then
+    local rankRows = call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId) or {}
+    local allDisabled = #rankRows > 0
+    for _, row in ipairs(rankRows) do
+      if row.enabled ~= false then allDisabled = false; break end
+    end
+    if allDisabled then
+      return { status = "OPTIONAL", summary = "All current guild ranks have Dibs allocation disabled." }
+    end
     return { status = "WARNING", summary = "Member allocation reconciliation cannot be verified from the current roster." }
   end
   local needed, retained = 0, 0
@@ -568,9 +576,13 @@ function Wizard.ApplyProfile(profileId, actor)
       result.stage = initialized.stage
     elseif action.id == "lootRules" then
       local apply = Dibs.RCOptions and Dibs.RCOptions.ApplyInstallationPreset
-      local applied = type(apply) == "function" and apply(PROFILE_DEFINITIONS[profileId].presetKey) == true
+      local applied, applyReason
+      if type(apply) == "function" then
+        applied, applyReason = apply(PROFILE_DEFINITIONS[profileId].presetKey)
+      end
+      applied = applied == true
       result.outcome = applied and "APPLIED" or "FAILED"
-      result.reasonCode = applied and nil or "LOOT_RULE_PRESET_FAILED"
+      result.reasonCode = applied and nil or applyReason or "LOOT_RULE_PRESET_FAILED"
     elseif action.id == "guildPolicy" then
       local adopted, reason = Wizard.AdoptOperationalPolicy(actor)
       result.outcome = adopted and "APPLIED" or "FAILED"

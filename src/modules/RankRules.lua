@@ -43,19 +43,24 @@ function Dibs.RankRules.GetRulesForSeason(seasonId)
   return Dibs.db.rankRules[targetSeason]
 end
 
-function Dibs.RankRules.SetAllocation(seasonId, rankIndex, rankName, allocation)
+function Dibs.RankRules.SetAllocation(seasonId, rankIndex, rankName, allocation, enabled)
   ensureState()
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local rules = Dibs.RankRules.GetRulesForSeason(targetSeason)
   local normalizedIndex = normalizeRankIndex(rankIndex)
   local key = tostring(normalizedIndex)
+  local previous = rules[key]
+  local isEnabled = enabled
+  if isEnabled == nil then isEnabled = not previous or previous.enabled ~= false end
+  isEnabled = isEnabled ~= false
   local nextRule = {
     rankIndex = normalizedIndex,
     rankName = rankName or ("Rank " .. tostring(normalizedIndex)),
     allocation = tonumber(allocation) or 0,
+    enabled = isEnabled,
   }
-  local previous = rules[key]
-  if not previous or previous.rankName ~= nextRule.rankName or previous.allocation ~= nextRule.allocation then
+  if not previous or previous.rankName ~= nextRule.rankName or previous.allocation ~= nextRule.allocation
+    or previous.enabled ~= nextRule.enabled then
     projectionGenerations[targetSeason] = (projectionGenerations[targetSeason] or 0) + 1
   end
   rules[key] = nextRule
@@ -120,10 +125,11 @@ function Dibs.RankRules.GetAllocationForRank(seasonId, rankIndex)
   ensureState()
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local normalizedIndex = normalizeRankIndex(rankIndex)
-  local allocation = Dibs.RankRules.GetAllocation(targetSeason, normalizedIndex)
   local rules = Dibs.RankRules.GetRulesForSeason(targetSeason)
-  if rules[tostring(normalizedIndex)] ~= nil then
-    return tonumber(allocation) or 0
+  local rule = rules[tostring(normalizedIndex)]
+  if rule ~= nil then
+    if rule.enabled == false then return 0 end
+    return tonumber(rule.allocation) or 0
   end
 
   if Dibs.db.settings and Dibs.db.settings.defaultAllocation then
@@ -170,24 +176,28 @@ function Dibs.RankRules.GetAllocationReconciliation(seasonId, members)
     local name = member.playerName or member.name
     if name and name ~= "" then
       local rankInfo = member.rankIndex ~= nil and member or Dibs.RankRules.GetPlayerRankInfo(name)
-      local expected = Dibs.RankRules.GetAllocationForPlayer(name, targetSeason)
-      local state = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(name, targetSeason) or {}
-      local assigned = tonumber(state.allocation) or 0
-      local difference = (tonumber(expected) or 0) - assigned
-      local delta = math.max(0, difference)
-      table.insert(rows, {
-        playerName = name,
-        rankName = rankInfo.rankName or "Guild Member",
-        rankIndex = tonumber(rankInfo.rankIndex) or 0,
-        expectedAllocation = tonumber(expected) or 0,
-        assignedAllocation = assigned,
-        difference = difference,
-        behavior = Dibs.RankRules.GetRankReconciliationBehavior(difference),
-        missingAllocation = delta,
-        surplusAllocation = math.max(0, assigned - (tonumber(expected) or 0)),
-        balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(name, targetSeason) or 0,
-        status = delta > 0 and "MISSING" or (assigned > (tonumber(expected) or 0) and "SURPLUS" or "ALIGNED"),
-      })
+      local rankIndex = normalizeRankIndex(rankInfo.rankIndex)
+      local rule = Dibs.RankRules.GetRankAllocation(targetSeason, rankIndex)
+      if not (rule and rule.enabled == false) then
+        local expected = Dibs.RankRules.GetAllocationForRank(targetSeason, rankIndex)
+        local state = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(name, targetSeason) or {}
+        local assigned = tonumber(state.allocation) or 0
+        local difference = (tonumber(expected) or 0) - assigned
+        local delta = math.max(0, difference)
+        table.insert(rows, {
+          playerName = name,
+          rankName = rankInfo.rankName or "Guild Member",
+          rankIndex = rankIndex,
+          expectedAllocation = tonumber(expected) or 0,
+          assignedAllocation = assigned,
+          difference = difference,
+          behavior = Dibs.RankRules.GetRankReconciliationBehavior(difference),
+          missingAllocation = delta,
+          surplusAllocation = math.max(0, assigned - (tonumber(expected) or 0)),
+          balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(name, targetSeason) or 0,
+          status = delta > 0 and "MISSING" or (assigned > (tonumber(expected) or 0) and "SURPLUS" or "ALIGNED"),
+        })
+      end
     end
   end
   table.sort(rows, function(left, right)
@@ -196,7 +206,7 @@ function Dibs.RankRules.GetAllocationReconciliation(seasonId, members)
   return rows
 end
 
-function Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName)
+function Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName, enabled)
   ensureState()
   if not seasonId or not Dibs.Seasons or not Dibs.Seasons.GetById or not Dibs.Seasons.GetById(seasonId) then
     return nil, "SEASON_NOT_FOUND"
@@ -209,8 +219,11 @@ function Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankN
   if numericAllocation == nil or numericAllocation < 0 or numericAllocation > 100000 then
     return nil, "INVALID_ALLOCATION"
   end
+  if enabled ~= nil and type(enabled) ~= "boolean" then
+    return nil, "INVALID_RANK_RULE_STATE"
+  end
 
-  return Dibs.RankRules.SetAllocation(seasonId, rankIndex, rankName, numericAllocation), nil
+  return Dibs.RankRules.SetAllocation(seasonId, rankIndex, rankName, numericAllocation, enabled), nil
 end
 
 function Dibs.RankRules.GetRankAllocation(seasonId, rankIndex)
@@ -249,7 +262,10 @@ function Dibs.RankRules.GetRankConfigurationSummary(seasonId)
   for key, info in pairs(byRank) do
     local rule = rules[key]
     local status
-    if type(rule) ~= "table" or tonumber(rule.allocation) == nil or tonumber(rule.allocation) < 0 then
+    local enabled = not (type(rule) == "table" and rule.enabled == false)
+    if not enabled then
+      status = "OPTIONAL"
+    elseif type(rule) ~= "table" or tonumber(rule.allocation) == nil or tonumber(rule.allocation) < 0 then
       status = "ACTION_REQUIRED"
     elseif tonumber(rule.allocation) == 0 then
       status = "OPTIONAL"
@@ -259,6 +275,7 @@ function Dibs.RankRules.GetRankConfigurationSummary(seasonId)
     rows[#rows + 1] = {
       rankIndex = info.rankIndex, rankName = info.rankName, memberCount = info.memberCount,
       configured = type(rule) == "table", allocation = type(rule) == "table" and rule.allocation or nil,
+      enabled = enabled,
       pendingReconciliation = missingByRank[key] or 0, surplusMembers = surplusByRank[key] or 0, status = status,
     }
   end

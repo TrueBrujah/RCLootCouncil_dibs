@@ -106,20 +106,34 @@ describe("Guild Loot Rules normalization", function()
     assert_equal("LOCAL_LEGACY_ONLY", rcSource)
   end)
 
-  it("allows only the GM to edit the local draft", function()
+  it("allows verified officers and GMs to edit the local draft but denies ordinary members", function()
     local dibs = load()
     setSupportedKeys(dibs, { TOKEN = "Curio" })
-    dibs.Permissions.IsGM = function() return false end
-    local priorSettings = dibs.db.settings.dibAllowedTypes
-    local changed, reason = dibs.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
+    dibs.GetDB()
+    local _, player = loader.load({ withAce3 = true, wow = {
+      playerName = "Player-Realm", guildLeader = false,
+      guildMembers = { "Player-Realm" }, guildRankIndices = { [1] = 3 },
+    } })
+    setSupportedKeys(player, { TOKEN = "Curio" })
+    local priorSettings = player.GetDB().settings.dibAllowedTypes
+    local changed, reason = player.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
     assert_equal(false, changed)
-    assert_equal("CURRENT_GUILD_MASTER_REQUIRED", reason)
-    assert_equal(priorSettings, dibs.db.settings.dibAllowedTypes)
+    assert_equal("GUILD_ADMIN_REQUIRED", reason)
+    assert_equal(priorSettings, player.GetDB().settings.dibAllowedTypes)
 
-    dibs.Permissions.IsGM = function() return true end
+    local _, officer = loader.load({ withAce3 = true, wow = {
+      playerName = "Officer-Realm", guildLeader = false,
+      guildMembers = { "Officer-Realm" }, guildRankIndices = { [1] = 1 },
+    } })
+    setSupportedKeys(officer, { TOKEN = "Curio" })
+    officer.GetDB()
+    changed, reason = officer.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
+    assert_true(changed, tostring(reason))
+    assert_equal(false, officer.GetDB().settings.dibAllowedTypes.TOKEN)
+
     changed, reason = dibs.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
     assert_true(changed, tostring(reason))
-    assert_equal(false, dibs.db.settings.dibAllowedTypes.TOKEN)
+    assert_equal(false, dibs.GetDB().settings.dibAllowedTypes.TOKEN)
   end)
 
   it("distinguishes unconfigured, local-only, and unavailable states", function()

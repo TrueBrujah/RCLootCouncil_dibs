@@ -3,7 +3,10 @@
 1. Open the Dibs Officer control center from the addon options or `/dibs officer`.
 2. Confirm the guild and installation mode. Guild GM/officer authority is separate from RCLootCouncil Master Looter authority.
 3. Create a season, give it a clear name, and make it active.
-4. Configure rank allocations for that season. The rank snapshot used when a transaction is recorded remains in its audit data.
+4. Configure rank allocations for that season. Disable Dibs for ranks that should
+   not receive starting allocations; members of those ranks are omitted from
+   allocation-reconciliation warnings. Existing ledger allocations are preserved.
+   The rank snapshot used when a transaction is recorded remains in its audit data.
 5. Choose Pre-Dibs mode and announcement channels/templates. Public requests can be disabled while officers continue to review existing records.
 6. Review loot eligibility policies for supported semantic families and difficulties.
 7. Create a backup before importing or restoring data. Imports are preview-first and require explicit application.

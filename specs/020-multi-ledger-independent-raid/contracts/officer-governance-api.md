@@ -19,6 +19,10 @@ In accordance with Constitution Principle XI, the following actions are permitte
 - `ledger.propose`: Proposing a new guild ledger instance.
 - `installation.run`: Executing the Guided Setup wizard and baseline discovery.
 
+For Guild Loot Rules, `settings.modify` permits verified officers to edit the local
+draft and apply Dibs loot-policy presets. Adoption and publication of the shared
+guild-wide policy remain Guild Master-only.
+
 ### 1.2 Actions Remaining Strictly Guild Master Only (`GM_ONLY_ACTIONS`)
 
 The following actions strictly require verified Guild Master authority (rank 0) to prevent split-brain roots or unauthorized structural cutovers:

@@ -5,7 +5,9 @@ The active database is a guild bucket returned by `Dibs.GetDB()`. The guild key 
 ## Core records
 
 - **Season:** `id`, `name`, status, and timestamps. One season may be current; archived seasons remain queryable.
-- **Rank rule:** rank index/name plus an allocation for a season.
+- **Rank rule:** rank index/name, enabled state, and allocation for a season. A
+  disabled rank receives no starting allocation and its members are excluded from
+  allocation-reconciliation warnings; existing ledger allocations are preserved.
 - **Transaction:** immutable transaction ID, player, season, signed amount, reason/source, timestamp, and optional rank/award/evidence references. Balance is the sum of valid transactions.
 - **Pre-Dib request:** player, item, season, optional normalized difficulty/mode, status, timestamps, and monotonic revision. Terminal requests are not silently reactivated.
 - **Vault acquisition:** player/item/difficulty/timestamp display record. It does not create a ledger transaction (DIBS-RULE-011).

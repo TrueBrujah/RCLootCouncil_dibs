@@ -24,8 +24,9 @@ local function supportedTypes()
     source = options.types.values
   end
   if type(source) == "function" then
-    ok, source = pcall(source)
-    if not ok then return nil, "GUILD_LOOT_RULES_UNAVAILABLE" end
+    local resolved, values = pcall(source)
+    if not resolved then return nil, "GUILD_LOOT_RULES_UNAVAILABLE" end
+    source = values
   end
   if type(source) ~= "table" then return nil, "GUILD_LOOT_RULES_UNAVAILABLE" end
 
@@ -137,10 +138,10 @@ function Dibs.LootRules.GetDraftSnapshot()
 end
 
 function Dibs.LootRules.SetDraftValue(typeKey, field, value)
-  if type(Dibs.Permissions) ~= "table" or type(Dibs.Permissions.IsGM) ~= "function" then
+  if type(Dibs.Permissions) ~= "table" or type(Dibs.Permissions.Can) ~= "function" then
     return false, "GUILD_LOOT_RULES_AUTHORITY_UNAVAILABLE"
   end
-  if Dibs.Permissions.IsGM() ~= true then return false, "CURRENT_GUILD_MASTER_REQUIRED" end
+  if not Dibs.Permissions.Can("settings.modify") then return false, "GUILD_ADMIN_REQUIRED" end
   if not DECISION_FIELDS[field] or type(value) ~= "boolean" then
     return false, "INVALID_GUILD_LOOT_RULE"
   end

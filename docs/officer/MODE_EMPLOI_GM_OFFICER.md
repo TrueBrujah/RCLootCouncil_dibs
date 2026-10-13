@@ -174,10 +174,12 @@ Rules changes**. En cas d'echec, la revision precedente du catalogue reste
 effective ; ne presentez pas le changement comme actif avant le message de
 reussite.
 
-Les Officers consultent les regles adoptees en lecture seule. Les anciennes
-valeurs locales sont conservees mais ne remplacent pas le snapshot publie. Les
-cles disponibles proviennent dynamiquement de RCLootCouncil ; les memes valeurs
-de guilde controlent l'eligibilite Adventure Guide et les boutons Dibs.
+Les officiers verifies peuvent modifier le brouillon local et appliquer le
+preset de politique Dibs. Ils ne peuvent pas adopter ni publier les regles de
+guilde; ces actions restent reservees au GM. Les anciennes valeurs locales
+sont conservees mais ne remplacent pas le snapshot publie. Les cles disponibles
+proviennent dynamiquement de RCLootCouncil ; les memes valeurs de guilde
+controlent l'eligibilite Adventure Guide et les boutons Dibs.
 
 Raid Readiness affiche l'etat exact des Loot Rules. `GUILD_LOOT_RULES_READY`
 indique un snapshot valide ; `GUILD_LOOT_RULES_NOT_CONFIGURED` et
@@ -208,6 +210,10 @@ selectionnee. Modifier la regle ne reecrit pas les anciennes transactions;
 verifiez separement le rapprochement des membres deja presents. Dans Guided
 Setup, **Rank Rules** et **Allocation Reconciliation** sont deux etapes
 distinctes.
+
+Desactivez les Dibs pour les rangs qui ne doivent pas recevoir d'allocation de
+depart. Leurs membres sont exclus des avertissements de rapprochement; les
+allocations deja inscrites au ledger sont conservees.
 
 Ouvrez **Automatic Dibs** pour comparer le rang actuel de chaque membre a son
 allocation saisonniere deja attribuee. Un ecart positif exige une confirmation

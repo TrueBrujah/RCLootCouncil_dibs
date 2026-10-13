@@ -996,6 +996,7 @@ local function applyRankRule(frame, row)
     rankIndex = rankIndex,
     rankName = getRankName(rankIndex),
     allocation = allocation,
+    enabled = row.enabled ~= false,
   })
 
   frame:SetStatus(result.ok and ("Saved " .. buildRankLabel(rankIndex) .. " = " .. tostring(allocation)) or result.diagnostic)
@@ -6774,17 +6775,40 @@ local function createAceWindow(initialRoute)
       Dibs.AceGUI.AddTooltip(rankHeading, "Rank allocations", helpText.UI_HELP_RANK_ALLOCATION)
       local rules = Dibs.RankRules and Dibs.RankRules.GetRulesForSeason and Dibs.RankRules.GetRulesForSeason(currentId) or {}
       for index = 1, self.rankRowCount do
-        local source = self.rankDrafts[index] or rules[index] or { rankIndex = index - 1, allocation = 1 }
-        local row = { rankIndex = tonumber(source.rankIndex) or 0, allocation = tonumber(source.allocation) or 0 }
+        local rankIndex = index - 1
+        local source = self.rankDrafts[index] or rules[tostring(rankIndex)] or rules[rankIndex]
+          or { rankIndex = rankIndex, allocation = 1 }
+        local row = { rankIndex = tonumber(source.rankIndex) or 0, allocation = tonumber(source.allocation) or 0,
+          enabled = source.enabled ~= false }
         self.rankDrafts[index] = row
         table.insert(self.rankRows, row)
         local ranks = {}
         for rank = 0, math.max(9, row.rankIndex) do ranks[rank] = buildRankLabel(rank) end
-        row.rankDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, "Rank", ranks, function(value) row.rankIndex = tonumber(value) or 0 end, 210)
+        row.rankDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, "Rank", ranks, function(value)
+          row.rankIndex = tonumber(value) or 0
+          local selectedRule = Dibs.RankRules.GetRankAllocation(currentId, row.rankIndex)
+          if selectedRule then
+            row.allocation = tonumber(selectedRule.allocation) or 0
+            row.enabled = selectedRule.enabled ~= false
+          else
+            row.allocation, row.enabled = 1, true
+          end
+          self.rankDrafts[index] = row
+          self:Refresh()
+        end, 210)
         Dibs.AceGUI.AddTooltip(row.rankDropdown, "Rank", helpText.UI_HELP_RANK_ALLOCATION)
         Dibs.AceGUI.SetValue(row.rankDropdown, row.rankIndex)
-        row.valueText = Dibs.AceGUI.AddLabel(shell, tabs, "Dibs: " .. tostring(row.allocation))
+        row.valueText = Dibs.AceGUI.AddLabel(shell, tabs, "Dibs: " .. tostring(row.allocation)
+          .. (row.enabled and "" or " (" .. ((Dibs.L or {}).RANK_DIBS_DISABLED or "Dibs disabled") .. ")"))
         Dibs.AceGUI.AddTooltip(row.valueText, "Rank allocation", helpText.UI_HELP_RANK_ALLOCATION)
+        row.enabledCheckBox = Dibs.AceGUI.AddCheckBox(shell, tabs,
+          (Dibs.L or {}).RANK_DIBS_ENABLED or "Enable Dibs for this rank", row.enabled, function(value)
+            row.enabled = value
+            self.rankDrafts[index] = row
+            self:Refresh()
+          end, 190)
+        Dibs.AceGUI.AddTooltip(row.enabledCheckBox, "Dibs allocation for this rank",
+          (Dibs.L or {}).UI_HELP_RANK_DIBS_ENABLED or helpText.UI_HELP_RANK_ALLOCATION)
         local decrease = Dibs.AceGUI.AddButton(shell, tabs, "-", function() row.allocation = math.max(0, row.allocation - 1); self.rankDrafts[index] = row; self:Refresh() end, 28)
         Dibs.AceGUI.AddTooltip(decrease, "Decrease allocation", helpText.UI_HELP_RANK_ALLOCATION)
         local increase = Dibs.AceGUI.AddButton(shell, tabs, "+", function() row.allocation = row.allocation + 1; self.rankDrafts[index] = row; self:Refresh() end, 28)

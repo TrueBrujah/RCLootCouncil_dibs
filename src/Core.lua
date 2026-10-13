@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.3"
+Dibs.VERSION = "0.8.4"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -934,6 +934,7 @@ function Dibs.CoreAPI.setRankAllocation(request)
     rankIndex = rule.rankIndex,
     allocation = rule.allocation,
     rankName = rule.rankName,
+    enabled = rule.enabled ~= false,
   } or { reasonCode = reasonCode }
 end
 
@@ -946,6 +947,7 @@ function Dibs.CoreAPI.getRankAllocation(request)
   return rule and {
     allocation = rule.allocation,
     rankName = rule.rankName,
+    enabled = rule.enabled ~= false,
   } or nil
 end
 

@@ -54,6 +54,16 @@ describe("Turnkey Guided Setup contract", function()
     assert_equal("ALREADY_READY", byId(second.actions, "lootRules").outcome)
   end)
 
+  it("lets a verified guild officer apply the Dibs loot policy preset", function()
+    local dibs = load("Officer-Realm", false)
+    local result = dibs.Wizard.ApplyProfile("progression", "Officer-Realm")
+    assert_equal("APPLIED", byId(result.actions, "lootRules").outcome)
+    assert_true(dibs.GetDB().settings.dibAllowedTypes.TOKEN)
+    assert_true(dibs.GetDB().settings.dibAllowedTypes.TOKEN_SET)
+    assert_false(dibs.Permissions.IsGM())
+    assert_true(dibs.Permissions.IsOfficer())
+  end)
+
   it("returns explicit partial failure details", function()
     local dibs = load()
     dibs.RCOptions.ApplyInstallationPreset = function() return false end

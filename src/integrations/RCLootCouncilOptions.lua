@@ -766,12 +766,12 @@ end
 local function applyDibSemanticTemplate(templateKey)
   if not canEditDibsSettings() then
     setStatus("Only the guild master or an officer may change Dibs settings.")
-    return false
+    return false, "GUILD_ADMIN_REQUIRED"
   end
   local template = DIBS_SEMANTIC_TEMPLATES[templateKey]
   if not template then
     setStatus("Unknown Dibs semantic template.")
-    return false
+    return false, "UNKNOWN_DIBS_SEMANTIC_TEMPLATE"
   end
 
   for _, key in ipairs(DIBS_SEMANTIC_TEMPLATE_KEYS) do
@@ -779,7 +779,7 @@ local function applyDibSemanticTemplate(templateKey)
     local ok, reason = setDibTypeEnabled(key, enabled)
     if not ok then
       setStatus(reason or ("Unable to apply template to " .. tostring(key) .. "."))
-      return false
+      return false, reason or "DIBS_SEMANTIC_TEMPLATE_APPLY_FAILED"
     end
   end
   setStatus("DIB semantic template applied: " .. template.label .. ".")
@@ -792,8 +792,9 @@ end
 -- the projection only adds/reuses the dedicated DIB entry in sets that the
 -- Master Looter already configured.
 local function applyInstallationPreset(templateKey)
-  if not applyDibSemanticTemplate(templateKey) then
-    return false
+  local applied, reason = applyDibSemanticTemplate(templateKey)
+  if not applied then
+    return false, reason or "DIBS_SEMANTIC_TEMPLATE_APPLY_FAILED"
   end
 
   local available, changed = refreshDibButtonProjection()
@@ -963,6 +964,12 @@ local function getRankAllocationForSeason(seasonId, rankIndex)
   return allocation
 end
 
+local function isRankAllocationEnabled(seasonId, rankIndex)
+  local rule = Dibs.RankRules and Dibs.RankRules.GetRankAllocation
+    and Dibs.RankRules.GetRankAllocation(seasonId, rankIndex)
+  return not (type(rule) == "table" and rule.enabled == false)
+end
+
 local function buildRankSummaryText(seasonId)
   local rules = Dibs.RankRules and Dibs.RankRules.GetRulesForSeason and Dibs.RankRules.GetRulesForSeason(seasonId) or {}
   local entries = {}
@@ -970,7 +977,9 @@ local function buildRankSummaryText(seasonId)
     local idx = tonumber(rule.rankIndex) or 0
     local name = getGuildRankNames()[idx] or rule.rankName or ("Rank " .. tostring(idx))
     local amount = tonumber(rule.allocation) or 0
-    table.insert(entries, { idx = idx, text = tostring(idx) .. " - " .. tostring(name) .. " = " .. tostring(amount) })
+    local state = rule.enabled == false and ((Dibs.L or {}).RANK_DIBS_DISABLED or "Dibs disabled") or nil
+    table.insert(entries, { idx = idx, text = tostring(idx) .. " - " .. tostring(name) .. " = "
+      .. tostring(amount) .. (state and (" (" .. state .. ")") or "") })
   end
 
   table.sort(entries, function(a, b)
@@ -1275,8 +1284,26 @@ local optionsTable = {
                 getState().rankAllocation = tonumber(value) or 1
               end,
             },
-            applyRank = {
+            rankEnabled = {
               order = 4,
+              type = "toggle",
+              name = function() return (Dibs.L or {}).RANK_DIBS_ENABLED or "Enable Dibs for this rank" end,
+              width = "full",
+              get = function() return isRankAllocationEnabled(getSelectedSeasonId(), getState().rankIndex) end,
+              set = function(_, value)
+                local state = getState()
+                local seasonId = getSelectedSeasonId()
+                local rankIndex = tonumber(state.rankIndex) or 0
+                local rankName = getGuildRankNames()[rankIndex] or ("Rank " .. tostring(rankIndex))
+                local result = Dibs.ProtectedActions.Execute("rank.set", nil, {
+                  seasonId = seasonId, rankIndex = rankIndex, rankName = rankName,
+                  allocation = getRankAllocationForSeason(seasonId, rankIndex), enabled = value == true,
+                })
+                setStatus(result.ok and "Rank Dibs setting saved." or result.diagnostic)
+              end,
+            },
+            applyRank = {
+              order = 5,
               type = "execute",
               width = "full",
               name = "Save rule for selected season",
@@ -2320,7 +2347,7 @@ if officerSeasons and officerSeasons.args then
 end
 local officerRanks = groups.officer.args.ranks
 if officerRanks and officerRanks.args then
-  for _, key in ipairs({ "rankSummary", "rankIndex", "rankAllocation", "applyRank" }) do
+  for _, key in ipairs({ "rankSummary", "rankIndex", "rankAllocation", "rankEnabled", "applyRank" }) do
     if officerRanks.args[key] then officerRanks.args[key].hidden = function() return true end end
   end
   officerRanks.args.rows = { type = "group", name = "", order = 1, inline = true, childGroups = "tree", args = {} }
@@ -2328,7 +2355,19 @@ if officerRanks and officerRanks.args then
   for rankIndex = 0, 9 do
     local key = "rank" .. tostring(rankIndex)
     rowArgs[key] = { type = "group", name = function() return "Rank " .. tostring(rankIndex) .. " — " .. tostring(getGuildRankNames()[rankIndex] or "Rank " .. tostring(rankIndex)) end, order = rankIndex + 1, inline = true, args = {
+      enabled = { type = "toggle", name = function() return (Dibs.L or {}).RANK_DIBS_ENABLED or "Enable Dibs for this rank" end, width = "full",
+        get = function() return isRankAllocationEnabled(getSelectedSeasonId(), rankIndex) end,
+        set = function(_, value)
+          local seasonId = getSelectedSeasonId()
+          local result = Dibs.ProtectedActions.Execute("rank.set", nil, {
+            seasonId = seasonId, rankIndex = rankIndex,
+            rankName = getGuildRankNames()[rankIndex] or ("Rank " .. tostring(rankIndex)),
+            allocation = getRankAllocationForSeason(seasonId, rankIndex), enabled = value == true,
+          })
+          setStatus(result.ok and "Rank Dibs setting saved." or result.diagnostic)
+        end },
       allocation = { type = "range", name = "Dibs", min = 0, max = 20, step = 1, width = "double",
+        disabled = function() return not isRankAllocationEnabled(getSelectedSeasonId(), rankIndex) end,
         get = function() return getRankAllocationForSeason(getSelectedSeasonId(), rankIndex) end,
         set = function(_, value)
           local result = Dibs.ProtectedActions.Execute("rank.set", nil, { seasonId = getSelectedSeasonId(), rankIndex = rankIndex, rankName = getGuildRankNames()[rankIndex] or ("Rank " .. tostring(rankIndex)), allocation = tonumber(value) or 0 })

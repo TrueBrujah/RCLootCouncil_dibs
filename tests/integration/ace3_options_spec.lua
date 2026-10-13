@@ -177,6 +177,24 @@ end)
 
 
 describe("Dibs options compatibility", function()
+  it("lets officers disable a rank's Dibs allocation and hides that rank's reconciliation warnings", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 } },
+      rclootcouncil = rc, withAce3 = true,
+    })
+    local seasonId = dibs.GetCurrentSeasonId()
+    local rankOptions = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.officer.args.ranks.args.rows.args.rank3.args
+    assert_true(rankOptions.enabled.get())
+    rankOptions.enabled.set(nil, false)
+    assert_false(rankOptions.enabled.get())
+    assert_true(rankOptions.allocation.disabled())
+    assert_equal(false, dibs.RankRules.GetRankAllocation(seasonId, 3).enabled)
+    local report = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.assignments.args.assignmentLog.name()
+    assert_false(report:find("Alice-Realm", 1, true) ~= nil)
+  end)
+
   it("lists roster allocation gaps and assigns only missing rank Dibs", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({

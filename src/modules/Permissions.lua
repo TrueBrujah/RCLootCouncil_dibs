@@ -88,7 +88,6 @@ local ADMIN_ACTIONS = {
 }
 
 local GM_ONLY_ACTIONS = {
-  ["settings.modify"] = true,
   ["ledger.approve"] = true,
   ["ledger.revoke"] = true,
   ["ledger.archive"] = true,
