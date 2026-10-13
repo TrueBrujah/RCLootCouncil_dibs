@@ -129,6 +129,7 @@ local function defaultState()
     auditLog = {},
     conflicts = {},
     aliases = { schema = 1, records = {} },
+    approvedLedgers = { ["guild-primary"] = { id = "guild-primary", name = "Primary", approvedAt = 0, approvedBy = "SYSTEM", status = "APPROVED" } },
     future = { coordinator = nil, ledgerEpoch = nil, protocolState = "LEGACY_LOCAL", baseline = nil },
     authority = { schema = AUTHORITY_SCHEMA, state = "LEGACY_LOCAL", proposals = {}, orphanedEvidence = {}, auditLog = {} },
   }
@@ -165,6 +166,8 @@ local function ensureState()
   if type(state.conflicts) ~= "table" then state.conflicts = {} end
   if type(state.aliases) ~= "table" then state.aliases = { schema = 1, records = {} } end
   if type(state.aliases.records) ~= "table" then state.aliases.records = {} end
+  if type(state.approvedLedgers) ~= "table" then state.approvedLedgers = { ["guild-primary"] = { id = "guild-primary", name = "Primary", approvedAt = 0, approvedBy = "SYSTEM", status = "APPROVED" } } end
+  if not state.approvedLedgers["guild-primary"] then state.approvedLedgers["guild-primary"] = { id = "guild-primary", name = "Primary", approvedAt = 0, approvedBy = "SYSTEM", status = "APPROVED" } end
   if type(state.future) ~= "table" then state.future = defaultState().future end
   authorityState(state)
   return state
@@ -196,7 +199,7 @@ local function validClosure(closure)
 end
 
 local function approvedBaseline(hash)
-  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+  local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline()
   return baseline and baseline.legacyBaselineHash == hash
 end
 
@@ -464,13 +467,13 @@ end
 -- that has shown the GM the actual incomplete/unresolved evidence (P0 fix:
 -- this used to hardcode `true` and could silently freeze a known-partial
 -- legacy baseline without GM review). It never bypasses per-evidence decision
--- requirements enforced by LegacyBaseline.FinalizeBaseline/RecordDecision.
+-- requirements enforced by HistoricalBaseline.FinalizeBaseline/RecordDecision.
 function Governance.ActivateV2(actor, options)
   options = type(options) == "table" and options or {}
-  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+  local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline()
   if not baseline then
-    if not (Dibs.LegacyBaseline and Dibs.LegacyBaseline.FinalizeBaseline) then return false, "BASELINE_REQUIRED" end
-    local approved, approvalReason = Dibs.LegacyBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = options.acknowledgeIncompleteEvidence == true })
+    if not (Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.FinalizeBaseline) then return false, "BASELINE_REQUIRED" end
+    local approved, approvalReason = Dibs.HistoricalBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = options.acknowledgeIncompleteEvidence == true })
     if not approved then return false, approvalReason or "BASELINE_REQUIRED" end
     baseline = approved
   end
@@ -709,7 +712,7 @@ function Governance.ClassifyLateEvidence(event)
   local identity = trim(event.evidenceId) or trim(event.eventId) or trim(event.transactionId)
   if not identity then return false, "EVIDENCE_ID_REQUIRED" end
   local baselineHash = authority.transition and authority.transition.baselineHash
-  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+  local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline()
     if authority.state == "ACTIVE" and authority.transition and authority.transition.kind == "FORCED_RECOVERY"
       and baseline and baseline.legacyBaselineHash == baselineHash then
     for _, evidenceId in ipairs(baseline.includedEvidenceIds or {}) do if evidenceId == identity then return true, "KNOWN_BASELINE_EVIDENCE" end end
@@ -744,6 +747,119 @@ function Governance.BuildAuthoritySignal()
     transitionHash = authority.transitionHash }
   signal.contentHash = authorityHash("SIGNAL", signal)
   return signal
+end
+
+function Governance.RecordLedgerApproval(actor, ledgerId, ledgerName)
+  local state = ensureState()
+  local gm, gmReason = currentGMSnapshot(actor)
+  if not gm then return false, gmReason end
+  state.approvedLedgers = state.approvedLedgers or {}
+  local existing = state.approvedLedgers[ledgerId]
+  if existing then
+    if existing.status ~= "APPROVED" or existing.name ~= (ledgerName or ledgerId) then
+      return false, "LEDGER_APPROVAL_CONFLICT"
+    end
+    return true, "IDEMPOTENT_REPLAY", copy(existing)
+  end
+  local approval = {
+    id = ledgerId,
+    name = ledgerName or ledgerId,
+    approvedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
+    approvedBy = gm.displayName,
+    status = "APPROVED",
+  }
+  state.approvedLedgers[ledgerId] = {
+    id = approval.id,
+    name = approval.name,
+    approvedAt = approval.approvedAt,
+    approvedBy = approval.approvedBy,
+    status = approval.status,
+  }
+  boundedInsert(state.auditLog, {
+    action = "LEDGER_APPROVED",
+    ledgerId = ledgerId,
+    actor = gm.displayName,
+    timestamp = approval.approvedAt,
+  }, 100)
+  return true, nil, copy(approval)
+end
+
+function Governance.ApplyLedgerApproval(sender, record)
+  if type(record) ~= "table" or type(record.id) ~= "string" or record.id == ""
+    or record.status ~= "APPROVED" or type(record.name) ~= "string"
+    or type(record.approvedBy) ~= "string" or not isInteger(record.approvedAt) then
+    return false, "INVALID_LEDGER_APPROVAL"
+  end
+  local snapshot, snapshotReason = Dibs.Identity and Dibs.Identity.CreateSnapshot
+    and Dibs.Identity.CreateSnapshot(sender)
+  if not snapshot then return false, snapshotReason or "IDENTITY_UNAVAILABLE" end
+  local isGM, gmReason = Dibs.Identity.IsCurrentGuildMaster(snapshot)
+  if not isGM then return false, gmReason or "GUILD_MASTER_REQUIRED" end
+  local state = ensureState()
+  state.approvedLedgers = state.approvedLedgers or {}
+  state.approvedLedgers[record.id] = {
+    id = record.id,
+    name = record.name,
+    approvedAt = record.approvedAt,
+    approvedBy = snapshot.displayName,
+    status = "APPROVED",
+  }
+  return true
+end
+
+function Governance.PrepareLedgerDeletion(actor, ledgerId, ledgerName)
+  local state = ensureState()
+  local gm, gmReason = currentGMSnapshot(actor)
+  if not gm then return false, gmReason end
+  state.ledgerDeletionRequests = state.ledgerDeletionRequests or {}
+  local existing = state.ledgerDeletionRequests[ledgerId]
+  if existing then return true, "IDEMPOTENT_REPLAY", copy(existing) end
+  local request = {
+    action = "LEDGER_DELETION_AUTHORIZED",
+    ledgerId = ledgerId,
+    ledgerName = ledgerName or ledgerId,
+    actor = gm.displayName,
+    timestamp = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
+  }
+  state.ledgerDeletionRequests[ledgerId] = copy(request)
+  boundedInsert(state.auditLog, copy(request), 100)
+  return true, nil, copy(request)
+end
+
+function Governance.RecordLedgerDeletion(actor, ledgerId, ledgerName)
+  local state = ensureState()
+  local gm, gmReason = currentGMSnapshot(actor)
+  if not gm then return false, gmReason end
+  state.ledgerDeletionRecords = state.ledgerDeletionRecords or {}
+  local existing = state.ledgerDeletionRecords[ledgerId]
+  if existing then return true, "IDEMPOTENT_REPLAY", copy(existing) end
+  local record = {
+    action = "LEDGER_DELETED",
+    ledgerId = ledgerId,
+    ledgerName = ledgerName or ledgerId,
+    actor = gm.displayName,
+    timestamp = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
+  }
+  state.ledgerDeletionRecords[ledgerId] = copy(record)
+  boundedInsert(state.auditLog, {
+    action = record.action,
+    ledgerId = record.ledgerId,
+    ledgerName = record.ledgerName,
+    actor = record.actor,
+    timestamp = record.timestamp,
+  }, 100)
+  return true, nil, copy(record)
+end
+
+function Governance.IsLedgerApproved(ledgerId)
+  if not ledgerId or ledgerId == "guild-primary" then return true end
+  local state = ensureState()
+  return (state.approvedLedgers and state.approvedLedgers[ledgerId] ~= nil)
+end
+
+function Governance.GetApprovedLedgers()
+  local state = ensureState()
+  return copy(state.approvedLedgers or {})
 end
 
 function Governance.ApplyAuthoritySignal(signal, sender)

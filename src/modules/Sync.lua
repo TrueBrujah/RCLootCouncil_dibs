@@ -125,6 +125,12 @@ end
 ---@param target string|nil Whisper target when channel is `WHISPER`.
 ---@return boolean sent
 function Dibs.Sync.Send(message, channel, target)
+  if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
+    local effChannel = channel or "RAID"
+    if effChannel == "GUILD" or effChannel == "OFFICER" or effChannel == "RAID" then
+      return false, "INDEPENDENT_RAID_ACTIVE"
+    end
+  end
   if type(message) ~= "table" or not MESSAGE_TYPES[message.type] or Dibs.Sync.ContainsForbiddenLiveLootData(message) then return false end
   if not message.version then message.version = Dibs.PROTOCOL_VERSION or 1 end
   if not message.guildKey and Dibs.GetGuildKey then message.guildKey = Dibs.GetGuildKey() end
@@ -315,7 +321,7 @@ function Dibs.Sync.GetPeerState(peerId)
   return Dibs.db.sync.peerStates[peerId]
 end
 
-function Dibs.Sync.GetDigest()
+function Dibs.Sync.GetDigest(targetLedgerId)
   if not localIsGuildAdmin() then
     return { protocol = Dibs.PROTOCOL_VERSION or 1, txCount = 0, totalBalance = 0, season = nil, updatedAt = time(), reasonCode = "OFFICER_SCOPE_REQUIRED" }
   end
@@ -323,13 +329,17 @@ function Dibs.Sync.GetDigest()
   local txCount = 0
   local totalBalance = 0
 
-  for _, tx in pairs(Dibs.db.ledger and Dibs.db.ledger.transactions or {}) do
+  local ledgerId = targetLedgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
+  local targetLedger = (Dibs.db and Dibs.db.ledgers and Dibs.db.ledgers[ledgerId]) or (Dibs.db and Dibs.db.ledger)
+
+  for _, tx in pairs(targetLedger and targetLedger.transactions or {}) do
     txCount = txCount + 1
     totalBalance = totalBalance + (tonumber(tx.amount) or 0)
   end
 
   return {
     protocol = Dibs.PROTOCOL_VERSION or 1,
+    ledgerId = ledgerId,
     txCount = txCount,
     totalBalance = totalBalance,
     season = Dibs.GetCurrentSeasonId(),

@@ -211,8 +211,22 @@ function Policy.IsAdopted() return ensureState().status == "POLICY_ADOPTED" end
 function Policy.GetValues()
   local record = Policy.GetCurrentRecord(); return record and copy(record.values) or nil
 end
-function Policy.GetPreDibMode(seasonId)
-  local values = Policy.GetValues(); return values and values.preDibModes and values.preDibModes[tostring(seasonId)] or nil
+local function preDibModeKey(seasonId, ledgerId)
+  local selectedLedger = ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+    and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
+  return tostring(selectedLedger) .. ":" .. tostring(seasonId)
+end
+function Policy.GetPreDibMode(seasonId, ledgerId)
+  local values = Policy.GetValues()
+  local modes = values and values.preDibModes
+  if not modes then return nil end
+  local scoped = modes[preDibModeKey(seasonId, ledgerId)]
+  if scoped then return scoped end
+  if (ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+    and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary") == "guild-primary" then
+    return modes[tostring(seasonId)]
+  end
+  return nil
 end
 function Policy.GetPublicPreDibsEnabled()
   local values = Policy.GetValues(); return values and values.allowPublicPreDibs
@@ -426,9 +440,10 @@ function Policy.Change(actor, patch, reason)
   if ok and Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then Dibs.Sync.AnnounceOperationalPolicy() end
   return ok, applyReason, applied
 end
-function Policy.SetPreDibMode(seasonId, mode, actor)
+function Policy.SetPreDibMode(seasonId, mode, actor, ledgerId)
   if (type(seasonId) ~= "string" and type(seasonId) ~= "number") or not VALID_MODES[tostring(mode)] then return nil, "INVALID_PREDIB_MODE" end
-  local current = Policy.GetValues() or {}; local modes = copy(current.preDibModes or {}); modes[tostring(seasonId)] = tostring(mode)
+  local current = Policy.GetValues() or {}; local modes = copy(current.preDibModes or {})
+  modes[preDibModeKey(seasonId, ledgerId)] = tostring(mode)
   return Policy.Change(actor, { preDibModes = modes }, "PRE_DIB_MODE")
 end
 function Policy.SetPublicPreDibsEnabled(enabled, actor)

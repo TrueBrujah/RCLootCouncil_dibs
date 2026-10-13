@@ -70,6 +70,29 @@ describe("Installation.Initialize orchestrator", function()
     assert_equal(governanceRevisionAfterFirst, dibs.Governance.GetState().revision)
   end)
 
+  it("lets a verified guild master review legacy evidence", function()
+    local _, dibs = loader.load({
+      withAce3 = true,
+      wow = {
+        playerName = "GameMaster-Realm", guildLeader = true,
+        guildMembers = { "GameMaster-Realm" }, guildRankIndices = { [1] = 0 },
+      },
+    })
+    assert_true(dibs.Governance.AdoptInitial(nil, { reason = "test authority" }))
+    local season = dibs.Seasons.Create("Legacy Test")
+    assert_not_nil(season)
+    assert_not_nil(dibs.Ledger.Grant("GameMaster-Realm", 1, "legacy grant", "test", season.id))
+
+    local blocked = dibs.Installation.Initialize(nil)
+    assert_false(blocked.ok)
+    assert_equal("LEGACY_RECONCILIATION_REQUIRED", blocked.reasonCode)
+    local evidence = dibs.HistoricalBaseline.GetEvidence()
+    assert_true(#evidence > 0)
+    local recorded, reason = dibs.HistoricalBaseline.RecordDecision(
+      nil, evidence[1].evidenceId, "INCLUDE", { reason = "reviewed in test mode" })
+    assert_not_nil(recorded, tostring(reason))
+  end)
+
   it("blocks one-click initialization when legacy evidence has open findings, and resumes after reconciliation", function()
     local dibs = load("Tester-Realm", true)
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "test" }))
@@ -81,10 +104,10 @@ describe("Installation.Initialize orchestrator", function()
     assert_equal("baseline", blocked.stage)
     assert_equal("LEGACY_RECONCILIATION_REQUIRED", blocked.reasonCode)
     assert_true(blocked.status.legacy.evidenceCount > 0)
-    assert_nil(dibs.LegacyBaseline.GetBaseline())
+    assert_nil(dibs.HistoricalBaseline.GetBaseline())
 
-    for _, evidence in ipairs(dibs.LegacyBaseline.GetEvidence()) do
-      assert_not_nil(dibs.LegacyBaseline.RecordDecision(nil, evidence.evidenceId, "INCLUDE", { reason = "reviewed" }))
+    for _, evidence in ipairs(dibs.HistoricalBaseline.GetEvidence()) do
+      assert_not_nil(dibs.HistoricalBaseline.RecordDecision(nil, evidence.evidenceId, "INCLUDE", { reason = "reviewed" }))
     end
 
     local resumed = dibs.Installation.Initialize(nil)
@@ -96,17 +119,17 @@ describe("Installation.Initialize orchestrator", function()
   it("does not silently acknowledge incomplete evidence sources", function()
     local dibs = load("Tester-Realm", true)
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "test" }))
-    local added = dibs.LegacyBaseline.CollectEvidence(nil, {
+    local added = dibs.HistoricalBaseline.CollectEvidence(nil, {
       sourceId = "manual-import", sourceClient = "Tester-Realm", sourceType = "LEDGER_TRANSACTION", complete = false,
     }, { { originalId = "tx-1", record = { transactionId = "tx-1", playerName = "Member-Realm", amount = 1, seasonId = "S1", actionType = "DIB_GRANTED" } } })
     assert_not_nil(added)
-    assert_not_nil(dibs.LegacyBaseline.RecordDecision(nil, added[1], "INCLUDE", { reason = "reviewed" }))
+    assert_not_nil(dibs.HistoricalBaseline.RecordDecision(nil, added[1], "INCLUDE", { reason = "reviewed" }))
 
     local blocked = dibs.Installation.Initialize(nil)
     assert_false(blocked.ok)
     assert_equal("baseline", blocked.stage)
     assert_equal("INCOMPLETE_EVIDENCE_ACKNOWLEDGEMENT_REQUIRED", blocked.reasonCode)
-    assert_nil(dibs.LegacyBaseline.GetBaseline())
+    assert_nil(dibs.HistoricalBaseline.GetBaseline())
 
     local resumed = dibs.Installation.Initialize(nil, { acknowledgeIncompleteEvidence = true })
     assert_true(resumed.ok, tostring(resumed.reasonCode))
@@ -116,7 +139,7 @@ describe("Installation.Initialize orchestrator", function()
   it("resumes from the authority stage after a partial reload-simulated failure", function()
     local dibs = load("Tester-Realm", true)
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "test" }))
-    assert_not_nil(dibs.LegacyBaseline.FinalizeBaseline(nil))
+    assert_not_nil(dibs.HistoricalBaseline.FinalizeBaseline(nil))
     local status = dibs.Installation.GetStatus()
     assert_equal("READY_TO_INITIALIZE", status.state)
     assert_false(dibs.Governance.IsV2Enforced())
@@ -131,15 +154,15 @@ describe("P0 regression: Governance.ActivateV2 never silently acknowledges incom
   it("stops on incomplete evidence sources unless the caller explicitly acknowledges them", function()
     local dibs = load("Tester-Realm", true)
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "test" }))
-    local added = dibs.LegacyBaseline.CollectEvidence(nil, {
+    local added = dibs.HistoricalBaseline.CollectEvidence(nil, {
       sourceId = "manual-import", sourceClient = "Tester-Realm", sourceType = "LEDGER_TRANSACTION", complete = false,
     }, { { originalId = "tx-1", record = { transactionId = "tx-1", playerName = "Member-Realm", amount = 1, seasonId = "S1", actionType = "DIB_GRANTED" } } })
-    assert_not_nil(dibs.LegacyBaseline.RecordDecision(nil, added[1], "INCLUDE", { reason = "reviewed" }))
+    assert_not_nil(dibs.HistoricalBaseline.RecordDecision(nil, added[1], "INCLUDE", { reason = "reviewed" }))
 
     local blocked, blockedReason = dibs.Governance.ActivateV2(nil)
     assert_false(blocked)
     assert_equal("INCOMPLETE_EVIDENCE_ACKNOWLEDGEMENT_REQUIRED", blockedReason)
-    assert_nil(dibs.LegacyBaseline.GetBaseline())
+    assert_nil(dibs.HistoricalBaseline.GetBaseline())
     assert_false(dibs.Governance.IsV2Enforced())
 
     local enabled, enableReason = dibs.Governance.ActivateV2(nil, { acknowledgeIncompleteEvidence = true })
@@ -200,5 +223,25 @@ describe("Guild Configuration next steps after activation", function()
     frame:ActivateRoute("sync")
     clickLatestButton("Open Guild Configuration")
     assert_equal("installation", frame.activeTab)
+  end)
+
+  it("archives and permanently deletes a non-default ledger through Guild Configuration", function()
+    local dibs = load("Tester-Realm", true)
+    local proposed = dibs.MultiLedger.ProposeLedger(nil, "Retired Raid")
+    assert_true(proposed.ok)
+    assert_true(dibs.MultiLedger.ApproveLedger(nil, proposed.ledgerId).ok)
+    local originalSend = dibs.SyncV2.Send
+    dibs.SyncV2.Send = function() return true, "TEST_SENT" end
+
+    dibs.OfficerUI.CreateWindow("installation")
+    clickLatestButton("Archive")
+    clickLatestButton("Confirm archive")
+    assert_equal("ARCHIVED", dibs.GetDB().ledgers[proposed.ledgerId].status)
+
+    clickLatestButton("Delete permanently")
+    clickLatestButton("Confirm permanent deletion")
+    dibs.SyncV2.Send = originalSend
+    assert_nil(dibs.GetDB().ledgers[proposed.ledgerId])
+    assert_not_nil(dibs.GetDB().ledgerDeletionTombstones[proposed.ledgerId])
   end)
 end)

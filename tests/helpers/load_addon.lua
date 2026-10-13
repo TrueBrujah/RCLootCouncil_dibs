@@ -13,6 +13,7 @@ local TOC_FILES = {
   "modules/LootRules.lua",
   "modules/RankRules.lua",
   "modules/Ledger.lua",
+  "modules/MultiLedger.lua",
   "modules/Permissions.lua",
   "modules/ProtectedActions.lua",
   "modules/Notifications.lua",
@@ -27,7 +28,7 @@ local TOC_FILES = {
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
   "modules/SyncV2.lua",
-  "modules/LegacyBaseline.lua",
+  "modules/HistoricalBaseline.lua",
   "modules/Installation.lua",
   "modules/Wizard.lua",
   "modules/RaidRelay.lua",
@@ -35,6 +36,7 @@ local TOC_FILES = {
   "modules/Readiness.lua",
   "modules/DryRun.lua",
   "modules/Capabilities.lua",
+  "modules/IndependentRaid.lua",
   "integrations/Ace3.lua",
   "integrations/DeveloperSandboxStore.lua",
   "integrations/DeveloperSandbox.lua",
@@ -54,6 +56,7 @@ local TOC_FILES = {
   "ui/DataUI.lua",
   "ui/PlayerUI.lua",
   "ui/OfficerUI.lua",
+  "ui/MinimapButton.lua",
   "integrations/RCLootCouncilOptions.lua",
 }
 
@@ -132,6 +135,12 @@ local function makeAce3()
         GetStringWidth = function(self) return #(self._text or "") * 8 end,
       }
       frame.GetFontString = function(self) return self._fontString end
+    end
+    if kind == "EditBox" then
+      widget.editbox = {
+        SetFocus = function(self) self.focused = true end,
+        SetCursorPosition = function(self, position) self.cursorPosition = position end,
+      }
     end
     if kind == "Frame" then
       widget.closebutton = _G.CreateFrame("Button", nil, frame)

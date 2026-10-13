@@ -72,6 +72,13 @@ Relevant design details are in [data-model.md](data-model.md) and
 8. Exercise Search -> Review -> Confirm/Reject -> Complete with real bounded RC history;
    confirm no RCLootCouncil history writes and no changed B09 evidence semantics.
 
+## Current validation status
+
+Maintainer report (2026-10-01): one-client and two-client Retail validation is complete
+for UI fallback, combat safety, provider restoration, player privacy, Officer authority,
+and reconciliation. The sandbox lifecycle has not been retested since v0.6.x; repeat
+the sandbox isolation and re-entry checks on the current build before closing T063.
+
 ## Release gates
 
 - All automated tests pass or known baseline failures are documented.

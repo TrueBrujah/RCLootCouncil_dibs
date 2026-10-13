@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.8.3",
+  "addonVersion": "0.8.4",
   "concepts": [
     {
       "id": "guild.ledger.status",
@@ -42,7 +42,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 85,
+        "line": 96,
         "symbol": "Installation.GetStatus"
       }
     },
@@ -128,7 +128,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 271,
+        "line": 289,
         "symbol": "Installation.Initialize"
       }
     },
@@ -173,7 +173,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 278,
+        "line": 279,
         "symbol": "executeLedgerAdjust"
       }
     },
@@ -218,7 +218,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 714,
+        "line": 790,
         "symbol": "Ledger.AdminAdjust"
       }
     },
@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 883,
+        "line": 963,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -306,7 +306,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 817,
+        "line": 897,
         "symbol": "Ledger.GetBalance"
       }
     },
@@ -350,7 +350,7 @@
       },
       "source": {
         "file": "src/ui/OfficerUI.lua",
-        "line": 433,
+        "line": 436,
         "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
       }
     },
@@ -566,7 +566,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 477,
+        "line": 540,
         "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
@@ -610,7 +610,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 456,
+        "line": 518,
         "symbol": "Dibs.PreDibs.ValidatePublicRequest"
       }
     },
@@ -654,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 582,
+        "line": 647,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },
@@ -744,7 +744,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 181,
+        "line": 182,
         "symbol": "executeRankReconcile"
       }
     },
@@ -788,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3629,
+        "line": 3696,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
@@ -918,7 +918,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 172,
+        "line": 190,
         "symbol": "Installation.GetReconciliationView"
       }
     },
@@ -962,7 +962,7 @@
       },
       "source": {
         "file": "src/modules/Governance.lua",
-        "line": 435,
+        "line": 438,
         "symbol": "Governance.GetAuthorityState"
       }
     },
@@ -1005,7 +1005,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 372,
+        "line": 423,
         "symbol": "Sync.GetPeerStatuses"
       }
     },
@@ -1041,13 +1041,13 @@
           "frFR": "Les diagnostics peuvent afficher des etats de protocole comme V2_ENFORCED, ledgerEpoch et les empreintes. Ils servent au depannage; la configuration normale utilise les statuts et actions indiquees."
         },
         "reference": {
-          "enUS": "SyncV2 may report LEGACY_LOCAL before cutover, CUTOVER_PREPARED while writer compatibility is prepared, or V2_ENFORCED after approved enforcement. ledgerEpoch identifies the active canonical ledger generation; legacyBaselineHash identifies the approved legacy baseline.",
+          "enUS": "SyncV2 may report LEGACY_LOCAL before cutover, CUTOVER_PREPARED while writer compatibility is prepared, or V2_ENFORCED after approved enforcement. ledgerEpoch identifies the active canonical ledger generation; legacyBaselineHash identifies the approved historical baseline.",
           "frFR": "SyncV2 peut indiquer LEGACY_LOCAL avant le changement, CUTOVER_PREPARED pendant la preparation de compatibilite des ecrivains, ou V2_ENFORCED apres activation approuvee. ledgerEpoch identifie la generation active du registre canonique; legacyBaselineHash identifie la base historique approuvee."
         }
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 623,
+        "line": 703,
         "symbol": "Sync.SetProtocolState"
       }
     },
@@ -1178,7 +1178,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 343,
+        "line": 394,
         "symbol": "Sync.GetStatus"
       }
     }

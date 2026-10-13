@@ -59,4 +59,28 @@ describe("Pre-Dib recovery sync", function()
     end
     assert_equal(1, heartbeatCount)
   end)
+
+  it("spreads startup traffic and coalesces the immediate settled-roster retry", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    dibs.Ace3.libs.comm.sent = {}
+    dibs.Ace3.libs.timer.scheduled = {}
+    dibs.Sync.startupLifecycleScheduled = nil
+    dibs.Sync.lastLifecycleAt = nil
+    dibs.Sync.heartbeat = nil
+
+    assert_true(dibs.Sync.OnLifecycle("STARTUP"))
+    assert_true(#dibs.Ace3.libs.comm.sent <= 3)
+    local sentBeforeRoster = #dibs.Ace3.libs.comm.sent
+    local accepted, reason = dibs.Sync.OnLifecycle("GUILD_ROSTER_SETTLED")
+    assert_true(accepted)
+    assert_equal("ROSTER_LIFECYCLE_COALESCED", reason)
+    assert_equal(sentBeforeRoster, #dibs.Ace3.libs.comm.sent)
+
+    local startupDelays = {}
+    for _, timer in ipairs(dibs.Ace3.libs.timer.scheduled) do
+      startupDelays[timer.delay] = true
+    end
+    assert_true(startupDelays[1])
+    assert_true(startupDelays[2])
+  end)
 end)

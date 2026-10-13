@@ -271,4 +271,55 @@ describe("B11d Officer dashboard", function()
     assert_equal("RECOVERY_PENDING", dashboard.technical.coordinator.state)
     assert_true(dashboard.status.coordinator.explanation:find("recovery", 1, true) ~= nil)
   end)
+
+  it("builds only the projection requested by a paged view", function()
+    local dibs = setup()
+    local calls = { ledger = 0, automatic = 0, predibs = 0, vault = 0 }
+    dibs.OfficerUI.BuildLedgerDetails = function()
+      calls.ledger = calls.ledger + 1
+      return { players = { "Player" }, actions = { "Action" }, hiddenTransactionCount = 0 }
+    end
+    dibs.OfficerUI.BuildAutomaticAllocationDetails = function()
+      calls.automatic = calls.automatic + 1
+      return { allocations = { "Allocation" }, rows = {}, hiddenTransactionCount = 0 }
+    end
+    dibs.OfficerUI.BuildPreDibDetails = function()
+      calls.predibs = calls.predibs + 1
+      return { requests = { "Pre-Dib" }, hiddenRequestCount = 0 }
+    end
+    dibs.OfficerUI.BuildVaultAcquisitionReview = function()
+      calls.vault = calls.vault + 1
+      return { rows = { { text = "Vault" } }, hiddenCount = 0 }
+    end
+
+    assert_equal("Action", dibs.OfficerUI.GetPagedView("actions", 7, 1, 5).lines[1])
+    assert_equal(1, calls.ledger)
+    assert_equal(0, calls.automatic)
+    assert_equal(0, calls.predibs)
+    assert_equal(0, calls.vault)
+
+    assert_equal("Pre-Dib", dibs.OfficerUI.GetPagedView("predibs", 7, 1, 5).lines[1])
+    assert_equal(1, calls.ledger)
+    assert_equal(0, calls.automatic)
+    assert_equal(1, calls.predibs)
+    assert_equal(0, calls.vault)
+  end)
+
+  it("avoids a duplicate first-show render and a full-ledger overview scan", function()
+    local dibs = setup()
+    dibs.Ledger.GetAllTransactions = function()
+      error("OfficerUI.Show must not copy and sort the full ledger")
+    end
+
+    local frame = dibs.OfficerUI.Show()
+    assert_not_nil(frame)
+    assert_equal(1, frame.routeDispatchCount)
+    local onShow = frame.GetScript and frame:GetScript("OnShow") or frame._scripts and frame._scripts.OnShow
+    assert_not_nil(onShow)
+
+    onShow(frame)
+    assert_equal(1, frame.routeDispatchCount)
+    onShow(frame)
+    assert_equal(2, frame.routeDispatchCount)
+  end)
 end)

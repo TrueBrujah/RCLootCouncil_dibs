@@ -23,7 +23,7 @@ end
 local function activateV2()
   local dibs = load("Coordinator-Realm")
   assert_true(dibs.Governance.AdoptInitial(nil, { reason = "award relay test" }))
-  local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+  local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
   local coordinator = assert(dibs.Identity.CreateSnapshot("Coordinator-Realm"))
   assert_true(dibs.Governance.Change(nil, { future = { authority = {
     schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 1,

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.4 - Guided setup, multi-ledger, and rank controls - 2026-10-13
+
+- Replace the fourteen-page Guided Setup navigation with Choose, Configure, and Verify. Add Progression, Standard Loot, and Custom profiles with change previews, preserved-data explanations, deferred approvals, idempotent application, and explicit partial-failure details.
+- Add plain-language blocker causes, impacts, and direct correction routes while keeping warnings and optional raid context distinct.
+- Add multi-ledger accounting with independent transactions and balances, officer proposals, GM-only approval and deletion of eligible archived ledgers, and catalog replication. Keep guild-primary as the default and preserve historical compatibility.
+- Add isolated Independent Raid sessions with local point tracking, no guild/officer/raid synchronization, RCLootCouncil DIB response integration, and optional post-raid award reconciliation.
+- Let verified officers initialize setup proposals, configure seasons, apply Dibs loot-policy presets, and edit local Loot Rules drafts. Adoption and publication of guild-wide Loot Rules remain GM-only.
+- Add a per-rank Dibs enable/disable setting. Disabled ranks receive no starting allocation and are excluded from allocation warnings; existing ledger allocations remain unchanged.
+- Preserve authority checks, guild and character data isolation, existing ledgers, transactions, history, and advanced configuration pages. Keep Serialized baseline identifiers compatible while renaming the module to `Dibs.HistoricalBaseline`.
+- Update English and French officer guidance and release documentation.
+
 ## 0.8.3 - Guild whisper addressing and Pre-Dib loot rows - 2026-10-08
 
 - Resolve V2 addon whisper recipients against the guild roster and send full

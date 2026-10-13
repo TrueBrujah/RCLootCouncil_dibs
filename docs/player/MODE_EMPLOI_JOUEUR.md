@@ -38,6 +38,10 @@ Commandes principales :
 
 Vous pouvez aussi utiliser `/dibs options`, puis les boutons de lancement des fenetres Joueur et Demandes.
 
+Apres la connexion, l'icone Dibs a cote de la mini-carte ouvre la vue
+appropriee. Elle ne donne aucun droit d'Officer ou de GM : c'est seulement un
+raccourci.
+
 ## Installation et premier lancement
 
 1. Installez le dossier `RCLootCouncil_dibs` dans `Interface/AddOns/`.
@@ -53,9 +57,10 @@ finalisation du butin.
 ## Regles de butin de guilde
 
 Avec DIBS 0.8.x, le maitre de guilde adopte explicitement les regles de butin
-de guilde et publie leurs modifications. Les Officers consultent la version
-publiee sans la modifier ; les anciennes valeurs locales ne constituent pas
-une autorite de guilde. Raid Readiness distingue les etats suivants :
+de guilde et publie leurs modifications. Les officiers verifies peuvent
+modifier un brouillon local et appliquer le preset Dibs, mais seul le GM peut
+adopter ou publier les regles de guilde. Les anciennes valeurs locales ne
+constituent pas une autorite de guilde. Raid Readiness distingue les etats suivants :
 
 - `GUILD_LOOT_RULES_READY` : une version de guilde valide est presente ;
 - `LOCAL_LEGACY_ONLY` : les anciennes regles restent un repli local avant
@@ -91,11 +96,18 @@ Un Dib est une unite de priorite definie par la guilde pour la saison active.
 
 Dans la fenetre Joueur, verifiez :
 
-- la saison active ;
+- la saison active et le ledger sélectionné (menu déroulant en haut du tableau si la guilde gère plusieurs rosters) ;
 - votre solde disponible ;
 - vos derniers mouvements ;
 - vos demandes Pre-Dibs actives ;
 - l'etat de l'integration RCLootCouncil, si elle est utilisee.
+
+### Raids Indépendants et PUGs
+
+Si vous participez à un raid indépendant mené par un Master Looter avec Dibs :
+- Vous avez seulement besoin de l'addon RCLootCouncil standard.
+- Cliquer sur le bouton "DIB" dans la fenêtre de vote RCLootCouncil consomme un point de la session temporaire du raid.
+- Ces attributions n'affectent pas votre solde de guilde habituel (sauf réconciliation ultérieure par un officier).
 
 ## 3. Faire une demande Pre-Dib
 

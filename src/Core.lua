@@ -30,7 +30,7 @@ Dibs.Permissions = Dibs.Permissions or {}
 Dibs.Identity = Dibs.Identity or {}
 Dibs.Governance = Dibs.Governance or {}
 Dibs.OperationalPolicy = Dibs.OperationalPolicy or {}
-Dibs.LegacyBaseline = Dibs.LegacyBaseline or {}
+Dibs.HistoricalBaseline = Dibs.HistoricalBaseline or {}
 Dibs.Installation = Dibs.Installation or {}
 Dibs.Wizard = Dibs.Wizard or {}
 Dibs.ProtectedActions = Dibs.ProtectedActions or {}
@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.3"
+Dibs.VERSION = "0.8.4"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -934,6 +934,7 @@ function Dibs.CoreAPI.setRankAllocation(request)
     rankIndex = rule.rankIndex,
     allocation = rule.allocation,
     rankName = rule.rankName,
+    enabled = rule.enabled ~= false,
   } or { reasonCode = reasonCode }
 end
 
@@ -946,6 +947,7 @@ function Dibs.CoreAPI.getRankAllocation(request)
   return rule and {
     allocation = rule.allocation,
     rankName = rule.rankName,
+    enabled = rule.enabled ~= false,
   } or nil
 end
 
@@ -1374,7 +1376,7 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs sync probe|report|repair <player> | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name]")
+    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs sync probe|report|repair <player> | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name] | /dibs ledger [list|set <id>] | /dibs raid [ledger <id>|sync|start|stop|status]")
     Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
     Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
     return
@@ -1696,6 +1698,102 @@ function Dibs.HandleSlashCommand(msg)
     end
   end
 
+  if action == "ledger" then
+    local mode = args[2] or "list"
+    if mode == "set" then
+      local targetId = args[3]
+      if not targetId or targetId == "" then
+        Dibs.Message("Usage: /dibs ledger set <ledgerId|name>")
+        return
+      end
+      local ok, reason = Dibs.MultiLedger and Dibs.MultiLedger.SetActiveLedger and Dibs.MultiLedger.SetActiveLedger(targetId)
+      if ok then
+        local current = Dibs.MultiLedger.GetActiveLedgerId()
+        Dibs.Message("Active ledger set to: " .. tostring(current))
+        if Dibs.MultiLedger and Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
+          Dibs.MultiLedger.BroadcastRaidLedger(nil, current)
+        end
+      else
+        Dibs.Message("Failed to set active ledger: " .. tostring(reason or "unknown error"))
+      end
+      return
+    end
+
+    if mode == "list" or mode == "" then
+      local ledgers = Dibs.MultiLedger and Dibs.MultiLedger.GetLedgers and Dibs.MultiLedger.GetLedgers() or {}
+      local activeId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
+      local text = "Ledgers: "
+      for _, l in ipairs(ledgers) do
+        local marker = l.id == activeId and " [ACTIVE]" or ""
+        text = text .. tostring(l.name) .. " (" .. tostring(l.id) .. ", " .. tostring(l.status) .. ")" .. marker .. ", "
+      end
+      Dibs.Message(text)
+      return
+    end
+
+    local current = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
+    Dibs.Message("Current active ledger: " .. tostring(current))
+    return
+  end
+
+  if action == "raid" then
+    local mode = args[2] or "status"
+    if mode == "ledger" or mode == "set" then
+      local target = args[3]
+      if not target or target == "" then
+        Dibs.Message("Usage: /dibs raid ledger <ledgerId|name>")
+        return
+      end
+      local ok, reason = Dibs.MultiLedger and Dibs.MultiLedger.BroadcastRaidLedger and Dibs.MultiLedger.BroadcastRaidLedger(nil, target)
+      if ok then
+        local current = Dibs.MultiLedger.GetActiveLedgerId()
+        Dibs.Message("Raid active ledger synchronized to: " .. tostring(current))
+      else
+        Dibs.Message("Failed to synchronize raid ledger: " .. tostring(reason or "unknown error"))
+      end
+      return
+    end
+
+    if mode == "sync" then
+      local activeId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId()
+      local ok, reason = Dibs.MultiLedger and Dibs.MultiLedger.BroadcastRaidLedger and Dibs.MultiLedger.BroadcastRaidLedger(nil, activeId)
+      if ok then
+        Dibs.Message("Raid active ledger broadcast: " .. tostring(activeId))
+      else
+        Dibs.Message("Failed to broadcast raid ledger: " .. tostring(reason or "unknown error"))
+      end
+      return
+    end
+
+    if mode == "start" then
+      local points = tonumber(args[3]) or 1
+      local name = args[4]
+      local result = Dibs.IndependentRaid and Dibs.IndependentRaid.StartSession and Dibs.IndependentRaid.StartSession(name, points)
+      if result and result.ok then
+        Dibs.Message("Independent Raid session started: " .. tostring(result.sessionId) .. " (" .. tostring(points) .. " points)")
+      else
+        Dibs.Message("Failed to start Independent Raid: " .. tostring(result and result.reasonCode or "unknown error"))
+      end
+      return
+    end
+
+    if mode == "stop" or mode == "conclude" then
+      local result = Dibs.IndependentRaid and Dibs.IndependentRaid.ConcludeSession and Dibs.IndependentRaid.ConcludeSession()
+      if result and result.ok then
+        Dibs.Message("Independent Raid session concluded.")
+      else
+        Dibs.Message("Failed to conclude Independent Raid: " .. tostring(result and result.reasonCode or "unknown error"))
+      end
+      return
+    end
+
+    local isIndependent = Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive()
+    local currentLedger = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
+    Dibs.Message(string.format("Raid status: %s | Active Guild Ledger: %s",
+      isIndependent and "Independent Session ACTIVE" or "Guild Ledger Mode", tostring(currentLedger)))
+    return
+  end
+
   Dibs.Message("Unknown Dibs command. Use /dibs help.")
 end
 
@@ -1860,6 +1958,10 @@ function Dibs.Initialize()
     Dibs.Sync.RegisterTransport()
   end
   if Dibs.Sync and Dibs.Sync.OnLifecycle then Dibs.Sync.OnLifecycle("STARTUP") end
+
+  if Dibs.MultiLedger and Dibs.MultiLedger.RegisterTransport then
+    Dibs.MultiLedger.RegisterTransport()
+  end
 
   Dibs.SetupSlashCommands()
   registerOptionalCapabilities()

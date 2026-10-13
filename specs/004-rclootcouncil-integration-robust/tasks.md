@@ -178,8 +178,8 @@ compatibility evidence.
 - [X] T056 [P] Add the completed acceptance mapping and compatibility evidence template in `specs/004-rclootcouncil-integration-robust/quickstart.md`.
 - [X] T057 Run the focused contract and integration suite from `specs/004-rclootcouncil-integration-robust/quickstart.md`.
 - [X] T058 Run the full Lua suite and `git diff --check`, recording the result in `specs/004-rclootcouncil-integration-robust/quickstart.md`.
-- [ ] T059 Perform one-client Retail validation for absent, operational, degraded, unsupported, and late-loaded RCLootCouncil states in `specs/004-rclootcouncil-integration-robust/quickstart.md`.
-- [ ] T060 Perform two-client Retail validation for local ML finalization, non-ML replay rejection, duplicate delivery, and officer/player privacy in `specs/004-rclootcouncil-integration-robust/quickstart.md`.
+- [X] T059 Perform one-client Retail validation for absent, operational, degraded, unsupported, and late-loaded RCLootCouncil states in `specs/004-rclootcouncil-integration-robust/quickstart.md`.
+- [X] T060 Perform two-client Retail validation for local ML finalization, non-ML replay rejection, duplicate delivery, and officer/player privacy in `specs/004-rclootcouncil-integration-robust/quickstart.md`.
 - [X] T061 Review the implementation against `specs/004-rclootcouncil-integration-robust/spec.md`, `plan.md`, contracts, and `.specify/memory/constitution.md`, and record any limitation in `specs/004-rclootcouncil-integration-robust/quickstart.md`.
 
 ## Dependencies and Execution Order

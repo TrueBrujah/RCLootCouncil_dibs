@@ -9,10 +9,16 @@ local function load(player, saved)
   } }))
 end
 
+local function remote(dibs, message, sender)
+  local envelope = assert(dibs.Sync.BuildEnvelope(message))
+  envelope.senderNameRealm, envelope.senderMemberKey = sender, string.lower(sender)
+  return envelope
+end
+
 local function activateV2()
   local dibs = load("Coordinator-Realm")
   assert_true(dibs.Governance.AdoptInitial(nil, { reason = "B06 governance" }))
-  local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+  local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
   local coordinator = assert(dibs.Identity.CreateSnapshot("Coordinator-Realm"))
   assert_true(dibs.Governance.Change(nil, { future = { authority = {
     schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 7,
@@ -232,7 +238,7 @@ describe("B06 coordinator distributed ledger", function()
     end
     assert_equal(1, requests)
 
-    syncState.ledgerRequestAt = syncState.ledgerRequestAt - 61
+    syncState.ledgerSync["guild-primary"].requestAt = syncState.ledgerSync["guild-primary"].requestAt - 61
 
     accepted, reason = follower.Sync.Receive(retryEnvelope, "Coordinator-Realm")
     assert_true(accepted, tostring(reason))
@@ -244,6 +250,92 @@ describe("B06 coordinator distributed ledger", function()
       if message and message.type == "DETAIL_FETCH" then requests = requests + 1 end
     end
     assert_equal(2, requests)
+  end)
+
+  it("replicates an alternate-ledger commit while the peer has another active ledger", function()
+    local coordinator = activateV2()
+    local season = coordinator.GetCurrentSeasonId()
+    local proposed = coordinator.MultiLedger.ProposeLedger("Coordinator-Realm", "B06 Alternate")
+    assert_true(proposed.ok, tostring(proposed.reasonCode))
+    assert_true(coordinator.MultiLedger.ApproveLedger("Coordinator-Realm", proposed.ledgerId).ok)
+    assert_true(coordinator.MultiLedger.SetActiveLedger(proposed.ledgerId))
+    local seed = coordinator.Ledger.CommitSeasonAllocation(
+      { systemBootstrap = true, ledgerId = proposed.ledgerId },
+      { playerName = "Player-Realm", seasonId = season, amount = 1, reason = "alternate seed" })
+    assert_true(seed.accepted, tostring(seed.reasonCode))
+    assert_true(coordinator.MultiLedger.SetActiveLedger("guild-primary"))
+    local followerStart = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
+    local sentBefore = #coordinator.Ace3.libs.comm.sent
+    local result = coordinator.Ledger.CommitDibUse({ ledgerId = proposed.ledgerId }, {
+      transactionId = "b06-alternate-award", playerName = "Player-Realm", seasonId = season,
+      amount = 1, itemID = 991, source = "b06-alternate",
+    })
+    assert_true(result.accepted, tostring(result.reasonCode))
+    assert_equal(proposed.ledgerId, result.value.ledgerId)
+    local digest
+    for index = sentBefore + 1, #coordinator.Ace3.libs.comm.sent do
+      local message = coordinator.Ace3.Deserialize(coordinator.Ace3.libs.comm.sent[index].payload)
+      if message and message.type == "LEDGER_DIGEST" then digest = message end
+    end
+    assert_not_nil(digest)
+    assert_equal(proposed.ledgerId, digest.ledgerId)
+    local coordinatorAfterCommit = coordinator.DeepCopy(_G.RCLootCouncil_dibsDB)
+
+    local follower = load("Officer-Realm", followerStart)
+    assert_true(follower.MultiLedger.SetActiveLedger("guild-primary"))
+    local accepted, reason = follower.Sync.Receive(digest, "Coordinator-Realm")
+    assert_true(accepted, tostring(reason))
+    assert_equal("LEDGER_DETAIL_REQUESTED", reason)
+    local fetch
+    for _, sent in ipairs(follower.Ace3.libs.comm.sent) do
+      local message = follower.Ace3.Deserialize(sent.payload)
+      if message and message.type == "DETAIL_FETCH" then fetch = message end
+    end
+    assert_not_nil(fetch)
+    assert_equal(proposed.ledgerId, fetch.requests[1].ledgerId)
+    local followerWaiting = follower.DeepCopy(_G.RCLootCouncil_dibsDB)
+
+    local responder = load("Coordinator-Realm", coordinatorAfterCommit)
+    local coordinatorSentBefore = #responder.Ace3.libs.comm.sent
+    accepted, reason = responder.Sync.Receive(fetch, "Officer-Realm")
+    assert_true(accepted, tostring(reason))
+    local transferMessages = {}
+    for index = coordinatorSentBefore + 1, #responder.Ace3.libs.comm.sent do
+      local sent = responder.Ace3.libs.comm.sent[index]
+      local message = responder.Ace3.Deserialize(sent.payload)
+      if message and (message.type == "TRANSFER_BEGIN" or message.type == "TRANSFER_CHUNK" or message.type == "TRANSFER_END") then
+        transferMessages[#transferMessages + 1] = { message = message, channel = sent.channel }
+      end
+    end
+
+    local syncedFollower = load("Officer-Realm", followerWaiting)
+    local transferBegin, transferEnd, chunks = nil, nil, {}
+    for _, transfer in ipairs(transferMessages) do
+      if transfer.message.type == "TRANSFER_BEGIN" then transferBegin = transfer.message end
+      if transfer.message.type == "TRANSFER_CHUNK" then chunks[transfer.message.chunkIndex] = transfer.message.chunk end
+      if transfer.message.type == "TRANSFER_END" then transferEnd = transfer.message end
+    end
+    assert_not_nil(transferBegin)
+    assert_not_nil(transferEnd)
+    local sourcePayload = responder.Ace3.Deserialize(table.concat(chunks))
+    assert_not_nil(sourcePayload)
+    local receiverSentBefore = #syncedFollower.Ace3.libs.comm.sent
+    assert_true(syncedFollower.Sync.SendDetail("AWARD_COMMIT", transferBegin.entityId, transferBegin.revision,
+      transferBegin.contentHash, sourcePayload, "Coordinator-Realm"))
+    for index = receiverSentBefore + 1, #syncedFollower.Ace3.libs.comm.sent do
+      local sent = syncedFollower.Ace3.libs.comm.sent[index]
+      local message = syncedFollower.Ace3.Deserialize(sent.payload)
+      if message and (message.type == "TRANSFER_BEGIN" or message.type == "TRANSFER_CHUNK" or message.type == "TRANSFER_END") then
+        message.senderNameRealm, message.senderMemberKey = "Coordinator-Realm", "coordinator-realm"
+        accepted, reason = syncedFollower.Sync.Receive(message, "Coordinator-Realm", sent.channel)
+        assert_true(accepted, tostring(message.type) .. ":" .. tostring(reason))
+      end
+    end
+    assert_equal(1, syncedFollower.Ledger.GetBalance("Player-Realm", season, "guild-primary"))
+    assert_equal(0, syncedFollower.Ledger.GetBalance("Player-Realm", season, proposed.ledgerId))
+    assert_equal("guild-primary", syncedFollower.MultiLedger.GetActiveLedgerId())
+    assert_equal(3, syncedFollower.Ledger.GetCanonicalState(proposed.ledgerId).nextSeq)
+    assert_equal(1, syncedFollower.Ledger.GetCanonicalState("guild-primary").nextSeq)
   end)
 
   it("serializes competing proposals against the coordinator's current balance and blocks local bypass", function()

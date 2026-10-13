@@ -3,7 +3,7 @@ Module: Dibs.Installation
 Layer: Guild installation/readiness orchestration
 Purpose: Derive one normalized guild installation/readiness projection and
 orchestrate the GM-facing "Initialize DIBS" workflow over existing
-authoritative modules (Governance, LegacyBaseline, Sync).
+authoritative modules (Governance, HistoricalBaseline, Sync).
 Non-responsibilities: It owns no authority, ledger, baseline, or protocol
 state of its own; every mutation is delegated to the module that already
 validates it. It never mutates db.governance/db.ledger/db.sync.v2 directly.
@@ -29,6 +29,14 @@ local function isGM(actor)
   return Dibs.Identity.IsCurrentGuildMaster(actor or localPlayer()) == true
 end
 
+local function isOfficer(actor)
+  if Dibs.Permissions and type(Dibs.Permissions.IsOfficer) == "function" then
+    return Dibs.Permissions.IsOfficer(actor) == true
+  end
+  if not Dibs.Identity or type(Dibs.Identity.IsCurrentGuildOfficer) ~= "function" then return false end
+  return Dibs.Identity.IsCurrentGuildOfficer(actor or localPlayer()) == true
+end
+
 local function countTable(value)
   local total = 0
   for _ in pairs(value or {}) do total = total + 1 end
@@ -48,7 +56,7 @@ local function hasIncompleteSources(baselineState)
   return false
 end
 
--- Real existing Dibs data, independent of whether LegacyBaseline evidence has
+-- Real existing Dibs data, independent of whether HistoricalBaseline evidence has
 -- ever been collected. A guild is never "clean" merely because the evidence
 -- cache is empty (see Installation_Initialization_V2_Architecture_Review.md).
 -- SEASON_ALLOCATION transactions are excluded: Dibs.Initialize() creates a
@@ -66,7 +74,10 @@ local function detectRealLegacyData()
   end
   local preDibCount = 0
   local db = Dibs.GetDB and Dibs.GetDB()
-  if type(db) == "table" and type(db.preDibs) == "table" and type(db.preDibs.requests) == "table" then
+  if Dibs.PreDibs and Dibs.PreDibs.GetHistory then
+    local requests = Dibs.PreDibs.GetHistory()
+    if type(requests) == "table" then preDibCount = #requests end
+  elseif type(db) == "table" and type(db.preDibs) == "table" and type(db.preDibs.requests) == "table" then
     preDibCount = #db.preDibs.requests
   end
   return ledgerCount > 0 or preDibCount > 0, ledgerCount, preDibCount
@@ -86,9 +97,9 @@ function Installation.GetStatus(actor)
   local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or { status = "POLICY_UNINITIALIZED" }
   local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or { state = "LEGACY_LOCAL" }
   local protocolActive = Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced() == true
-  local baselineState = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetState and Dibs.LegacyBaseline.GetState() or { evidence = {}, sources = {} }
-  local approvedBaseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
-  local findings = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetFindings and Dibs.LegacyBaseline.GetFindings() or {}
+  local baselineState = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetState and Dibs.HistoricalBaseline.GetState() or { evidence = {}, sources = {} }
+  local approvedBaseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline()
+  local findings = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetFindings and Dibs.HistoricalBaseline.GetFindings() or {}
   local evidenceCount = countTable(baselineState.evidence)
   local openFindings = countFindingsOpen(findings)
   local incompleteSources = hasIncompleteSources(baselineState)
@@ -97,6 +108,7 @@ function Installation.GetStatus(actor)
   local reconciliationRequired = hasUncollectedEvidence or (evidenceCount > 0 and openFindings > 0)
 
   local actorIsGM = isGM(actor)
+  local actorIsOfficer = isOfficer(actor)
   local snapshot = actorSnapshot(actor)
   local candidateDisplayName = (authority.coordinator and authority.coordinator.displayName) or (snapshot and snapshot.displayName)
   local syncBehind = Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() == true
@@ -127,12 +139,18 @@ function Installation.GetStatus(actor)
     if not compatibilityReady then warnings[#warnings + 1] = compatibilityReason or "WRITER_COMPATIBILITY_REQUIRED" end
     if syncBehind then warnings[#warnings + 1] = "SYNC_BEHIND" end
   end
-  if not actorIsGM then blockers[#blockers + 1] = "GUILD_MASTER_REQUIRED" end
+  if not actorIsGM and not actorIsOfficer then
+    blockers[#blockers + 1] = "GUILD_MASTER_REQUIRED"
+  elseif not actorIsGM and actorIsOfficer then
+    if governance.status ~= "GOVERNANCE_ADOPTED" or not approvedBaseline then
+      warnings[#warnings + 1] = "GM_CONFIRMATION_PENDING"
+    end
+  end
 
   return {
     state = state,
     installType = hasRealLegacyData and "UPGRADE" or "CLEAN",
-    actor = { isGM = actorIsGM, displayName = snapshot and snapshot.displayName or nil },
+    actor = { isGM = actorIsGM, isOfficer = actorIsOfficer, displayName = snapshot and snapshot.displayName or nil },
     governance = { ready = governance.status == "GOVERNANCE_ADOPTED" },
     legacy = {
       evidenceCount = evidenceCount,
@@ -170,9 +188,9 @@ end
 ---@doc.help-key UI_HELP_RECONCILIATION
 ---@doc.label-key DOC_GUILD_RECONCILIATION_LABEL
 function Installation.GetReconciliationView()
-  local evidence = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetEvidence and Dibs.LegacyBaseline.GetEvidence() or {}
-  local state = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetState and Dibs.LegacyBaseline.GetState() or { decisions = {}, activeDecisionByEvidence = {} }
-  local findings = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetFindings and Dibs.LegacyBaseline.GetFindings() or {}
+  local evidence = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetEvidence and Dibs.HistoricalBaseline.GetEvidence() or {}
+  local state = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetState and Dibs.HistoricalBaseline.GetState() or { decisions = {}, activeDecisionByEvidence = {} }
+  local findings = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetFindings and Dibs.HistoricalBaseline.GetFindings() or {}
   local findingByEvidence = {}
   for _, finding in ipairs(findings) do
     for _, evidenceId in ipairs(finding.evidenceIds or {}) do
@@ -213,25 +231,25 @@ end
 -- reviewable evidence. It never approves or decides anything.
 local function stageLegacyDiscovery(actor)
   local hasRealLegacyData, _, _ = detectRealLegacyData()
-  local baselineState = Dibs.LegacyBaseline.GetState()
+  local baselineState = Dibs.HistoricalBaseline.GetState()
   local evidenceCount = countTable(baselineState.evidence)
   if not hasRealLegacyData or evidenceCount > 0 then return true, "NO_ACTION_REQUIRED" end
-  local result, reason = Dibs.LegacyBaseline.CollectLocalEvidence(actor, "installation-wizard")
+  local result, reason = Dibs.HistoricalBaseline.CollectLocalEvidence(actor, "installation-wizard")
   if not result then return false, reason or "LEGACY_EVIDENCE_COLLECTION_FAILED" end
   return true, "COLLECTED"
 end
 
 local function stageBaseline(actor, options)
-  local existing = Dibs.LegacyBaseline.GetBaseline()
+  local existing = Dibs.HistoricalBaseline.GetBaseline()
   if existing then return true, "ALREADY_APPROVED" end
-  local baselineState = Dibs.LegacyBaseline.GetState()
+  local baselineState = Dibs.HistoricalBaseline.GetState()
   local evidenceCount = countTable(baselineState.evidence)
   if evidenceCount > 0 then
-    local findings = Dibs.LegacyBaseline.GetFindings()
+    local findings = Dibs.HistoricalBaseline.GetFindings()
     if countFindingsOpen(findings) > 0 then return false, "LEGACY_RECONCILIATION_REQUIRED" end
   end
   local acknowledgeIncompleteEvidence = options and options.acknowledgeIncompleteEvidence == true
-  local baseline, reason = Dibs.LegacyBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = acknowledgeIncompleteEvidence })
+  local baseline, reason = Dibs.HistoricalBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = acknowledgeIncompleteEvidence })
   if not baseline then return false, reason end
   return true, "APPROVED"
 end
@@ -240,7 +258,7 @@ local function stageCoordinator(actor)
   local authority = Dibs.Governance.GetAuthorityState()
   if authority.state == "ACTIVE" then return true, "ALREADY_ACTIVE" end
   if authority.state ~= "LEGACY_LOCAL" then return false, authority.state end
-  local baseline = Dibs.LegacyBaseline.GetBaseline()
+  local baseline = Dibs.HistoricalBaseline.GetBaseline()
   if not baseline then return false, "BASELINE_REQUIRED" end
   local ok, reason = Dibs.Governance.EstablishInitialAuthority(actor, baseline.legacyBaselineHash)
   if not ok then return false, reason end
@@ -270,11 +288,30 @@ end
 ---@doc.label-key DOC_GUILD_SETUP_LABEL
 function Installation.Initialize(actor, options)
   options = type(options) == "table" and options or {}
-  if not isGM(actor) then
+  local actorIsGM = isGM(actor)
+  local actorIsOfficer = isOfficer(actor)
+  if not actorIsGM and not actorIsOfficer then
     return { ok = false, stage = "actor", reasonCode = "GUILD_MASTER_REQUIRED", status = Installation.GetStatus(actor) }
   end
   if Installation.GetStatus(actor).protocol.active then
     return { ok = true, reasonCode = "ALREADY_INITIALIZED", status = Installation.GetStatus(actor) }
+  end
+  if not actorIsGM and actorIsOfficer then
+    stageLegacyDiscovery(actor)
+    if Dibs.MultiLedger and type(Dibs.MultiLedger.ProposeLedger) == "function" then
+      local ledgers = Dibs.MultiLedger.GetLedgers()
+      local hasLedger = false
+      for _, l in ipairs(ledgers) do
+        if l.id == "guild-primary" or l.name == "Guild Primary" then
+          hasLedger = true
+          break
+        end
+      end
+      if not hasLedger then
+        Dibs.MultiLedger.ProposeLedger(actor, "Guild Primary")
+      end
+    end
+    return { ok = true, reasonCode = "PROPOSAL_CREATED", status = Installation.GetStatus(actor) }
   end
   local govOk, govReason = stageGovernance(actor)
   if not govOk then return { ok = false, stage = "governance", reasonCode = govReason, status = Installation.GetStatus(actor) } end

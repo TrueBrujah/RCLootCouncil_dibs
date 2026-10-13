@@ -207,8 +207,9 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 - [X] T060 [P] Add full B11 regression coverage and update `docs/TEST_PLAN.md` with automated, Retail, one-client, and two-client scenarios from `specs/011-midnight-ui-developer-sandbox/quickstart.md`.
 - [X] T061 [P] Update `docs/developer/architecture.md`, `docs/developer/testing.md`, `docs/developer/saved-variables.md`, and `docs/developer/modules.md` to document Midnight, provider isolation, local persistence, and sandbox lifecycle.
 - [X] T062 Run the complete Fengari suite from `specs/011-midnight-ui-developer-sandbox/quickstart.md`, record known pre-B11 baseline failures separately, and run `git diff --check`.
-- [ ] T063 Run Retail one-client and two-client validation for UI fallback, combat safety, sandbox isolation, provider restoration, player privacy, Officer authority, and reconciliation behavior using `docs/TEST_PLAN.md` and `specs/011-midnight-ui-developer-sandbox/quickstart.md`.
+- [ ] T063 Re-test current-version Retail sandbox isolation, simulated role/provider lifecycle, production noninterference, and explicit re-entry on one and two clients; record evidence in `specs/011-midnight-ui-developer-sandbox/quickstart.md`.
 - [X] T064 Confirm no production SavedVariables migration, SyncV2 change, ledger semantic change, RCLootCouncil write, or sandbox-to-production path exists; record the B11 release note in `CHANGELOG.md` only when implementation is complete.
+- [X] T065 Record confirmed one-client and two-client Retail validation of UI fallback, combat safety, provider restoration, player privacy, Officer authority, and reconciliation in `specs/011-midnight-ui-developer-sandbox/quickstart.md`, excluding the pending sandbox retest.
 
 ---
 

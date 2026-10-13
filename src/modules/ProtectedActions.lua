@@ -160,7 +160,8 @@ local function executeRankSet(actor, payload, decision)
   local rankIndex = payload and payload.rankIndex
   local allocation = payload and payload.allocation
   local rankName = payload and payload.rankName
-  local rule, reason = Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName)
+  local enabled = payload and payload.enabled
+  local rule, reason = Dibs.RankRules.SetRankAllocation(seasonId, rankIndex, allocation, rankName, enabled)
   if rule and Dibs.Seasons and Dibs.Seasons.PublishCatalog then
     local published = Dibs.Seasons.PublishCatalog(actor, "RANK_RULE_SET")
     if published and Dibs.Sync and Dibs.Sync.AnnounceSeasonCatalog then Dibs.Sync.AnnounceSeasonCatalog() end

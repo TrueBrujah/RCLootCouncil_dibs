@@ -1,15 +1,15 @@
 --[[
-Module: Dibs.LegacyBaseline
-Layer: Legacy reconciliation and recovery staging (B05a)
-Purpose: Preserve divergent legacy evidence and create a GM-approved,
+Module: Dibs.HistoricalBaseline
+Layer: Historical reconciliation and recovery staging (B05a)
+Purpose: Preserve divergent pre-existing evidence and create a GM-approved,
 deterministic baseline without activating a coordinator or mutating history.
 Non-responsibilities: Coordinator transitions, ledger epochs, AWARD_COMMIT,
-RCLootCouncil award handling, or revival of legacy Pre-Dibs.
+RCLootCouncil award handling, or revival of superseded Pre-Dibs records.
 ]]
 
 local Dibs = _G.Dibs
-Dibs.LegacyBaseline = Dibs.LegacyBaseline or {}
-local M = Dibs.LegacyBaseline
+Dibs.HistoricalBaseline = Dibs.HistoricalBaseline or {}
+local M = Dibs.HistoricalBaseline
 
 local SCHEMA, MAX_EVIDENCE, MAX_SOURCES, MAX_DECISIONS, MAX_AUDIT, MAX_DEPTH = 1, 500, 50, 500, 50, 8
 local DECISIONS = { INCLUDE = true, EXCLUDE = true, COMPENSATING_ADJUSTMENT = true, DEFER = true }
@@ -352,14 +352,14 @@ function M.GetState() return copy(ensure()) end
 function M.GetEvidence() return sortedValues(ensure().evidence) end
 function M.GetFindings() return sortedValues(ensure().findings) end
 function M.GetBaseline() return copy(ensure().baseline) end
-function M.CalculateLegacyBaselineHash(content) return hash(content) end
+function M.CalculateHistoricalBaselineHash(content) return hash(content) end
 
 function M.ApplyApprovedBaseline(baseline)
   if type(baseline) ~= "table" or type(baseline.legacyBaselineHash) ~= "string" then return false, "INVALID_BASELINE" end
   local projection = copy(baseline)
   -- gmApproval is stamped onto the baseline after buildBaseline() computes the hash; exclude it here too.
   projection.legacyBaselineHash, projection.gmApproval = nil, nil
-  if M.CalculateLegacyBaselineHash(projection) ~= baseline.legacyBaselineHash then return false, "BASELINE_HASH_MISMATCH" end
+  if M.CalculateHistoricalBaselineHash(projection) ~= baseline.legacyBaselineHash then return false, "BASELINE_HASH_MISMATCH" end
   local state = ensure()
   if state.baseline and state.baseline.legacyBaselineHash ~= baseline.legacyBaselineHash then return false, "BASELINE_CONFLICT" end
   state.baseline, state.status = copy(baseline), "BASELINE_APPROVED"
@@ -384,10 +384,17 @@ end
 -- Collects the local Dibs-owned history only. RCLootCouncil history is deliberately excluded.
 function M.CollectLocalEvidence(actor, sourceId)
   local db = Dibs.GetDB()
-  local ledger, preDibs = db.ledger or {}, db.preDibs or {}
+  local preDibs = db.preDibs or {}
   local ledgerRecords, requestRecords = {}, {}
-  for id, record in pairs(ledger.transactions or {}) do ledgerRecords[#ledgerRecords + 1] = { originalId = id, record = copy(record) } end
-  for _, record in ipairs(preDibs.requests or {}) do requestRecords[#requestRecords + 1] = { originalId = record.requestId, record = copy(record) } end
+  local transactions = Dibs.Ledger and Dibs.Ledger.GetAllTransactions
+    and Dibs.Ledger.GetAllTransactions("guild-primary") or {}
+  local requests = Dibs.PreDibs and Dibs.PreDibs.GetHistory
+    and Dibs.PreDibs.GetHistory("guild-primary") or preDibs.requests or {}
+  for _, record in ipairs(transactions) do
+    local id = record.transactionId
+    ledgerRecords[#ledgerRecords + 1] = { originalId = id, record = copy(record) }
+  end
+  for _, record in ipairs(requests) do requestRecords[#requestRecords + 1] = { originalId = record.requestId, record = copy(record) } end
   table.sort(ledgerRecords, function(a, b) return tostring(a.originalId) < tostring(b.originalId) end)
   table.sort(requestRecords, function(a, b) return tostring(a.originalId) < tostring(b.originalId) end)
   local client = Dibs.GetPlayerName()

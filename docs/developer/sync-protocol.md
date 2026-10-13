@@ -33,7 +33,12 @@ visible in readiness; it must not trigger local fallback.
 
 ## Validation and privacy
 
-Receivers validate the message type, protocol version, sender identity, guild membership, guild key, revision bounds, chunk count/size, and request ownership. Messages containing live loot candidates, votes, or responses are rejected. Only officers can apply authoritative guild data; a player can submit their own request. Transfers expire after a short TTL and duplicate transactions are guarded by `seenTransactions`.
+Receivers validate the message type, protocol version, sender identity, guild membership, guild key, revision bounds, chunk count/size, and request ownership. Messages containing live loot candidates, votes, or responses are rejected. Only authorized writers can approve new authoritative guild revisions. After a client directly observes an approved governance, operational-policy, season-catalog, or historical-baseline digest from the required authority, any compatible guild member may relay the immutable content matching that exact revision and hash. Unknown or conflicting hashes still require direct authority and fail closed. Transfers expire after a short TTL and duplicate transactions are guarded by `seenTransactions`.
+
+Canonical ledger commits are excluded from member relay. Their aggregate ledger
+digest does not attest each individual commit hash, so the active coordinator
+remains the authoritative detail source until a stronger per-commit proof
+contract exists.
 
 ## V2 multi-raid behavior
 

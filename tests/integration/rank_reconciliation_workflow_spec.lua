@@ -14,7 +14,7 @@ local function setup(wow, enableV2)
   local _, dibs = loader.load({ wow = options })
   if enableV2 ~= false then
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "rank reconciliation workflow test" }))
-    local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+    local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
     local coordinator = assert(dibs.Identity.CreateSnapshot("Tester-Realm"))
     assert_true(dibs.Governance.Change(nil, { future = { authority = {
       schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 1,

@@ -2,7 +2,7 @@
 ## Title: RCLootCouncil_dibs
 ## Notes: Seasonal guild Dibs, Pre-Dibs, audit history, and optional RCLootCouncil integration.
 ## Author: Contributors
-## Version: 0.8.3
+## Version: 0.8.4
 ## IconTexture: Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo
 ## SavedVariables: RCLootCouncil_dibsDB,RCLootCouncil_dibsSandboxDB
 ## SavedVariablesPerCharacter: RCLootCouncil_dibsLocalDB
@@ -19,6 +19,7 @@ modules/Seasons.lua
 modules/LootRules.lua
 modules/RankRules.lua
 modules/Ledger.lua
+modules/MultiLedger.lua
 modules/Permissions.lua
 modules/ProtectedActions.lua
 modules/Notifications.lua
@@ -33,7 +34,7 @@ modules/CharacterEligibility.lua
 modules/LootPipeline.lua
 modules/Sync.lua
 modules/SyncV2.lua
-modules/LegacyBaseline.lua
+modules/HistoricalBaseline.lua
 modules/Installation.lua
 modules/Wizard.lua
 modules/RaidRelay.lua
@@ -41,6 +42,7 @@ modules/RaidPrompts.lua
 modules/Readiness.lua
 modules/DryRun.lua
 modules/Capabilities.lua
+modules/IndependentRaid.lua
 integrations/Ace3.lua
 integrations/DeveloperSandboxStore.lua
 integrations/DeveloperSandbox.lua
@@ -60,4 +62,5 @@ ui/DataUI.lua
 ui/DebugLogsUI.lua
 ui/PlayerUI.lua
 ui/OfficerUI.lua
+ui/MinimapButton.lua
 integrations/RCLootCouncilOptions.lua

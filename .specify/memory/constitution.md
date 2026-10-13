@@ -2,16 +2,20 @@
 
 <!--
 Sync Impact Report
-Version change: 2.5.0 -> 2.6.0
-Modified principles: XIX. Change Notes and Addon Versioning; XXII. Documentation and Guide Maintenance
+Version change: 2.7.0 -> 2.8.0
+Modified principles: IV. Append-Only Ledger and Auditability
 Added sections: none
 Removed sections: none
-Rationale for MINOR bump: require one consistent addon version across source metadata,
-  documentation, scripts, changelog, and release artifacts for every shipped change.
-Dependent documents: all README files, user and developer guides, specifications, plans,
-  tasks, release notes, validation checklists, maintenance scripts, and release artifacts
-  must follow this rule.
-  Existing ledger, protocol, and SavedVariables data remain compatible.
+Approved policy: retain checkpoint-based, bounded development and allow a narrowly
+scoped, GM-confirmed deletion lifecycle for archived non-default ledgers.
+Rationale for MINOR bump: amend one lifecycle exception without changing ordinary
+accounting correction requirements.
+Compatibility impact: adds a destructive, guild-synchronized ledger lifecycle action;
+ordinary transactions remain append-only.
+Dependent-document follow-up: align .github/copilot-instructions.md with this principle,
+  retain UI rules in .github/instructions/ui.instructions.md, and record the amendment
+  in CHANGELOG.md. Templates and Spec Kit commands read the constitution at runtime;
+  no template or approved feature-spec changes are required.
 Follow-up TODOs: TODO(RATIFICATION_DATE) remains because the original adoption date is unknown.
 -->
 
@@ -53,6 +57,12 @@ Rank changes during a season MUST NOT silently rewrite historical allocations or
 The authoritative accounting model MUST be an append-only ledger.
 
 Existing ledger transactions MUST NOT be deleted or rewritten to correct mistakes.
+
+As a narrowly scoped lifecycle exception, a Guild Master MAY permanently delete a
+separately archived, non-default ledger only after explicit confirmation. This is
+destructive data removal, not an accounting correction: it MUST be audit-recorded,
+must be synchronized to the guild namespace, and must fail closed when authority,
+archive state, confirmation, or synchronization is unavailable.
 
 Corrections MUST be represented by new transactions such as:
 - DIB_REFUNDED
@@ -465,6 +475,31 @@ Documentation updates MUST include or update screenshot references when the affe
 screen, workflow, status, or control is visible to users. A feature is not complete
 until its affected guides and screenshot inventory are reviewed.
 
+### XXIII. Evidence-Based and Bounded Development
+
+Work MUST start from the latest relevant checkpoint or handoff when one is available,
+after checking the current Git state and the task's approved scope. Existing changes
+MUST be preserved unless their modification is explicitly authorized.
+
+Previously recorded evidence MUST be reused only while its source revision, affected
+paths, assumptions, and validation environment remain applicable. Changes that invalidate
+that evidence MUST trigger fresh checks for the affected scope. Historical automated
+results MUST NOT be presented as current results or Retail certification.
+
+Exploration MUST be limited to the files, callers, contracts, and documentation needed
+to implement and verify the requested outcome. Broader exploration or validation MUST
+have a concrete reason, such as a changed shared contract or an unexplained failure.
+
+Code changes MUST use the smallest existing test slice covering the changed behavior
+and its compatibility boundaries. Wider suites and manual Retail checks MUST still run
+when required by the approved specification or release gates. Documentation-only changes
+that do not alter the addon build or behavior MUST use diff and document-consistency
+checks rather than code tests.
+
+Checkpoint and completion notes MUST concisely record decisions, changed paths,
+validation commands and results, remaining blockers, and the next action when applicable.
+They MUST NOT duplicate unchanged specifications or include private data or raw logs.
+
 ## Governance
 
 This constitution governs all specifications, plans, tasks, and implementations in this repository.
@@ -481,4 +516,4 @@ XIX: add a dated changelog note and increment the addon TOC version when the add
 or behavior changes. Specifications, plans, tasks, release notes, and code reviews MUST
 check compliance with the current constitution before implementation is accepted.
 
-**Version**: 2.6.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-09-17
+**Version**: 2.7.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-10-10

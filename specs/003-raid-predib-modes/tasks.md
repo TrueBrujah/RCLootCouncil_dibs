@@ -120,7 +120,7 @@ description: "Task list for Raid Pre-Dib Modes feature implementation"
 - [X] T047 Update architecture and protocol documentation for mode policy, request recovery, acknowledgements, reminders, and prompt safety in `docs/ARCHITECTURE.md` and `docs/PROTOCOL.md`
 - [X] T048 Run the full Fengari suite and record result in `specs/003-raid-predib-modes/quickstart.md`
 - [X] T049 Run diagnostics and `git diff --check` for all feature files and record results in `specs/003-raid-predib-modes/quickstart.md`
-- [ ] T050 Perform Retail validation for Wild Open/Encounter modes, two-client recovery, reminders, entry prompts, boss navigation fallback, and combat deferral in `specs/003-raid-predib-modes/quickstart.md`
+- [X] T050 Perform Retail validation for Wild Open/Encounter modes, two-client recovery, reminders, entry prompts, boss navigation fallback, and combat deferral in `specs/003-raid-predib-modes/quickstart.md`
 - [X] T051 Review implementation against `specs/003-raid-predib-modes/spec.md`, `plan.md`, contracts, and `.specify/memory/constitution.md`; record final acceptance evidence in `specs/003-raid-predib-modes/quickstart.md`
 
 ## Phase 8: Difficulty and Vault Acquisition Extension
@@ -135,7 +135,7 @@ description: "Task list for Raid Pre-Dib Modes feature implementation"
 - [X] T057 Match finalized awards to confirmed Pre-Dibs using difficulty when award context provides it in `src/modules/ProtectedActions.lua` and `src/modules/PreDibs.lua`
 - [X] T058 Add an explicit player-recorded Vault acquisition workflow and render `Acquired` with difficulty/source in `src/ui/PlayerUI.lua` and `src/integrations/EncounterJournal.lua`
 - [X] T059 Render request difficulty and Vault acquisition state in `src/ui/OfficerUI.lua` and add search/filter coverage in `tests/integration/combat_safety_spec.lua`
-- [ ] T060 Update `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, and `specs/003-raid-predib-modes/quickstart.md`; run the full Fengari suite, `git diff --check`, and Retail scenarios E plus the existing T050 validation.
+- [X] T060 Update `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, and `specs/003-raid-predib-modes/quickstart.md`; run the full Fengari suite, `git diff --check`, and Retail scenarios E plus the existing T050 validation.
 
 ## Dependencies and Execution Order
 

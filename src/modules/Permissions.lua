@@ -80,12 +80,18 @@ local ADMIN_ACTIONS = {
   ["eligibility.relationship.review"] = true,
   ["eligibility.main.review"] = true,
   ["eligibility.exception.create"] = true,
+  ["ledger.propose"] = true,
+  ["ledger.approve"] = true,
+  ["ledger.revoke"] = true,
+  ["ledger.archive"] = true,
+  ["ledger.delete"] = true,
 }
 
 local GM_ONLY_ACTIONS = {
-  ["settings.modify"] = true,
-  ["predib.public.set"] = true,
-  ["installation.mode.set"] = true,
+  ["ledger.approve"] = true,
+  ["ledger.revoke"] = true,
+  ["ledger.archive"] = true,
+  ["ledger.delete"] = true,
   ["admin.list"] = true,
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,

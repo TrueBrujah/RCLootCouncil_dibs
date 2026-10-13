@@ -74,7 +74,7 @@ describe("Automatic Dibs table presentation", function()
       guildRankIndices = guildRankIndices,
     } })
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "Automatic Dibs presentation fixture" }))
-    local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+    local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
     local coordinator = assert(dibs.Identity.CreateSnapshot("Tester-Realm"))
     assert_true(dibs.Governance.Change(nil, { future = { authority = {
       schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 1,

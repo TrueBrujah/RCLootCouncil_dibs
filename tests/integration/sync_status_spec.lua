@@ -71,4 +71,44 @@ describe("Synchronization status", function()
     assert_true(uiStatus ~= "")
     assert_true(uiStatus:find("Tester-Realm", 1, true) ~= nil)
   end)
+
+  it("turns peer synchronization states into explicit next actions", function()
+    local dibs = load()
+    local offline = dibs.OfficerUI.GetSynchronizationPeerPresentation({
+      online = false, addonDetected = true, compatibility = "Compatible", syncStatus = "Behind",
+    })
+    assert_equal("Waiting for login", offline.label)
+    assert_true(offline.nextAction:find("Log in", 1, true) ~= nil)
+
+    local behind = dibs.OfficerUI.GetSynchronizationPeerPresentation({
+      online = true, addonDetected = true, compatibility = "Compatible", syncStatus = "Behind",
+    })
+    assert_equal("Remote client behind", behind.label)
+    assert_true(behind.nextAction:find("both clients online", 1, true) ~= nil)
+  end)
+
+  it("uses a recent addon response when the guild roster still reports offline", function()
+    local dibs = load()
+    local originalGetGuildRosterInfo = _G.GetGuildRosterInfo
+    _G.GetGuildRosterInfo = function(index)
+      local name, rankName, rankIndex = originalGetGuildRosterInfo(index)
+      return name, rankName, rankIndex, nil, nil, nil, false
+    end
+
+    local member = dibs.Identity.ResolveRosterMember("Officer-Realm")
+    dibs.GetDB().sync.v2.peers[member.memberKey] = {
+      lastSeenAt = 1700000000,
+      addonVersion = "0.8.3",
+    }
+
+    local officer
+    for _, peer in ipairs(dibs.Sync.GetPeerStatuses("GUILD")) do
+      if peer.playerName == "Officer-Realm" then officer = peer; break end
+    end
+    assert_not_nil(officer)
+    assert_true(officer.online)
+    assert_false(officer.rosterOnline)
+    assert_equal("ADDON_HEARTBEAT", officer.presenceSource)
+    assert_true(officer.addonDetected)
+  end)
 end)

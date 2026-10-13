@@ -350,6 +350,16 @@ function Midnight.AddStatusBadge(shell, parent, status, label)
   local badge = gui.AddLabel(shell, parent, text, true)
   if badge then
     badge.dibsMidnightStatus = presentation.tone
+    local colors = Midnight.GetTokens().colors or {}
+    local color = presentation.tone == "danger" and colors.DANGER
+      or presentation.tone == "warning" and colors.WARNING
+      or (presentation.tone == "ready" or presentation.tone == "success") and colors.SUCCESS
+      or presentation.tone == "info" and colors.INFO
+      or colors.TEXT_MUTED
+    badge.dibsMidnightColor = color and copy(color) or nil
+    if badge.label and color and type(badge.label.SetTextColor) == "function" then
+      badge.label:SetTextColor(unpack(color))
+    end
     gui.AddTooltip(badge, presentation.label, presentation.explanation)
   end
   return badge

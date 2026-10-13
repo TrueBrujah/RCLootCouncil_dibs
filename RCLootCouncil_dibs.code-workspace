@@ -52,8 +52,11 @@
 			"INT_SPELL_DURATION_HOURS",
 			"TIME_UNIT_DELIMITER",
 			"INT_SPELL_DURATION_MIN",
-			"GetUnitName"
+			"GetUnitName",
+			"RANDOM_ROLL_RESULT",
+			"HandleModifiedItemClick"
 		],
-		"Lua.type.weakUnionCheck": true
+		"Lua.type.weakUnionCheck": true,
+		"chat.permissions.default": "autoApprove"
 	}
 }

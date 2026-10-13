@@ -15,6 +15,28 @@ describe("Permissions", function()
     assert_true(dibs.Permissions.Can("predib.mode.set"))
   end)
 
+  it("does not let Developer Mode grant guild or raid authority", function()
+    local _, dibs = loader.load({
+      localVariables = { settings = { developerModeEnabled = true } },
+      wow = {
+        guildLeader = false,
+        guildMembers = { "Nanarus-Durotan" },
+        guildRankIndices = { [1] = 4 },
+        inRaid = true,
+        playerName = "Nanarus-Durotan",
+      },
+    })
+    assert_nil(dibs.DeveloperMode.IsTestAuthority)
+    assert_false(dibs.Permissions.IsGM())
+    assert_false(dibs.Permissions.IsOfficer())
+    assert_false(dibs.Permissions.Can("ledger.approve"))
+    assert_false(dibs.MultiLedger.CanBroadcastRaidLedger())
+
+    dibs.DeveloperMode.SetEnabled(false)
+    assert_false(dibs.Permissions.IsGM())
+    assert_false(dibs.Permissions.IsOfficer())
+  end)
+
   it("does not treat ML or raid roles as Dibs administrators", function()
     local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-1-TESTER", name = "Tester-Realm" } })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = false, guildMembers = { "Tester-Realm" }, guildRankIndices = { [1] = 3 }, inRaid = true, raidLeader = true, raidAssistant = true } })
@@ -58,5 +80,27 @@ describe("Permissions", function()
     local mode = dibs.ProtectedActions.Execute("installation.mode.set", nil, { mode = "STANDALONE" })
     assert_false(mode.ok)
     assert_equal("GUILD_ADMIN_REQUIRED", mode.reasonCode)
+  end)
+
+  it("authorizes officers for settings and ledger proposals while reserving ledger approvals for the GM", function()
+    local _, officerDibs = loader.load({ wow = { playerName = "Officer-Realm", guildLeader = false, guildMembers = { "Officer-Realm" }, guildRankIndices = { [1] = 1 } } })
+    assert_true(officerDibs.Permissions.IsOfficer())
+    assert_false(officerDibs.Permissions.IsGM())
+    assert_true(officerDibs.Permissions.Can("settings.modify"))
+    assert_true(officerDibs.Permissions.Can("predib.public.set"))
+    assert_true(officerDibs.Permissions.Can("predib.mode.set"))
+    assert_true(officerDibs.Permissions.Can("installation.mode.set"))
+    assert_true(officerDibs.Permissions.Can("ledger.propose"))
+    assert_false(officerDibs.Permissions.Can("ledger.approve"))
+    assert_false(officerDibs.Permissions.Can("ledger.revoke"))
+    assert_false(officerDibs.Permissions.Can("ledger.archive"))
+
+    local _, gmDibs = loader.load({ wow = { playerName = "GM-Realm", guildLeader = true, guildMembers = { "GM-Realm" }, guildRankIndices = { [1] = 0 } } })
+    assert_true(gmDibs.Permissions.IsGM())
+    assert_true(gmDibs.Permissions.Can("settings.modify"))
+    assert_true(gmDibs.Permissions.Can("ledger.propose"))
+    assert_true(gmDibs.Permissions.Can("ledger.approve"))
+    assert_true(gmDibs.Permissions.Can("ledger.revoke"))
+    assert_true(gmDibs.Permissions.Can("ledger.archive"))
   end)
 end)
