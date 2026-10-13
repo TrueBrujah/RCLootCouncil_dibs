@@ -859,6 +859,32 @@ local function createLegacyAceWindow()
     end
 
     Dibs.AceGUI.AddHeader(shell, tabs, "Season summary", "Your current season balance and Pre-Dib status.")
+    local activeLedgerName = "Default"
+    if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
+      local ledgers = Dibs.MultiLedger.GetLedgers()
+      local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
+      local approvedCount = 0
+      local ledgerValues = {}
+      for _, l in ipairs(ledgers) do
+        if l.status == "APPROVED" then
+          ledgerValues[l.id] = l.name
+          approvedCount = approvedCount + 1
+          if l.id == activeLedgerId then
+            activeLedgerName = l.name
+          end
+        end
+      end
+      if approvedCount > 0 then
+        if not ledgerValues[activeLedgerId] then
+          ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
+        end
+        local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, "Active ledger", ledgerValues, function(value)
+          Dibs.MultiLedger.SetActiveLedger(nil, value)
+          self:Refresh()
+        end, 200)
+        Dibs.AceGUI.SetValue(ledgerDropdown, activeLedgerId)
+      end
+    end
     local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
     if integration then
       local integrationState = integration.availability == "operational" or integration.status == "Ready" and { status = "Ready" }
@@ -881,6 +907,7 @@ local function createLegacyAceWindow()
       { title = "Metric", width = 180, tooltip = "Summary field." },
       { title = "Value", width = 280, tooltip = "Current value." },
     }, {
+      { "Active Ledger", tostring(activeLedgerName) },
       { "Season", tostring(summary.season and summary.season.name or "None") },
       { (Dibs.L or {}).PLAYER_SEASON_ALLOCATION or "Season allocation", tostring(summary.seasonAllocation or 0) },
       { (Dibs.L or {}).PLAYER_DIBS_USED or "Dibs used", tostring(summary.seasonUsed or 0) },
@@ -1107,6 +1134,47 @@ local function createAceWindow()
     Dibs.AceGUI.AddLabel(shell, parent, frame.preDibStatusText or (publicEnabled
       and "Public Pre-Dibs are enabled."
       or "Public Pre-Dibs are currently disabled by Officers."), true)
+  end
+
+  local function addActiveLedgerToolbar(parent)
+    if not (Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function") then return end
+    local toolbar = Dibs.AceGUI.AddInlineGroup(shell, parent)
+    local ledgers = Dibs.MultiLedger.GetLedgers()
+    local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
+    local ledgerValues = {}
+    for _, l in ipairs(ledgers) do
+      if l.status == "APPROVED" then
+        ledgerValues[l.id] = l.name or l.id
+      end
+    end
+    if not ledgerValues[activeLedgerId] then
+      ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
+    end
+    local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, toolbar, "Active ledger", ledgerValues, function(value)
+      Dibs.MultiLedger.SetActiveLedger(nil, value)
+      if Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
+        Dibs.MultiLedger.BroadcastRaidLedger(nil, value)
+      end
+      frame:Refresh()
+    end, 200)
+    Dibs.AceGUI.SetValue(ledgerDropdown, activeLedgerId)
+    if Dibs.MultiLedger and Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
+      local L = Dibs.Locales and Dibs.Locales.GetStrings and Dibs.Locales.GetStrings() or {}
+      Dibs.AceGUI.AddButton(shell, toolbar, L.RAID_SYNC_BUTTON or "Sync to Raid", function()
+        local currentActive = Dibs.MultiLedger.GetActiveLedgerId()
+        local ok, reason = Dibs.MultiLedger.BroadcastRaidLedger(nil, currentActive)
+        if ok then
+          Dibs.Message("Raid active ledger synchronized to: " .. tostring(currentActive))
+        else
+          Dibs.Message("Failed to sync raid ledger: " .. tostring(reason or "unknown error"))
+        end
+        frame:Refresh()
+      end, 120, L.RAID_SYNC_TOOLTIP or "Synchronize the current active ledger to all raid members with Dibs.")
+    end
+    if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
+      Dibs.Midnight.AddStatusBadge(shell, toolbar, "warning", "Independent Raid Active (Session Points)")
+    end
+    return toolbar
   end
 
   frame.Refresh = function(self)
@@ -1413,6 +1481,7 @@ local function createAceWindow()
     end
     if self.playerTab == "requests" then
       Dibs.AceGUI.AddHeading(shell, tabs, "Requests", "Your Pre-Dib requests and their current status.")
+      addActiveLedgerToolbar(tabs)
       local requestRows = {}
       for _, request in ipairs(view.requests or {}) do
         requestRows[#requestRows + 1] = {
@@ -1443,6 +1512,7 @@ local function createAceWindow()
     end
     if self.playerTab == "history" then
       Dibs.AceGUI.AddHeading(shell, tabs, "History", "Your Dibs activity for the current season.")
+      addActiveLedgerToolbar(tabs)
       local historyRows = {}
       for _, entry in ipairs(view.history or {}) do
         historyRows[#historyRows + 1] = { entry.date, entry.item, entry.action, entry.result, entry.balanceImpact, entry = entry }
@@ -1495,6 +1565,7 @@ local function createAceWindow()
 
     Dibs.AceGUI.AddHeading(shell, tabs, "My Dibs", "Your season allocation, Dibs use, and current balance.")
     Dibs.AceGUI.AddHeader(shell, tabs, view.seasonName, helpText.UI_HELP_SEASON)
+    addActiveLedgerToolbar(tabs)
     Dibs.AceGUI.AddTable(shell, tabs, {
       { title = helpText.PLAYER_SEASON_ALLOCATION or "Season allocation", width = 180, minWidth = 120, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_SEASON },
       { title = helpText.PLAYER_DIBS_USED or "Dibs used", width = 150, minWidth = 100, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIB_BALANCE },
@@ -1760,7 +1831,12 @@ function Dibs.PlayerUI.CreateWindow()
 
   frame.Refresh = function(self)
     local summary = Dibs.PlayerUI.GetSummary()
-    local status = "Season: " .. tostring((summary.season and summary.season.name) or "None") .. "\n" ..
+    local activeLedgerName = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and (function()
+      local l = Dibs.MultiLedger.GetLedgerById(nil, Dibs.MultiLedger.GetActiveLedgerId())
+      return l and l.name or Dibs.MultiLedger.GetActiveLedgerId()
+    end)() or "Default"
+    local status = "Ledger: " .. tostring(activeLedgerName) .. "\n" ..
+      "Season: " .. tostring((summary.season and summary.season.name) or "None") .. "\n" ..
       "Balance: " .. tostring(summary.balance) .. "\n" ..
       "Pre-Dibs: " .. tostring(#(summary.activePreDibs or {})) .. "\n" ..
       "Acquired: " .. tostring(#(summary.acquisitions or {})) .. "\n" ..

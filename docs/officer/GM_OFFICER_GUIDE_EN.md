@@ -34,16 +34,24 @@ GM or Officer.
 1. Install the `RCLootCouncil_dibs` folder under `Interface/AddOns/`.
 2. Enable it and run `/reload`.
 3. Open `/dibs options` and open **Guided Setup** under Officer > Overview.
-4. Follow the Guided Setup steps in order, or jump directly to any step or to
-   the first outstanding issue. Each step summarizes and links to an existing
-  Officer page (Guild Configuration, Seasons, Rank Rules, Loot Rules, Pre-Dibs,
-   RCLootCouncil, Synchronization); the Wizard itself makes no configuration
-   decision for you and initializes nothing merely by being opened.
-5. Create and activate a season, configure rank allocations, policy,
-   announcements, and modules, either from within Guided Setup or directly on
-   their existing pages.
-6. Finish with the Wizard's **Readiness** step, or run `/dibs readiness` and a
-   dry-run, before the first live raid.
+4. Complete the three primary stages:
+  - **Choose**: select Progression raid, Standard loot, or Custom/advanced.
+    The profile explains who it is for, why it is useful, and what it leaves
+    unchanged.
+  - **Configure**: review every planned action, expected result, preserved
+    record, and deferred GM approval before selecting **Apply this setup**.
+  - **Verify**: review the current authoritative guild state after setup.
+5. Correct red **Blocking** results before relying on live raid accounting.
+  Every blocker explains what DIBS checked, why it matters, and provides a
+  direct button to the relevant Officer page. Amber warnings require review
+  but may describe non-blocking or currently unavailable context. Blue
+  optional results, such as RCLootCouncil not being installed, do not prevent
+  standalone DIBS use.
+6. Run `/dibs readiness` and a dry-run before the first live raid.
+
+The Dibs icon beside the minimap is a shortcut to the appropriate Player or
+Officer view. It never grants authority; the same permission checks still
+apply.
 
 A normal Guild Master does not need to run `/run` commands or call internal
 APIs to reach a working guild ledger. Guided Setup shows what needs
@@ -71,7 +79,7 @@ use the one that matches what you're trying to do:
 
 | Page | Purpose |
 |---|---|
-| **Guided Setup** | Step-by-step workflow that navigates and summarizes the pages below in one guided order. Configures nothing directly; it is a navigation/status shell. |
+| **Guided Setup** | Three-stage turnkey workflow. It documents and applies a reviewed recommended profile through existing authoritative services, then points every unresolved blocker to its correction page. Custom mode leaves all settings unchanged. |
 | **Raid Readiness** | Answers "is DIBS ready for this raid?" (season, rank rules, RCLootCouncil, live raid context). It can be run independently and is reused as-is by Guided Setup's final step. |
 | **Guild Configuration** | Guild-level configuration and canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and one-time ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
 
@@ -117,6 +125,34 @@ Choose an installation mode:
   evidence and accounting;
 - `AUTO`: use the integration when available and retain local operation when it
   is absent or unavailable.
+
+## Multi-Ledger Management
+
+Dibs supports partitioned ledgers within the same guild to accommodate multiple raid teams, split runs, or distinct progression rosters without balance interference.
+
+- **Storage Partitioning**: Each ledger maintains independent transaction logs and player balances (`guild-primary` is the default).
+- **Proposing a Ledger**: Verified Officers can propose a new ledger (`Dibs.MultiLedger.ProposeLedger(name, description)` or via the Officer UI).
+- **Guild Master Approval**: Proposed ledgers remain inactive until explicitly approved by the Guild Master (`Dibs.MultiLedger.ApproveLedger(ledgerId)` or in Officer > Guild Configuration).
+- **Active Ledger Switching**: Officers and players can switch their active view via the ledger selector dropdown in the UI (`/dibs` for players, `/dibs options` for officers).
+- **Catalog Synchronization**: The approved ledger catalog (`LEDGER_CATALOG`) replicates automatically across all guild members.
+- **Permanent deletion**: Only the Guild Master can permanently delete a non-default ledger after it is archived. The Officer UI requires a second confirmation, records a governance audit entry, and synchronizes an idempotent deletion tombstone to the guild. The default ledger and active or approved ledgers cannot be deleted.
+
+## Officer Administration Empowerment
+
+Verified Guild Officers can initialize setup proposals, configure seasons, adjust rank rules, and work through Guided Setup without fatal `GUILD_MASTER_REQUIRED` blockers:
+
+- Officer initializations create a `PROPOSAL_CREATED` setup state.
+- Operational policies and newly proposed ledgers remain clearly marked as pending GM confirmation.
+- Routine administration (season activation, rank point allocations) is accessible directly to authorized officers when the GM is offline.
+
+## Independent Raid Sessions
+
+When running a raid with pick-up groups (PUGs) or non-guild players, Master Looters can start an **Independent Raid Session** (Officer > Integrations > Independent Raid):
+
+- **Ephemeral Local Accounting**: The session tracks starting point allowances locally without affecting guild ledgers.
+- **Strict Network Inhibition**: All outgoing synchronization to `GUILD`, `OFFICER`, and `RAID` addon channels is completely paused while an independent session is active.
+- **RCLootCouncil DIB Integration**: Raiders only need the standard RCLootCouncil addon. Selecting the "DIB" response button deducts from their ephemeral session points. Free awards (non-DIB responses) spend zero points.
+- **Award Reconciliation**: After the raid, Officers can review recorded awards and optionally reconcile eligible items into an approved guild ledger.
 
 ## Guild Loot Rules
 

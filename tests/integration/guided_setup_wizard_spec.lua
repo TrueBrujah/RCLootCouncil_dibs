@@ -198,29 +198,17 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("READY_FOR_RAID", dibs.Wizard.GetStatus().overallState)
   end)
 
-  it("applies Dibs loot presets from the Guided Setup rules step", function()
+  it("applies Dibs loot presets from the turnkey Configure stage", function()
     local dibs = load("Tester-Realm", true)
-    dibs.Wizard.SetCurrentStepIndex(7)
+    dibs.Wizard.SetSelectedProfileId("progression")
+    dibs.Wizard.SetCurrentStage("configure")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
-    local presetButton
+    local applyButton
     for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
-      if widget.kind == "Button" and widget.text == "Curio + Tier Set" then presetButton = widget end
+      if widget.kind == "Button" and widget.text == "Apply this setup" then applyButton = widget end
     end
-    assert_not_nil(presetButton)
-    local setupStatus
-    local expectedStatus = dibs.RCOptions.GetSetupAssistantStatus()
-    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
-      if widget.kind == "Label" and widget.text == expectedStatus then
-        setupStatus = widget
-      end
-    end
-    assert_not_nil(setupStatus)
-    local refreshButton
-    for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
-      if widget.kind == "Button" and widget.text == "Refresh Dibs buttons" then refreshButton = widget end
-    end
-    assert_not_nil(refreshButton)
-    presetButton.callbacks.OnClick(presetButton, "OnClick")
+    assert_not_nil(applyButton)
+    applyButton.callbacks.OnClick(applyButton, "OnClick")
 
     local types = dibs.RCOptions.GetLootTypeOptions().types
     assert_true(types.get(nil, "TOKEN"))
@@ -361,6 +349,15 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("SYNC_BEHIND", dibs.Sync.GetStatus().state)
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
   end)
+
+  it("does not mark warning-only turnkey verification as blocked", function()
+    local dibs = configuredGuild()
+    local status = dibs.Wizard.GetTurnkeyStatus()
+    assert_equal("PARTIALLY_CONFIGURED", status.overallState)
+    for _, result in ipairs(status.verification) do
+      assert_true(result.severity ~= "BLOCKING")
+    end
+  end)
 end)
 
 describe("Guided Setup Wizard UI", function()
@@ -380,134 +377,146 @@ describe("Guided Setup Wizard UI", function()
     return widget
   end
 
-  it("opens with step 1 selected, supports Next/Back, and navigates to an existing page via Open", function()
+  it("opens with Choose selected and moves through the three primary stages", function()
     local dibs = load("Tester-Realm", true)
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
-    assert_equal(1, dibs.Wizard.GetCurrentStepIndex())
+    assert_equal("choose", dibs.Wizard.GetCurrentStage())
+    clickLatestButton("Selected: Progression raid")
+    assert_equal("configure", dibs.Wizard.GetCurrentStage())
+    clickLatestButton("Back to profiles")
+    assert_equal("choose", dibs.Wizard.GetCurrentStage())
+    clickLatestButton("3 Verify")
+    assert_equal("verify", dibs.Wizard.GetCurrentStage())
+  end)
 
-    clickLatestButton("Next")
-    assert_equal(2, dibs.Wizard.GetCurrentStepIndex())
-    clickLatestButton("Back")
-    assert_equal(1, dibs.Wizard.GetCurrentStepIndex())
-
-    clickLatestButton("Open Installation")
+  it("points directly to the first outstanding issue", function()
+    local dibs = load("Tester-Realm", true)
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    frame:ActivateRoute("wizard")
+    clickLatestButton("3 Verify")
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text == "[X] BLOCKING"
+        and widget.dibsMidnightStatus == "danger" and widget.dibsMidnightColor
+        and widget.dibsMidnightColor[1] > widget.dibsMidnightColor[2]
+    end))
+    clickLatestButton("Fix first blocking issue")
     assert_equal("installation", frame.activeTab)
+    assert_equal("verify", dibs.Wizard.GetCurrentStage())
   end)
 
-  it("jumps directly to a step and to the first outstanding issue", function()
+  it("keeps detailed verification results inside a bounded responsive scroll frame", function()
     local dibs = load("Tester-Realm", true)
-    assert_true(dibs.Installation.Initialize(nil).ok)
+    dibs.Wizard.SetCurrentStage("verify")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
-
-    clickLatestButton("4 Seasons")
-    assert_equal(4, dibs.Wizard.GetCurrentStepIndex())
-
-    dibs.Wizard.SetCurrentStepIndex(1)
-    frame:Refresh()
-    clickLatestButton("Jump to first issue")
-    local status = dibs.Wizard.GetStatus()
-    assert_true(status.steps[dibs.Wizard.GetCurrentStepIndex()].status ~= "READY")
+    local scroll = findLatestWidget(function(widget)
+      return widget.kind == "ScrollFrame" and widget._dibsResizeOffset == 300
+    end)
+    assert_not_nil(scroll)
+    assert_true(tonumber(scroll.height) >= 120)
+    assert_true(tonumber(scroll.height) <= 520)
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Button" and widget.text == "Review setup profile"
+        and widget.parent ~= scroll
+    end))
   end)
 
-  it("opens Automatic Dibs from the Allocation Reconciliation step", function()
+  it("shows the exact failed setup action and routes SYNC_BEHIND to Synchronization", function()
     local dibs = load("Tester-Realm", true)
-    local status = dibs.Wizard.GetStatus()
-    local index
-    for stepIndex, step in ipairs(status.steps) do
-      if step.id == "allocationReconciliation" then index = stepIndex break end
+    dibs.Wizard.SetSelectedProfileId("progression")
+    dibs.Wizard.SetCurrentStage("configure")
+    dibs.Wizard.ApplyProfile = function()
+      return {
+        ok = false,
+        reasonCode = "SETUP_PROFILE_PARTIAL_FAILURE",
+        actions = {
+          {
+            id = "initialize", title = "Guild foundation", outcome = "FAILED",
+            reasonCode = "SYNC_BEHIND", stage = "cutover", route = "sync",
+          },
+        },
+      }
     end
-    assert_not_nil(index)
-    dibs.Wizard.SetCurrentStepIndex(index)
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    frame:ActivateRoute("wizard")
+    clickLatestButton("Apply this setup")
+    assert_true(frame.statusMessage:find("Guild foundation - SYNC_BEHIND", 1, true) ~= nil)
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and widget.text == "Reason: SYNC_BEHIND"
+    end))
+    clickLatestButton("Open Synchronization")
+    assert_equal("sync", frame.activeTab)
+  end)
+
+  it("opens Automatic Dibs from the Allocation Reconciliation verification result", function()
+    local dibs, season = configuredGuild()
+    publishRule(dibs, season.id, 1, 1)
+    dibs.Wizard.SetCurrentStage("verify")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
     clickLatestButton("Open Allocation Reconciliation")
     assert_equal("automaticDibs", frame.activeTab)
   end)
 
-  it("shows policy adoption only to the GM and removes the action after adoption", function()
+  it("keeps custom setup mutation-free and opens advanced settings", function()
+    local dibs = load("Tester-Realm", true)
+    dibs.Wizard.SetSelectedProfileId("custom")
+    dibs.Wizard.SetCurrentStage("configure")
+    local frame = dibs.OfficerUI.CreateWindow("wizard")
+    frame:ActivateRoute("wizard")
+    local before = loader.snapshotProductionState(dibs)
+    clickLatestButton("Open advanced settings")
+    assert_equal("settings", frame.activeTab)
+    assert_true(loader.productionStateEquals(dibs, before))
+  end)
+
+  it("defers policy adoption for an Officer and applies it for the GM", function()
     local gm = load("Tester-Realm", true)
     assert_true(gm.Installation.Initialize(nil).ok)
     local saved = gm.DeepCopy(_G.RCLootCouncil_dibsDB)
-    local function policyIndex(dibs)
-      for index, step in ipairs(dibs.Wizard.GetStatus().steps) do
-        if step.id == "operationalPolicy" then return index end
-      end
-    end
 
     local officer = load("Officer-Realm", false, saved)
-    officer.Wizard.SetCurrentStepIndex(policyIndex(officer))
+    officer.Wizard.SetCurrentStage("configure")
     local officerFrame = officer.OfficerUI.CreateWindow("wizard")
     officerFrame:ActivateRoute("wizard")
-    assert_nil(findLatestWidget(function(widget)
-      return widget.kind == "Button" and widget.text == "Adopt and publish Guild Policy"
-    end))
     assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text == "Only the Guild Master can adopt Guild Policy."
+      return widget.kind == "Label" and widget.text == "[!] DEFERRED"
     end))
 
     gm = load("Tester-Realm", true, saved)
-    gm.Wizard.SetCurrentStepIndex(policyIndex(gm))
+    gm.Wizard.SetCurrentStage("configure")
     local gmFrame = gm.OfficerUI.CreateWindow("wizard")
     gmFrame:ActivateRoute("wizard")
-    local adoptButton = findLatestWidget(function(widget)
-      return widget.kind == "Button" and widget.text == "Adopt and publish Guild Policy"
-    end)
-    assert_not_nil(adoptButton)
-    local widgetsBeforeRefresh = #(_G.__dibsAceWidgets or {})
-    adoptButton.callbacks.OnClick(adoptButton, "OnClick")
+    clickLatestButton("Apply this setup")
     assert_true(gm.OperationalPolicy.IsAdopted())
-    for index = widgetsBeforeRefresh + 1, #(_G.__dibsAceWidgets or {}) do
-      local widget = _G.__dibsAceWidgets[index]
-      assert_false(widget.kind == "Button" and widget.text == "Adopt and publish Guild Policy")
-    end
   end)
 
-  it("shows authoritative readiness findings and refreshes the affected rank in Review", function()
+  it("shows authoritative readiness findings and refreshes verification", function()
     local dibs, season = configuredGuild()
     dibs.SetupAssistant.Evaluate = function() return { status = "UNAVAILABLE", checks = {
       { id = "local_services", state = "unavailable", impact = "Transport unavailable", remediation = "Repair transport" },
     } } end
-    local reviewIndex
-    for stepIndex, step in ipairs(dibs.Wizard.GetStatus().steps) do
-      if step.id == "review" then reviewIndex = stepIndex break end
-    end
-    assert_not_nil(reviewIndex)
-    dibs.Wizard.SetCurrentStepIndex(reviewIndex)
+    dibs.Wizard.SetCurrentStage("verify")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
     assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text == "Overall: Blocked"
-    end))
-    assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text:find("local_services: Transport unavailable", 1, true) ~= nil
+      return widget.kind == "Label" and widget.text:find("Transport unavailable", 1, true) ~= nil
     end))
 
     publishRule(dibs, season.id, 1, 1)
     frame:Refresh()
     assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text:find("Allocation Reconciliation", 1, true) ~= nil
+      return widget.kind == "Button" and widget.text == "Open Allocation Reconciliation"
     end))
 
     dibs.SetupAssistant.Evaluate = function() return { status = "UNAVAILABLE", checks = {
       { id = "raid_context", state = "unavailable", impact = "No raid group is active, so live-session checks cannot run yet.",
         remediation = "This is expected outside a raid; run the check again after entering the intended raid." },
     } } end
-    local readinessIndex
-    for stepIndex, step in ipairs(dibs.Wizard.GetStatus().steps) do
-      if step.id == "readiness" then readinessIndex = stepIndex break end
-    end
-    assert_not_nil(readinessIndex)
-    dibs.Wizard.SetCurrentStepIndex(readinessIndex)
     frame:Refresh()
     assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text == "Why readiness is blocked:"
-    end))
-    assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text:find(
-        "No raid group is active, so live-session checks cannot run yet. Next: This is expected outside a raid; run the check again after entering the intended raid.",
-        1, true) ~= nil
+      return widget.kind == "Label" and widget.text:find("No raid group is active", 1, true) ~= nil
     end))
   end)
 
@@ -515,6 +524,42 @@ describe("Guided Setup Wizard UI", function()
     local dibs = load("Member-Realm", false)
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
-    assert_nil(findLatestWidget(function(widget) return widget.kind == "Button" and widget.text == "Next" end))
+    assert_nil(findLatestWidget(function(widget) return widget.kind == "Button" and widget.text == "1 Choose" end))
+  end)
+
+  it("permits verified officers to initialize setup proposal, create seasons, and set rank rules", function()
+    local officer = load("Officer-Realm", false)
+    assert_true(officer.Permissions.IsOfficer())
+    assert_false(officer.Permissions.IsGM())
+
+    -- Installation status should not have GUILD_MASTER_REQUIRED blocker for officer
+    local status = officer.Installation.GetStatus(nil)
+    local hasGMBAN = false
+    for _, b in ipairs(status.blockers or {}) do
+      if b == "GUILD_MASTER_REQUIRED" then hasGMBAN = true end
+    end
+    assert_false(hasGMBAN)
+
+    -- Officer can initialize setup proposal
+    local initResult = officer.Installation.Initialize(nil)
+    assert_true(initResult.ok)
+    assert_equal("PROPOSAL_CREATED", initResult.reasonCode)
+
+    -- Officer can create season and set rank rules
+    local createSeason = officer.ProtectedActions.Execute("season.create", nil, { name = "Officer Season" })
+    assert_true(createSeason.ok)
+    local seasonId = createSeason.value.id
+
+    local setRule = officer.ProtectedActions.Execute("rank.set", nil, {
+      seasonId = seasonId, rankIndex = 1, rankName = "Officer", allocation = 2,
+    })
+    assert_true(setRule.ok)
+
+    -- Officer can navigate the turnkey stages.
+    local frame = officer.OfficerUI.CreateWindow("wizard")
+    frame:ActivateRoute("wizard")
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Button" and widget.text:find("1 Choose", 1, true) ~= nil
+    end))
   end)
 end)

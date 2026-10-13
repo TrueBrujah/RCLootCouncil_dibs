@@ -15,6 +15,10 @@ Related docs: docs/developer/testing.md.
 local Dibs = _G.Dibs
 Dibs.DeveloperMode = Dibs.DeveloperMode or {}
 
+-- TEST-ONLY: remove this identity override before publishing.
+local TEST_AUTHORITY_CHARACTER = "nanarus"
+local TEST_AUTHORITY_REALM = "durotan"
+
 local function ensureDB()
   local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
   if settings.developerModeEnabled == nil then
@@ -36,6 +40,28 @@ function Dibs.DeveloperMode.IsEnabled()
   return settings.developerModeEnabled == true
 end
 
+function Dibs.DeveloperMode.IsTestAuthority(actor)
+  if not Dibs.DeveloperMode.IsEnabled() then return false end
+  local name = actor
+  if type(actor) == "table" then
+    name = actor.name or actor.playerName or actor.displayName or actor.nameRealm
+  end
+  if name == nil and type(UnitName) == "function" then
+    name = UnitName("player")
+    local realm = type(GetRealmName) == "function" and GetRealmName() or nil
+    if realm and tostring(realm) ~= "" and not tostring(name):find("-", 1, true) then
+      name = tostring(name) .. "-" .. tostring(realm)
+    end
+  end
+  local normalized = string.lower(tostring(name or ""))
+  local character, realm = normalized:match("^([^-]+)%-(.+)$")
+  if not character then
+    character = normalized
+    realm = TEST_AUTHORITY_REALM
+  end
+  return character == TEST_AUTHORITY_CHARACTER and realm == TEST_AUTHORITY_REALM
+end
+
 function Dibs.DeveloperMode.SetEnabled(enabled)
   local settings = ensureDB()
   settings.developerModeEnabled = enabled == true
@@ -44,6 +70,9 @@ end
 
 function Dibs.DeveloperMode.GetStatusText()
   if Dibs.DeveloperMode.IsEnabled() then
+    if Dibs.DeveloperMode.IsTestAuthority() then
+      return "ENABLED (TEST AUTHORITY: " .. TEST_AUTHORITY_CHARACTER .. ")"
+    end
     return "ENABLED"
   end
   return "DISABLED"

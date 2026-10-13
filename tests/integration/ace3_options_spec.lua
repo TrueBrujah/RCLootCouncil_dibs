@@ -190,7 +190,7 @@ describe("Dibs options compatibility", function()
     })
     local seasonId = dibs.GetCurrentSeasonId()
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "assignment reconciliation test" }))
-    local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+    local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
     local coordinator = assert(dibs.Identity.CreateSnapshot("Tester-Realm"))
     assert_true(dibs.Governance.Change(nil, { future = { authority = {
       schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 1,

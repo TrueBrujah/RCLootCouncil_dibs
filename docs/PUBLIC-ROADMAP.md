@@ -148,6 +148,15 @@ pour un support ou une revue de guilde.
 - configurable tie-breaking policies
 - optional public guild request board
 
+## À spécifier - approuvé
+- [ ] **Rangs WoW, paliers Dibs et règle main/alt par lockout** : associer les
+  rangs WoW à des paliers Dibs sans dupliquer les rangs, faire partager le
+  palier et les droits de loot au groupe main/alt approuvé, et exiger le main
+  pour les loots protégés pendant une période de raid définie. Prévoir une
+  exception de composition limitée demandée par le RL ou le GM pour un alt utile
+  à un boss. La spécification doit trancher si l'exception autorise seulement
+  la présence ou aussi un loot, et quelle est sa portée temporelle.
+
 ## Backlog proposé - Historique et éligibilité avancée
 - Synchroniser les options communes de la guilde avec un snapshot de
   configuration versionné : révision, auteur, date, autorisation GM/officier,
@@ -233,6 +242,10 @@ acceptées et ne doivent pas être implémentées sans validation préalable.
 - Consentement des joueurs concernant l'utilisation des données d'inventaire.
 
 ### Amélioration de l'information et de l'aide à l'écran à classer
+- Ajouter un preset de thème **Minimal** au système existant : surfaces plus
+  épurées et hiérarchie visuelle inspirée de la maquette Minimal, avec choix
+  persistant par profil et sans changement de navigation ou de comportement
+  métier. À valider avant implémentation.
 - Ajouter des tooltips contextuels pour les items, joueurs, boutons, statuts et
   décisions d'éligibilité.
 - Afficher clairement les champs `Nom` et `Joueur-realm`, notamment pour

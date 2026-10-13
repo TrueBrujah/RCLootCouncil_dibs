@@ -22,13 +22,15 @@ local CHANNEL_TEST_PENDING_LIMIT = 16
 local CHANNEL_TEST_RESPONSE_TTL = 120
 local CHANNEL_TEST_PEER_WINDOW, CHANNEL_TEST_PEER_LIMIT = 60, 6
 local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 300, 60, 3
-local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
+local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, LEDGER_DELETE = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 TYPES.CHANNEL_TEST, TYPES.CHANNEL_TEST_ACK = true, true
 local CHANNEL_TEST_CHANNELS = { GUILD = true, OFFICER = true, RAID = true, PARTY = true, INSTANCE_CHAT = true, WHISPER = true, CHANNEL = true }
-local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, SEASON_CATALOG = true }
+local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, SEASON_CATALOG = true, LEDGER_CATALOG = true, LEDGER_BATCH = true }
 local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true }
+local TRUSTED_RELAY_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, SEASON_CATALOG = true, LEGACY_BASELINE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 local awardReservationGenerations = {}
+local boundMap
 
 local function bumpAwardReservationGeneration(memberKey)
   if type(memberKey) == "string" then
@@ -64,6 +66,7 @@ local function expectedTransportChannel(message, transfer)
     return CHANNEL_TEST_CHANNELS[message.testChannel] and message.testChannel or nil
   end
   if message.type == "HELLO" or message.type == "DIGEST" or message.type == "LEDGER_DIGEST"
+    or message.type == "LEDGER_DELETE"
     or message.type == "VAULT_DIGEST" or message.type == "AWARD_RESERVATION_DIGEST" then
     return "GUILD"
   end
@@ -110,6 +113,38 @@ local function ensure()
   state.v2.addonVersionMismatches = state.v2.addonVersionMismatches or {}
   Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.v2Transfers = Dibs.runtime.v2Transfers or {}
   return state.v2
+end
+
+local function trustedDigestKey(entityType, revision, contentHash)
+  return table.concat({ tostring(entityType or ""), tostring(revision or ""), tostring(contentHash or "") }, "|")
+end
+
+local function trustedDigestStore()
+  local localDB = Dibs.GetLocalDB and Dibs.GetLocalDB() or {}
+  localDB.trustedSyncDigests = localDB.trustedSyncDigests or {}
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or "unknown"
+  localDB.trustedSyncDigests[guildKey] = localDB.trustedSyncDigests[guildKey] or {}
+  return localDB.trustedSyncDigests[guildKey]
+end
+
+local function rememberTrustedDigest(entityType, revision, contentHash, source)
+  if not TRUSTED_RELAY_ENTITIES[entityType] or not finiteInteger(revision)
+    or type(contentHash) ~= "string" or contentHash == "" then return false end
+  local store = trustedDigestStore()
+  store[trustedDigestKey(entityType, revision, contentHash)] = {
+    entityType = entityType,
+    revision = tonumber(revision),
+    contentHash = contentHash,
+    sourceMemberKey = source and source.memberKey,
+    observedAt = time(),
+  }
+  boundMap(store, 128)
+  return true
+end
+
+local function hasTrustedDigest(entityType, revision, contentHash)
+  if not TRUSTED_RELAY_ENTITIES[entityType] then return false end
+  return trustedDigestStore()[trustedDigestKey(entityType, revision, contentHash)] ~= nil
 end
 
 -- Same type-tagged/key-sorted 31-bit content identity shape as B03. It is not a
@@ -184,8 +219,8 @@ local function expiry()
   for key, record in pairs(state.replay) do if (record.at or 0) + TTL < now then state.replay[key] = nil end end
   for key, transfer in pairs(Dibs.runtime.v2Transfers or {}) do if transfer.expiresAt < now then Dibs.runtime.v2Transfers[key] = nil end end
 end
-local function boundMap(map, maximum)
-  local values = {}; for key, value in pairs(map) do values[#values + 1] = { key = key, at = value.at or value.updatedAt or 0 } end
+boundMap = function(map, maximum)
+  local values = {}; for key, value in pairs(map) do values[#values + 1] = { key = key, at = value.at or value.updatedAt or value.observedAt or 0 } end
   table.sort(values, function(a, b) return a.at < b.at end)
   for i = 1, #values - maximum do map[values[i].key] = nil end
 end
@@ -262,7 +297,7 @@ function Sync.BuildSyncProbeReport()
   local state = ensure()
   local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
   local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or {}
-  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+  local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline() or {}
   local ledger = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState() or {}
   local snapshot = localSnapshot() or {}
   local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
@@ -302,7 +337,7 @@ end
 function Sync.RepairPeer(target)
   if not target or target == "" then return false, "INVALID_WHISPER_TARGET" end
   if localRole() ~= "gm" then return false, "GUILD_MASTER_REQUIRED" end
-  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+  local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline()
   if not baseline or not baseline.legacyBaselineHash then return false, "BASELINE_UNAVAILABLE" end
   return Sync.SendDetail("LEGACY_BASELINE", baseline.legacyBaselineHash, 1, baseline.legacyBaselineHash, baseline, target)
 end
@@ -426,6 +461,8 @@ function Sync.GetPeerStatuses(rosterScope)
       local peer = state.peers[memberKey]
       local lastSeen = peer and tonumber(peer.lastSeenAt or peer.at) or 0
       local detected = lastSeen > 0 and now - lastSeen <= (HEARTBEAT * 3)
+      local rosterOnline = online == true
+      local effectiveOnline = rosterOnline or detected
       local compatibility, compatibilityReason = nil, "REMOTE_ADDON_VERSION_UNKNOWN"
       if peer and peer.addonVersion then compatibility, compatibilityReason = Sync.GetAddonVersionCompatibility(peer.addonVersion) end
       local syncStatus = "Unknown"
@@ -454,7 +491,7 @@ function Sync.GetPeerStatuses(rosterScope)
       local localMember = localSnapshot() or {}
       local isLocalMember = memberKey == localMember.memberKey
         or string.lower(tostring(resolved and resolved.displayName or name)) == string.lower(tostring(localMember.displayName or ""))
-      local localBaseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+      local localBaseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline() or {}
       local baselineStatus = "Unknown"
       if isLocalMember then
         baselineStatus = localBaseline.legacyBaselineHash and "Present" or "Missing"
@@ -478,7 +515,9 @@ function Sync.GetPeerStatuses(rosterScope)
       rows[#rows + 1] = {
         playerName = resolved and resolved.displayName or name,
         rankIndex = tonumber(rankIndex) or 0,
-        online = online == true,
+        online = effectiveOnline,
+        rosterOnline = rosterOnline,
+        presenceSource = detected and (rosterOnline and "ROSTER_AND_ADDON" or "ADDON_HEARTBEAT") or (rosterOnline and "ROSTER" or "NONE"),
         addonDetected = detected,
         addonStatus = detected and "Detected" or "No response",
         addonVersion = detected and (peer.addonVersion or "unknown") or "unknown",
@@ -653,6 +692,12 @@ function Sync.BuildEnvelope(message)
   return message
 end
 function Sync.Send(message, channel, target)
+  if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
+    local effChannel = channel or "GUILD"
+    if effChannel == "GUILD" or effChannel == "OFFICER" or effChannel == "RAID" then
+      return false, "INDEPENDENT_RAID_ACTIVE"
+    end
+  end
   if type(message) ~= "table" then return false, "INVALID_SYNC_MESSAGE" end
   if Sync.ContainsForbiddenLiveLootData and Sync.ContainsForbiddenLiveLootData(message) then return false, "FORBIDDEN_LIVE_LOOT_DATA" end
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
@@ -931,14 +976,57 @@ end
 function Sync.AnnounceRequestIndex()
   return Sync.Send(Sync.BuildManifest(), "GUILD")
 end
-function Sync.BuildLedgerDigest()
+function Sync.BuildLedgerDigest(targetLedgerId)
+  local ledgerId = targetLedgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
   if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
-    return { type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = Dibs.GetCurrentSeasonId() or "none", revision = 0, contentHash = "LOCAL_ONLY" }
+    return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = Dibs.GetCurrentSeasonId() or "none", revision = 0, contentHash = "LOCAL_ONLY" }
   end
-  local state = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState() or {}
-  return { type = "LEDGER_DIGEST", entityType = "LEDGER", entityId = tostring(state.epoch or "none"), revision = tonumber(state.nextSeq or 1) - 1,
+  local state = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState(ledgerId) or {}
+  return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = tostring(state.epoch or "none"), revision = tonumber(state.nextSeq or 1) - 1,
     contentHash = state.rootHash or "UNINITIALIZED", ledgerEpoch = state.epoch, lastSeq = tonumber(state.nextSeq or 1) - 1, rootHash = state.rootHash }
 end
+function Sync.BuildLedgerCatalogDigest()
+  local ledgers = Dibs.MultiLedger and Dibs.MultiLedger.GetLedgers and Dibs.MultiLedger.GetLedgers() or {}
+  local catalog = {}
+  local totalRev = 0
+  for _, l in ipairs(ledgers) do
+    if l.status == "APPROVED" then
+      local state = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState(l.id) or {}
+      local rev = tonumber(state.nextSeq or 1) - 1
+      totalRev = totalRev + rev
+      catalog[l.id] = {
+        id = l.id,
+        name = l.name,
+        status = l.status,
+        epoch = state.epoch or 1,
+        revision = rev,
+        rootHash = state.rootHash or "NONE",
+        createdAt = l.createdAt,
+        createdBy = l.createdBy,
+        approvedAt = l.approvedAt,
+        approvedBy = l.approvedBy,
+      }
+    end
+  end
+  return {
+    type = "DIGEST",
+    entityType = "LEDGER_CATALOG",
+    entityId = "catalog",
+    revision = totalRev,
+    contentHash = "CATALOG-" .. tostring(totalRev),
+    ledgers = catalog,
+  }
+end
+function Sync.BroadcastCatalogDigest()
+  local digest = Sync.BuildLedgerCatalogDigest()
+  if digest and Sync.Send then
+    Sync.Send(digest, "GUILD")
+  end
+end
+Dibs.SyncV2 = Dibs.SyncV2 or {}
+Dibs.SyncV2.BroadcastCatalogDigest = Sync.BroadcastCatalogDigest
+Dibs.SyncV2.Send = Sync.Send
+
 function Sync.BuildAuthorityDigest()
   local signal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
   if not signal or signal.state == "LEGACY_LOCAL" then return nil end
@@ -948,7 +1036,7 @@ end
 function Sync.BuildGovernanceDigest()
   local record = Dibs.Governance and Dibs.Governance.GetCurrentRecord and Dibs.Governance.GetCurrentRecord()
   local state = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
-  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+  local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline() or {}
   return {
     type = "DIGEST", entityType = "GOVERNANCE", entityId = tostring(state.revision or 0),
     revision = tonumber(state.revision) or 0, contentHash = state.hash or "GENESIS",
@@ -1621,8 +1709,30 @@ function Sync.Receive(message, sender, channel)
     if tonumber(message.lastSeq) == localLast and message.rootHash ~= localState.rootHash then return false, "CANONICAL_ROOT_CONFLICT" end
     return true, "LEDGER_CURRENT"
   end
+  if message.type == "LEDGER_DELETE" then
+    if resolved.role ~= "gm" then return false, "GUILD_MASTER_REQUIRED" end
+    if type(message.ledgerId) ~= "string" or message.ledgerId == ""
+      or type(message.deletedBy) ~= "string" or not finiteInteger(message.timestamp) then
+      return false, "INVALID_LEDGER_DELETE"
+    end
+    if message.deletedBy ~= resolved.displayName then return false, "SENDER_IDENTITY_MISMATCH" end
+    local result = Dibs.MultiLedger and Dibs.MultiLedger.ApplyLedgerDeletion
+      and Dibs.MultiLedger.ApplyLedgerDeletion(resolved.displayName, message.ledgerId, {
+        timestamp = message.timestamp, deletedBy = message.deletedBy, verifiedTombstone = true,
+      })
+    if not result or not result.ok then return false, result and result.reasonCode or "LEDGER_DELETE_FAILED" end
+    if result.reasonCode ~= "IDEMPOTENT_REPLAY"
+      and Dibs.Governance and Dibs.Governance.RecordLedgerDeletion then
+      Dibs.Governance.RecordLedgerDeletion(resolved.displayName, message.ledgerId)
+    end
+    return true, "LEDGER_DELETED"
+  end
   if message.type == "DIGEST" and message.entityType == "GOVERNANCE" then
     if resolved.role ~= "gm" or not finiteInteger(message.revision) or type(message.contentHash) ~= "string" then return false, "INVALID_GOVERNANCE_DIGEST" end
+    rememberTrustedDigest("GOVERNANCE", message.revision, message.contentHash, resolved)
+    if type(message.baselineHash) == "string" and message.baselineHash ~= "" then
+      rememberTrustedDigest("LEGACY_BASELINE", 1, message.baselineHash, resolved)
+    end
     local current = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or { revision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.revision) or 0) then
       Sync.MarkSyncBehind("GOVERNANCE_PARENT_MISSING")
@@ -1630,7 +1740,7 @@ function Sync.Receive(message, sender, channel)
       return true, "GOVERNANCE_DETAIL_REQUESTED"
     end
     if tonumber(message.revision) == (tonumber(current.revision) or 0) and message.contentHash ~= current.hash then return false, "GOVERNANCE_CONFLICT" end
-    local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+    local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline() or {}
     if message.baselineHash and baseline.legacyBaselineHash ~= message.baselineHash then
       sendDetailFetch({ {
         entityType = "LEGACY_BASELINE", entityId = message.baselineHash, revision = 1, contentHash = message.baselineHash,
@@ -1648,6 +1758,7 @@ function Sync.Receive(message, sender, channel)
       writerAllowed, writerReason = authorization[1], authorization[2]
     end
     if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+    rememberTrustedDigest("OPERATIONAL_POLICY", message.revision, message.contentHash, resolved)
     local current = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or { policyRevision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.policyRevision) or 0) then
       local state = ensure(); state.policyTarget = { revision = message.revision, contentHash = message.contentHash }
@@ -1658,6 +1769,41 @@ function Sync.Receive(message, sender, channel)
     if tonumber(message.revision) == (tonumber(current.policyRevision) or 0) and message.contentHash ~= current.hash then return false, "POLICY_CONFLICT" end
     return true, "POLICY_CURRENT"
   end
+  if message.type == "DIGEST" and message.entityType == "LEDGER_CATALOG" then
+    if resolved.role ~= "gm" and resolved.role ~= "officer" then return false, "GUILD_ADMIN_REQUIRED" end
+    if type(message.ledgers) ~= "table" then return false, "INVALID_LEDGER_CATALOG" end
+    local db = Dibs.GetDB and Dibs.GetDB()
+    if not db then return false, "DB_UNAVAILABLE" end
+    db.ledgers = db.ledgers or {}
+    db.ledgerDeletionTombstones = db.ledgerDeletionTombstones or {}
+    for id, remoteLedger in pairs(message.ledgers) do
+      if not db.ledgerDeletionTombstones[id]
+        and type(remoteLedger) == "table" and remoteLedger.status == "APPROVED" then
+        if not db.ledgers[id] then
+          db.ledgers[id] = {
+            id = id,
+            name = remoteLedger.name or id,
+            status = "APPROVED",
+            createdAt = remoteLedger.createdAt or time(),
+            createdBy = remoteLedger.createdBy or "REMOTE",
+            approvedAt = remoteLedger.approvedAt or time(),
+            approvedBy = remoteLedger.approvedBy or resolved.displayName,
+            isDefault = id == "guild-primary",
+            transactions = {},
+            playerStates = {},
+            awardTransactions = {},
+            evidenceTransactions = {},
+            canonical = { schema = 1, epoch = remoteLedger.epoch, nextSeq = 1, rootHash = remoteLedger.rootHash, commits = {}, transactionIndex = {}, positions = {} },
+          }
+        elseif db.ledgers[id].status == "PROPOSED" then
+          db.ledgers[id].status = "APPROVED"
+          db.ledgers[id].approvedAt = remoteLedger.approvedAt or time()
+          db.ledgers[id].approvedBy = remoteLedger.approvedBy or resolved.displayName
+        end
+      end
+    end
+    return true, "LEDGER_CATALOG_SYNCED"
+  end
   if message.type == "DIGEST" and message.entityType == "SEASON_CATALOG" then
     if not finiteInteger(message.revision) or type(message.contentHash) ~= "string" then return false, "INVALID_SEASON_CATALOG_DIGEST" end
     local writerAllowed = false
@@ -1666,6 +1812,7 @@ function Sync.Receive(message, sender, channel)
       writerAllowed, writerReason = Dibs.OperationalPolicy.CanWrite(resolved.displayName)
     end
     if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+    rememberTrustedDigest("SEASON_CATALOG", message.revision, message.contentHash, resolved)
     local current = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or { catalogRevision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.catalogRevision) or 0) then
       local state = ensure(); state.seasonCatalogTarget = { revision = message.revision, contentHash = message.contentHash }
@@ -1710,11 +1857,12 @@ function Sync.Receive(message, sender, channel)
         local officerRelay = (localRole() == "gm" or localRole() == "officer")
           and (resolved.role == "gm" or resolved.role == "officer")
         if request and owner and (ownerIsLocal or officerRelay) then requestDetail(resolved.displayName, requested.entityId) end
-      elseif requested.entityType == "GOVERNANCE" and localRole() == "gm" then
+      elseif requested.entityType == "GOVERNANCE" then
         local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState()
         local record = governanceState and governanceState.records and governanceState.records[tostring(requested.revision)]
-        if record and tonumber(record.governanceRevision) == tonumber(requested.revision) then
-          local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+        if record and tonumber(record.governanceRevision) == tonumber(requested.revision)
+          and (not requested.contentHash or requested.contentHash == record.contentHash) then
+          local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline()
           if baseline and baseline.legacyBaselineHash then
             Sync.SendDetail("LEGACY_BASELINE", baseline.legacyBaselineHash, 1, baseline.legacyBaselineHash, baseline, resolved.displayName)
           end
@@ -1726,21 +1874,21 @@ function Sync.Receive(message, sender, channel)
             Sync.SendDetail("GOVERNANCE", tostring(nextRecord.governanceRevision), nextRecord.governanceRevision, nextRecord.contentHash, nextRecord, resolved.displayName)
           end
         end
-      elseif requested.entityType == "LEGACY_BASELINE" and localRole() == "gm" then
-        local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline()
+      elseif requested.entityType == "LEGACY_BASELINE" then
+        local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline()
         if baseline and baseline.legacyBaselineHash and (not requested.contentHash or requested.contentHash == baseline.legacyBaselineHash) then
           Sync.SendDetail("LEGACY_BASELINE", baseline.legacyBaselineHash, 1, baseline.legacyBaselineHash, baseline, resolved.displayName)
         end
       elseif requested.entityType == "OPERATIONAL_POLICY" and Dibs.OperationalPolicy then
-        local allowed = Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(nil)
         local record = Dibs.OperationalPolicy.GetRecord and Dibs.OperationalPolicy.GetRecord(requested.revision)
-        if allowed and record and tonumber(record.policyRevision) == tonumber(requested.revision) then
+        if record and tonumber(record.policyRevision) == tonumber(requested.revision)
+          and (not requested.contentHash or requested.contentHash == record.contentHash) then
           Sync.SendDetail("OPERATIONAL_POLICY", tostring(record.policyRevision), record.policyRevision, record.contentHash, record, resolved.displayName)
         end
       elseif requested.entityType == "SEASON_CATALOG" and Dibs.Seasons then
-        local allowed = Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite and Dibs.OperationalPolicy.CanWrite(nil)
         local record = Dibs.Seasons.GetCatalogRecord and Dibs.Seasons.GetCatalogRecord(requested.revision)
-        if allowed and record and tonumber(record.catalogRevision) == tonumber(requested.revision) then
+        if record and tonumber(record.catalogRevision) == tonumber(requested.revision)
+          and (not requested.contentHash or requested.contentHash == record.contentHash) then
           Sync.SendDetail("SEASON_CATALOG", tostring(record.catalogRevision), record.catalogRevision, record.contentHash, record, resolved.displayName)
         end
       elseif requested.entityType == "AUTHORITY_SIGNAL" and Dibs.Governance and Dibs.Governance.BuildAuthoritySignal then
@@ -1762,6 +1910,11 @@ function Sync.Receive(message, sender, channel)
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
     if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_BASELINE" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" and message.entityType ~= "AWARD_PROPOSAL" and message.entityType ~= "SEASON_CATALOG" then return false, "UNSUPPORTED_ENTITY" end
+    local trustedRelay = false
+    if message.entityType == "GOVERNANCE" and resolved.role ~= "gm" then
+      trustedRelay = hasTrustedDigest(message.entityType, message.revision, message.contentHash)
+      if not trustedRelay then return false, "APPROVED_DIGEST_REQUIRED" end
+    end
     if message.entityType == "OPERATIONAL_POLICY" then
       local writerAllowed = false
       local writerReason = "POLICY_WRITER_REQUIRED"
@@ -1769,16 +1922,25 @@ function Sync.Receive(message, sender, channel)
         local authorization = { Dibs.OperationalPolicy.CanWrite(resolved.displayName) }
         writerAllowed, writerReason = authorization[1], authorization[2]
       end
-      if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+      if not writerAllowed then
+        trustedRelay = hasTrustedDigest(message.entityType, message.revision, message.contentHash)
+        if not trustedRelay then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+      end
     end
-    if message.entityType == "LEGACY_BASELINE" and resolved.role ~= "gm" then return false, "GUILD_MASTER_REQUIRED" end
+    if message.entityType == "LEGACY_BASELINE" and resolved.role ~= "gm" then
+      trustedRelay = hasTrustedDigest(message.entityType, message.revision, message.contentHash)
+      if not trustedRelay then return false, "GUILD_MASTER_REQUIRED" end
+    end
     if message.entityType == "SEASON_CATALOG" then
       local writerAllowed = false
       local writerReason = "POLICY_WRITER_REQUIRED"
       if Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite then
         writerAllowed, writerReason = Dibs.OperationalPolicy.CanWrite(resolved.displayName)
       end
-      if not writerAllowed then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+      if not writerAllowed then
+        trustedRelay = hasTrustedDigest(message.entityType, message.revision, message.contentHash)
+        if not trustedRelay then return false, writerReason or "POLICY_WRITER_REQUIRED" end
+      end
     end
     local existing = Dibs.runtime.v2Transfers[message.transferId]
     if existing then
@@ -1793,7 +1955,8 @@ function Sync.Receive(message, sender, channel)
     Dibs.runtime.v2Transfers[message.transferId] = { transferId = message.transferId, sender = resolved.memberKey,
       entityType = message.entityType, entityId = message.entityId, revision = message.revision,
       contentHash = message.contentHash, payloadHash = message.payloadHash, chunkCount = message.chunkCount,
-      chunks = {}, receivedChunks = 0, totalBytes = 0, expiresAt = time() + TTL }
+      chunks = {}, receivedChunks = 0, totalBytes = 0, expiresAt = time() + TTL,
+      trustedRelay = trustedRelay }
     return true, "TRANSFER_STARTED"
   end
   if message.type == "TRANSFER_CHUNK" then
@@ -1814,17 +1977,23 @@ function Sync.Receive(message, sender, channel)
       local ok, applyReason = applyRequest(payload, transfer, resolved); if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end; return ok, applyReason
     end
     if transfer.entityType == "VAULT_DETAIL" then return applyVaultDetail(payload, transfer, resolved) end
-    if transfer.entityType == "LEGACY_BASELINE" and Dibs.LegacyBaseline and Dibs.LegacyBaseline.ApplyApprovedBaseline then
+    if transfer.entityType == "LEGACY_BASELINE" and Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.ApplyApprovedBaseline then
       if payload.legacyBaselineHash ~= transfer.contentHash or transfer.entityId ~= payload.legacyBaselineHash then return false, "CONTENT_HASH_MISMATCH" end
-      return Dibs.LegacyBaseline.ApplyApprovedBaseline(payload)
+      return Dibs.HistoricalBaseline.ApplyApprovedBaseline(payload)
     end
     if transfer.entityType == "GOVERNANCE" and Dibs.Governance and Dibs.Governance.ApplyRecord then
-      local ok, applyReason = Dibs.Governance.ApplyRecord(payload, resolved.displayName)
+      if payload.contentHash ~= transfer.contentHash
+        or transfer.entityId ~= tostring(payload.governanceRevision) then return false, "CONTENT_HASH_MISMATCH" end
+      local sender = transfer.trustedRelay and payload.authorNameRealm or resolved.displayName
+      local ok, applyReason = Dibs.Governance.ApplyRecord(payload, sender)
       if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end
       return ok, applyReason
     end
     if transfer.entityType == "OPERATIONAL_POLICY" and Dibs.OperationalPolicy and Dibs.OperationalPolicy.ApplyRecord then
-      local ok, applyReason = Dibs.OperationalPolicy.ApplyRecord(payload, resolved.displayName)
+      if payload.contentHash ~= transfer.contentHash
+        or transfer.entityId ~= tostring(payload.policyRevision) then return false, "CONTENT_HASH_MISMATCH" end
+      local sender = transfer.trustedRelay and payload.authorNameRealm or resolved.displayName
+      local ok, applyReason = Dibs.OperationalPolicy.ApplyRecord(payload, sender)
       if not ok and applyReason == "POLICY_PARENT_MISSING" then
         local state = ensure()
         state.policyTarget = state.policyTarget or { revision = transfer.revision, contentHash = transfer.contentHash }
@@ -1837,7 +2006,8 @@ function Sync.Receive(message, sender, channel)
     end
     if transfer.entityType == "SEASON_CATALOG" and Dibs.Seasons and Dibs.Seasons.ApplyCatalog then
       if payload.contentHash ~= transfer.contentHash or transfer.entityId ~= tostring(payload.catalogRevision) then return false, "CONTENT_HASH_MISMATCH" end
-      local ok, applyReason = Dibs.Seasons.ApplyCatalog(payload, resolved.displayName)
+      local sender = transfer.trustedRelay and payload.authorNameRealm or resolved.displayName
+      local ok, applyReason = Dibs.Seasons.ApplyCatalog(payload, sender)
       if not ok and applyReason == "SEASON_CATALOG_PARENT_MISSING" then
         local state = ensure()
         state.seasonCatalogTarget = { revision = transfer.revision, contentHash = transfer.contentHash }
@@ -1846,9 +2016,9 @@ function Sync.Receive(message, sender, channel)
       elseif ok then clearResolvedSeasonCatalogGap() end
       return ok, applyReason
     end
-    if transfer.entityType == "LEGACY_RECOVERY_PACKAGE" and Dibs.LegacyBaseline and Dibs.LegacyBaseline.StageRecoveryPackage then
+    if transfer.entityType == "LEGACY_RECOVERY_PACKAGE" and Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.StageRecoveryPackage then
       if payload.contentHash ~= transfer.contentHash or transfer.entityId ~= payload.contentHash then return false, "CONTENT_HASH_MISMATCH" end
-      local staged, stageReason = Dibs.LegacyBaseline.StageRecoveryPackage(payload, { sender = resolved.displayName })
+      local staged, stageReason = Dibs.HistoricalBaseline.StageRecoveryPackage(payload, { sender = resolved.displayName })
       if not staged then return false, stageReason end
       Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.legacyRecoveryPackages = Dibs.runtime.legacyRecoveryPackages or {}
       local pending = Dibs.runtime.legacyRecoveryPackages
@@ -1947,13 +2117,23 @@ local function scheduleHeartbeat()
 end
 function Sync.OnLifecycle(reason)
   if not Sync.RegisterTransport() then return false, "SYNC_UNAVAILABLE" end
+  scheduleHeartbeat()
+  local now = time()
+  if reason == "STARTUP" and Sync.startupLifecycleScheduled then
+    return true, "STARTUP_COALESCED"
+  end
+  if reason == "GUILD_ROSTER_SETTLED" and Sync.lastLifecycleAt
+    and now - Sync.lastLifecycleAt < 5 then
+    return true, "ROSTER_LIFECYCLE_COALESCED"
+  end
+  if reason == "STARTUP" then Sync.startupLifecycleScheduled = true end
+  Sync.lastLifecycleAt = now
   Sync.Send({ type = "HELLO", protocolState = Sync.GetProtocolState(), lifecycle = reason }, "GUILD")
   local digest = Sync.BuildManifest(); local sent = Sync.Send(digest, "GUILD")
   Sync.Send(Sync.BuildVaultDigest(), "GUILD")
-  Sync.AnnounceAwardReservationDigest()
   retryVaultRequests()
-  Sync.AnnounceGovernance()
   local sendGovernedDigests = function()
+    Sync.AnnounceGovernance()
     if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted() then
       Sync.Send(Sync.BuildOperationalPolicyDigest(), "GUILD")
     end
@@ -1972,18 +2152,26 @@ function Sync.OnLifecycle(reason)
     if tonumber(catalogState.catalogRevision) and tonumber(catalogState.catalogRevision) > 0 then
       Sync.Send(Sync.BuildSeasonCatalogDigest(), "GUILD")
     end
+    local authority = Sync.BuildAuthorityDigest()
+    if authority then Sync.Send(authority, "GUILD") end
+    local localMember = localSnapshot()
+    local authorityState = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+    if Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()
+      and authorityState and authorityState.state == "ACTIVE" and localMember then
+      Sync.AnnounceLedgerDigest()
+    end
   end
-  if Dibs.Ace3 and Dibs.Ace3.ScheduleTimer then Dibs.Ace3.ScheduleTimer(sendGovernedDigests, 1) else sendGovernedDigests() end
-  local authority = Sync.BuildAuthorityDigest()
-  if authority then Sync.Send(authority, "GUILD") end
-  local localMember = localSnapshot()
-  local authorityState = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
-  if Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()
-    and authorityState and authorityState.state == "ACTIVE" and localMember then
-    Sync.AnnounceLedgerDigest()
+  local sendDeferredDetails = function()
+    Sync.AnnounceAwardReservationDigest()
+    Sync.RetryPendingAwardProposals()
   end
-  Sync.RetryPendingAwardProposals()
-  scheduleHeartbeat()
+  if reason == "STARTUP" and Dibs.Ace3 and Dibs.Ace3.ScheduleTimer then
+    Dibs.Ace3.ScheduleTimer(sendGovernedDigests, 1)
+    Dibs.Ace3.ScheduleTimer(sendDeferredDetails, 2)
+  else
+    sendGovernedDigests()
+    sendDeferredDetails()
+  end
   return sent, digest
 end
 function Sync.AnnounceOperationalPolicy()

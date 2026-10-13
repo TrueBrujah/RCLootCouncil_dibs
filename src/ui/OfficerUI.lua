@@ -105,6 +105,7 @@ local OFFICER_NAV_TREE = {
   { section = "GUILD RULES", text = "Announcements", value = "announcements", module = "announcements" },
   { section = "GUILD RULES", text = "Loot Eligibility", value = "eligibility", module = "lootEligibility" },
   { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration", module = "rclootcouncil" },
+  { section = "INTEGRATIONS", text = "Independent Raid", value = "independentRaid" },
   { section = "SYSTEM", text = "Settings", value = "settings" },
   { section = "SYSTEM", text = "Pre-Dibs Settings", value = "preDibs", module = "preDibs" },
   { section = "SYSTEM", text = "Modules", value = "modules" },
@@ -126,6 +127,8 @@ local OFFICER_TAB_ALIASES = {
   review = "disputes",
   historyReconciliation = "reconciliation",
   rcHistory = "reconciliation",
+  independentRaid = "independentRaid",
+  independent = "independentRaid",
 }
 
 local canViewOfficerData
@@ -512,6 +515,16 @@ local function setControlText(control, text)
   if control.SetText then
     control:SetText(control._dibsText)
   end
+end
+
+local function focusControlAtEnd(control)
+  local target = control and (control.editbox or control.frame)
+  if not target then return false end
+  if type(target.SetFocus) == "function" then pcall(target.SetFocus, target) end
+  if type(target.SetCursorPosition) == "function" then
+    pcall(target.SetCursorPosition, target, #(control._dibsText or ""))
+  end
+  return true
 end
 
 local function getControlText(control)
@@ -1658,18 +1671,28 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
     structuredFilter = query
     query = query.query
   end
-  local ledger = Dibs.OfficerUI.BuildLedgerDetails(seasonId, structuredFilter)
-  local automatic = Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
-  local preDibs = Dibs.OfficerUI.BuildPreDibDetails(seasonId)
-  local vault = Dibs.OfficerUI.BuildVaultAcquisitionReview({ seasonId = seasonId, query = query, verificationState = statusFilter })
-  local lines = selectedView == "actions" and ledger.actions
-    or (selectedView == "automaticDibs" and automatic.allocations
-    or (selectedView == "predibs" and preDibs.requests
-      or (selectedView == "vault" and (function()
-        local result = {}
-        for _, row in ipairs(vault.rows) do result[#result + 1] = row.text end
-        return result
-      end)() or ledger.players)))
+  local lines, structuredRows, hiddenCount
+  if selectedView == "actions" or selectedView == "players" then
+    local ledger = Dibs.OfficerUI.BuildLedgerDetails(seasonId, structuredFilter)
+    lines = selectedView == "actions" and ledger.actions or ledger.players
+    hiddenCount = ledger.hiddenTransactionCount
+  elseif selectedView == "automaticDibs" then
+    local automatic = Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
+    lines = automatic.allocations
+    structuredRows = automatic.rows or {}
+    hiddenCount = automatic.hiddenTransactionCount
+  elseif selectedView == "predibs" then
+    local preDibs = Dibs.OfficerUI.BuildPreDibDetails(seasonId)
+    lines = preDibs.requests
+    hiddenCount = preDibs.hiddenRequestCount
+  else
+    local vault = Dibs.OfficerUI.BuildVaultAcquisitionReview({
+      seasonId = seasonId, query = query, verificationState = statusFilter,
+    })
+    lines = {}
+    for _, row in ipairs(vault.rows) do lines[#lines + 1] = row.text end
+    hiddenCount = vault.hiddenCount
+  end
   local emptyText = selectedView == "actions" and "No history for this season."
     or (selectedView == "automaticDibs" and "No automatic Dibs allocations for this season."
     or (selectedView == "predibs" and "No pre-Dibs for this season."
@@ -1677,18 +1700,17 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
   local title = selectedView == "actions" and "Actions"
     or (selectedView == "automaticDibs" and "Automatic Dibs"
     or (selectedView == "predibs" and "Pre-Dibs" or (selectedView == "vault" and "Vault Review" or "Players")))
-  local automaticRows = automatic.rows or {}
   local needle = string.lower(tostring(query or ""))
   if needle ~= "" then
     local filtered, filteredRows = {}, {}
     for originalIndex, line in ipairs(lines) do
       if string.find(string.lower(line), needle, 1, true) then
         table.insert(filtered, line)
-        if selectedView == "automaticDibs" then table.insert(filteredRows, automaticRows[originalIndex]) end
+        if selectedView == "automaticDibs" then table.insert(filteredRows, structuredRows[originalIndex]) end
       end
     end
     lines = filtered
-    if selectedView == "automaticDibs" then automaticRows = filteredRows end
+    if selectedView == "automaticDibs" then structuredRows = filteredRows end
   end
   local size = math.max(1, tonumber(pageSize) or 8)
   local totalPages = math.max(1, math.ceil(#lines / size))
@@ -1698,7 +1720,7 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
   local visibleRows = {}
   for index = first, math.min(first + size - 1, #lines) do
     table.insert(visible, lines[index])
-    if selectedView == "automaticDibs" and automaticRows[index] then table.insert(visibleRows, automaticRows[index]) end
+    if selectedView == "automaticDibs" and structuredRows[index] then table.insert(visibleRows, structuredRows[index]) end
   end
   if #visible == 0 then
     visible[1] = emptyText
@@ -1712,9 +1734,7 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
     totalPages = totalPages,
     totalCount = #lines,
     query = needle,
-    hiddenCount = selectedView == "automaticDibs" and automatic.hiddenTransactionCount
-      or (selectedView == "predibs" and preDibs.hiddenRequestCount
-      or (selectedView == "vault" and vault.hiddenCount or ledger.hiddenTransactionCount)),
+    hiddenCount = hiddenCount,
   }
 end
 
@@ -2087,7 +2107,46 @@ local function renderDashboard(shell, parent, frame)
     Dibs.AceGUI.AddLabel(shell, statusSection, tostring(value and value.explanation or "Unavailable."), true)
   end
   Dibs.AceGUI.AddHeading(shell, parent, "Officer dashboard", "Guild-wide operational summary for authorized Officers and GM.")
-  Dibs.AceGUI.AddLabel(shell, parent, "Season: " .. tostring(dashboard.season and dashboard.season.name or "No active season"), true)
+  local controlRow = Dibs.AceGUI.AddInlineGroup(shell, parent)
+  local seasonLabel = Dibs.AceGUI.AddLabel(shell, controlRow, "Season: " .. tostring(dashboard.season and dashboard.season.name or "No active season"), false)
+  if seasonLabel and seasonLabel.SetWidth then seasonLabel:SetWidth(180) end
+  if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
+    local ledgers = Dibs.MultiLedger.GetLedgers()
+    local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
+    local ledgerValues = {}
+    for _, l in ipairs(ledgers) do
+      if l.status == "APPROVED" then
+        ledgerValues[l.id] = l.name or l.id
+      end
+    end
+    if not ledgerValues[activeLedgerId] then
+      ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
+    end
+    local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, controlRow, "Active ledger", ledgerValues, function(value)
+      Dibs.MultiLedger.SetActiveLedger(nil, value)
+      if Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
+        Dibs.MultiLedger.BroadcastRaidLedger(nil, value)
+      end
+      frame:Refresh()
+    end, 200)
+    Dibs.AceGUI.SetValue(ledgerDropdown, activeLedgerId)
+    if Dibs.MultiLedger and Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
+      local L = Dibs.Locales and Dibs.Locales.GetStrings and Dibs.Locales.GetStrings() or {}
+      Dibs.AceGUI.AddButton(shell, controlRow, L.RAID_SYNC_BUTTON or "Sync to Raid", function()
+        local currentActive = Dibs.MultiLedger.GetActiveLedgerId()
+        local ok, reason = Dibs.MultiLedger.BroadcastRaidLedger(nil, currentActive)
+        if ok then
+          Dibs.Message("Raid active ledger synchronized to: " .. tostring(currentActive))
+        else
+          Dibs.Message("Failed to sync raid ledger: " .. tostring(reason or "unknown error"))
+        end
+        frame:Refresh()
+      end, 120, L.RAID_SYNC_TOOLTIP or "Synchronize the current active ledger to all raid members with Dibs.")
+    end
+  end
+  if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
+    Dibs.Midnight.AddStatusBadge(shell, controlRow, "warning", "Independent Raid Active")
+  end
   Dibs.AceGUI.AddHeader(shell, parent, "Season statistics", "Current-season activity; award distribution values are per recipient.")
   local metricGrid = Dibs.AceGUI.AddInlineGroup(shell, parent)
   local metrics = {
@@ -2290,10 +2349,72 @@ function Dibs.OfficerUI.BuildRankCatalogStatus()
   return "Guild configuration: Synchronized.\nCatalog revision: " .. tostring(revision)
 end
 
+function Dibs.OfficerUI.GetSynchronizationPeerPresentation(peer)
+  peer = peer or {}
+  local strings = Dibs.L or {}
+  if peer.online ~= true then
+    return {
+      label = strings.SYNC_PEER_WAITING_LOGIN or "Waiting for login",
+      nextAction = strings.SYNC_PEER_ACTION_LOGIN or "Log in on this character, then retry synchronization.",
+      tone = "warning",
+    }
+  end
+  if peer.addonDetected ~= true then
+    return {
+      label = strings.SYNC_PEER_NO_RESPONSE or "No addon response",
+      nextAction = strings.SYNC_PEER_ACTION_RELOAD or "Enable DIBS, reload the UI, then announce presence.",
+      tone = "warning",
+    }
+  end
+  if peer.compatibility == "Update required" then
+    return {
+      label = strings.SYNC_PEER_UPDATE_REQUIRED or "Update required",
+      nextAction = strings.SYNC_PEER_ACTION_UPDATE or "Install the current DIBS version on this character.",
+      tone = "danger",
+    }
+  end
+  if peer.syncStatus == "Behind" then
+    return {
+      label = strings.SYNC_PEER_REMOTE_BEHIND or "Remote client behind",
+      nextAction = strings.SYNC_PEER_ACTION_RETRY or "Keep both clients online and retry synchronization.",
+      tone = "warning",
+    }
+  end
+  if peer.syncStatus == "Local behind" then
+    return {
+      label = strings.SYNC_PEER_LOCAL_BEHIND or "This client behind",
+      nextAction = strings.SYNC_PEER_ACTION_RETRY or "Keep both clients online and retry synchronization.",
+      tone = "warning",
+    }
+  end
+  if tostring(peer.baselineStatus or ""):find("^Rejected/") then
+    return {
+      label = strings.SYNC_PEER_BASELINE_REJECTED or "Baseline rejected",
+      nextAction = strings.SYNC_PEER_ACTION_REVIEW_BASELINE or "Review Guild Configuration before retrying synchronization.",
+      tone = "danger",
+    }
+  end
+  if peer.syncStatus == "Up to date" then
+    return {
+      label = strings.SYNC_PEER_SYNCHRONIZED or "Synchronized",
+      nextAction = strings.SYNC_PEER_ACTION_NONE or "No action required.",
+      tone = "success",
+    }
+  end
+  return {
+    label = strings.SYNC_PEER_WAITING_STATUS or "Waiting for status",
+    nextAction = strings.SYNC_PEER_ACTION_ANNOUNCE or "Announce presence while both clients are online.",
+    tone = "warning",
+  }
+end
+
 function Dibs.OfficerUI.BuildSynchronizationProjection(rosterScope)
   local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
   local peers = Dibs.Sync and Dibs.Sync.GetPeerStatuses and Dibs.Sync.GetPeerStatuses(rosterScope) or {}
-  local baseline = Dibs.LegacyBaseline and Dibs.LegacyBaseline.GetBaseline and Dibs.LegacyBaseline.GetBaseline() or {}
+  local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline() or {}
+  for _, peer in ipairs(peers) do
+    peer.presentation = Dibs.OfficerUI.GetSynchronizationPeerPresentation(peer)
+  end
   return {
     state = Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or {},
     protocolState = Dibs.Sync and Dibs.Sync.GetProtocolState and Dibs.Sync.GetProtocolState() or "Unknown",
@@ -2361,13 +2482,18 @@ local function renderInstallationPage(shell, parent, frame)
     coordinator = {}, compatibility = {}, sync = {}, protocol = {}, blockers = {}, warnings = {}, technical = {},
   }
   Dibs.AceGUI.AddHeading(shell, parent, helpText.DOC_GUILD_SETUP_LABEL or "Guild Configuration", helpText.UI_HELP_GUILD_SETUP)
-  if not status.actor.isGM then
+  if not status.actor.isGM and not status.actor.isOfficer then
     if status.protocol.active then
       Dibs.AceGUI.AddLabel(shell, parent, "Guild Ledger: Active | Coordinator: " .. tostring(status.coordinator.candidate or "Unknown"), true)
     else
       Dibs.AceGUI.AddLabel(shell, parent, "DIBS has not yet been initialized for this guild.\nThe Guild Master must complete the initial setup.", true)
     end
     return
+  end
+
+  if not status.actor.isGM then
+    Dibs.AceGUI.AddLabel(shell, parent,
+      "Officer setup: you can prepare the guild configuration. Guild-wide governance stays pending until the Guild Master confirms.", true)
   end
 
   Dibs.AceGUI.AddLabel(shell, parent, "Status: " .. tostring(INSTALLATION_STATE_LABEL[status.state] or status.state), true)
@@ -2401,12 +2527,18 @@ local function renderInstallationPage(shell, parent, frame)
           tostring(row.identity), tostring(row.action), tostring(row.amount or ""), tostring(row.decision or "UNRESOLVED")), false)
         if not row.decision then
           local include = Dibs.AceGUI.AddButton(shell, group, "Include", function()
-            Dibs.LegacyBaseline.RecordDecision(nil, row.evidenceId, "INCLUDE", { reason = "Reviewed via Guild Configuration" })
+            local recorded, reason = Dibs.HistoricalBaseline.RecordDecision(
+              nil, row.evidenceId, "INCLUDE", { reason = "Reviewed via Guild Configuration" })
+            frame:SetStatus(recorded and "Existing data included."
+              or ("Include failed: " .. tostring(reason or "unknown error")))
             frame:Refresh()
           end, 70)
           Dibs.AceGUI.AddTooltip(include, "Include", helpText.UI_HELP_RECONCILIATION_INCLUDE)
           local exclude = Dibs.AceGUI.AddButton(shell, group, "Exclude", function()
-            Dibs.LegacyBaseline.RecordDecision(nil, row.evidenceId, "EXCLUDE", { reason = "Reviewed via Guild Configuration" })
+            local recorded, reason = Dibs.HistoricalBaseline.RecordDecision(
+              nil, row.evidenceId, "EXCLUDE", { reason = "Reviewed via Guild Configuration" })
+            frame:SetStatus(recorded and "Existing data excluded."
+              or ("Exclude failed: " .. tostring(reason or "unknown error")))
             frame:Refresh()
           end, 70)
           Dibs.AceGUI.AddTooltip(exclude, "Exclude", helpText.UI_HELP_RECONCILIATION_EXCLUDE)
@@ -2469,6 +2601,115 @@ local function renderInstallationPage(shell, parent, frame)
       "\nBaseline Hash: " .. tostring(status.technical.baselineHash) ..
       "\nCoordinator: " .. tostring(status.technical.coordinatorMemberKey), true)
   end
+
+  if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
+    Dibs.AceGUI.AddHeading(shell, parent, "Guild Ledgers", "Manage and approve guild ledgers.")
+    local ledgers = Dibs.MultiLedger.GetLedgers()
+    local isGM = Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM() == true
+
+    local pending = {}
+    for _, l in ipairs(ledgers) do
+      if l.status == "PROPOSED" then
+        pending[#pending + 1] = l
+      end
+    end
+    if #pending > 0 then
+      Dibs.AceGUI.AddHeader(shell, parent, "Pending Ledger Approvals", "Proposed ledgers awaiting Guild Master approval.")
+      for _, l in ipairs(pending) do
+        local pGroup = Dibs.AceGUI.AddInlineGroup(shell, parent)
+        Dibs.AceGUI.AddLabel(shell, pGroup, string.format("%s (proposed by %s)", tostring(l.name), tostring(l.proposedBy or "Unknown")), false)
+        if isGM then
+          Dibs.AceGUI.AddButton(shell, pGroup, "Approve", function()
+            local ok, err = Dibs.MultiLedger.ApproveLedger(nil, l.id)
+            frame:SetStatus(ok and ("Approved ledger " .. tostring(l.name)) or tostring(err))
+            frame:Refresh()
+          end, 80)
+        else
+          Dibs.AceGUI.AddLabel(shell, pGroup, "(Awaiting GM approval)", false)
+        end
+      end
+    end
+
+    local approved = {}
+    for _, l in ipairs(ledgers) do
+      if l.status == "APPROVED" and not l.isDefault then approved[#approved + 1] = l end
+    end
+    if #approved > 0 then
+      Dibs.AceGUI.AddHeader(shell, parent, "Approved Ledgers",
+        "Archive a ledger before permanently deleting it. Archiving the active ledger switches clients back to Primary.")
+      for _, l in ipairs(approved) do
+        local approvedGroup = Dibs.AceGUI.AddInlineGroup(shell, parent)
+        local active = Dibs.MultiLedger.GetActiveLedgerId() == l.id
+        Dibs.AceGUI.AddLabel(shell, approvedGroup,
+          string.format("%s%s (%d transactions)", tostring(l.name), active and " - Active" or "",
+            tonumber(l.transactionCount) or 0), false)
+        if isGM then
+          local armed = frame.ledgerArchiveConfirmId == l.id
+          Dibs.AceGUI.AddButton(shell, approvedGroup,
+            armed and "Confirm archive" or "Archive", function()
+              if frame.ledgerArchiveConfirmId ~= l.id then
+                frame.ledgerArchiveConfirmId = l.id
+                frame.ledgerDeleteConfirmId = nil
+                frame:SetStatus("Confirm archiving " .. tostring(l.name) .. ".")
+              else
+                local result = Dibs.MultiLedger.ArchiveLedger(nil, l.id)
+                frame.ledgerArchiveConfirmId = nil
+                frame:SetStatus(result.ok and ("Archived ledger " .. tostring(l.name))
+                  or ("Archive failed: " .. tostring(result.reasonCode)))
+              end
+              frame:Refresh()
+            end, 130)
+        end
+      end
+    end
+
+    local archived = {}
+    for _, l in ipairs(ledgers) do
+      if l.status == "ARCHIVED" and not l.isDefault then archived[#archived + 1] = l end
+    end
+    if #archived > 0 then
+      Dibs.AceGUI.AddHeader(shell, parent, "Archived Ledgers", "Archived ledgers are retained unless a GM explicitly confirms permanent deletion.")
+      for _, l in ipairs(archived) do
+        local archivedGroup = Dibs.AceGUI.AddInlineGroup(shell, parent)
+        Dibs.AceGUI.AddLabel(shell, archivedGroup,
+          string.format("%s (%d transactions)", tostring(l.name), tonumber(l.transactionCount) or 0), false)
+        if isGM then
+          local armed = frame.ledgerDeleteConfirmId == l.id
+          Dibs.AceGUI.AddButton(shell, archivedGroup,
+            armed and "Confirm permanent deletion" or "Delete permanently", function()
+              if frame.ledgerDeleteConfirmId ~= l.id then
+                frame.ledgerDeleteConfirmId = l.id
+                frame.ledgerArchiveConfirmId = nil
+                frame:SetStatus("Confirm permanent deletion of " .. tostring(l.name) .. ".")
+              else
+                local result = Dibs.MultiLedger.DeleteLedger(nil, l.id, { confirmed = true })
+                frame.ledgerDeleteConfirmId = nil
+                frame:SetStatus(result.ok and ("Deleted ledger " .. tostring(l.name)) or ("Delete failed: " .. tostring(result.reasonCode)))
+              end
+              frame:Refresh()
+            end, 170)
+        end
+      end
+    end
+
+    local proposeGroup = Dibs.AceGUI.AddInlineGroup(shell, parent)
+    local nameBox = Dibs.AceGUI.AddEditBox(shell, proposeGroup, "New ledger name", function(val)
+      frame.newLedgerProposedName = val
+    end, 200)
+    setControlText(nameBox, frame.newLedgerProposedName or "")
+    Dibs.AceGUI.AddButton(shell, proposeGroup, "Propose Ledger", function()
+      local name = trimText(frame.newLedgerProposedName or "")
+      if name == "" then return end
+      local ok, res = Dibs.MultiLedger.ProposeLedger(nil, name)
+      if ok then
+        frame.newLedgerProposedName = ""
+        frame:SetStatus("Proposed ledger: " .. name)
+      else
+        frame:SetStatus("Failed to propose: " .. tostring(res))
+      end
+      frame:Refresh()
+    end, 120)
+  end
 end
 
 local WIZARD_STEP_ROUTE = {
@@ -2490,171 +2731,262 @@ local function wizardStepMarker(status)
 end
 
 local function renderWizardPage(shell, parent, frame)
-  local helpText = Dibs.L or {}
+  local strings = Dibs.L or {}
   if not canViewOfficerData() then
-    Dibs.AceGUI.AddHeading(shell, parent, "Guided Setup")
+    Dibs.AceGUI.AddHeading(shell, parent, strings.OFFICER_NAV_GUIDED_SETUP_LABEL or "Guided Setup")
     Dibs.AceGUI.AddLabel(shell, parent, "Officer access required.", true)
     return
   end
-  local status = Dibs.Wizard and Dibs.Wizard.GetStatus and Dibs.Wizard.GetStatus() or { steps = {}, overallState = "NEW_INSTALLATION", mode = "FIRST_TIME_SETUP" }
-  Dibs.AceGUI.AddHeading(shell, parent, "DIBS Guided Setup",
-    helpText.UI_HELP_WIZARD)
-  Dibs.AceGUI.AddLabel(shell, parent, "Overall: " .. tostring(WIZARD_OVERALL_LABEL[status.overallState] or status.overallState), true)
 
-  local total = #status.steps
-  local currentIndex = math.max(1, math.min(Dibs.Wizard.GetCurrentStepIndex(), total))
-  local current = status.steps[currentIndex]
+  local status = Dibs.Wizard.GetTurnkeyStatus()
+  local stage = status.currentStage
+  local selectedProfileId = status.selectedProfileId
+  local profileById = {}
+  for _, profile in ipairs(Dibs.Wizard.GetProfiles()) do profileById[profile.id] = profile end
+  local selectedProfile = profileById[selectedProfileId]
 
-  local nav = Dibs.AceGUI.AddInlineGroup(shell, parent)
-  for index, step in ipairs(status.steps) do
-    local label = index .. " " .. step.label .. " [" .. wizardStepMarker(step.status) .. "]"
-    if index == currentIndex then label = "> " .. label end
-    Dibs.AceGUI.AddButton(shell, nav, label, function()
-      Dibs.Wizard.SetCurrentStepIndex(index)
+  Dibs.AceGUI.AddHeading(shell, parent, strings.WIZARD_TITLE or "DIBS Guided Setup",
+    strings.UI_HELP_WIZARD)
+  Dibs.Midnight.AddStatusBadge(shell, parent,
+    status.overallState == "READY_FOR_RAID" and "success"
+      or status.overallState == "BLOCKED" and "danger" or "warning",
+    tostring(WIZARD_OVERALL_LABEL[status.overallState] or status.overallState))
+
+  local stageLabels = {
+    choose = strings.WIZARD_STAGE_CHOOSE or "1 Choose",
+    configure = strings.WIZARD_STAGE_CONFIGURE or "2 Configure",
+    verify = strings.WIZARD_STAGE_VERIFY or "3 Verify",
+  }
+  local stageNav = Dibs.AceGUI.AddInlineGroup(shell, parent)
+  for _, id in ipairs({ "choose", "configure", "verify" }) do
+    local stageId = id
+    local label = (stageId == stage and "> " or "") .. stageLabels[stageId]
+    Dibs.AceGUI.AddButton(shell, stageNav, label, function()
+      Dibs.Wizard.SetCurrentStage(stageId)
       frame:Refresh()
-    end, 150)
+    end, 180)
   end
 
-  if current then
-    Dibs.AceGUI.AddHeading(shell, parent, currentIndex .. " of " .. total .. " — " .. current.label)
-    Dibs.AceGUI.AddLabel(shell, parent, "Status: " .. current.status, true)
-    Dibs.AceGUI.AddLabel(shell, parent, tostring(current.summary or ""), true)
-    if current.id == "dibsRules" then
-      Dibs.AceGUI.AddLabel(shell, parent,
-        "Choose a starting policy here. Fine-tune individual loot families in Loot Rules.", true)
-      local setupStatus = Dibs.RCOptions and Dibs.RCOptions.GetSetupAssistantStatus
-        and Dibs.RCOptions.GetSetupAssistantStatus()
-      if setupStatus then Dibs.AceGUI.AddLabel(shell, parent, setupStatus, true) end
-      local presets = Dibs.AceGUI.AddInlineGroup(shell, parent)
-      local function applyPreset(templateKey)
-        local apply = Dibs.RCOptions and Dibs.RCOptions.ApplyInstallationPreset
-        local applied = type(apply) == "function" and apply(templateKey) == true
-        frame:SetStatus(applied and "Dibs policy preset applied." or "Unable to apply Dibs policy preset.")
-        frame:Refresh()
+  if stage == "choose" then
+    Dibs.AceGUI.AddHeading(shell, parent, stageLabels.choose)
+    Dibs.AceGUI.AddLabel(shell, parent, strings.WIZARD_CHOOSE_HELP or
+      "Choose a profile. Nothing changes until the next stage.", true)
+    local profileList = Dibs.AceGUI.AddScrollableList(shell, parent, 540, 245) or parent
+    for _, profile in ipairs(Dibs.Wizard.GetProfiles()) do
+      local profileId = profile.id
+      local section = Dibs.Midnight.CreatePanel(shell, profileList, profile.label)
+      Dibs.AceGUI.AddLabel(shell, section, profile.summary, true)
+      for _, benefit in ipairs(profile.benefits or {}) do
+        Dibs.AceGUI.AddLabel(shell, section, "- " .. tostring(benefit), true)
       end
-      Dibs.AceGUI.AddButton(shell, presets, "Curio + Tier Set", function()
-        applyPreset("progression")
-      end, 170)
-      Dibs.AceGUI.AddButton(shell, presets, "Standard loot + collections", function()
-        applyPreset("broad")
-      end, 210)
-      Dibs.AceGUI.AddButton(shell, presets, "Refresh Dibs buttons", function()
-        local refresh = Dibs.RCOptions and Dibs.RCOptions.RefreshDibButtonProjection
-        local available = type(refresh) == "function" and refresh() == true
-        frame:SetStatus(available and "Dibs buttons refreshed in RCLootCouncil."
-          or "RCLootCouncil is unavailable; standalone Dibs controls remain active.")
-        frame:Refresh()
-      end, 175)
+      Dibs.AceGUI.AddButton(shell, section,
+        profileId == selectedProfileId
+          and ((strings.WIZARD_SELECTED or "Selected") .. ": " .. profile.label)
+          or ((strings.WIZARD_CHOOSE or "Choose") .. " " .. profile.label),
+        function()
+          Dibs.Wizard.SetSelectedProfileId(profileId)
+          Dibs.Wizard.SetCurrentStage("configure")
+          frame:Refresh()
+        end, 240)
     end
-    if current.id == "review" then
-      for _, step in ipairs(status.steps) do
-        if step.id ~= "review" then
-          Dibs.AceGUI.AddLabel(shell, parent, string.format("[%s] %s - %s", wizardStepMarker(step.status), step.label, tostring(step.summary or "")), true)
+  elseif stage == "configure" then
+    Dibs.AceGUI.AddHeading(shell, parent, stageLabels.configure .. " - " .. tostring(selectedProfile.label))
+    Dibs.AceGUI.AddLabel(shell, parent, strings.WIZARD_CONFIGURE_HELP or
+      "Review what will change before applying the selected setup.", true)
+    local configurationList = Dibs.AceGUI.AddScrollableList(shell, parent, 520, 300) or parent
+    Dibs.AceGUI.AddLabel(shell, configurationList, selectedProfile.summary, true)
+    local preview = Dibs.Wizard.PreviewProfile(selectedProfileId)
+    for _, action in ipairs(preview.actions or {}) do
+      local section = Dibs.Midnight.CreatePanel(shell, configurationList, action.title)
+      local tone = action.disposition == "ALREADY_READY" and "success"
+        or action.disposition == "DEFERRED" and "warning"
+        or action.disposition == "ADVANCED_ONLY" and "info" or "ready"
+      Dibs.Midnight.AddStatusBadge(shell, section, tone, action.disposition)
+      Dibs.AceGUI.AddLabel(shell, section, action.explanation, true)
+      Dibs.AceGUI.AddLabel(shell, section,
+        (strings.WIZARD_RESULT or "Result") .. ": " .. tostring(action.outcome), true)
+    end
+    local preserved = Dibs.Midnight.CreatePanel(shell, configurationList,
+      strings.WIZARD_PRESERVED_TITLE or "What DIBS preserves")
+    for _, item in ipairs(preview.preserved or {}) do
+      Dibs.AceGUI.AddLabel(shell, preserved, "- " .. tostring(item), true)
+    end
+    local actions = Dibs.AceGUI.AddInlineGroup(shell, parent)
+    Dibs.AceGUI.AddButton(shell, actions, strings.WIZARD_BACK_PROFILES or "Back to profiles", function()
+      Dibs.Wizard.SetCurrentStage("choose")
+      frame:Refresh()
+    end, 150)
+    if selectedProfileId == "custom" then
+      Dibs.AceGUI.AddButton(shell, actions, strings.WIZARD_OPEN_ADVANCED or "Open advanced settings", function()
+        frame:ActivateRoute("settings")
+      end, 200)
+    else
+      Dibs.AceGUI.AddButton(shell, actions, strings.WIZARD_APPLY or "Apply this setup", function()
+        local result = Dibs.Wizard.ApplyProfile(selectedProfileId)
+        frame.turnkeySetupResult = result
+        local firstFailure
+        for _, action in ipairs(result.actions or {}) do
+          if action.outcome == "FAILED" then firstFailure = action break end
+        end
+        local failureText = firstFailure
+          and (tostring(firstFailure.title or firstFailure.id) .. " - " .. tostring(firstFailure.reasonCode))
+          or tostring(result.reasonCode)
+        frame:SetStatus(result.ok and (strings.WIZARD_APPLIED_STATUS or "Setup applied. Review the current guild status.")
+          or ((strings.WIZARD_ATTENTION_STATUS or "Setup needs attention") .. ": " .. failureText))
+        Dibs.Wizard.SetCurrentStage("verify")
+        frame:Refresh()
+      end, 180)
+    end
+  else
+    Dibs.AceGUI.AddHeading(shell, parent, stageLabels.verify)
+    Dibs.AceGUI.AddLabel(shell, parent, strings.WIZARD_VERIFY_HELP or
+      "Correct red blockers first. Warnings are not always blocking.", true)
+    local verificationList = Dibs.AceGUI.AddScrollableList(shell, parent, 520, 300) or parent
+    local lastAttempt = frame.turnkeySetupResult
+    if lastAttempt and type(lastAttempt.actions) == "table" then
+      local attempt = Dibs.Midnight.CreatePanel(shell, verificationList,
+        strings.WIZARD_LAST_ATTEMPT or "Last setup attempt")
+      for _, action in ipairs(lastAttempt.actions) do
+        local actionRoute = action.route
+        local outcomeText = action.outcome == "APPLIED" and (strings.WIZARD_ACTION_APPLIED or "Applied")
+          or action.outcome == "FAILED" and (strings.WIZARD_ACTION_FAILED or "Failed")
+          or action.outcome == "DEFERRED" and (strings.WIZARD_ACTION_DEFERRED or "Deferred")
+          or (strings.WIZARD_ACTION_READY or "Already ready")
+        local tone = action.outcome == "FAILED" and "danger"
+          or action.outcome == "DEFERRED" and "warning"
+          or "success"
+        Dibs.Midnight.AddStatusBadge(shell, attempt, tone,
+          tostring(action.title or action.id) .. " - " .. outcomeText)
+        if action.reasonCode then
+          Dibs.AceGUI.AddLabel(shell, attempt,
+            (strings.WIZARD_FAILURE_REASON or "Reason") .. ": " .. tostring(action.reasonCode), true)
+        end
+        if action.stage then
+          Dibs.AceGUI.AddLabel(shell, attempt,
+            (strings.WIZARD_FAILURE_STAGE or "Stage") .. ": " .. tostring(action.stage), true)
+        end
+        if action.outcome == "FAILED" and actionRoute then
+          Dibs.AceGUI.AddLabel(shell, attempt,
+            strings.WIZARD_RETRY_AFTER_FIX or "Retry the setup after correcting this result.", true)
+          Dibs.AceGUI.AddButton(shell, attempt,
+            (strings.WIZARD_OPEN or "Open") .. " "
+              .. (actionRoute == "sync" and "Synchronization" or tostring(action.title or action.id)),
+            function() frame:ActivateRoute(actionRoute) end, 220)
         end
       end
     end
-    if current.id == "operationalPolicy" then
-      local policyState = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState
-        and Dibs.OperationalPolicy.GetState() or {}
-      local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
-      local isGM = Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM() == true
-      if policyState.status == "POLICY_ADOPTED" then
-        Dibs.AceGUI.AddLabel(shell, parent,
-          "Guild Policy is adopted at revision " .. tostring(policyState.policyRevision) .. ".", true)
+    for _, result in ipairs(status.verification or {}) do
+      local correctionRoute = result.route
+      local correctionTitle = result.title
+      local section = Dibs.Midnight.CreatePanel(shell, verificationList,
+        tostring(result.category) .. " - " .. tostring(result.title))
+      local tone = result.severity == "BLOCKING" and "danger"
+        or result.severity == "WARNING" and "warning"
+        or result.severity == "READY" and "success" or "info"
+      Dibs.Midnight.AddStatusBadge(shell, section, tone, result.severity)
+      Dibs.AceGUI.AddLabel(shell, section,
+        (strings.WIZARD_CHECKED or "What DIBS checked") .. ": " .. tostring(result.explanation), true)
+      Dibs.AceGUI.AddLabel(shell, section,
+        (strings.WIZARD_IMPACT or "Impact") .. ": " .. tostring(result.impact), true)
+      if result.nextAction and result.route then
+        Dibs.AceGUI.AddLabel(shell, section,
+          (strings.WIZARD_NEXT or "Next") .. ": " .. tostring(result.nextAction), true)
+        Dibs.AceGUI.AddButton(shell, section,
+          (strings.WIZARD_OPEN or "Open") .. " " .. tostring(correctionTitle), function()
+          frame:ActivateRoute(correctionRoute)
+        end, 200)
+      end
+    end
+    local primary
+    for _, result in ipairs(status.verification or {}) do
+      if result.id == status.primaryIssueId then primary = result break end
+    end
+    local actions = Dibs.AceGUI.AddInlineGroup(shell, parent)
+    Dibs.AceGUI.AddButton(shell, actions,
+      strings.WIZARD_REVIEW_PROFILE or "Review setup profile", function()
+      Dibs.Wizard.SetCurrentStage("configure")
+      frame:Refresh()
+    end, 180)
+    if primary and primary.route then
+      local primaryRoute = primary.route
+      local primaryLabel = primary.severity == "BLOCKING"
+        and (strings.WIZARD_FIX_FIRST_BLOCKER or "Fix first blocking issue")
+        or (strings.WIZARD_REVIEW_FIRST_WARNING or "Review first warning")
+      Dibs.AceGUI.AddButton(shell, actions, primaryLabel, function()
+        frame:ActivateRoute(primaryRoute)
+      end, 190)
+    end
+  end
+end
+
+local function renderIndependentRaidPage(shell, parent, frame)
+  Dibs.AceGUI.AddHeading(shell, parent, "Independent Raid Sessions", "Manage ephemeral standalone raid sessions with local accounting and zero guild network synchronization.")
+
+  local active = Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive()
+  if active then
+    local session = Dibs.IndependentRaid.GetActiveSession()
+    Dibs.AceGUI.AddLabel(shell, parent, "Status: ACTIVE SESSION IN PROGRESS", true)
+    Dibs.AceGUI.AddLabel(shell, parent, "Session Title: " .. tostring(session and session.title or "Unknown"), true)
+    Dibs.AceGUI.AddLabel(shell, parent, "Starting Points: " .. tostring(session and session.startingPoints or 1), true)
+    Dibs.AceGUI.AddLabel(shell, parent, "Network Sync: INHIBITED (Zero guild traffic)", true)
+
+    Dibs.AceGUI.AddButton(shell, parent, "Conclude Session", function()
+      local res = Dibs.IndependentRaid.ConcludeSession()
+      if res.ok then
+        frame:SetStatus("Independent raid session concluded.")
       else
-        local draft = current.detail
-        if draft then
-          Dibs.AceGUI.AddLabel(shell, parent,
-            "Adoption publishes the current local Pre-Dibs availability, seasonal modes, announcement channels, and module settings as Guild Policy revision 1.", true)
-          Dibs.AceGUI.AddLabel(shell, parent,
-            "Public Pre-Dibs: " .. (draft.allowPublicPreDibs == true and "Enabled" or "Disabled"), true)
-          local modeRows = {}
-          for seasonId, mode in pairs(draft.preDibModes or {}) do
-            modeRows[#modeRows + 1] = tostring(seasonId) .. ": " .. tostring(mode)
-          end
-          table.sort(modeRows)
-          Dibs.AceGUI.AddLabel(shell, parent,
-            "Pre-Dibs modes: " .. (#modeRows > 0 and table.concat(modeRows, ", ") or "WILD_OPEN (default)"), true)
-          local channels = draft.announcementChannels or {}
-          Dibs.AceGUI.AddLabel(shell, parent,
-            "Announcement channels: " .. tostring(channels.publicChannel or "GUILD") .. " / " .. tostring(channels.officerChannel or "OFFICER"), true)
-          local moduleDefinitions = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleDefinitions
-            and Dibs.OperationalPolicy.GetModuleDefinitions() or {}
-          for _, definition in ipairs(moduleDefinitions) do
-            Dibs.AceGUI.AddLabel(shell, parent,
-              tostring(definition.label) .. ": " .. (draft.modules and draft.modules[definition.key] == true and "Enabled" or "Disabled"), true)
-          end
-        end
-        if governance.status ~= "GOVERNANCE_ADOPTED" and isGM then
-          Dibs.AceGUI.AddButton(shell, parent, "Open Guild Configuration", function()
-            frame:ActivateRoute("installation")
-          end, 200)
-        elseif governance.status == "GOVERNANCE_ADOPTED" and isGM then
-          Dibs.AceGUI.AddButton(shell, parent, "Adopt and publish Guild Policy", function()
-            local adopted, reason = Dibs.Wizard.AdoptOperationalPolicy(nil)
-            frame:SetStatus(adopted and "Guild Policy adopted and announced."
-              or ("Guild Policy adoption failed: " .. tostring(reason)))
+        frame:SetStatus("Error: " .. tostring(res.reasonCode))
+      end
+      frame:Refresh()
+    end, 180)
+  else
+    Dibs.AceGUI.AddLabel(shell, parent, "Status: No active independent raid session.", true)
+    Dibs.AceGUI.AddLabel(shell, parent, "Start an independent session when running with PUGs or non-guild raids. Members receive ephemeral dibs balances and guild synchronization is completely paused.", true)
+
+    local titleBox = Dibs.AceGUI.AddEditBox(shell, parent, "Session Title", function() end, 220)
+    if titleBox then Dibs.AceGUI.SetText(titleBox, "PUG Raid") end
+    local pointsBox = Dibs.AceGUI.AddEditBox(shell, parent, "Starting Points", function() end, 100)
+    if pointsBox then Dibs.AceGUI.SetText(pointsBox, "1") end
+
+    Dibs.AceGUI.AddButton(shell, parent, "Start Independent Session", function()
+      local title = (titleBox and Dibs.AceGUI.GetText(titleBox)) or "PUG Raid"
+      local points = tonumber(pointsBox and Dibs.AceGUI.GetText(pointsBox)) or 1
+      local res = Dibs.IndependentRaid.StartSession(title, points)
+      if res.ok then
+        frame:SetStatus("Independent raid session started.")
+      else
+        frame:SetStatus("Error: " .. tostring(res.reasonCode))
+      end
+      frame:Refresh()
+    end, 200)
+  end
+
+  Dibs.AceGUI.AddHeading(shell, parent, "Past Sessions History", "Review previous independent raid sessions, export results, or reconcile awards into guild ledgers.")
+  local sessions = Dibs.IndependentRaid and Dibs.IndependentRaid.GetSessions and Dibs.IndependentRaid.GetSessions() or {}
+  if #sessions == 0 then
+    Dibs.AceGUI.AddLabel(shell, parent, "No past independent sessions recorded.", true)
+  else
+    for _, s in ipairs(sessions) do
+      local awardCount = #(s.awards or {})
+      local headerText = string.format("%s (%s) - %d award(s)", tostring(s.title or s.id), tostring(s.status), awardCount)
+      Dibs.AceGUI.AddLabel(shell, parent, headerText, true)
+      for _, awd in ipairs(s.awards or {}) do
+        local awdText = string.format("  - %s: %s (Spent: %d)%s", tostring(awd.recipient), tostring(awd.itemLink or awd.itemID or "Item"), tonumber(awd.dibsSpent) or 0, awd.reconciled and " [Reconciled]" or "")
+        Dibs.AceGUI.AddLabel(shell, parent, awdText, true)
+        if not awd.reconciled and awd.isDib then
+          Dibs.AceGUI.AddButton(shell, parent, "Reconcile into Guild Ledger", function()
+            local actor = Dibs.GetPlayerName and Dibs.GetPlayerName() or "Officer"
+            local rec = Dibs.IndependentRaid.ReconcileAward(actor, s.id, awd.awardId, "guild-primary")
+            if rec.ok then
+              frame:SetStatus("Award reconciled into guild ledger.")
+            else
+              frame:SetStatus("Reconcile failed: " .. tostring(rec.reasonCode))
+            end
             frame:Refresh()
-          end, 250)
-        elseif not isGM then
-          Dibs.AceGUI.AddLabel(shell, parent, "Only the Guild Master can adopt Guild Policy.", true)
+          end, 200)
         end
       end
     end
-    if current.id == "review" or current.id == "readiness" then
-      local readiness = status.steps[total] and status.steps[total].detail or {}
-      local unresolvedFindings = {}
-      for _, finding in ipairs(readiness.checks or {}) do
-        if finding.state ~= "ready" and finding.state ~= "skipped" then
-          unresolvedFindings[#unresolvedFindings + 1] = finding
-        end
-      end
-      if current.id == "readiness" and #unresolvedFindings > 0 then
-        Dibs.AceGUI.AddLabel(shell, parent,
-          current.status == "BLOCKED" and "Why readiness is blocked:" or "Readiness details:", true)
-        for _, finding in ipairs(unresolvedFindings) do
-          local explanation = tostring(finding.impact or finding.reasonCode or finding.state)
-          if finding.remediation and finding.remediation ~= "" then
-            explanation = explanation .. " Next: " .. tostring(finding.remediation)
-          end
-          Dibs.AceGUI.AddLabel(shell, parent, explanation, true)
-        end
-      else
-        for _, finding in ipairs(unresolvedFindings) do
-          Dibs.AceGUI.AddLabel(shell, parent,
-            tostring(finding.id) .. ": " .. tostring(finding.impact or finding.reasonCode or finding.state)
-              .. " " .. tostring(finding.remediation or ""), true)
-        end
-      end
-    end
-    local route = WIZARD_STEP_ROUTE[current.id]
-    if route then
-      Dibs.AceGUI.AddButton(shell, parent, "Open " .. current.label, function()
-        frame:ActivateRoute(route)
-      end, 160)
-    end
-  end
-
-  local controls = Dibs.AceGUI.AddInlineGroup(shell, parent)
-  Dibs.AceGUI.AddButton(shell, controls, "Back", function()
-    Dibs.Wizard.SetCurrentStepIndex(currentIndex - 1)
-    frame:Refresh()
-  end, 90)
-  Dibs.AceGUI.AddButton(shell, controls, "Next", function()
-    Dibs.Wizard.SetCurrentStepIndex(currentIndex + 1)
-    frame:Refresh()
-  end, 90)
-  local firstWarning
-  for index, step in ipairs(status.steps) do
-    if not firstWarning and (step.status == "ACTION_REQUIRED" or step.status == "WARNING" or step.status == "BLOCKED") then
-      firstWarning = index
-    end
-  end
-  if firstWarning then
-    Dibs.AceGUI.AddButton(shell, controls, "Jump to first issue", function()
-      Dibs.Wizard.SetCurrentStepIndex(firstWarning)
-      frame:Refresh()
-    end, 150)
   end
 end
 
@@ -3870,7 +4202,7 @@ local function createAceWindow(initialRoute)
     local routeTitles = {
       disputes = "Requests", preDibs = "Pre-Dibs Settings", preDibRequests = "Pre-Dib Requests", pendingAwards = "Pending Awards", history = "History", reconciliation = "History", seasons = "Seasons",
       ranks = "Rank Rules", lootTypes = "Loot Rules", announcements = "Announcements",
-      integration = "RCLootCouncil", settings = "Settings", diagnostics = "Diagnostics", vault = "Vault Review",
+      integration = "RCLootCouncil", independentRaid = "Independent Raid", settings = "Settings", diagnostics = "Diagnostics", vault = "Vault Review",
       eligibility = "Loot Eligibility", modules = "Modules", developer = "Developer", debug = "Debug",
     }
     routeTitles.setup = (Dibs.L and Dibs.L.DOC_SETUP_ASSISTANT_LABEL) or "Raid Readiness"
@@ -4040,6 +4372,7 @@ local function createAceWindow(initialRoute)
       self.syncRosterSelector = Dibs.AceGUI.AddDropdown(shell, rosterControls, "Roster view", {
         GUILD = "Guild", PARTY = "Party", RAID = "Raid",
       }, function(value)
+        self.syncRosterSearchGeneration = (self.syncRosterSearchGeneration or 0) + 1
         self.syncRosterScope = value
         self.syncRosterPage = 1
         self:Refresh()
@@ -4050,10 +4383,27 @@ local function createAceWindow(initialRoute)
       self.syncRosterSearch = Dibs.AceGUI.AddEditBox(shell, searchControls, "Search member", function(value)
         self.syncRosterQuery = value or ""
         self.syncRosterPage = 1
-        self:Refresh()
+        self.syncRosterSearchGeneration = (self.syncRosterSearchGeneration or 0) + 1
+        local generation = self.syncRosterSearchGeneration
+        local refreshSearch = function()
+          if self.activeTab ~= "sync" or generation ~= self.syncRosterSearchGeneration then return end
+          self.syncRosterRestoreFocus = true
+          self:Refresh()
+        end
+        if Dibs.Ace3 and Dibs.Ace3.ScheduleTimer then
+          Dibs.Ace3.ScheduleTimer(refreshSearch, 0.2)
+        else
+          refreshSearch()
+        end
       end, 240)
       setControlText(self.syncRosterSearch, self.syncRosterQuery or "")
+      if self.syncRosterRestoreFocus then
+        self.syncRosterRestoreFocus = nil
+        focusControlAtEnd(self.syncRosterSearch)
+      end
       Dibs.AceGUI.AddButton(shell, searchControls, "Clear", function()
+        self.syncRosterSearchGeneration = (self.syncRosterSearchGeneration or 0) + 1
+        self.syncRosterRestoreFocus = nil
         self.syncRosterQuery, self.syncRosterPage = "", 1
         self:Refresh()
       end, 60)
@@ -4066,8 +4416,18 @@ local function createAceWindow(initialRoute)
         "\nLocal baseline: " .. tostring(projection.localBaselineStatus or "Unknown") ..
         "\nRoster view: " .. rosterScope .. " (" .. tostring(#projection.peers) .. " members)", true)
       Dibs.AceGUI.AddTooltip(syncSummary, "Synchronization status", helpText.UI_HELP_SYNC_STATUS)
+      if projection.state.state == "SYNC_BEHIND" then
+        Dibs.Midnight.AddStatusBadge(shell, pageHeader, "warning",
+          helpText.SYNC_LOCAL_BEHIND_LABEL or "This client is behind")
+        Dibs.AceGUI.AddLabel(shell, pageHeader,
+          helpText.SYNC_LOCAL_BEHIND_ACTION
+            or "Keep an up-to-date Officer client online, then retry synchronization.", true)
+      end
       Dibs.AceGUI.AddLabel(shell, pageHeader, "Synchronized: Pre-Dibs requests, guild policy, season catalog, vault acquisition summaries, and ledger digests when V2 enforcement is active. Live loot candidates, votes, responses, and item transfers are never synchronized.", true)
-      local announce = Dibs.AceGUI.AddButton(shell, rosterControls, "Announce presence", function()
+      local announceLabel = projection.state.state == "SYNC_BEHIND"
+        and (helpText.SYNC_RETRY_BUTTON or "Retry synchronization")
+        or (helpText.SYNC_ANNOUNCE_BUTTON or "Announce presence")
+      local announce = Dibs.AceGUI.AddButton(shell, rosterControls, announceLabel, function()
         local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
         if tonumber(catalog.catalogRevision) == 0 and Dibs.Seasons and Dibs.Seasons.PublishCatalog then
           Dibs.Seasons.PublishCatalog(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, "SYNC_BOOTSTRAP")
@@ -4089,19 +4449,19 @@ local function createAceWindow(initialRoute)
       local query = string.lower(self.syncRosterQuery or "")
       local rows = {}
       for _, peer in ipairs(projection.peers) do
+        local presentation = peer.presentation or Dibs.OfficerUI.GetSynchronizationPeerPresentation(peer)
         local searchText = string.lower(table.concat({ peer.playerName, peer.addonStatus, peer.addonVersion,
-          peer.compatibility, peer.syncStatus, peer.baselineStatus or "" }, " "))
+          peer.compatibility, peer.syncStatus, peer.baselineStatus or "", presentation.label,
+          presentation.nextAction }, " "))
         if query == "" or string.find(searchText, query, 1, true) then
           rows[#rows + 1] = {
             peer.playerName,
             peer.online and "Online" or "Offline",
             tostring(peer.addonStatus or "Unknown") .. (peer.addonVersion and peer.addonVersion ~= "unknown" and (" " .. peer.addonVersion) or ""),
             peer.compatibility,
-            peer.syncStatus,
+            presentation.label,
             peer.baselineStatus or "Unknown",
-            table.concat({ tostring(peer.seasonCatalogRevision or 0), tostring(peer.policyRevision or 0),
-              tostring(peer.governanceRevision or 0), tostring(peer.predibRevision or 0),
-              tostring(peer.vaultRevision or 0), tostring(peer.ledgerRevision or 0) }, "/"),
+            presentation.nextAction,
             peer.lastSeenAt > 0 and date("%Y-%m-%d %H:%M", peer.lastSeenAt) or "Never",
             peerData = peer,
           }
@@ -4137,23 +4497,23 @@ local function createAceWindow(initialRoute)
         or (self.syncRosterScope == "RAID" and "No Raid roster is active." or "No Guild roster is available."))
         or (#rows == 0 and "No synchronization peers match this search." or nil)
       Dibs.AceGUI.AddTable(shell, tablePage.scroll, {
-        { title = "Player", width = 145, minWidth = 96, weight = 3, tooltip = helpText.UI_HELP_SYNC_PEER },
-        { title = "Online", width = 70, minWidth = 62, fixed = true, tooltip = helpText.UI_HELP_SYNC_ONLINE },
-        { title = "Addon", width = 115, minWidth = 90, weight = 2, tooltip = "Detected status and addon version." },
-        { title = "Compatibility", width = 105, minWidth = 82, weight = 2, tooltip = helpText.UI_HELP_SYNC_COMPATIBILITY },
-        { title = "Sync", width = 100, minWidth = 82, weight = 2, tooltip = helpText.UI_HELP_SYNC_PEER },
-        { title = "Baseline", width = 112, minWidth = 90, weight = 2, tooltip = helpText.UI_HELP_EXISTING_DIBS_DATA },
-        { title = "Revisions", width = 118, minWidth = 90, weight = 2, tooltip = "Catalog / policy / governance / requests / vault / ledger revisions, in that order." },
-        { title = "Last response", width = 125, minWidth = 100, weight = 2, tooltip = helpText.UI_HELP_SYNC_LAST_RESPONSE },
+        { title = "Player", width = 180, minWidth = 130, weight = 3, align = "LEFT", wrap = true, tooltip = helpText.UI_HELP_SYNC_PEER },
+        { title = "Online", width = 68, minWidth = 68, fixed = true, align = "LEFT", tooltip = helpText.UI_HELP_SYNC_ONLINE },
+        { title = "Addon", width = 120, minWidth = 96, weight = 2, align = "LEFT", wrap = true, tooltip = "Detected status and addon version." },
+        { title = "Compatibility", width = 120, minWidth = 100, weight = 2, align = "LEFT", wrap = true, tooltip = helpText.UI_HELP_SYNC_COMPATIBILITY },
+        { title = "Status", width = 155, minWidth = 120, weight = 3, align = "LEFT", wrap = true, tooltip = helpText.UI_HELP_SYNC_PEER },
+        { title = "Baseline", width = 95, minWidth = 80, weight = 1, align = "LEFT", wrap = true, tooltip = helpText.UI_HELP_EXISTING_DIBS_DATA },
+        { title = "Next action", width = 220, minWidth = 160, weight = 4, align = "LEFT", wrap = true, tooltip = "The safest next step for this character." },
+        { title = "Last response", width = 145, minWidth = 130, weight = 2, align = "LEFT", wrap = true, tooltip = helpText.UI_HELP_SYNC_LAST_RESPONSE },
       }, displayRows, nil, nil, {
         noScrolling = true, fluidColumns = true, headerParent = tablePage.columnHeader,
         widthHint = getOfficerContentWidth(frame, shell),
         horizontalPadding = metrics.tableHorizontalPadding,
         scrollbarReserve = metrics.tableScrollbarReserve, columnGap = metrics.tableColumnGap,
-        rowHeight = math.max(metrics.rowHeight, metrics.buttonHeight + 8), emptyText = emptyText,
+        rowHeight = math.max(metrics.rowHeight, metrics.buttonHeight + 8, 36), emptyText = emptyText,
         disableContextMenu = true,
         cellTooltip = function(row, index)
-          if index == 7 and row.peerData then
+          if (index == 5 or index == 7) and row.peerData then
             local peer = row.peerData
             return string.format("Catalog %d | Policy %d | Governance %d | Requests %d | Vault %d | Ledger %d",
               tonumber(peer.seasonCatalogRevision) or 0, tonumber(peer.policyRevision) or 0,
@@ -4177,6 +4537,11 @@ local function createAceWindow(initialRoute)
 
     if self.activeTab == "overview" then
       renderDashboard(shell, tabs, self)
+      return
+    end
+
+    if self.activeTab == "independentRaid" then
+      renderIndependentRaidPage(shell, tabs, self)
       return
     end
 
@@ -5821,7 +6186,7 @@ local function createAceWindow(initialRoute)
       local statusText = {
         GUILD_LOOT_RULES_READY = strings.LOOT_RULES_STATUS_READY or "Guild Loot Rules are active.",
         GUILD_LOOT_RULES_NOT_CONFIGURED = strings.LOOT_RULES_STATUS_NOT_CONFIGURED or "Guild Loot Rules have not been adopted.",
-        LOCAL_LEGACY_ONLY = strings.LOOT_RULES_STATUS_LOCAL_ONLY or "Only local legacy Loot Rules are available.",
+        LOCAL_LEGACY_ONLY = strings.LOOT_RULES_STATUS_LOCAL_ONLY or "Only local pre-existing Loot Rules are available.",
         GUILD_LOOT_RULES_SYNC_BEHIND = strings.LOOT_RULES_STATUS_SYNC_BEHIND or "Guild Loot Rules are not synchronized yet.",
         GUILD_LOOT_RULES_INCOMPATIBLE = strings.LOOT_RULES_STATUS_INCOMPATIBLE or "Guild Loot Rules cannot be read by this client.",
         UNAVAILABLE = strings.LOOT_RULES_STATUS_UNAVAILABLE or "Loot Rules are unavailable.",
@@ -6927,6 +7292,25 @@ local function createAceWindow(initialRoute)
     end, 220)
     setControlText(self.searchBox, self.ledgerQuery or "")
     Dibs.AceGUI.AddButton(shell, searchControls, "Clear", function() self.ledgerQuery, self.ledgerPage = "", 1; self:Refresh() end, 60)
+    if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
+      local ledgers = Dibs.MultiLedger.GetLedgers()
+      local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
+      local ledgerValues = {}
+      for _, l in ipairs(ledgers) do
+        if l.status == "APPROVED" then
+          ledgerValues[l.id] = l.name or l.id
+        end
+      end
+      if not ledgerValues[activeLedgerId] then
+        ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
+      end
+      self.activeLedgerDropdown = Dibs.AceGUI.AddDropdown(shell, searchControls, "Ledger", ledgerValues, function(value)
+        Dibs.MultiLedger.SetActiveLedger(nil, value)
+        self.ledgerPage = 1
+        self:Refresh()
+      end, 180)
+      Dibs.AceGUI.SetValue(self.activeLedgerDropdown, activeLedgerId)
+    end
     local isPreDibRequestRoute = self.activeTab == "preDibRequests" or self.activeTab == "predibs"
     local preDibRows = isPreDibRequestRoute
       and Dibs.OfficerUI.BuildRequestView("officer", { kind = "predibs", limit = 50 }) or {}
@@ -7067,7 +7451,7 @@ local function createAceWindow(initialRoute)
         self:SetStatus(result and "Great Vault review recorded." or ("Unable to review Great Vault record: " .. tostring(reason or "unknown error")))
         if result then self:Refresh() end
       end, 120)
-      local statusValues = { ALL = "All statuses", UNVERIFIED = "Unverified", MANUAL_RECORDED = "Manual", LEGACY_RECORDED = "Legacy", AUTOMATIC_CONFIRMED = "Automatic", OFFICER_CONFIRMED = "Officer confirmed", REJECTED = "Rejected", REFERENCE_ONLY = "Reference only" }
+      local statusValues = { ALL = "All statuses", UNVERIFIED = "Unverified", MANUAL_RECORDED = "Manual", LEGACY_RECORDED = "Earlier record", AUTOMATIC_CONFIRMED = "Automatic", OFFICER_CONFIRMED = "Officer confirmed", REJECTED = "Rejected", REFERENCE_ONLY = "Reference only" }
       self.vaultStatusControl = Dibs.AceGUI.AddDropdown(shell, pageHeader, "Status filter", statusValues, function(value) self.vaultStatusFilter = value == "ALL" and nil or value; self.ledgerPage = 1; self:Refresh() end, 220, false)
       Dibs.AceGUI.SetValue(self.vaultStatusControl, self.vaultStatusFilter or "ALL")
     end
@@ -7201,6 +7585,7 @@ local function createAceWindow(initialRoute)
       "preDibRequestDetailsId",
       "ledgerTitle", "ledgerText", "aceLedgerScroll", "pageText", "summaryText", "statusText", "activeTab",
       "selectedRoute", "Refresh", "RefreshAutomaticDibsTable", "ReflowAutomaticDibsTable", "automaticDibsTablePage", "dibsAdminTablePage", "automaticDibsCachedDetails", "automaticDibsCachedPresentation", "automaticDibsSearch", "automaticDibsStatusFilter", "automaticDibsPage", "automaticDibsPageSize", "automaticDibsPageIndicator", "automaticDibsPageSizeDropdown", "automaticDibsPreviousPage", "automaticDibsNextPage", "automaticDibsLayoutMode", "automaticDibsStructureMode", "_automaticDibsResizeHandlerInstalled", "_automaticDibsResizeWidth", "_automaticDibsReflowQueued", "SelectTab", "ActivateRoute", "routeDispatchCount", "_dibsRouteSyncing", "_dibsTreeRoute", "_dibsRenderingRoute", "SetStatus", "CloseHistoryTransfer", "dibsAceGUIShell", "_dibsUiShell",
+      "_dibsSkipNextShowRefresh",
     }) do
       frame[key] = nil
     end
@@ -7209,11 +7594,17 @@ local function createAceWindow(initialRoute)
     frame._dibsOnShowHookInstalled = true
     frame:HookScript("OnShow", function(self)
       local activeShell = self._dibsUiShell
-      if activeShell and activeShell._dibsActive then self:Refresh() end
+      if not activeShell or not activeShell._dibsActive then return end
+      if self._dibsSkipNextShowRefresh then
+        self._dibsSkipNextShowRefresh = nil
+        return
+      end
+      self:Refresh()
     end)
   end
   _G.DibsOfficerFrame = frame
   activateRoute(frame.activeTab, true)
+  frame._dibsSkipNextShowRefresh = true
   return frame
 end
 
@@ -7749,9 +8140,7 @@ function Dibs.OfficerUI.Show()
     frame:Refresh()
   end
 
-  local overview = Dibs.OfficerUI.GetLedgerOverview()
-  Dibs.Message("Dibs officer ledger: " .. tostring(overview.count) .. " transactions")
-  return overview
+  return frame
 end
 
 ---@param forceShow boolean|nil Force visible state when true.

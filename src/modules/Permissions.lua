@@ -80,12 +80,18 @@ local ADMIN_ACTIONS = {
   ["eligibility.relationship.review"] = true,
   ["eligibility.main.review"] = true,
   ["eligibility.exception.create"] = true,
+  ["ledger.propose"] = true,
+  ["ledger.approve"] = true,
+  ["ledger.revoke"] = true,
+  ["ledger.archive"] = true,
+  ["ledger.delete"] = true,
 }
 
 local GM_ONLY_ACTIONS = {
-  ["settings.modify"] = true,
-  ["predib.public.set"] = true,
-  ["installation.mode.set"] = true,
+  ["ledger.approve"] = true,
+  ["ledger.revoke"] = true,
+  ["ledger.archive"] = true,
+  ["ledger.delete"] = true,
   ["admin.list"] = true,
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,
@@ -146,6 +152,10 @@ end
 
 function Dibs.Permissions.GetGuildRole(actor)
   if not isGuildAvailable() then return "player" end
+  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsTestAuthority
+    and Dibs.DeveloperMode.IsTestAuthority(actor) then
+    return "gm"
+  end
   local role = rosterRole(actor)
   if role then return role end
   local actorId = Dibs.Permissions.CanonicalPlayerId(actor)
@@ -160,6 +170,11 @@ end
 function Dibs.Permissions.IsOfficer()
   if not isGuildAvailable() then
     return false
+  end
+
+  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsTestAuthority
+    and Dibs.DeveloperMode.IsTestAuthority() then
+    return true
   end
 
   if IsGuildLeader and IsGuildLeader() then
@@ -220,6 +235,11 @@ end
 function Dibs.Permissions.IsGM()
   if not isGuildAvailable() then
     return false
+  end
+
+  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsTestAuthority
+    and Dibs.DeveloperMode.IsTestAuthority() then
+    return true
   end
 
   return IsGuildLeader and IsGuildLeader() or false

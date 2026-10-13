@@ -48,6 +48,10 @@ Puis configurez dans cet ordre :
 7. **System > Modules** : activez uniquement les fonctions utiles a la guilde.
 8. **Overview** : verifiez la saison, les permissions et l'etat des integrations.
 
+L'icone Dibs a cote de la mini-carte est un raccourci vers la vue Joueur ou
+Officer appropriee. Elle n'accorde jamais de permission : les controles
+d'autorite habituels restent appliques.
+
 Commandes utiles :
 
 ```text
@@ -87,6 +91,59 @@ RCLootCouncil gere la session de butin et le vote. Dibs ajoute la reponse DIB, c
 ### AUTO
 
 Dibs utilise l'integration lorsqu'elle est disponible et conserve le fonctionnement local lorsque RCLootCouncil est absent ou indisponible.
+
+### Multi-Ledger de guilde (Plusieurs rosters / splits)
+
+Dibs permet de maintenir plusieurs registres indépendants au sein de la même guilde afin de gérer différents groupes de raid ou des runs séparés :
+
+- **Isolation des soldes** : chaque ledger possède son propre journal de transactions et ses soldes de joueurs (`guild-primary` est le ledger par défaut).
+- **Proposition par un officier** : tout officier vérifié peut proposer un nouveau ledger (`/dibs options` ou via `MultiLedger.ProposeLedger`).
+- **Approbation obligatoire par le GM** : un ledger proposé reste inactif jusqu'à ce que le Maître de Guilde le valide (`MultiLedger.ApproveLedger` ou dans l'interface Configuration de Guilde).
+- **Sélection du ledger actif** : officiers et joueurs peuvent changer de vue active via le menu déroulant dans `/dibs options` ou `/dibs`.
+- **Catalogue synchronisé** : le catalogue des ledgers approuvés (`LEDGER_CATALOG`) est répliqué automatiquement entre tous les membres de la guilde.
+- **Suppression définitive** : seul le GM peut supprimer définitivement un ledger non par défaut après son archivage. L’interface exige une seconde confirmation, conserve une trace d’audit de gouvernance et synchronise un tombstone idempotent à toute la guilde. Le ledger par défaut, actif ou approuvé ne peut pas être supprimé.
+
+### Autonomie de configuration des Officiers
+
+Les officiers vérifiés peuvent initialiser la configuration de Dibs, configurer les saisons, ajuster les règles de rangs et suivre le Guided Setup sans bloquant fatal réservé au GM :
+
+- Une initialisation par un officier crée une proposition de configuration (`PROPOSAL_CREATED`).
+- Les politiques opérationnelles et nouveaux ledgers restent clairement marqués en attente de validation par le GM.
+
+### Configuration guidee cle en main
+
+La page **Configuration guidee** regroupe les verifications techniques en trois
+etapes principales :
+
+1. **Choisir** : selectionnez Raid de progression, Butin standard ou
+   Personnalise/avance. Chaque profil explique a quelle guilde il convient,
+   pourquoi il est utile et ce qu'il ne modifiera pas.
+2. **Configurer** : examinez les actions prevues, leur resultat, les donnees
+   conservees et les approbations GM reportees avant de cliquer sur
+   **Appliquer cette configuration**.
+3. **Verifier** : DIBS relit l'etat officiel de la guilde et affiche seulement
+   les corrections encore necessaires.
+
+Un resultat rouge **Bloquant** doit etre corrige avant de compter sur la
+comptabilite du raid. Il indique ce qui manque, pourquoi c'est important,
+l'impact et un bouton direct vers la bonne page. Un avertissement orange doit
+etre examine, mais il peut representer un contexte non bloquant, par exemple
+l'absence de raid actif. Un resultat facultatif n'empeche pas le fonctionnement
+autonome de DIBS.
+
+Le parcours ne supprime ni ne reecrit les transactions, soldes, historiques ou
+preuves existantes. Le mode Personnalise n'applique aucun changement
+automatique et conserve l'acces aux pages avancees.
+- L'administration courante (création de saison, attribution des points de rangs) reste pleinement accessible en l'absence du GM.
+
+### Raids Indépendants (PUG / Raids sans guilde)
+
+Pour les raids organisés avec des joueurs hors-guilde ou en PUG, le Master Looter peut démarrer une session de **Raid Indépendant** (Officier > Intégrations > Raid Indépendant) :
+
+- **Comptabilité locale éphémère** : la session attribue un nombre de points de départ local sans impacter les ledgers de guilde.
+- **Inhibition stricte du réseau** : aucun message n'est envoyé sur les canaux d'addon de guilde, d'officiers ou de raid pendant toute la durée de la session indépendante.
+- **Intégration RCLootCouncil avec réponse DIB** : les membres du raid n'ont besoin que de l'addon RCLootCouncil standard. Cliquer sur le bouton "DIB" consomme les points de la session locale. Les attributions gratuites (hors DIB) ne coûtent aucun point.
+- **Réconciliation post-raid** : après le raid, les officiers peuvent consulter les attributions de la session et réconcilier facultativement un objet dans un ledger de guilde approuvé.
 
 ## 4. Avant un raid
 

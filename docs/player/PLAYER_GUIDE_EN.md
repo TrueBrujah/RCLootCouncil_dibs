@@ -28,6 +28,9 @@ _Screenshot placeholder: `docs/assets/guides/screenshots/en/player/player-overvi
 4. Ask a GM or Officer which season and loot policy are active.
 5. Run `/dibs ui` and check the season, balance, requests, and integration status.
 
+After login, the Dibs icon beside the minimap opens the appropriate Dibs view.
+It is only a shortcut: it does not grant Officer or GM permissions.
+
 RCLootCouncil is optional. Standalone mode manages Dibs balances and requests
 without a live RCLootCouncil session. RCLootCouncil mode uses RCLootCouncil for
 loot voting and award finalization.
@@ -74,7 +77,11 @@ starting allocation appears out of date.
 ## Balance and history
 
 Your balance reflects recorded Dibs changes for the current guild and active
-season. Dibs history can show grants, uses, refunds, adjustments, reasons,
+season. If your guild operates multiple teams or split raids, you can switch
+between approved ledgers using the dropdown at the top of the Season Summary
+table in the Player window (`/dibs`).
+
+Dibs history can show grants, uses, refunds, adjustments, reasons,
 timestamps, and award references. A rank change does not rewrite older history.
 
 The Player window is read-only for balances and guild rules. You can submit or
@@ -83,6 +90,13 @@ balance correction.
 
 A correction never silently deletes the original event. It appends a new,
 audited transaction linked to the original one.
+
+### Independent and PUG Raids
+
+If you participate in an independent raid run by a Master Looter using Dibs:
+- You only need standard RCLootCouncil installed; the Dibs addon is not required.
+- Selecting the "DIB" button in RCLootCouncil will consume one of your ephemeral session points allocated for that raid.
+- Independent raids do not affect your guild ledger balance unless an officer later reconciles an award.
 
 ## Great Vault acquisitions
 

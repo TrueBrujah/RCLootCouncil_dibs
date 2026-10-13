@@ -87,7 +87,7 @@ local function candidateStatus(candidate)
     return { label = "Ignored", explanation = "This history row does not match a finalized DIB award.", tone = "normal" }
   end
   if classification == "legacy" then
-    return { label = "Display only", explanation = "Legacy Dibs markers are evidence hints only and cannot be confirmed.", tone = "warning" }
+    return { label = "Display only", explanation = "Pre-existing Dibs markers are evidence hints only and cannot be confirmed.", tone = "warning" }
   end
   return { label = "Needs review", explanation = "The award could not be matched safely.", tone = "warning" }
 end

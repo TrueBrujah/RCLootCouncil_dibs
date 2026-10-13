@@ -40,6 +40,37 @@ local function transfer(dibs, payload, opts)
 end
 
 describe("B04 V2 transport", function()
+  it("allows a player to relay only a policy hash directly approved by an Officer", function()
+    local dibs = load()
+    dibs.OperationalPolicy.GetState = function()
+      return { policyRevision = 1, hash = "CURRENT" }
+    end
+    dibs.OperationalPolicy.CanWrite = function(actor)
+      return actor == "Tester-Realm" or actor == "Officer-Realm", "POLICY_WRITER_REQUIRED"
+    end
+
+    local approved = remote(dibs, {
+      type = "DIGEST", entityType = "OPERATIONAL_POLICY", entityId = "2",
+      revision = 2, contentHash = "APPROVED", parentRevision = 1, parentHash = "CURRENT",
+    }, "Officer-Realm")
+    local accepted, reason = dibs.Sync.Receive(approved, "Officer-Realm")
+    assert_true(accepted, tostring(reason))
+
+    local begin = {
+      type = "TRANSFER_BEGIN", transferId = "approved-policy-relay",
+      entityType = "OPERATIONAL_POLICY", entityId = "2", revision = 2,
+      contentHash = "APPROVED", payloadHash = "PAYLOAD", chunkCount = 1,
+    }
+    accepted, reason = dibs.Sync.Receive(remote(dibs, begin, "Player-Realm"), "Player-Realm")
+    assert_true(accepted, tostring(reason))
+
+    begin.transferId = "unapproved-policy-relay"
+    begin.contentHash = "UNAPPROVED"
+    accepted, reason = dibs.Sync.Receive(remote(dibs, begin, "Player-Realm"), "Player-Realm")
+    assert_false(accepted)
+    assert_equal("POLICY_WRITER_REQUIRED", reason)
+  end)
+
   it("qualifies short whisper targets with the recipient's roster realm", function()
     local _, dibs = loader.load({ withAce3 = true, wow = {
       guildMembers = { "Tester-Realm", "Officer-OtherRealm" },

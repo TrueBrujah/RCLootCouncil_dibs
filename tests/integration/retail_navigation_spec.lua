@@ -142,9 +142,11 @@ describe("Retail Officer navigation lifecycle", function()
   it("switches the synchronization roster view without changing guild sync scope", function()
     local dibs = setup()
     local originalAddTable = dibs.AceGUI.AddTable
-    local syncTableOptions
+    local syncTableColumns, syncTableOptions
     dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
-      if options and options.disableContextMenu then syncTableOptions = options end
+      if options and options.disableContextMenu then
+        syncTableColumns, syncTableOptions = columns, options
+      end
       return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
     end
     local frame = dibs.OfficerUI.CreateWindow("sync")
@@ -166,8 +168,39 @@ describe("Retail Officer navigation lifecycle", function()
     assert_not_nil(frame.syncTablePage)
     assert_not_nil(frame.syncRosterPagination)
     assert_true(syncTableOptions and syncTableOptions.disableContextMenu)
+    assert_equal(8, #syncTableColumns)
+    for _, column in ipairs(syncTableColumns) do assert_equal("LEFT", column.align) end
+    assert_true(syncTableColumns[1].wrap)
+    assert_true(syncTableColumns[7].wrap)
+    assert_true(syncTableColumns[1].width > syncTableColumns[2].width)
+    assert_true(syncTableColumns[7].width > syncTableColumns[5].width)
     assert_true(containsText(frame.contentHost, "No Party roster is active."))
     assert_true(containsText(frame.contentHost, "Party"))
+  end)
+
+  it("debounces member search and restores focus after filtering", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow("sync")
+    local search = frame.syncRosterSearch
+    assert_not_nil(search)
+    local timerCount = #dibs.Ace3.libs.timer.scheduled
+
+    search.callbacks.OnTextChanged(search, "OnTextChanged", "n")
+    local staleRefresh = dibs.Ace3.libs.timer.scheduled[timerCount + 1]
+    search.callbacks.OnTextChanged(search, "OnTextChanged", "na")
+    local activeRefresh = dibs.Ace3.libs.timer.scheduled[timerCount + 2]
+
+    assert_equal("na", frame.syncRosterQuery)
+    assert_equal(0.2, staleRefresh.delay)
+    assert_equal(0.2, activeRefresh.delay)
+    local dispatchCount = frame.routeDispatchCount
+    staleRefresh.callback()
+    assert_equal(dispatchCount, frame.routeDispatchCount)
+
+    activeRefresh.callback()
+    assert_true(frame.routeDispatchCount > dispatchCount)
+    assert_true(frame.syncRosterSearch.editbox.focused)
+    assert_equal(2, frame.syncRosterSearch.editbox.cursorPosition)
   end)
 
   it("keeps the RCLootCouncil page focused on integration status and mapping", function()

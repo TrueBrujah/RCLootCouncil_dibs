@@ -129,6 +129,11 @@ local function currentMember(actor)
 end
 
 local function isCurrentGM(snapshot)
+  -- TEST-ONLY: remove this override before publishing.
+  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
+    and Dibs.DeveloperMode.IsTestAuthority(snapshot) then
+    return true, "TEST_AUTHORITY"
+  end
   if not (Dibs.Identity and Dibs.Identity.IsCurrentGuildMaster) then return false, "IDENTITY_UNAVAILABLE" end
   return Dibs.Identity.IsCurrentGuildMaster(snapshot)
 end

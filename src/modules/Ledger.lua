@@ -55,15 +55,57 @@ local function rememberPlayerDibsProjection(key, entry)
   playerDibsProjections[key] = entry
 end
 
-local function ensureState()
+function Ledger.GetActiveLedgerId()
+  if Dibs.MultiLedger and type(Dibs.MultiLedger.GetActiveLedgerId) == "function" then
+    return Dibs.MultiLedger.GetActiveLedgerId()
+  end
+  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  return db.activeLedgerId or "guild-primary"
+end
+
+local function ensureState(targetLedgerId)
   Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
-  Dibs.db.ledger = Dibs.db.ledger or { transactions = {}, playerStates = {} }
-  local ledger = Dibs.db.ledger
+  local db = Dibs.db
+  db.ledgers = db.ledgers or {}
+  if db.ledger and not db.ledgers["guild-primary"] then
+    db.ledgers["guild-primary"] = {
+      id = "guild-primary",
+      name = "Primary",
+      status = "APPROVED",
+      createdAt = (db.ledger.createdAt or (time and time()) or 0),
+      transactions = db.ledger.transactions or {},
+      playerStates = db.ledger.playerStates or {},
+      awardTransactions = db.ledger.awardTransactions or {},
+      evidenceTransactions = db.ledger.evidenceTransactions or {},
+      canonical = db.ledger.canonical or { schema = CANONICAL_SCHEMA, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} },
+    }
+    db.activeLedgerId = db.activeLedgerId or "guild-primary"
+  end
+
+  local id = targetLedgerId or Ledger.GetActiveLedgerId() or "guild-primary"
+  db.ledgers[id] = db.ledgers[id] or {
+    id = id,
+    name = (id == "guild-primary" and "Primary" or id),
+    status = "APPROVED",
+    createdAt = (time and time()) or 0,
+    transactions = {},
+    playerStates = {},
+    awardTransactions = {},
+    evidenceTransactions = {},
+    canonical = { schema = CANONICAL_SCHEMA, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} },
+  }
+
+  local ledger = db.ledgers[id]
   ledger.transactions = ledger.transactions or {}; ledger.playerStates = ledger.playerStates or {}
   ledger.awardTransactions = ledger.awardTransactions or {}; ledger.evidenceTransactions = ledger.evidenceTransactions or {}
   ledger.canonical = ledger.canonical or { schema = CANONICAL_SCHEMA, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} }
   ledger.canonical.commits = ledger.canonical.commits or {}; ledger.canonical.transactionIndex = ledger.canonical.transactionIndex or {}; ledger.canonical.positions = ledger.canonical.positions or {}
   if ledger.canonical.schema ~= CANONICAL_SCHEMA then ledger.canonical = { schema = CANONICAL_SCHEMA, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} } end
+
+  if id == (db.activeLedgerId or "guild-primary") then
+    db.ledger = ledger
+  end
+
   return ledger
 end
 
@@ -81,8 +123,8 @@ end
 local function finiteInteger(value) return finiteNumber(value) and tonumber(value) == math.floor(tonumber(value)) end
 local function normalizeLegacyPlayerKey(playerName) return string.lower(trim(tostring(playerName or "")) or "") end
 
-local function ensurePlayerState(playerKey, seasonId)
-  local ledger = ensureState()
+local function ensurePlayerState(playerKey, seasonId, targetLedgerId)
+  local ledger = ensureState(targetLedgerId)
   ledger.playerStates[seasonId] = ledger.playerStates[seasonId] or {}
   ledger.playerStates[seasonId][playerKey] = ledger.playerStates[seasonId][playerKey] or { allocation = 0, balance = 0, transactions = {} }
   return ledger.playerStates[seasonId][playerKey]
@@ -212,8 +254,8 @@ local function sameCanonicalContent(existing, candidate)
     and existing.canonicalContentHash == candidate.canonicalContentHash
 end
 
-local function getCurrentBalance(memberKey, seasonId)
-  local ledger = ensureState(); local state = ledger.playerStates[seasonId] and ledger.playerStates[seasonId][memberKey]
+local function getCurrentBalance(memberKey, seasonId, targetLedgerId)
+  local ledger = ensureState(targetLedgerId); local state = ledger.playerStates[seasonId] and ledger.playerStates[seasonId][memberKey]
   if not state then return 0 end
   local balance = tonumber(state.allocation) or 0
   for _, transactionId in ipairs(state.transactions or {}) do
@@ -388,22 +430,24 @@ local function buildDetachedTransaction(context, input)
   return tx
 end
 
-local function appendValidated(tx)
-  local ledger = ensureState(); ledger.transactions[tx.transactionId] = tx
+local function appendValidated(tx, targetLedgerId)
+  local ledger = ensureState(targetLedgerId); ledger.transactions[tx.transactionId] = tx
   if tx.awardRef then ledger.awardTransactions[tx.awardRef] = tx.transactionId end
   if tx.evidenceId then ledger.evidenceTransactions[tx.evidenceId] = tx.transactionId end
-  local state = ensurePlayerState(tx.memberKey, tx.seasonId); table.insert(state.transactions, tx.transactionId)
+  local state = ensurePlayerState(tx.memberKey, tx.seasonId, targetLedgerId); table.insert(state.transactions, tx.transactionId)
   if tx.type == "SEASON_ALLOCATION" then state.allocation = (tonumber(state.allocation) or 0) + tx.amount end
-  state.balance = getCurrentBalance(tx.memberKey, tx.seasonId)
+  state.balance = getCurrentBalance(tx.memberKey, tx.seasonId, targetLedgerId)
   playerStateProjectionRevisions[state] = (playerStateProjectionRevisions[state] or 0) + 1
   return tx
 end
 
 ---@param context table Local caller context; it never represents a coordinator or epoch.
 ---@param record table Candidate transaction fields.
+---@param targetLedgerId string|nil Optional target ledger identifier.
 ---@return table result `{accepted, idempotentReplay, value?, reasonCode?}`.
-function Ledger.CommitLocalTransaction(context, record)
-  local ledger = ensureState(); local input = record or {}; local inputId = trim(input.transactionId)
+function Ledger.CommitLocalTransaction(context, record, targetLedgerId)
+  local ledgerId = targetLedgerId or (context and context.ledgerId) or Ledger.GetActiveLedgerId()
+  local ledger = ensureState(ledgerId); local input = record or {}; local inputId = trim(input.transactionId)
   local existing = inputId and ledger.transactions[inputId] or nil
   local tx, reason = buildDetachedTransaction(context or {}, input)
   if not tx then return { accepted = false, idempotentReplay = false, reasonCode = reason } end
@@ -432,10 +476,10 @@ function Ledger.CommitLocalTransaction(context, record)
       return { accepted = false, idempotentReplay = false, reasonCode = "SEASON_ALLOCATION_EXISTS" }
     end
   end
-  if tx.type == "DIB_USED" and tx.debtPolicy.allowDebt ~= true and getCurrentBalance(tx.memberKey, tx.seasonId) + tx.amount < 0 then
+  if tx.type == "DIB_USED" and tx.debtPolicy.allowDebt ~= true and getCurrentBalance(tx.memberKey, tx.seasonId, ledgerId) + tx.amount < 0 then
     return { accepted = false, idempotentReplay = false, reasonCode = "INSUFFICIENT_BALANCE" }
   end
-  return { accepted = true, idempotentReplay = false, reasonCode = "COMMITTED_LOCAL", value = copy(appendValidated(tx)) }
+  return { accepted = true, idempotentReplay = false, reasonCode = "COMMITTED_LOCAL", value = copy(appendValidated(tx, ledgerId)) }
 end
 
 local function proposalFor(context, evidence)
@@ -625,13 +669,13 @@ local function compatibilityContext(action, audit)
 end
 
 -- Deprecated compatibility facades. Each reaches the sole durable mutation command.
-function Ledger.AppendTransaction(record, context) return Ledger.CommitLocalTransaction(context or compatibilityContext(nil, record), record) end
-function Ledger.AddTransaction(record)
-  local result = Ledger.CommitLocalTransaction(compatibilityContext(nil, record), record)
+function Ledger.AppendTransaction(record, context, ledgerId) return Ledger.CommitLocalTransaction(context or compatibilityContext(nil, record), record, ledgerId) end
+function Ledger.AddTransaction(record, ledgerId)
+  local result = Ledger.CommitLocalTransaction(compatibilityContext(nil, record), record, ledgerId)
   return result.value, result.reasonCode
 end
 
-local function compatibilityMutation(action, playerName, amount, reason, source, seasonId, audit)
+local function compatibilityMutation(action, playerName, amount, reason, source, seasonId, audit, ledgerId)
   local result = Ledger.CommitLocalTransaction(compatibilityContext(action, audit), {
     transactionId = audit and audit.transactionId, playerName = playerName or Dibs.GetPlayerName(), amount = amount, type = action,
     reason = reason, source = source, seasonId = seasonId, awardRef = audit and audit.awardRef, evidenceId = audit and audit.evidenceId,
@@ -639,21 +683,21 @@ local function compatibilityMutation(action, playerName, amount, reason, source,
     response = audit and audit.response, playerGuid = audit and audit.playerGuid, reviewRequestId = audit and audit.reviewRequestId,
     originalTransactionId = audit and audit.originalTransactionId, correctionKey = audit and audit.correctionKey,
     confirmation = audit and audit.confirmation,
-  })
+  }, ledgerId)
   return result.value, result.reasonCode
 end
 
-function Ledger.Grant(playerName, amount, reason, source, seasonId, audit)
+function Ledger.Grant(playerName, amount, reason, source, seasonId, audit, ledgerId)
   local numeric = amount == nil and 1 or tonumber(amount); if not finiteInteger(numeric) or numeric <= 0 then return nil, "INVALID_AMOUNT" end
-  return compatibilityMutation("DIB_GRANTED", playerName, numeric, reason or "Dib granted", source or "system", seasonId or Dibs.GetCurrentSeasonId(), audit)
+  return compatibilityMutation("DIB_GRANTED", playerName, numeric, reason or "Dib granted", source or "system", seasonId or Dibs.GetCurrentSeasonId(), audit, ledgerId)
 end
-function Ledger.Use(playerName, amount, reason, source, seasonId, audit)
+function Ledger.Use(playerName, amount, reason, source, seasonId, audit, ledgerId)
   local numeric = amount == nil and 1 or tonumber(amount); if not finiteInteger(numeric) or numeric <= 0 then return nil, "INVALID_AMOUNT" end
-  return compatibilityMutation("DIB_USED", playerName, -numeric, reason or "Dib consumed", source or "system", seasonId or Dibs.GetCurrentSeasonId(), audit)
+  return compatibilityMutation("DIB_USED", playerName, -numeric, reason or "Dib consumed", source or "system", seasonId or Dibs.GetCurrentSeasonId(), audit, ledgerId)
 end
-function Ledger.Refund(playerName, amount, reason, source, seasonId, audit)
+function Ledger.Refund(playerName, amount, reason, source, seasonId, audit, ledgerId)
   local numeric = amount == nil and 1 or tonumber(amount); if not finiteInteger(numeric) or numeric <= 0 then return nil, "INVALID_AMOUNT" end
-  return compatibilityMutation("DIB_REFUNDED", playerName, numeric, reason or "Dib refunded", source or "system", seasonId or Dibs.GetCurrentSeasonId(), audit)
+  return compatibilityMutation("DIB_REFUNDED", playerName, numeric, reason or "Dib refunded", source or "system", seasonId or Dibs.GetCurrentSeasonId(), audit, ledgerId)
 end
 local function commitCanonicalAdminAdjustment(playerName, amount, reason, source, seasonId, audit)
   local context = compatibilityContext("DIB_ADMIN_ADJUSTMENT", audit)
@@ -814,9 +858,9 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_DIB_BALANCE
 ---@doc.label-key DOC_LEDGER_BALANCE_LABEL
-function Ledger.GetBalance(playerName, seasonId)
+function Ledger.GetBalance(playerName, seasonId, ledgerId)
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
-  return getCurrentBalance(memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName()), seasonId or Dibs.GetCurrentSeasonId())
+  return getCurrentBalance(memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName()), seasonId or Dibs.GetCurrentSeasonId(), ledgerId)
 end
 function Ledger.GetPendingDibReservations(playerName, seasonId)
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
@@ -847,23 +891,23 @@ function Ledger.GetPendingDibReservations(playerName, seasonId)
   end
   return reserved
 end
-function Ledger.GetAvailableBalance(playerName, seasonId)
-  return math.max(0, Ledger.GetBalance(playerName, seasonId) - Ledger.GetPendingDibReservations(playerName, seasonId))
+function Ledger.GetAvailableBalance(playerName, seasonId, ledgerId)
+  return math.max(0, Ledger.GetBalance(playerName, seasonId, ledgerId) - Ledger.GetPendingDibReservations(playerName, seasonId))
 end
-function Ledger.GetPlayerState(playerName, seasonId)
+function Ledger.GetPlayerState(playerName, seasonId, ledgerId)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
   memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
-  local ledger = ensureState(); local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
+  local ledger = ensureState(ledgerId); local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
   if not state then return { allocation = 0, balance = 0, transactions = {} } end
-  local result = copy(state); result.balance = getCurrentBalance(memberKey, targetSeason); return result
+  local result = copy(state); result.balance = getCurrentBalance(memberKey, targetSeason, ledgerId); return result
 end
-function Ledger.GetTransactionForAward(awardRef)
-  local ledger = ensureState(); local id = awardRef and ledger.awardTransactions[tostring(awardRef)]
+function Ledger.GetTransactionForAward(awardRef, ledgerId)
+  local ledger = ensureState(ledgerId); local id = awardRef and ledger.awardTransactions[tostring(awardRef)]
   return id and copy(ledger.transactions[id]) or nil
 end
-function Ledger.GetTransactionForEvidence(evidenceId)
-  local ledger = ensureState(); local id = evidenceId and ledger.evidenceTransactions[tostring(evidenceId)]
+function Ledger.GetTransactionForEvidence(evidenceId, ledgerId)
+  local ledger = ensureState(ledgerId); local id = evidenceId and ledger.evidenceTransactions[tostring(evidenceId)]
   return id and copy(ledger.transactions[id]) or nil
 end
 local function sortTransactions(list)
@@ -880,21 +924,21 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_AUDIT_HISTORY
 ---@doc.label-key DOC_AUDIT_HISTORY_LABEL
-function Ledger.GetHistory(playerName, seasonId)
+function Ledger.GetHistory(playerName, seasonId, ledgerId)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerName) or nil
-  memberKey = memberKey or normalizeLegacyPlayerKey(playerName); local ledger = ensureState(); local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
+  memberKey = memberKey or normalizeLegacyPlayerKey(playerName); local ledger = ensureState(ledgerId); local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
   local history = {}; for _, id in ipairs(state and state.transactions or {}) do if ledger.transactions[id] then table.insert(history, copy(ledger.transactions[id])) end end
   sortTransactions(history); return history
 end
-function Ledger.GetAllTransactions()
-  local list = {}; for _, tx in pairs(ensureState().transactions) do table.insert(list, copy(tx)) end; sortTransactions(list); return list
+function Ledger.GetAllTransactions(ledgerId)
+  local list = {}; for _, tx in pairs(ensureState(ledgerId).transactions) do table.insert(list, copy(tx)) end; sortTransactions(list); return list
 end
-function Ledger.GetTransactions(seasonId, playerGuidOrName)
+function Ledger.GetTransactions(seasonId, playerGuidOrName, ledgerId)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local memberKey = playerGuidOrName and (Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(playerGuidOrName) or normalizeLegacyPlayerKey(playerGuidOrName)) or nil
   local list = {}
-  for _, tx in pairs(ensureState().transactions) do
+  for _, tx in pairs(ensureState(ledgerId).transactions) do
     local matchesPlayer = not memberKey or tx.memberKey == memberKey or tx.playerKey == memberKey or normalizeLegacyPlayerKey(tx.playerName) == memberKey or tostring(tx.playerGuid or tx.playerId or "") == tostring(playerGuidOrName or "")
     if tx.seasonId == targetSeason and matchesPlayer then table.insert(list, copy(tx)) end
   end
@@ -967,7 +1011,7 @@ local function getPlayerDibsProjection(playerName, seasonId, useCache)
   if not useCache then return computePlayerDibsProjection(identity, targetSeason) end
 
   local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or ""
-  local cacheKey = tostring(guildKey) .. "|" .. tostring(targetSeason) .. "|" .. tostring(identity.memberKey)
+  local cacheKey = tostring(guildKey) .. "|" .. tostring(ledger.id or "") .. "|" .. tostring(targetSeason) .. "|" .. tostring(identity.memberKey)
   local identityGeneration = Dibs.Identity and Dibs.Identity.GetInvalidationGeneration
     and Dibs.Identity.GetInvalidationGeneration() or 0
   local proposalGeneration = Dibs.Governance and Dibs.Governance.GetAwardProposalGeneration

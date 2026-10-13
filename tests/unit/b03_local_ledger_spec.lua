@@ -17,7 +17,7 @@ local function command(dibs, fields, context)
     playerGuid = fields.playerGuid,
     awardRef = fields.awardRef,
   }
-  return dibs.Ledger.CommitLocalTransaction(context or { action = "ledger.use" }, value)
+  return dibs.Ledger.CommitLocalTransaction(context or { action = "ledger.use" }, value, context and context.ledgerId)
 end
 
 describe("B03 local canonical ledger", function()
@@ -90,6 +90,40 @@ describe("B03 local canonical ledger", function()
     assert_true(readable)
     local tx, reason = dibs.Ledger.Grant("Unknown-Realm", 1, "must validate", "test", dibs.GetCurrentSeasonId())
     assert_nil(tx); assert_equal("UNKNOWN_ROSTER_MEMBER", reason)
+  end)
+
+  it("migrates legacy db.ledger into db.ledgers['guild-primary'] and maintains active pointer", function()
+    local legacy = {
+      schemaVersion = 6,
+      guilds = { ["realm:testguild"] = {
+        version = 6, currentSeasonId = "season-migration", seasons = { ["season-migration"] = { id = "season-migration", name = "Migration", isArchived = false } }, rankRules = {},
+        ledger = { transactions = { ["tx-migrated"] = { transactionId = "tx-migrated", playerName = "Tester-Realm", amount = 3, seasonId = "season-migration", type = "DIB_GRANTED", createdAt = 1700000001 } }, playerStates = {}, awardTransactions = {}, evidenceTransactions = {} },
+        permissions = { adminEvents = {}, activeStandaloneAdmins = {} }, preDibs = { requests = {}, modePolicies = {}, acquisitions = {} }, settings = {}, sync = { seenTransactions = {}, peerStates = {} },
+      } }, persistenceRecovery = { version = 1, backups = {}, quarantine = {}, nextBackupId = 1 },
+    }
+    local dibs = load({ savedVariables = legacy, wow = { guildLeader = true } })
+    local db = dibs.GetDB()
+    assert_not_nil(db.ledgers)
+    assert_not_nil(db.ledgers["guild-primary"])
+    assert_equal("guild-primary", dibs.Ledger.GetActiveLedgerId())
+    assert_equal("tx-migrated", db.ledgers["guild-primary"].transactions["tx-migrated"].transactionId)
+    -- db.ledger should be maintained as backward compatible reference
+    assert_equal(db.ledgers["guild-primary"], db.ledger)
+  end)
+
+  it("isolates transactions between different ledger partitions", function()
+    local dibs = load()
+    local primaryBefore = dibs.Ledger.GetBalance("Tester-Realm", nil, "guild-primary")
+
+    -- Commit transaction in secondary ledger partition
+    local result = command(dibs, { transactionId = "alt-grant", type = "DIB_GRANTED", amount = 2 }, { action = "ledger.grant", ledgerId = "alt-raid" })
+    assert_true(result.accepted)
+    assert_equal("COMMITTED_LOCAL", result.reasonCode)
+
+    -- Primary balance must be unchanged
+    assert_equal(primaryBefore, dibs.Ledger.GetBalance("Tester-Realm", nil, "guild-primary"))
+    -- Alt raid balance must reflect the grant
+    assert_equal(2, dibs.Ledger.GetBalance("Tester-Realm", nil, "alt-raid"))
   end)
 
   it("returns copies from read APIs and leaves B02a identity/governance available", function()

@@ -2849,6 +2849,28 @@ function Dibs.RCLootCouncil.IsAvailable()
   return Dibs.RCLootCouncil.GetAvailability() == "operational"
 end
 
+function Dibs.RCLootCouncil.GetMasterLooter()
+  -- TEST-ONLY: remove this override before publishing.
+  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
+    and Dibs.DeveloperMode.IsTestAuthority() then
+    return Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
+  end
+  local rc = getRC()
+  return rc and (rc.masterLooter or rc.masterLooterName) or nil
+end
+
+function Dibs.RCLootCouncil.IsMasterLooter(actor)
+  -- TEST-ONLY: remove this override before publishing.
+  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
+    and Dibs.DeveloperMode.IsTestAuthority(actor) then
+    return true
+  end
+  local master = Dibs.RCLootCouncil.GetMasterLooter()
+  local actorId = playerIdentity(actor or (Dibs.GetPlayerName and Dibs.GetPlayerName() or nil))
+  local masterId = playerIdentity(master)
+  return actorId ~= nil and masterId ~= nil and actorId == masterId
+end
+
 ---@param actionId string Authoritative action identifier.
 ---@param actor string|nil Actor identity.
 ---@return table decision RC capability/authority decision.
@@ -2866,6 +2888,11 @@ function Dibs.RCLootCouncil.EvaluateAuthority(actionId, actor)
     or (localNameId and string.lower(tostring(actorId)) == string.lower(tostring(localNameId)))
   if not actorIsLocal then
     return { allowed = false, authority = "rclootcouncil", availability = before, actionId = actionId, actorId = actorId, reasonCode = "RC_ACTOR_NOT_LOCAL", diagnostic = text("AUTHORITY_RC_NOT_LOCAL", "Only the local RCLootCouncil Master Looter may finalize this action.") }
+  end
+  -- TEST-ONLY: remove this override before publishing.
+  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
+    and Dibs.DeveloperMode.IsTestAuthority(actor) then
+    return { allowed = true, authority = "rclootcouncil", availability = before, actionId = actionId, actorId = actorId, reasonCode = "RC_TEST_AUTHORIZED", diagnostic = "Authorized by the temporary Developer Mode test authority." }
   end
   local after = Dibs.RCLootCouncil.GetAvailability()
   local currentRC = getRC()
@@ -3111,6 +3138,17 @@ end
 -- an exact profile, persists no RC table, and can reach accounting solely via
 -- the protected command boundary.
 function Dibs.RCLootCouncil.HandleAwardCallback(callback, session, winner, status, itemLink, responseText, historyId)
+  if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
+    local isDib = isDibLabel(responseText) or (Dibs.RCLootCouncil.NormalizeDibResponse(responseText) == "DIB")
+    local itemID = tonumber(tostring(itemLink or ""):match("item:(%d+)"))
+    return Dibs.IndependentRaid.RecordAward(winner, itemID, itemLink, isDib, {
+      callback = callback,
+      session = session,
+      status = status,
+      historyId = historyId,
+      responseText = responseText,
+    })
+  end
   if not Dibs.ProtectedActions then return ignoredAward("AWARD_INVALID") end
   local mode = Dibs.Permissions and Dibs.Permissions.GetInstallationMode and Dibs.Permissions.GetInstallationMode() or "AUTO"
   if mode == "STANDALONE" then return ignoredAward("STANDALONE_MODE") end

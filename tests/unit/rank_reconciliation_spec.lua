@@ -3,7 +3,7 @@ local loader = require("helpers.load_addon")
 local function activateV2(wow)
   local _, dibs = loader.load({ wow = wow })
   assert_true(dibs.Governance.AdoptInitial(nil, { reason = "rank reconciliation test" }))
-  local baseline = assert(dibs.LegacyBaseline.FinalizeBaseline(nil))
+  local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
   local coordinator = assert(dibs.Identity.CreateSnapshot("Tester-Realm"))
   assert_true(dibs.Governance.Change(nil, { future = { authority = {
     schema = 1, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = 1,

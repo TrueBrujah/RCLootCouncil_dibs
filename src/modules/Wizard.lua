@@ -17,6 +17,34 @@ local Dibs = _G.Dibs
 Dibs.Wizard = Dibs.Wizard or {}
 local Wizard = Dibs.Wizard
 
+local TURNKEY_STAGES = { "choose", "configure", "verify" }
+local PROFILE_ORDER = { "progression", "broad", "custom" }
+local PROFILE_DEFINITIONS = {
+  progression = {
+    presetKey = "progression",
+    labelKey = "WIZARD_PROFILE_PROGRESSION",
+    summaryKey = "WIZARD_PROFILE_PROGRESSION_SUMMARY",
+    benefitKeys = { "WIZARD_PROFILE_PROGRESSION_BENEFIT_1", "WIZARD_PROFILE_PROGRESSION_BENEFIT_2" },
+    changeKeys = { "WIZARD_CHANGE_INITIALIZE", "WIZARD_CHANGE_PROGRESSION_RULES", "WIZARD_CHANGE_POLICY" },
+  },
+  broad = {
+    presetKey = "broad",
+    labelKey = "WIZARD_PROFILE_BROAD",
+    summaryKey = "WIZARD_PROFILE_BROAD_SUMMARY",
+    benefitKeys = { "WIZARD_PROFILE_BROAD_BENEFIT_1", "WIZARD_PROFILE_BROAD_BENEFIT_2" },
+    changeKeys = { "WIZARD_CHANGE_INITIALIZE", "WIZARD_CHANGE_BROAD_RULES", "WIZARD_CHANGE_POLICY" },
+  },
+  custom = {
+    labelKey = "WIZARD_PROFILE_CUSTOM",
+    summaryKey = "WIZARD_PROFILE_CUSTOM_SUMMARY",
+    benefitKeys = { "WIZARD_PROFILE_CUSTOM_BENEFIT_1", "WIZARD_PROFILE_CUSTOM_BENEFIT_2" },
+    changeKeys = {},
+  },
+}
+local PRESERVED_KEYS = {
+  "WIZARD_PRESERVE_LEDGER", "WIZARD_PRESERVE_HISTORY", "WIZARD_PRESERVE_EXISTING",
+}
+
 local STEPS = {
   { id = "installation", label = "Installation" },
   { id = "guild", label = "Guild" },
@@ -39,6 +67,48 @@ local function call(fn, ...)
   local ok, result = pcall(fn, ...)
   if ok then return result end
   return nil
+end
+
+local function text(key, fallback)
+  return (Dibs.L and Dibs.L[key]) or fallback or key
+end
+
+local function copy(value)
+  return Dibs.DeepCopy and Dibs.DeepCopy(value) or value
+end
+
+local function localizedList(keys)
+  local values = {}
+  for _, key in ipairs(keys or {}) do values[#values + 1] = text(key) end
+  return values
+end
+
+local function buildProfile(id)
+  local definition = PROFILE_DEFINITIONS[id]
+  if not definition then return nil end
+  return {
+    id = id,
+    presetKey = definition.presetKey,
+    label = text(definition.labelKey, id),
+    summary = text(definition.summaryKey),
+    benefits = localizedList(definition.benefitKeys),
+    changes = localizedList(definition.changeKeys),
+    preserves = localizedList(PRESERVED_KEYS),
+  }
+end
+
+local function profileMatches(profileId)
+  local definition = PROFILE_DEFINITIONS[profileId]
+  if not definition or not definition.presetKey then return false end
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  local allowed = db.settings and db.settings.dibAllowedTypes or {}
+  local expected = profileId == "progression"
+    and { TOKEN = true, TOKEN_SET = true }
+    or { TOKEN = true, TOKEN_SET = true, MOUNTS = true, PETS = true, RECIPE = true, OTHER = true }
+  for _, key in ipairs({ "default", "TOKEN", "TOKEN_SET", "MOUNTS", "PETS", "RECIPE", "DECOR", "OTHER" }) do
+    if (allowed[key] == true) ~= (expected[key] == true) then return false end
+  end
+  return true
 end
 
 local function installationStatus()
@@ -369,6 +439,277 @@ function Wizard.AdoptOperationalPolicy(actor)
   local policy = Dibs.OperationalPolicy
   if not policy or type(policy.AdoptInitial) ~= "function" then return false, "OPERATIONAL_POLICY_UNAVAILABLE" end
   return policy.AdoptInitial(actor, initialOperationalPolicyValues(), "GUIDED_SETUP")
+end
+
+function Wizard.GetProfiles()
+  local profiles = {}
+  for _, id in ipairs(PROFILE_ORDER) do profiles[#profiles + 1] = buildProfile(id) end
+  return copy(profiles)
+end
+
+function Wizard.GetCurrentStage()
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
+  local stage = tostring(settings.turnkeyWizardStage or "choose")
+  for _, allowed in ipairs(TURNKEY_STAGES) do
+    if stage == allowed then return stage end
+  end
+  return "choose"
+end
+
+function Wizard.SetCurrentStage(stage)
+  stage = tostring(stage or "")
+  local valid
+  for _, allowed in ipairs(TURNKEY_STAGES) do
+    if stage == allowed then valid = true break end
+  end
+  if not valid then stage = "choose" end
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings()
+  if settings then settings.turnkeyWizardStage = stage end
+  return stage
+end
+
+function Wizard.GetSelectedProfileId()
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
+  local profileId = tostring(settings.turnkeyWizardProfileId or "progression")
+  return PROFILE_DEFINITIONS[profileId] and profileId or "progression"
+end
+
+function Wizard.SetSelectedProfileId(profileId)
+  profileId = tostring(profileId or "")
+  if not PROFILE_DEFINITIONS[profileId] then return nil, "UNKNOWN_SETUP_PROFILE" end
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings()
+  if settings then settings.turnkeyWizardProfileId = profileId end
+  return profileId
+end
+
+local function previewAction(id, disposition, titleKey, explanationKey, outcomeKey, reasonCode)
+  return {
+    id = id,
+    disposition = disposition,
+    title = text(titleKey),
+    explanation = text(explanationKey),
+    outcome = text(outcomeKey),
+    reasonCode = reasonCode,
+  }
+end
+
+function Wizard.PreviewProfile(profileId, actor)
+  local profile = buildProfile(profileId)
+  if not profile then return nil, "UNKNOWN_SETUP_PROFILE" end
+  if profileId == "custom" then
+    return {
+      profileId = profileId,
+      canApply = false,
+      actions = {
+        previewAction("advanced", "ADVANCED_ONLY", "WIZARD_ACTION_ADVANCED_TITLE",
+          "WIZARD_ACTION_ADVANCED_EXPLANATION", "WIZARD_ACTION_ADVANCED_OUTCOME"),
+      },
+      preserved = copy(profile.preserves),
+      deferred = {},
+    }
+  end
+
+  local status = installationStatus()
+  local actions, deferred = {}, {}
+  local active = status.protocol and status.protocol.active == true
+  actions[#actions + 1] = previewAction("initialize", active and "ALREADY_READY" or "APPLY",
+    "WIZARD_ACTION_INITIALIZE_TITLE", "WIZARD_ACTION_INITIALIZE_EXPLANATION",
+    active and "WIZARD_ACTION_ALREADY_READY" or "WIZARD_ACTION_INITIALIZE_OUTCOME")
+
+  actions[#actions + 1] = previewAction("lootRules", profileMatches(profileId) and "ALREADY_READY" or "APPLY",
+    "WIZARD_ACTION_RULES_TITLE", "WIZARD_ACTION_RULES_EXPLANATION",
+    profileMatches(profileId) and "WIZARD_ACTION_ALREADY_READY" or "WIZARD_ACTION_RULES_OUTCOME")
+
+  local policy = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState) or {}
+  if policy.status == "POLICY_ADOPTED" then
+    actions[#actions + 1] = previewAction("guildPolicy", "ALREADY_READY",
+      "WIZARD_ACTION_POLICY_TITLE", "WIZARD_ACTION_POLICY_EXPLANATION", "WIZARD_ACTION_ALREADY_READY")
+  else
+    local governance = call(Dibs.Governance and Dibs.Governance.GetState) or {}
+    local gm = call(Dibs.Permissions and Dibs.Permissions.IsGM, actor) == true
+    local disposition = gm and (governance.status == "GOVERNANCE_ADOPTED" or not active) and "APPLY" or "DEFERRED"
+    local reasonCode = disposition == "DEFERRED" and "GM_CONFIRMATION_REQUIRED" or nil
+    local action = previewAction("guildPolicy", disposition,
+      "WIZARD_ACTION_POLICY_TITLE", "WIZARD_ACTION_POLICY_EXPLANATION",
+      disposition == "APPLY" and "WIZARD_ACTION_POLICY_OUTCOME" or "WIZARD_ACTION_POLICY_DEFERRED",
+      reasonCode)
+    actions[#actions + 1] = action
+    if disposition == "DEFERRED" then deferred[#deferred + 1] = copy(action) end
+  end
+
+  return {
+    profileId = profileId,
+    canApply = true,
+    actions = actions,
+    preserved = copy(profile.preserves),
+    deferred = deferred,
+  }
+end
+
+function Wizard.ApplyProfile(profileId, actor)
+  local preview, previewReason = Wizard.PreviewProfile(profileId, actor)
+  if not preview then return { ok = false, profileId = profileId, actions = {}, reasonCode = previewReason } end
+  if profileId == "custom" then
+    return { ok = true, profileId = profileId, actions = { { id = "advanced", outcome = "ADVANCED_ONLY" } } }
+  end
+
+  local results, failed = {}, false
+  for _, action in ipairs(preview.actions) do
+    local result = { id = action.id, title = action.title }
+    if action.disposition == "ALREADY_READY" then
+      result.outcome = "ALREADY_READY"
+    elseif action.disposition == "DEFERRED" then
+      result.outcome, result.reasonCode = "DEFERRED", action.reasonCode
+    elseif action.id == "initialize" then
+      local initialized = Dibs.Installation and Dibs.Installation.Initialize
+        and Dibs.Installation.Initialize(actor, {}) or { ok = false, reasonCode = "INSTALLATION_UNAVAILABLE" }
+      result.outcome = initialized.ok and "APPLIED" or "FAILED"
+      result.reasonCode = initialized.ok and nil or initialized.reasonCode
+      result.stage = initialized.stage
+    elseif action.id == "lootRules" then
+      local apply = Dibs.RCOptions and Dibs.RCOptions.ApplyInstallationPreset
+      local applied = type(apply) == "function" and apply(PROFILE_DEFINITIONS[profileId].presetKey) == true
+      result.outcome = applied and "APPLIED" or "FAILED"
+      result.reasonCode = applied and nil or "LOOT_RULE_PRESET_FAILED"
+    elseif action.id == "guildPolicy" then
+      local adopted, reason = Wizard.AdoptOperationalPolicy(actor)
+      result.outcome = adopted and "APPLIED" or "FAILED"
+      result.reasonCode = adopted and nil or reason
+    end
+    result.route = result.reasonCode == "SYNC_BEHIND" and "sync"
+      or action.id == "lootRules" and "lootTypes"
+      or action.id == "guildPolicy" and "installation"
+      or action.id == "initialize" and "installation"
+      or nil
+    if result.outcome == "FAILED" then failed = true end
+    results[#results + 1] = result
+  end
+  return {
+    ok = not failed,
+    profileId = profileId,
+    actions = results,
+    reasonCode = failed and "SETUP_PROFILE_PARTIAL_FAILURE" or nil,
+  }
+end
+
+local TURNKEY_ROUTE = {
+  installation = "installation", guild = "settings", administration = "settings",
+  seasons = "seasons", rankRules = "ranks", allocationReconciliation = "automaticDibs",
+  dibsRules = "lootTypes", preDibs = "preDibs", ledger = "installation",
+  rclootcouncil = "integration", sync = "sync", operationalPolicy = "installation",
+  readiness = "setup",
+}
+local TURNKEY_CATEGORY = {
+  installation = "WIZARD_CATEGORY_FOUNDATION", guild = "WIZARD_CATEGORY_FOUNDATION",
+  administration = "WIZARD_CATEGORY_FOUNDATION", seasons = "WIZARD_CATEGORY_RULES",
+  rankRules = "WIZARD_CATEGORY_RULES", allocationReconciliation = "WIZARD_CATEGORY_RULES",
+  dibsRules = "WIZARD_CATEGORY_RULES", preDibs = "WIZARD_CATEGORY_RULES",
+  ledger = "WIZARD_CATEGORY_LEDGER", rclootcouncil = "WIZARD_CATEGORY_INTEGRATIONS",
+  sync = "WIZARD_CATEGORY_INTEGRATIONS", operationalPolicy = "WIZARD_CATEGORY_POLICY",
+  readiness = "WIZARD_CATEGORY_READINESS",
+}
+local NON_BLOCKING_ACTION_REQUIRED = { allocationReconciliation = true, operationalPolicy = true }
+
+local function turnkeySeverity(step)
+  if step.status == "READY" then return "READY" end
+  if step.status == "OPTIONAL" then return "OPTIONAL" end
+  if step.status == "BLOCKED" then return "BLOCKING" end
+  if step.status == "ACTION_REQUIRED" and not NON_BLOCKING_ACTION_REQUIRED[step.id] then return "BLOCKING" end
+  return "WARNING"
+end
+
+function Wizard.GetTurnkeyStatus(actor)
+  local legacy = Wizard.GetStatus(actor)
+  local install = installationStatus()
+  local syncBlocking = install.sync and install.sync.behind == true
+    and not (install.protocol and install.protocol.active == true)
+  local verification, primaryIssueId, hasBlocking, hasWarning = {}, nil, false, false
+  for _, step in ipairs(legacy.steps or {}) do
+    if step.id ~= "review" then
+      local severity = turnkeySeverity(step)
+      if step.id == "sync" and syncBlocking then
+        severity = "BLOCKING"
+      end
+      local deferredLedger = step.id == "ledger" and syncBlocking
+        and step.status == "ACTION_REQUIRED" and install.state == "READY_TO_INITIALIZE"
+      if deferredLedger then severity = "WARNING" end
+      local result = {
+        id = step.id,
+        category = text(TURNKEY_CATEGORY[step.id] or "WIZARD_CATEGORY_OTHER"),
+        severity = severity,
+        title = step.label,
+        explanation = tostring(step.summary or ""),
+        impact = severity == "BLOCKING" and text("WIZARD_BLOCKING_IMPACT")
+          or severity == "WARNING" and text("WIZARD_WARNING_IMPACT")
+          or severity == "READY" and text("WIZARD_READY_IMPACT")
+          or text("WIZARD_OPTIONAL_IMPACT"),
+        nextAction = TURNKEY_ROUTE[step.id] and text("WIZARD_CORRECTION_ACTION") or nil,
+        route = TURNKEY_ROUTE[step.id],
+        sourceStatus = step.status,
+      }
+      if deferredLedger then
+        result.explanation = text("WIZARD_LEDGER_SYNC_DEFERRED_EXPLANATION")
+        result.impact = text("WIZARD_LEDGER_SYNC_DEFERRED_IMPACT")
+        result.nextAction = text("WIZARD_SYNC_BLOCKING_ACTION")
+        result.route = TURNKEY_ROUTE.sync
+      end
+      if step.id == "sync" and severity == "BLOCKING" then
+        result.explanation = text("WIZARD_SYNC_BLOCKING_EXPLANATION")
+        result.impact = text("WIZARD_SYNC_BLOCKING_IMPACT")
+        result.nextAction = text("WIZARD_SYNC_BLOCKING_ACTION")
+      end
+      if step.id == "readiness" and type(step.detail) == "table" then
+        for _, finding in ipairs(step.detail.checks or {}) do
+          if finding.state ~= "ready" and finding.state ~= "skipped" then
+            result.explanation = tostring(finding.impact or finding.reasonCode or result.explanation)
+            result.impact = tostring(finding.impact or result.impact)
+            result.nextAction = tostring(finding.remediation or result.nextAction or "")
+            break
+          end
+        end
+      end
+      verification[#verification + 1] = result
+      if severity == "BLOCKING" then
+        hasBlocking = true
+      elseif severity == "WARNING" then
+        hasWarning = true
+      end
+    end
+  end
+  local priority = {
+    "installation", "sync", "ledger", "seasons", "rankRules", "dibsRules",
+    "allocationReconciliation", "operationalPolicy", "readiness",
+  }
+  for _, id in ipairs(priority) do
+    for _, result in ipairs(verification) do
+      if result.id == id and result.severity == "BLOCKING" then
+        primaryIssueId = id
+        break
+      end
+    end
+    if primaryIssueId then break end
+  end
+  if not primaryIssueId then
+    for _, result in ipairs(verification) do
+      if result.severity == "WARNING" then primaryIssueId = result.id break end
+    end
+  end
+  local overallState = hasBlocking and "BLOCKED"
+    or hasWarning and "PARTIALLY_CONFIGURED"
+    or "READY_FOR_RAID"
+  return {
+    currentStage = Wizard.GetCurrentStage(),
+    selectedProfileId = Wizard.GetSelectedProfileId(),
+    stages = {
+      { id = "choose", status = "READY" },
+      { id = "configure", status = legacy.overallState == "NEW_INSTALLATION" and "ACTION_REQUIRED" or "READY" },
+      { id = "verify", status = primaryIssueId and "ATTENTION" or "READY" },
+    },
+    verification = verification,
+    primaryIssueId = primaryIssueId,
+    overallState = overallState,
+    mode = legacy.mode,
+  }
 end
 
 function Wizard.GetSteps()

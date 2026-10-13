@@ -10,7 +10,7 @@ end
 
 local function baseline(dibs)
   assert_true(dibs.Governance.AdoptInitial(nil, { reason = "B05b governance" }))
-  local value, reason = dibs.LegacyBaseline.FinalizeBaseline(nil)
+  local value, reason = dibs.HistoricalBaseline.FinalizeBaseline(nil)
   assert_not_nil(value, tostring(reason))
   return value
 end
@@ -82,7 +82,7 @@ describe("B05b fenced authority and recovery", function()
     assert_true(dibs.Governance.Change(nil, { future = { authority = recovered } }))
     assert_false(dibs.Governance.ClassifyLateEvidence({ eventId = "late-7-2", epoch = 7, seq = 2 }))
     assert_equal("ORPHANED_EVIDENCE", select(2, dibs.Governance.ClassifyLateEvidence({ eventId = "late-7-2", epoch = 7, seq = 2 })))
-    assert_equal("BASELINE_APPROVED", dibs.LegacyBaseline.GetState().status)
+    assert_equal("BASELINE_APPROVED", dibs.HistoricalBaseline.GetState().status)
     assert_true(dibs.Governance.GetAuthorityState().state ~= "RECOVERY_PENDING_REVIEW")
   end)
 

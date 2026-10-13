@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased - Feature 021: Turnkey Guided Setup - 2026-10-13
+
+- Replace the fourteen-page Guided Setup navigation with three primary stages: Choose, Configure, and Verify.
+- Add documented Progression, Standard Loot, and Custom profiles with an explicit preview of changes, preserved data, deferred approvals, and expected outcomes.
+- Apply recommended profiles through existing installation, Loot Rules, and Guild Policy services with idempotent results and explicit partial failures.
+- Show true blockers in the Midnight danger color with plain-language cause, impact, and direct correction actions; keep warnings and optional raid context visually distinct.
+- Preserve all existing ledgers, transactions, history, authority checks, GM approvals, and advanced configuration pages.
+
+## Unreleased - Feature 020: Multi-Ledger, Officer Setup, and Independent Raids - 2026-10-18
+
+- Add Multi-Ledger support (`db.ledgers`) allowing guilds to partition accounting across multiple rosters or split teams with independent transactions and balances (`guild-primary` by default).
+- Implement officer ledger proposals (`Dibs.MultiLedger.ProposeLedger`), GM-only approval authority (`Dibs.MultiLedger.ApproveLedger`), and automated catalog replication (`LEDGER_CATALOG`).
+- Empower verified Guild Officers to initialize setup proposals, configure seasons, and set rank rules in Guided Setup without fatal `GUILD_MASTER_REQUIRED` blockers, preserving non-blocking GM confirmation warnings.
+- Introduce Independent Raid Sessions (`Dibs.IndependentRaid`) with ephemeral local point tracking, strict guild/officer network sync inhibition, standard RCLootCouncil "DIB" response interception, and optional post-raid award reconciliation into guild ledgers.
+- Add active ledger switching dropdowns to Player UI and Officer UI, GM pending ledger approval panel to Guild Configuration, and an Independent Raid management tab to Officer UI.
+- Add GM-confirmed, guild-synchronized permanent deletion for archived non-default ledgers, with governance audit records and idempotent deletion tombstones.
+- Rename the `Dibs.LegacyBaseline` module to `Dibs.HistoricalBaseline` (`src/modules/HistoricalBaseline.lua`) and replace "legacy" wording in English user-facing text with neutral terms. Serialized identifiers (`legacyBaselineHash`, `LEGACY_BASELINE`, `LEGACY_RECOVERY_PACKAGE`, `LEGACY_LOCAL`, `LEGACY_RECORDED`) are unchanged, so SavedVariables and cross-client synchronization remain compatible.
+
+## Unreleased - Documentation maintenance for 0.8.3 - 2026-10-10
+
+- Add constitution principle XXIII in version 2.7.0 for checkpoint-based work,
+  valid evidence reuse, bounded exploration, targeted validation, and concise notes.
+- Expand repository Copilot instructions with verified architecture, safety boundaries,
+  and focused Fengari commands; move existing UI guidance to path-scoped instructions
+  to avoid loading specialized rules for unrelated work.
+- Documentation only: no addon version, business rule, UI behavior, protocol,
+  SavedVariables, permission, migration, or release-gate changes.
+
 ## 0.8.3 - Guild whisper addressing and Pre-Dib loot rows - 2026-10-08
 
 - Resolve V2 addon whisper recipients against the guild roster and send full
