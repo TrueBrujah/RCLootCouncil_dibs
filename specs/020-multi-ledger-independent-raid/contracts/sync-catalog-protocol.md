@@ -86,3 +86,33 @@ When a client detects a sequence gap for any approved `ledgerId`:
 
 ### 3.3 Integrity Rule
 A client MUST discard any incoming ledger batch or transaction payload whose `ledgerId` does not match an `APPROVED` ledger in `db.governance.approvedLedgers`.
+
+## 4. Ledger-Scoped Pre-Dib Synchronization
+
+Each approved ledger has an independent `PREDIB_INDEX` digest and Pre-Dib request history.
+The digest and its `DETAIL_FETCH` entries identify the target `ledgerId`; a request detail
+transfer carries the same `ledgerId` in its transfer envelope and request record. Receivers
+MUST reject a scope mismatch and MUST verify that the target ledger is approved before
+fetching or applying the request.
+
+For backward compatibility, a missing `ledgerId` on a legacy Pre-Dib digest or request
+transfer means `guild-primary` only. An alternate-ledger request MUST NOT be applied to the
+currently selected ledger merely because that ledger is active locally.
+
+## 5. Ledger Deletion Tombstones
+
+A Guild Master may delete only an archived, non-default ledger that is not the active ledger
+after explicit confirmation and only when synchronization is available. The local client
+records a governance authorization before attempting the guild broadcast. If the send fails,
+the operation reports `SYNC_PENDING`, retains the archived ledger for retry, and MUST NOT
+report deletion success. After a successful send, it records the deletion and applies a durable
+local tombstone.
+
+Peers MUST record the verified Guild Master deletion in their governance audit before applying
+the tombstone. Repeated deletion messages are idempotent. Clients periodically rebroadcast
+retained tombstones that have not recently been sent, so a temporary disconnect does not make
+the deletion depend on the ledger still being present locally.
+
+Ledger approval follows the same explicit-result rule: governance approval is recorded before
+the local ledger changes to `APPROVED`, and a failed catalog send is reported as `SYNC_PENDING`.
+The approved catalog is periodically rebroadcast to reconcile missed updates.

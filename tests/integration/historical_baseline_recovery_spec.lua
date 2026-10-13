@@ -135,14 +135,22 @@ describe("B05a historical baseline reconciliation and staged recovery", function
 
   it("keeps active-looking historical Pre-Dibs historical and never revives them", function()
     local dibs = load(); adoptGovernance(dibs)
-    local request = predib("active-request", "Player-Realm", "confirmed")
-    dibs.GetDB().preDibs.requests = { request }
+    local request = dibs.PreDibs.CreatePublic("Player-Realm", 21000, "Primary history",
+      dibs.GetCurrentSeasonId(), "test")
+    assert_not_nil(request)
+    local proposal = dibs.MultiLedger.ProposeLedger("Tester-Realm", "Independent Team")
+    assert_true(proposal.ok)
+    assert_true(dibs.MultiLedger.ApproveLedger("Tester-Realm", proposal.ledgerId).ok)
+    assert_not_nil(dibs.PreDibs.Create("Player-Realm", 21001, "Alternate history",
+      dibs.GetCurrentSeasonId(), proposal.ledgerId))
+    assert_true(dibs.MultiLedger.SetActiveLedger(proposal.ledgerId))
     assert_not_nil(dibs.HistoricalBaseline.CollectLocalEvidence(nil, "local-history"))
     decisionAll(dibs, "INCLUDE")
     local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
     assert_equal("confirmed", request.status)
-    assert_equal("confirmed", dibs.GetDB().preDibs.requests[1].status)
+    assert_equal("confirmed", dibs.PreDibs.GetHistory("guild-primary")[1].status)
     assert_equal("HISTORICAL_RECONFIRMATION_REQUIRED", baseline.historicalPreDibs[1].state)
+    assert_equal(1, #baseline.historicalPreDibs)
   end)
 
   it("stages a complete recovery package and commits evidence atomically with provenance and a safety backup", function()

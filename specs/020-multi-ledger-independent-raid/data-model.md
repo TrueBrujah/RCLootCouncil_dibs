@@ -53,9 +53,45 @@ A governance record created when the Guild Master approves a proposed ledger or 
 | `parentHash` | `string` | Preceding governance hash | Ensures immutable hash chain |
 | `recordHash` | `string` | Cryptographic content hash of the approval record | Derived via `Governance.contentHash` |
 
+### 1.3 LedgerDeletionRequest
+
+A durable governance authorization stored by `ledgerId` before attempting to broadcast a
+permanent deletion. Its presence records an authorized attempt for retry; it does not mean the
+ledger has been deleted.
+
+| Field | Type | Description | Invariant / Validation |
+|---|---|---|---|
+| `action` | `string` | `"LEDGER_DELETION_AUTHORIZED"` | Written only after current-GM verification |
+| `ledgerId` | `string` | Non-default archived ledger authorized for deletion | Stable idempotency key |
+| `ledgerName` | `string` | Name at authorization time | String |
+| `actor` | `string` | Canonical name-realm of the authorizing GM | Must verify as current GM |
+| `timestamp` | `number` | Unix timestamp of authorization | Positive integer |
+
+A completed deletion is separately recorded as `LEDGER_DELETED` and represented by a durable
+`db.ledgerDeletionTombstones[ledgerId]` record only after the guild broadcast succeeds.
+Receivers record that completed governance event before applying the tombstone.
+
+### 1.4 PreDibRequest
+
+A player-owned request is stored inside its target guild ledger's Pre-Dib partition.
+The primary ledger remains the fallback scope for records migrated from the legacy
+guild-wide Pre-Dib tables.
+
+| Field | Type | Description | Invariant / Validation |
+|---|---|---|---|
+| `requestId` | `string` | Stable request identifier | Unique within the ledger |
+| `ledgerId` | `string` | Approved ledger that owns this request | Must match the containing Pre-Dib partition |
+| `playerName` | `string` | Canonical request owner | Verified guild member |
+| `itemID` | `number` | Requested item identifier | Positive integer |
+| `seasonId` | `string \| number` | Season scope | Must identify an available season |
+| `status` | `string` | Request lifecycle status | Validated by Pre-Dib transitions |
+
+The V2 request index and detail transfer MUST remain ledger-scoped. A receiver MUST
+reject a request whose envelope, payload, and target partition do not agree.
+
 ---
 
-### 1.3 IndependentRaidSession
+### 1.4 IndependentRaidSession
 
 An ephemeral or locally persistent raid session operated by a Master Looter for a non-official, alt, or community raid. It operates without emitting guild-wide synchronization traffic.
 
@@ -86,7 +122,7 @@ An ephemeral or locally persistent raid session operated by a Master Looter for 
 
 ---
 
-### 1.4 LedgerCatalogManifest
+### 1.5 LedgerCatalogManifest
 
 The network payload used in background distributed synchronization to broadcast the catalog of approved guild ledgers.
 

@@ -70,19 +70,18 @@ describe("Installation.Initialize orchestrator", function()
     assert_equal(governanceRevisionAfterFirst, dibs.Governance.GetState().revision)
   end)
 
-  it("lets the temporary Nanarus authority review legacy evidence", function()
+  it("lets a verified guild master review legacy evidence", function()
     local _, dibs = loader.load({
       withAce3 = true,
-      localVariables = { settings = { developerModeEnabled = true } },
       wow = {
-        playerName = "Nanarus", realmName = "Durotan", guildLeader = false,
-        guildMembers = { "Nanarus-Durotan" }, guildRankIndices = { [1] = 4 },
+        playerName = "GameMaster-Realm", guildLeader = true,
+        guildMembers = { "GameMaster-Realm" }, guildRankIndices = { [1] = 0 },
       },
     })
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "test authority" }))
     local season = dibs.Seasons.Create("Legacy Test")
     assert_not_nil(season)
-    assert_not_nil(dibs.Ledger.Grant("Nanarus-Durotan", 1, "legacy grant", "test", season.id))
+    assert_not_nil(dibs.Ledger.Grant("GameMaster-Realm", 1, "legacy grant", "test", season.id))
 
     local blocked = dibs.Installation.Initialize(nil)
     assert_false(blocked.ok)

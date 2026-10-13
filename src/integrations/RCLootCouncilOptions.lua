@@ -1754,13 +1754,10 @@ local function officerOnly()
   return not Dibs.RCOptions.IsOfficerPreview()
 end
 function Dibs.RCOptions.IsOfficerPreview()
-  if Dibs.Permissions and Dibs.Permissions.IsOfficer and Dibs.Permissions.IsOfficer() then return true end
-  local name = type(UnitName) == "function" and UnitName("player") or ""
-  local realm = type(GetRealmName) == "function" and GetRealmName() or ""
-  return string.lower(tostring(name)) == "nanarus" and string.lower(tostring(realm)):gsub("%s+", "") == "durotan"
+  return Dibs.Permissions and Dibs.Permissions.IsOfficer and Dibs.Permissions.IsOfficer() == true or false
 end
 function Dibs.RCOptions.IsOfficerPreviewOnly()
-  return Dibs.RCOptions.IsOfficerPreview() and not (Dibs.Permissions and Dibs.Permissions.IsOfficer and Dibs.Permissions.IsOfficer())
+  return false
 end
 -- Keep the RCLC Dibs category as a small launcher; detailed settings remain
 -- registered for existing internal consumers but are not shown in this panel.

@@ -127,13 +127,62 @@ local function ensureRaidDibsChannel()
   return nil, "RAID_DIBS_UNAVAILABLE"
 end
 
-local function ensureState()
+local DEFAULT_LEDGER_ID = "guild-primary"
+
+local function activeLedgerId()
+  return Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+    and Dibs.MultiLedger.GetActiveLedgerId() or DEFAULT_LEDGER_ID
+end
+
+local function isApprovedLedger(ledgerId)
+  if type(ledgerId) ~= "string" or ledgerId == "" then return false end
+  if ledgerId == DEFAULT_LEDGER_ID then return true end
+  local ledger = Dibs.MultiLedger and Dibs.MultiLedger.GetLedgerById
+    and Dibs.MultiLedger.GetLedgerById(ledgerId)
+  return ledger and ledger.status == "APPROVED"
+    and Dibs.Governance and Dibs.Governance.IsLedgerApproved
+    and Dibs.Governance.IsLedgerApproved(ledgerId) == true
+end
+
+local function ensureState(targetLedgerId, bindActive)
   Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   Dibs.db.preDibs = Dibs.db.preDibs or { requests = {} }
-  Dibs.db.preDibs.requests = Dibs.db.preDibs.requests or {}
-  Dibs.db.preDibs.modePolicies = Dibs.db.preDibs.modePolicies or {}
-  Dibs.db.preDibs.acquisitions = Dibs.db.preDibs.acquisitions or {}
-  Dibs.db.preDibs.vaultConflicts = Dibs.db.preDibs.vaultConflicts or {}
+  local root = Dibs.db.preDibs
+  root.requests = root.requests or {}
+  root.modePolicies = root.modePolicies or {}
+  root.acquisitions = root.acquisitions or {}
+  root.vaultConflicts = root.vaultConflicts or {}
+  root.ledgers = type(root.ledgers) == "table" and root.ledgers or {}
+  if root.ledgerStorageVersion ~= 1 then
+    local primary = type(root.ledgers[DEFAULT_LEDGER_ID]) == "table" and root.ledgers[DEFAULT_LEDGER_ID] or {}
+    primary.requests = type(primary.requests) == "table" and primary.requests or root.requests
+    primary.modePolicies = type(primary.modePolicies) == "table" and primary.modePolicies or root.modePolicies
+    primary.vaultConflicts = type(primary.vaultConflicts) == "table" and primary.vaultConflicts or root.vaultConflicts
+    for _, request in ipairs(primary.requests) do
+      if type(request) == "table" and request.ledgerId == nil then request.ledgerId = DEFAULT_LEDGER_ID end
+    end
+    root.ledgers[DEFAULT_LEDGER_ID] = primary
+    root.ledgerStorageVersion = 1
+  end
+  local ledgerId = targetLedgerId
+  if ledgerId == nil then ledgerId = activeLedgerId() end
+  if type(ledgerId) ~= "string" or ledgerId == "" then return nil, "INVALID_LEDGER_ID" end
+  if not isApprovedLedger(ledgerId) then return nil, "LEDGER_NOT_APPROVED" end
+  local store = root.ledgers[ledgerId]
+  if type(store) ~= "table" then
+    store = {}
+    root.ledgers[ledgerId] = store
+  end
+  store.requests = type(store.requests) == "table" and store.requests or {}
+  store.modePolicies = type(store.modePolicies) == "table" and store.modePolicies or {}
+  store.vaultConflicts = type(store.vaultConflicts) == "table" and store.vaultConflicts or {}
+  store.ledgerId = ledgerId
+  for _, request in ipairs(store.requests) do
+    if type(request) == "table" and request.ledgerId == nil then request.ledgerId = ledgerId end
+  end
+  if bindActive == true or ledgerId == activeLedgerId() then
+    root.requests, root.modePolicies, root.vaultConflicts = store.requests, store.modePolicies, store.vaultConflicts
+  end
   Dibs.db.settings = Dibs.db.settings or {}
   if Dibs.db.settings.allowPublicPreDibs == nil then
     Dibs.db.settings.allowPublicPreDibs = true
@@ -146,6 +195,13 @@ local function ensureState()
   if Dibs.db.settings.raidReminderTemplate == nil then
     Dibs.db.settings.raidReminderTemplate = Dibs.db.settings.raidReminderMessage or DEFAULT_REMINDER_TEMPLATE
   end
+  return store
+end
+
+function Dibs.PreDibs.SetLedgerContext(ledgerId)
+  local store, reason = ensureState(ledgerId, true)
+  if not store then return false, reason end
+  return true
 end
 
 local VALID_MODES = { WILD_OPEN = true, ENCOUNTER = true }
@@ -361,8 +417,8 @@ local function announcePreDib(request)
   end
 end
 
-local function announceRequestIndex()
-  if Dibs.Sync and Dibs.Sync.AnnounceRequestIndex then Dibs.Sync.AnnounceRequestIndex() end
+local function announceRequestIndex(ledgerId)
+  if Dibs.Sync and Dibs.Sync.AnnounceRequestIndex then Dibs.Sync.AnnounceRequestIndex(ledgerId) end
 end
 
 local function isRequestActive(request)
@@ -374,12 +430,12 @@ local VALID_STATUS_TRANSITIONS = {
   confirmed = { cancelled = true, invalidated = true, fulfilled = true },
 }
 
-local function findActiveRequest(playerName, itemID, seasonId, difficulty)
+local function findActiveRequest(playerName, itemID, seasonId, difficulty, requests)
   local targetPlayer = tostring(playerName or Dibs.GetPlayerName())
   local targetItem = tonumber(itemID) or 0
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
   local targetDifficulty = Dibs.PreDibs.NormalizeDifficulty(difficulty)
-  for _, request in ipairs(Dibs.db.preDibs.requests) do
+  for _, request in ipairs(requests or Dibs.db.preDibs.requests) do
     if tonumber(request.itemID) == targetItem
       and tostring(request.playerName or "") == targetPlayer
       and request.seasonId == targetSeason
@@ -402,25 +458,31 @@ function Dibs.PreDibs.IsPublicEnabled()
   return Dibs.db.settings.allowPublicPreDibs ~= false
 end
 
-function Dibs.PreDibs.GetModePolicy(seasonId)
-  ensureState()
+function Dibs.PreDibs.GetModePolicy(seasonId, ledgerId)
+  local targetLedgerId = ledgerId
+  if targetLedgerId == nil then targetLedgerId = activeLedgerId() end
+  local store, storeReason = ensureState(targetLedgerId)
+  if not store then return nil, storeReason end
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
     and Dibs.OperationalPolicy.GetPreDibMode then
-    local sharedMode = Dibs.OperationalPolicy.GetPreDibMode(targetSeason)
-    if sharedMode then return { seasonId = targetSeason, mode = sharedMode, source = "OPERATIONAL_POLICY" } end
+    local sharedMode = Dibs.OperationalPolicy.GetPreDibMode(targetSeason, targetLedgerId)
+    if sharedMode then return { seasonId = targetSeason, ledgerId = targetLedgerId, mode = sharedMode, source = "OPERATIONAL_POLICY" } end
   end
-  local policy = targetSeason and Dibs.db.preDibs.modePolicies[targetSeason] or nil
+  local policy = targetSeason and store.modePolicies[targetSeason] or nil
   if type(policy) ~= "table" then
-    return { seasonId = targetSeason, mode = "WILD_OPEN" }
+    return { seasonId = targetSeason, ledgerId = targetLedgerId, mode = "WILD_OPEN" }
   end
   return policy
 end
 
-function Dibs.PreDibs.SetModePolicy(seasonId, mode, actor)
-  ensureState()
+function Dibs.PreDibs.SetModePolicy(seasonId, mode, actor, ledgerId)
+  local targetLedgerId = ledgerId
+  if targetLedgerId == nil then targetLedgerId = activeLedgerId() end
+  local store, storeReason = ensureState(targetLedgerId)
+  if not store then return nil, storeReason end
   if type(Dibs.Permissions) ~= "table" or type(Dibs.Permissions.Can) ~= "function"
-    or not Dibs.Permissions.Can("settings.modify", actor) then
+    or not Dibs.Permissions.Can("predib.mode.set", actor) then
     return nil, "GUILD_ADMIN_REQUIRED"
   end
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
@@ -429,12 +491,12 @@ function Dibs.PreDibs.SetModePolicy(seasonId, mode, actor)
   if not VALID_MODES[normalized] then return nil, "INVALID_PREDIB_MODE" end
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
     and Dibs.OperationalPolicy.SetPreDibMode then
-    local applied, reason, record = Dibs.OperationalPolicy.SetPreDibMode(targetSeason, normalized, actor)
+    local applied, reason, record = Dibs.OperationalPolicy.SetPreDibMode(targetSeason, normalized, actor, targetLedgerId)
     if not applied then return nil, reason end
-    return { seasonId = targetSeason, mode = normalized, changedAt = record.timestamp, changedBy = record.authorNameRealm, policyRevision = record.policyRevision, source = "OPERATIONAL_POLICY" }
+    return { seasonId = targetSeason, ledgerId = targetLedgerId, mode = normalized, changedAt = record.timestamp, changedBy = record.authorNameRealm, policyRevision = record.policyRevision, source = "OPERATIONAL_POLICY" }
   end
-  local policy = { seasonId = targetSeason, mode = normalized, changedAt = time(), changedBy = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName() or "Unknown") }
-  Dibs.db.preDibs.modePolicies[targetSeason] = policy
+  local policy = { seasonId = targetSeason, ledgerId = targetLedgerId, mode = normalized, changedAt = time(), changedBy = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName() or "Unknown") }
+  store.modePolicies[targetSeason] = policy
   return policy
 end
 
@@ -453,11 +515,12 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_PREDIB_MODE
 ---@doc.label-key DOC_PREDIB_ENCOUNTER_MODE_LABEL
-function Dibs.PreDibs.ValidatePublicRequest(itemID, seasonId, context)
+function Dibs.PreDibs.ValidatePublicRequest(itemID, seasonId, context, ledgerId)
   local targetItem = tonumber(itemID)
   if not targetItem or targetItem <= 0 then return nil, "INVALID_ITEM" end
-  local policy = Dibs.PreDibs.GetModePolicy(seasonId)
+  local policy, policyReason = Dibs.PreDibs.GetModePolicy(seasonId, ledgerId)
   local validation = requestContext(context)
+  if not policy then return nil, policyReason or "LEDGER_NOT_APPROVED", nil, validation end
   if validation.isSupportedRaidLoot ~= true then return nil, "UNSUPPORTED_RAID_LOOT", policy, validation end
   if policy.mode == "ENCOUNTER" then
     if validation.inRaid ~= true then return nil, "ENCOUNTER_REQUIRES_RAID", policy, validation end
@@ -534,8 +597,9 @@ function Dibs.PreDibs.SetAnnouncementTemplates(preDibTemplate, reminderTemplate,
   return Dibs.PreDibs.GetAnnouncementTemplates()
 end
 
-function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId)
-  ensureState()
+function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId, ledgerId)
+  local store, storeReason = ensureState(ledgerId)
+  if not store then return nil, storeReason end
   local enabled, reason = requirePreDibsEnabled()
   if not enabled then return nil, reason end
   if not tonumber(itemID) or tonumber(itemID) <= 0 then return nil end
@@ -552,13 +616,14 @@ function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId)
     itemName = itemName or "Unknown item",
     seasonId = targetSeason,
     status = "pending",
+    ledgerId = store.ledgerId,
     createdAt = time(),
     updatedAt = time(),
     difficulty = "UNKNOWN",
   }
 
-  table.insert(Dibs.db.preDibs.requests, request)
-  announceRequestIndex()
+  table.insert(store.requests, request)
+  announceRequestIndex(store.ledgerId)
   return request
 end
 
@@ -580,7 +645,10 @@ end
 ---@doc.help-key UI_HELP_PREDIB
 ---@doc.label-key DOC_PREDIB_REQUEST_LABEL
 function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, source, context)
-  ensureState()
+  local targetLedgerId = activeLedgerId()
+  if type(context) == "table" and context.ledgerId ~= nil then targetLedgerId = context.ledgerId end
+  local store, storeReason = ensureState(targetLedgerId)
+  if not store then return nil, storeReason end
   local enabled, reason = requirePreDibsEnabled()
   if not enabled then return nil, reason end
   if Dibs.PreDibs.IsPublicEnabled() ~= true then
@@ -597,10 +665,10 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
     return nil, "NO_ACTIVE_SEASON"
   end
 
-  local accepted, validationReason, policy, validation = Dibs.PreDibs.ValidatePublicRequest(targetItem, targetSeason, context)
+  local accepted, validationReason, policy, validation = Dibs.PreDibs.ValidatePublicRequest(targetItem, targetSeason, context, targetLedgerId)
   if accepted ~= true then return nil, validationReason end
 
-  local existing = findActiveRequest(playerName, targetItem, targetSeason, validation.difficulty)
+  local existing = findActiveRequest(playerName, targetItem, targetSeason, validation.difficulty, store.requests)
   if existing then
     if existing.status ~= "confirmed" then
       existing.status = "confirmed"
@@ -609,7 +677,7 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
       existing.revision = (tonumber(existing.revision) or 1) + 1
       existing.source = source or existing.source or "public"
       announcePreDib(existing)
-      announceRequestIndex()
+      announceRequestIndex(store.ledgerId)
     end
     return existing
   end
@@ -622,6 +690,7 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
     itemName = itemName or ("Item " .. tostring(targetItem)),
     seasonId = targetSeason,
     status = "confirmed",
+    ledgerId = store.ledgerId,
     source = source or "public",
     createdAt = now,
     updatedAt = now,
@@ -633,9 +702,9 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
     delivery = { state = "PENDING" },
   }
 
-  table.insert(Dibs.db.preDibs.requests, request)
+  table.insert(store.requests, request)
   announcePreDib(request)
-  announceRequestIndex()
+  announceRequestIndex(store.ledgerId)
   return request
 end
 
@@ -701,7 +770,7 @@ function Dibs.PreDibs.UpdateStatus(requestId, status)
       elseif status == "cancelled" and request.cancelledAt == nil then
         request.cancelledAt = request.updatedAt
       end
-      announceRequestIndex()
+      announceRequestIndex(request.ledgerId or DEFAULT_LEDGER_ID)
       if Dibs.Notifications and Dibs.Notifications.Notify then
         local kind = status == "confirmed" and "PREDIB_CONFIRMED"
           or status == "cancelled" and "PREDIB_CANCELLED"
@@ -723,7 +792,13 @@ end
 ---@return string|nil reasonCode
 -- Side effects: Applies only newer, owner-matching request revisions.
 function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
-  ensureState()
+  if type(incoming) ~= "table" then return nil, "INVALID_REQUEST" end
+  local targetLedgerId = incoming.ledgerId
+  if targetLedgerId == nil then targetLedgerId = DEFAULT_LEDGER_ID end
+  local store, storeReason = ensureState(targetLedgerId)
+  if not store then return nil, storeReason end
+  incoming = copy(incoming)
+  incoming.ledgerId = targetLedgerId
   local incomingItemId = type(incoming) == "table" and tonumber(incoming.itemID) or nil
   local incomingRevision = type(incoming) == "table" and (incoming.revision == nil and 1 or tonumber(incoming.revision)) or nil
   if type(incoming) ~= "table" or type(incoming.requestId) ~= "string" or #incoming.requestId < 1 or #incoming.requestId > 96
@@ -742,8 +817,9 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
     return nil, "OWNER_MISMATCH"
   end
   if incoming.status == "fulfilled" then return nil, "UNTRUSTED_FULFILLMENT" end
-  for _, existing in ipairs(Dibs.db.preDibs.requests) do
+  for _, existing in ipairs(store.requests) do
     if existing.requestId == incoming.requestId then
+      if (existing.ledgerId or DEFAULT_LEDGER_ID) ~= targetLedgerId then return nil, "LEDGER_SCOPE_MISMATCH" end
       if incomingRevision <= (tonumber(existing.revision) or 1) then return nil, "STALE_REVISION" end
       if not samePlayer(existing.playerName, incoming.playerName) then
         return nil, "IMMUTABLE_FIELD_MISMATCH"
@@ -765,7 +841,7 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
   -- Delivery acknowledgement is local officer metadata; an owner-supplied
   -- sync record can never claim that an officer received it.
   incoming.delivery = { state = "PENDING" }
-  table.insert(Dibs.db.preDibs.requests, incoming)
+  table.insert(store.requests, incoming)
   return incoming
 end
 
@@ -774,8 +850,15 @@ end
 -- helper above, it retains terminal lifecycle records as bounded sync
 -- tombstone evidence so a stale client can learn cancellation/invalidation/
 -- fulfillment even when it never saw the active revision.
-function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName)
-  ensureState()
+function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName, targetLedgerId)
+  if type(incoming) ~= "table" then return nil, "INVALID_REQUEST" end
+  local ledgerId = targetLedgerId
+  if ledgerId == nil then ledgerId = incoming.ledgerId end
+  if ledgerId == nil then ledgerId = DEFAULT_LEDGER_ID end
+  if incoming.ledgerId ~= nil and incoming.ledgerId ~= ledgerId then return nil, "LEDGER_SCOPE_MISMATCH" end
+  if ledgerId ~= DEFAULT_LEDGER_ID and incoming.ledgerId ~= ledgerId then return nil, "LEDGER_SCOPE_MISMATCH" end
+  local store, storeReason = ensureState(ledgerId)
+  if not store then return nil, storeReason end
   local revision = type(incoming) == "table" and tonumber(incoming.revision) or nil
   local itemID = type(incoming) == "table" and tonumber(incoming.itemID) or nil
   local allowed = incoming and (incoming.status == "pending" or incoming.status == "confirmed" or incoming.status == "cancelled" or incoming.status == "invalidated" or incoming.status == "fulfilled")
@@ -791,8 +874,9 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName)
     local recipientIsOfficer = recipientRole == "gm" or recipientRole == "officer"
     if not senderIsOfficer or not recipientIsOfficer then return nil, "OWNER_MISMATCH" end
   end
-  for _, existing in ipairs(Dibs.db.preDibs.requests) do
+  for _, existing in ipairs(store.requests) do
     if existing.requestId == incoming.requestId then
+      if (existing.ledgerId or DEFAULT_LEDGER_ID) ~= ledgerId then return nil, "LEDGER_SCOPE_MISMATCH" end
       local current = tonumber(existing.revision) or 1
       if revision <= current then return nil, "STALE_REVISION" end
       if not samePlayer(existing.playerName, incoming.playerName) or tonumber(existing.itemID) ~= itemID or existing.seasonId ~= incoming.seasonId then return nil, "IMMUTABLE_FIELD_MISMATCH" end
@@ -800,15 +884,16 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName)
       for key, value in pairs(incoming) do
         if key ~= "playerName" and key ~= "itemID" and key ~= "seasonId" and key ~= "modeAtCreation" and key ~= "createdAt" and key ~= "delivery" then existing[key] = value end
       end
-      announceRequestIndex()
+      announceRequestIndex(ledgerId)
       return existing
     end
   end
-  local record = Dibs.DeepCopy and Dibs.DeepCopy(incoming) or incoming
+  local record = copy(incoming)
   record.revision = revision
+  record.ledgerId = ledgerId
   record.delivery = { state = "PENDING" }
-  table.insert(Dibs.db.preDibs.requests, record)
-  announceRequestIndex()
+  table.insert(store.requests, record)
+  announceRequestIndex(ledgerId)
   return record
 end
 
@@ -1270,24 +1355,27 @@ function Dibs.PreDibs.HasConfirmedRequestsForItem(itemID)
   return #Dibs.PreDibs.GetConfirmedRequestsForItem(itemID) > 0
 end
 
-function Dibs.PreDibs.GetHistory()
-  ensureState()
-  return Dibs.db.preDibs.requests
+function Dibs.PreDibs.GetHistory(ledgerId)
+  local store, reason = ensureState(ledgerId)
+  if not store then return nil, reason end
+  return store.requests
 end
 
 -- Read-only Pre-Dibs summary for the Guided Setup Wizard; composes existing
 -- accessors only and mutates nothing.
-function Dibs.PreDibs.GetStatusSummary(seasonId)
-  ensureState()
+function Dibs.PreDibs.GetStatusSummary(seasonId, ledgerId)
+  local store, reason = ensureState(ledgerId)
+  if not store then return nil, reason end
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
-  local policy = Dibs.PreDibs.GetModePolicy(targetSeason)
+  local policy = Dibs.PreDibs.GetModePolicy(targetSeason, store.ledgerId)
   local activeCount, historyCount = 0, 0
-  for _, request in ipairs(Dibs.db.preDibs.requests) do
+  for _, request in ipairs(store.requests) do
     historyCount = historyCount + 1
     if isRequestActive(request) then activeCount = activeCount + 1 end
   end
   return {
     publicEnabled = Dibs.PreDibs.IsPublicEnabled(),
+    ledgerId = store.ledgerId,
     seasonId = targetSeason,
     mode = policy and policy.mode or nil,
     activeRequestCount = activeCount,

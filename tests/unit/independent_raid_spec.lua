@@ -48,21 +48,27 @@ describe("Dibs.IndependentRaid", function()
     local _, dibs = setup()
     dibs.IndependentRaid.StartSession("Friday Ad-hoc", 1)
 
+    local function evidence(id, playerName, itemID)
+      return { evidenceId = id, awardRef = id, playerName = playerName, itemID = itemID }
+    end
     -- Initial balance is startingPoints (1)
     assert_equal(1, dibs.IndependentRaid.GetPlayerBalance("RaiderA-Realm"))
 
     -- Award with DIB response spends 1 point
-    local award1 = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19019, "Item Link 1", true)
+    local award1 = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19019, "Item Link 1", true,
+      evidence("test:1", "RaiderA-Realm", 19019))
     assert_true(award1.ok)
     assert_equal(0, dibs.IndependentRaid.GetPlayerBalance("RaiderA-Realm"))
 
     -- Subsequent DIB award fails due to insufficient points
-    local award2 = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19020, "Item Link 2", true)
+    local award2 = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19020, "Item Link 2", true,
+      evidence("test:2", "RaiderA-Realm", 19020))
     assert_false(award2.ok)
     assert_equal("INDEPENDENT_NO_POINTS", award2.reasonCode)
 
     -- Non-DIB award (e.g. Free/MS/OS) succeeds without spending points
-    local freeAward = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19021, "Item Link 3", false)
+    local freeAward = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19021, "Item Link 3", false,
+      evidence("test:3", "RaiderA-Realm", 19021))
     assert_true(freeAward.ok)
     assert_equal(0, dibs.IndependentRaid.GetPlayerBalance("RaiderA-Realm"))
 
@@ -73,7 +79,8 @@ describe("Dibs.IndependentRaid", function()
   it("allows officers to reconcile an independent award into a guild ledger", function()
     local _, dibs = setup()
     dibs.IndependentRaid.StartSession("Community Run", 2)
-    local award = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19019, "Item Link 1", true)
+    local award = dibs.IndependentRaid.RecordAward("RaiderA-Realm", 19019, "Item Link 1", true,
+      { evidenceId = "test:reconcile", awardRef = "test:reconcile", playerName = "RaiderA-Realm", itemID = 19019 })
     assert_true(award.ok)
     local sessionId = dibs.IndependentRaid.GetActiveSessionId()
     local awardId = award.awardId
@@ -96,7 +103,8 @@ describe("Dibs.IndependentRaid", function()
 
     -- Cannot double reconcile
     local doubleReconcile = dibs.IndependentRaid.ReconcileAward(officer, sessionId, awardId, "guild-primary")
-    assert_false(doubleReconcile.ok)
-    assert_equal("ALREADY_RECONCILED", doubleReconcile.reasonCode)
+    assert_true(doubleReconcile.ok)
+    assert_true(doubleReconcile.duplicate)
+    assert_equal(reconcile.transactionId, doubleReconcile.transactionId)
   end)
 end)

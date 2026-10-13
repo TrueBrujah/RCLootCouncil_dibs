@@ -129,12 +129,47 @@ function IndependentRaid.RecordAward(winner, itemID, itemLink, isDib, evidence)
   end
 
   local player = normalizePlayer(winner)
-  if not player then
-    return { ok = false, reasonCode = "INVALID_WINNER" }
+  local numericItemId = tonumber(itemID)
+  if not player then return { ok = false, reasonCode = "INVALID_WINNER" } end
+  if not numericItemId or numericItemId <= 0 or numericItemId ~= math.floor(numericItemId) then
+    return { ok = false, reasonCode = "INVALID_ITEM" }
+  end
+  if type(evidence) ~= "table" or type(evidence.evidenceId) ~= "string"
+    or evidence.evidenceId == "" or type(evidence.awardRef) ~= "string" or evidence.awardRef == "" then
+    return { ok = false, reasonCode = "AWARD_IDENTITY_UNAVAILABLE" }
+  end
+  if normalizePlayer(evidence.playerName) ~= player or tonumber(evidence.itemID) ~= numericItemId then
+    return { ok = false, reasonCode = "AWARD_EVIDENCE_MISMATCH" }
+  end
+
+  session.awardEvidence = session.awardEvidence or {}
+  local fingerprint = table.concat({
+    player, tostring(numericItemId), tostring(itemLink or ""), tostring(isDib == true),
+    evidence.evidenceId, evidence.awardRef, tostring(evidence.response or ""),
+  }, "|")
+  local known = session.awardEvidence[evidence.evidenceId]
+  if not known then
+    for _, award in ipairs(session.awards or {}) do
+      local priorEvidence = award.evidence
+      if type(priorEvidence) == "table" and priorEvidence.evidenceId == evidence.evidenceId then
+        known = { awardId = award.awardId, fingerprint = table.concat({
+          tostring(award.recipient), tostring(award.itemID), tostring(award.itemLink or ""),
+          tostring(award.isDib == true), priorEvidence.evidenceId, priorEvidence.awardRef,
+          tostring(priorEvidence.response or ""),
+        }, "|") }
+        session.awardEvidence[evidence.evidenceId] = known
+        break
+      end
+    end
+  end
+  if known then
+    if known.fingerprint ~= fingerprint then return { ok = false, reasonCode = "AWARD_EVIDENCE_CONFLICT" } end
+    return { ok = true, duplicate = true, awardId = known.awardId,
+      outcome = "duplicate", reasonCode = "IDEMPOTENT_EVIDENCE" }
   end
 
   local now = time and time() or 0
-  local awardId = "AWD-" .. tostring(now) .. "-" .. (#session.awards + 1)
+  local awardId = "AWD-" .. session.id .. "-" .. evidence.evidenceId
 
   if isDib then
     local currentBalance = IndependentRaid.GetPlayerBalance(player, session.id)
@@ -147,13 +182,14 @@ function IndependentRaid.RecordAward(winner, itemID, itemLink, isDib, evidence)
       awardId = awardId,
       timestamp = now,
       recipient = player,
-      itemID = itemID,
+      itemID = numericItemId,
       itemLink = itemLink,
       isDib = true,
       dibsSpent = 1,
       reconciled = false,
       evidence = evidence,
     }
+    session.awardEvidence[evidence.evidenceId] = { awardId = awardId, fingerprint = fingerprint }
     return {
       ok = true,
       awardId = awardId,
@@ -165,13 +201,14 @@ function IndependentRaid.RecordAward(winner, itemID, itemLink, isDib, evidence)
       awardId = awardId,
       timestamp = now,
       recipient = player,
-      itemID = itemID,
+      itemID = numericItemId,
       itemLink = itemLink,
       isDib = false,
       dibsSpent = 0,
       reconciled = false,
       evidence = evidence,
     }
+    session.awardEvidence[evidence.evidenceId] = { awardId = awardId, fingerprint = fingerprint }
     return {
       ok = true,
       awardId = awardId,
@@ -211,7 +248,12 @@ function IndependentRaid.ReconcileAward(actor, sessionId, awardId, targetLedgerI
     return { ok = false, reasonCode = "AWARD_NOT_FOUND" }
   end
 
+  local targetId = targetLedgerId or "guild-primary"
   if targetAward.reconciled then
+    if targetAward.reconciledLedgerId == targetId or targetAward.reconciledLedgerId == "FREE_AWARD" then
+      return { ok = true, duplicate = true, transactionId = targetAward.reconciledTransactionId,
+        reasonCode = "IDEMPOTENT_REPLAY" }
+    end
     return { ok = false, reasonCode = "ALREADY_RECONCILED" }
   end
 
@@ -221,29 +263,41 @@ function IndependentRaid.ReconcileAward(actor, sessionId, awardId, targetLedgerI
     end
 
     local seasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or "season-1"
-    local tx, err = Dibs.Ledger.Use(
-      targetAward.recipient,
-      targetAward.dibsSpent,
-      "Independent Raid Award: " .. tostring(targetAward.itemLink or targetAward.itemID),
-      "independent_raid",
-      seasonId,
-      { actor = actor },
-      targetLedgerId or "guild-primary"
-    )
-
-    if not tx then
-      return { ok = false, reasonCode = err or "LEDGER_TRANSACTION_FAILED" }
+    local stableId = "independent:" .. tostring(sessionId) .. ":" .. tostring(awardId)
+    local audit = {
+      actor = actor, transactionId = stableId, awardRef = stableId, evidenceId = stableId,
+      itemID = targetAward.itemID, itemLink = targetAward.itemLink, sourceStatus = "FINAL_AWARD",
+    }
+    local transactionId
+    if Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced() then
+      local result = Dibs.Ledger.CommitDibUse({ actor = actor, ledgerId = targetId, action = "ledger.use" }, {
+        transactionId = stableId, awardRef = stableId, evidenceId = stableId,
+        playerName = targetAward.recipient, seasonId = seasonId, amount = targetAward.dibsSpent,
+        itemID = targetAward.itemID, itemLink = targetAward.itemLink, source = "independent_raid",
+      })
+      if not result.accepted then
+        return { ok = false, reasonCode = result.reasonCode or "LEDGER_TRANSACTION_FAILED",
+          proposalId = result.proposal and result.proposal.proposalId }
+      end
+      transactionId = result.value.canonicalTransactionId
+    else
+      local transaction, err = Dibs.Ledger.Use(
+        targetAward.recipient, targetAward.dibsSpent,
+        "Independent Raid Award: " .. tostring(targetAward.itemLink or targetAward.itemID),
+        "independent_raid", seasonId, audit, targetId)
+      if not transaction then return { ok = false, reasonCode = err or "LEDGER_TRANSACTION_FAILED" } end
+      transactionId = transaction.id or transaction.transactionId
     end
 
     targetAward.reconciled = true
-    targetAward.reconciledTransactionId = type(tx) == "table" and (tx.id or tx.transactionId)
-      or ("TX-RECONCILED-" .. tostring(time and time() or 0))
-    targetAward.reconciledLedgerId = targetLedgerId or "guild-primary"
+    targetAward.reconciledTransactionId = transactionId or stableId
+    targetAward.reconciledLedgerId = targetId
 
     return { ok = true, transactionId = targetAward.reconciledTransactionId }
   else
     targetAward.reconciled = true
     targetAward.reconciledTransactionId = "FREE_AWARD"
+    targetAward.reconciledLedgerId = "FREE_AWARD"
     return { ok = true, transactionId = "FREE_AWARD" }
   end
 end

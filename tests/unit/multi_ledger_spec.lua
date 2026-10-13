@@ -2,6 +2,7 @@ local loader = require("helpers.load_addon")
 
 local function loadGM()
   local _, dibs = loader.load({ wow = { guildLeader = true, playerName = "GM-Realm", guildMembers = { "GM-Realm" }, guildRankIndices = { [1] = 0 } } })
+  dibs.SyncV2.BroadcastCatalogDigest = function() return true, "TEST_SENT" end
   return dibs
 end
 
@@ -85,6 +86,7 @@ describe("MultiLedger lifecycle", function()
       savedVariables = saved,
       wow = { guildLeader = true, playerName = "GM-Realm", guildMembers = { "GM-Realm", "Officer-Realm" }, guildRankIndices = { [1] = 0, [2] = 1 } }
     })
+    gmDibs.SyncV2.BroadcastCatalogDigest = function() return true, "TEST_SENT" end
 
     local gmApprove = gmDibs.MultiLedger.ApproveLedger("GM-Realm", prop.ledgerId)
     assert_true(gmApprove.ok)
@@ -115,6 +117,58 @@ describe("MultiLedger lifecycle", function()
     assert_equal(5, gmDibs.Ledger.GetBalance("GM-Realm"))
     -- Primary ledger balance must be unchanged
     assert_equal(primaryBefore, gmDibs.Ledger.GetBalance("GM-Realm", nil, "guild-primary"))
+  end)
+
+  it("keeps approval proposed on audit failure and exposes retryable sync failure", function()
+    local dibs = loadGM()
+    local prop = dibs.MultiLedger.ProposeLedger("GM-Realm", "Approval Recovery")
+    assert_true(prop.ok)
+    local ledger = dibs.GetDB().ledgers[prop.ledgerId]
+    local originalRecord = dibs.Governance.RecordLedgerApproval
+    local originalBroadcast = dibs.SyncV2.BroadcastCatalogDigest
+    local broadcastCount = 0
+
+    dibs.Governance.RecordLedgerApproval = function() return false, "AUDIT_WRITE_FAILED" end
+    dibs.SyncV2.BroadcastCatalogDigest = function()
+      broadcastCount = broadcastCount + 1
+      return true
+    end
+    local auditFailure = dibs.MultiLedger.ApproveLedger("GM-Realm", prop.ledgerId)
+    assert_false(auditFailure.ok)
+    assert_equal("AUDIT_WRITE_FAILED", auditFailure.reasonCode)
+    assert_equal("PROPOSED", ledger.status)
+    assert_equal(0, broadcastCount)
+
+    dibs.Governance.RecordLedgerApproval = originalRecord
+    dibs.SyncV2.BroadcastCatalogDigest = function()
+      broadcastCount = broadcastCount + 1
+      return false, "TRANSPORT_OFFLINE"
+    end
+    local syncFailure = dibs.MultiLedger.ApproveLedger("GM-Realm", prop.ledgerId)
+    assert_false(syncFailure.ok)
+    assert_equal("SYNC_PENDING", syncFailure.reasonCode)
+    assert_equal("TRANSPORT_OFFLINE", syncFailure.syncReasonCode)
+    assert_true(syncFailure.localApproved)
+    assert_true(syncFailure.retryable)
+    assert_equal("APPROVED", ledger.status)
+
+    dibs.SyncV2.BroadcastCatalogDigest = function()
+      broadcastCount = broadcastCount + 1
+      return true
+    end
+    local retry = dibs.MultiLedger.ApproveLedger("GM-Realm", prop.ledgerId)
+    dibs.Governance.RecordLedgerApproval = originalRecord
+    dibs.SyncV2.BroadcastCatalogDigest = originalBroadcast
+    assert_true(retry.ok)
+    assert_true(retry.replayed)
+    assert_equal(2, broadcastCount)
+    local approvalEvents = 0
+    for _, event in ipairs(dibs.Governance.GetState().auditLog) do
+      if event.action == "LEDGER_APPROVED" and event.ledgerId == prop.ledgerId then
+        approvalEvents = approvalEvents + 1
+      end
+    end
+    assert_equal(1, approvalEvents)
   end)
 
   it("allows GM to archive an approved ledger and prevents archiving guild-primary", function()
@@ -158,6 +212,82 @@ describe("MultiLedger lifecycle", function()
     assert_not_nil(dibs.GetDB().ledgerDeletionTombstones[prop.ledgerId])
   end)
 
+  it("records deletion before applying it and retries an unsent tombstone idempotently", function()
+    local dibs = loadGM()
+    local prop = dibs.MultiLedger.ProposeLedger("GM-Realm", "Deletion Recovery")
+    assert_true(prop.ok)
+    assert_true(dibs.MultiLedger.ApproveLedger("GM-Realm", prop.ledgerId).ok)
+    assert_true(dibs.MultiLedger.ArchiveLedger("GM-Realm", prop.ledgerId).ok)
+    local originalPrepare = dibs.Governance.PrepareLedgerDeletion
+    local originalSend = dibs.SyncV2.Send
+
+    dibs.Governance.PrepareLedgerDeletion = function() return false, "AUDIT_WRITE_FAILED" end
+    dibs.SyncV2.Send = function() error("must not broadcast before audit succeeds") end
+    local auditFailure = dibs.MultiLedger.DeleteLedger(
+      "GM-Realm", prop.ledgerId, { confirmed = true })
+    assert_false(auditFailure.ok)
+    assert_equal("AUDIT_WRITE_FAILED", auditFailure.reasonCode)
+    assert_not_nil(dibs.GetDB().ledgers[prop.ledgerId])
+
+    dibs.Governance.PrepareLedgerDeletion = originalPrepare
+    dibs.SyncV2.Send = function() return false, "TRANSPORT_OFFLINE" end
+    local syncFailure = dibs.MultiLedger.DeleteLedger(
+      "GM-Realm", prop.ledgerId, { confirmed = true })
+    assert_false(syncFailure.ok)
+    assert_equal("SYNC_PENDING", syncFailure.reasonCode)
+    assert_equal("TRANSPORT_OFFLINE", syncFailure.syncReasonCode)
+    assert_false(syncFailure.localDeleted)
+    assert_true(syncFailure.retryable)
+    assert_not_nil(dibs.GetDB().ledgers[prop.ledgerId])
+    assert_nil(dibs.GetDB().ledgerDeletionTombstones[prop.ledgerId])
+    assert_not_nil(dibs.GetDB().governance.ledgerDeletionRequests[prop.ledgerId])
+
+    local retryAttempts = 0
+    dibs.SyncV2.Send = function()
+      retryAttempts = retryAttempts + 1
+      return true, "TEST_SENT"
+    end
+    local retry = dibs.MultiLedger.DeleteLedger(
+      "GM-Realm", prop.ledgerId, { confirmed = true })
+    assert_true(retry.ok)
+    assert_true(retry.replayed)
+    assert_equal(1, retryAttempts)
+    assert_nil(dibs.GetDB().ledgers[prop.ledgerId])
+    local tombstone = dibs.GetDB().ledgerDeletionTombstones[prop.ledgerId]
+    assert_true(tombstone.lastBroadcastAt > 0)
+    tombstone.lastBroadcastAt = nil
+    assert_true(dibs.SyncV2.BroadcastPendingLedgerDeletions())
+    assert_equal(2, retryAttempts)
+    assert_not_nil(dibs.GetDB().governance.ledgerDeletionRequests[prop.ledgerId])
+    dibs.SyncV2.Send = originalSend
+    local deletionEvents = 0
+    for _, event in ipairs(dibs.Governance.GetState().auditLog) do
+      if event.action == "LEDGER_DELETED" and event.ledgerId == prop.ledgerId then
+        deletionEvents = deletionEvents + 1
+      end
+    end
+    assert_equal(1, deletionEvents)
+  end)
+
+  it("rejects deletion of an archived active ledger without changing it", function()
+    local dibs = loadGM()
+    local prop = dibs.MultiLedger.ProposeLedger("GM-Realm", "Active Archived")
+    assert_true(prop.ok)
+    assert_true(dibs.MultiLedger.ApproveLedger("GM-Realm", prop.ledgerId).ok)
+    assert_true(dibs.MultiLedger.SetActiveLedger(prop.ledgerId))
+    local ledger = dibs.GetDB().ledgers[prop.ledgerId]
+    ledger.status = "ARCHIVED"
+    local originalSend = dibs.SyncV2.Send
+    dibs.SyncV2.Send = function() return true end
+    local result = dibs.MultiLedger.DeleteLedger("GM-Realm", prop.ledgerId, { confirmed = true })
+    dibs.SyncV2.Send = originalSend
+    assert_false(result.ok)
+    assert_equal("ACTIVE_LEDGER_CANNOT_DELETE", result.reasonCode)
+    assert_equal(prop.ledgerId, dibs.GetDB().activeLedgerId)
+    assert_not_nil(dibs.GetDB().ledgers[prop.ledgerId])
+    assert_nil(dibs.GetDB().ledgerDeletionTombstones[prop.ledgerId])
+  end)
+
   it("rejects permanent deletion of the default ledger", function()
     local dibs = loadGM()
     local originalSend = dibs.SyncV2.Send
@@ -190,6 +320,13 @@ describe("MultiLedger lifecycle", function()
       createdAt = 1700000000,
       createdBy = "RL-Realm",
     }
+    assert_true(dibsMember.Governance.ApplyLedgerApproval("RL-Realm", {
+      id = raidLedgerId,
+      name = "Raid Team 2",
+      status = "APPROVED",
+      approvedAt = 1700000000,
+      approvedBy = "RL-Realm",
+    }))
     assert_equal("guild-primary", dibsMember.MultiLedger.GetActiveLedgerId())
 
     -- Receive raid sync message from RL

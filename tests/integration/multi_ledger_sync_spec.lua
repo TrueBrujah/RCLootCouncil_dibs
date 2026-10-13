@@ -41,6 +41,8 @@ describe("Multi-Ledger synchronization", function()
     -- Member should now have the approved Alt Raid ledger
     local memberLedgers = member.MultiLedger.GetLedgers()
     assert_equal(2, #memberLedgers)
+    assert_true(member.Governance.IsLedgerApproved(prop.ledgerId))
+    assert_not_nil(member.Sync.BuildLedgerDigest(prop.ledgerId))
     local found = nil
     for _, l in ipairs(memberLedgers) do
       if l.id == prop.ledgerId then found = l end
@@ -64,8 +66,41 @@ describe("Multi-Ledger synchronization", function()
 
     local ok, reason = member.Sync.Receive(remote(member, fakeDigest, "Player-Realm"), "Player-Realm")
     assert_false(ok)
-    assert_equal("GUILD_ADMIN_REQUIRED", reason)
+    assert_equal("GUILD_MASTER_REQUIRED", reason)
     assert_equal(1, #member.MultiLedger.GetLedgers())
+  end)
+
+  it("requests alternate-ledger Pre-Dib details while the recipient has the primary ledger active", function()
+    local bootstrap = load("Player-Realm")
+    local memberBootstrap = bootstrap.DeepCopy(bootstrap.GetDB())
+    local gm = load("GameMaster-Realm")
+    local proposal = gm.MultiLedger.ProposeLedger("GameMaster-Realm", "Pre-Dib Alt")
+    assert_true(proposal.ok)
+    assert_true(gm.MultiLedger.ApproveLedger("GameMaster-Realm", proposal.ledgerId).ok)
+    local catalog = gm.Sync.BuildLedgerCatalogDigest()
+    local gmApprovedState = gm.DeepCopy(gm.GetDB())
+
+    local member = load("Player-Realm", memberBootstrap)
+    local catalogOk, catalogReason = member.Sync.Receive(
+      remote(member, catalog, "GameMaster-Realm"), "GameMaster-Realm")
+    assert_true(catalogOk, tostring(catalogReason))
+    assert_true(member.Governance.IsLedgerApproved(proposal.ledgerId))
+    local memberApprovedState = member.DeepCopy(member.GetDB())
+
+    gm = load("GameMaster-Realm", gmApprovedState)
+    local request = gm.PreDibs.CreatePublic("GameMaster-Realm", 21026, "Alt request",
+      gm.GetCurrentSeasonId(), "test", { ledgerId = proposal.ledgerId })
+    assert_not_nil(request)
+    local manifest = gm.Sync.BuildManifest(proposal.ledgerId)
+    member = load("Player-Realm", memberApprovedState)
+    local digestOk, digestReason = member.Sync.Receive(
+      remote(member, manifest, "GameMaster-Realm"), "GameMaster-Realm")
+
+    assert_true(digestOk, tostring(digestReason))
+    assert_equal("DETAIL_REQUESTED", digestReason)
+    assert_equal("guild-primary", member.MultiLedger.GetActiveLedgerId())
+    assert_equal(0, #member.PreDibs.GetHistory(proposal.ledgerId))
+    assert_equal(0, #member.PreDibs.GetHistory("guild-primary"))
   end)
 
   it("accepts an idempotent GM deletion tombstone for an archived ledger", function()
@@ -84,7 +119,7 @@ describe("Multi-Ledger synchronization", function()
       timestamp = 1700000000,
     }, "GameMaster-Realm")
     local ok, reason = member.Sync.Receive(message, "GameMaster-Realm")
-    assert_true(ok)
+    assert_true(ok, tostring(reason))
     assert_equal("LEDGER_DELETED", reason)
     assert_nil(member.GetDB().ledgers[prop.ledgerId])
     assert_not_nil(member.GetDB().ledgerDeletionTombstones[prop.ledgerId])
@@ -110,6 +145,30 @@ describe("Multi-Ledger synchronization", function()
     assert_equal("LEDGER_DELETED", reason)
     assert_nil(member.GetDB().ledgers[prop.ledgerId])
     assert_not_nil(member.GetDB().ledgerDeletionTombstones[prop.ledgerId])
+  end)
+
+  it("does not apply a GM deletion when the governance audit write fails", function()
+    local gm = load("GameMaster-Realm")
+    local prop = gm.MultiLedger.ProposeLedger("GameMaster-Realm", "Audit Protected")
+    assert_true(prop.ok)
+    assert_true(gm.MultiLedger.ApproveLedger("GameMaster-Realm", prop.ledgerId).ok)
+
+    local member = load("Player-Realm", gm.DeepCopy(gm.GetDB()))
+    local originalRecord = member.Governance.RecordLedgerDeletion
+    member.Governance.RecordLedgerDeletion = function() return false, "AUDIT_WRITE_FAILED" end
+    local message = remote(member, {
+      type = "LEDGER_DELETE",
+      ledgerId = prop.ledgerId,
+      deletedBy = "GameMaster-Realm",
+      timestamp = 1700000003,
+    }, "GameMaster-Realm")
+
+    local ok, reason = member.Sync.Receive(message, "GameMaster-Realm")
+    member.Governance.RecordLedgerDeletion = originalRecord
+    assert_false(ok)
+    assert_equal("AUDIT_WRITE_FAILED", reason)
+    assert_not_nil(member.GetDB().ledgers[prop.ledgerId])
+    assert_nil((member.GetDB().ledgerDeletionTombstones or {})[prop.ledgerId])
   end)
 
   it("records a verified GM tombstone for an unknown ledger and blocks stale recreation", function()
@@ -138,6 +197,8 @@ describe("Multi-Ledger synchronization", function()
           id = ledgerId,
           name = "Deleted Before Sync",
           status = "APPROVED",
+          approvedAt = 1700000000,
+          approvedBy = "GameMaster-Realm",
           epoch = 1,
           revision = 0,
           rootHash = "NONE",

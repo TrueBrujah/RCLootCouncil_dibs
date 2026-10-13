@@ -88,12 +88,6 @@ local function localSnapshot(actor, requireGM, requireAssistant)
   if snapshot.memberKey ~= localIdentity.memberKey then return nil, "LOCAL_ACTOR_REQUIRED" end
   local resolved = Dibs.Identity.ResolveRosterMember(snapshot.displayName)
   if not resolved or resolved.status ~= "RESOLVED" then return nil, resolved and resolved.status or "ROSTER_UNAVAILABLE" end
-  -- TEST-ONLY: remove this override before publishing.
-  if (requireGM or requireAssistant)
-    and Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
-    and Dibs.DeveloperMode.IsTestAuthority(actor) then
-    return snapshot
-  end
   if requireGM and resolved.rankIndex ~= 0 then return nil, "CURRENT_GUILD_MASTER_REQUIRED" end
   if requireAssistant and resolved.rankIndex ~= 0 and resolved.role ~= "officer" then return nil, "RECONCILIATION_ASSISTANT_REQUIRED" end
   return snapshot
@@ -390,10 +384,17 @@ end
 -- Collects the local Dibs-owned history only. RCLootCouncil history is deliberately excluded.
 function M.CollectLocalEvidence(actor, sourceId)
   local db = Dibs.GetDB()
-  local ledger, preDibs = db.ledger or {}, db.preDibs or {}
+  local preDibs = db.preDibs or {}
   local ledgerRecords, requestRecords = {}, {}
-  for id, record in pairs(ledger.transactions or {}) do ledgerRecords[#ledgerRecords + 1] = { originalId = id, record = copy(record) } end
-  for _, record in ipairs(preDibs.requests or {}) do requestRecords[#requestRecords + 1] = { originalId = record.requestId, record = copy(record) } end
+  local transactions = Dibs.Ledger and Dibs.Ledger.GetAllTransactions
+    and Dibs.Ledger.GetAllTransactions("guild-primary") or {}
+  local requests = Dibs.PreDibs and Dibs.PreDibs.GetHistory
+    and Dibs.PreDibs.GetHistory("guild-primary") or preDibs.requests or {}
+  for _, record in ipairs(transactions) do
+    local id = record.transactionId
+    ledgerRecords[#ledgerRecords + 1] = { originalId = id, record = copy(record) }
+  end
+  for _, record in ipairs(requests) do requestRecords[#requestRecords + 1] = { originalId = record.requestId, record = copy(record) } end
   table.sort(ledgerRecords, function(a, b) return tostring(a.originalId) < tostring(b.originalId) end)
   table.sort(requestRecords, function(a, b) return tostring(a.originalId) < tostring(b.originalId) end)
   local client = Dibs.GetPlayerName()

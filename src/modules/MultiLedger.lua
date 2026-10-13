@@ -124,9 +124,12 @@ function MultiLedger.SetActiveLedger(arg1, arg2)
       end
     end
   end
-
   if not ledger then return false, "LEDGER_NOT_FOUND" end
   if ledger.status ~= "APPROVED" then return false, "LEDGER_UNAPPROVED" end
+  if Dibs.PreDibs and Dibs.PreDibs.SetLedgerContext then
+    local scoped, scopeReason = Dibs.PreDibs.SetLedgerContext(ledgerId)
+    if not scoped then return false, scopeReason or "LEDGER_NOT_APPROVED" end
+  end
 
   db.activeLedgerId = ledgerId
   db.ledger = ledger
@@ -181,27 +184,40 @@ function MultiLedger.ApproveLedger(actor, ledgerId)
     return { ok = false, reasonCode = decision and decision.reasonCode or "GUILD_MASTER_REQUIRED" }
   end
 
-  if not ledgerId or not db.ledgers[ledgerId] then
+  if type(ledgerId) ~= "string" or ledgerId == "" or not db.ledgers[ledgerId] then
     return { ok = false, reasonCode = "LEDGER_NOT_FOUND" }
   end
 
   local ledger = db.ledgers[ledgerId]
-  local now = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
-  local actorName = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()) or "Unknown"
+  if ledger.status ~= "PROPOSED" and ledger.status ~= "APPROVED" then
+    return { ok = false, reasonCode = "LEDGER_NOT_APPROVABLE" }
+  end
+
+  if not (Dibs.Governance and Dibs.Governance.RecordLedgerApproval) then
+    return { ok = false, reasonCode = "AUDIT_UNAVAILABLE" }
+  end
+  local recorded, recordReason, approval = Dibs.Governance.RecordLedgerApproval(actor, ledgerId, ledger.name)
+  if not recorded then return { ok = false, reasonCode = recordReason or "AUDIT_RECORD_FAILED" } end
 
   ledger.status = "APPROVED"
-  ledger.approvedAt = now
-  ledger.approvedBy = actorName
+  ledger.approvedAt = approval and approval.approvedAt or ledger.approvedAt
+  ledger.approvedBy = approval and approval.approvedBy or ledger.approvedBy
 
-  if Dibs.Governance and Dibs.Governance.RecordLedgerApproval then
-    Dibs.Governance.RecordLedgerApproval(actor, ledgerId, ledger.name)
+  if not (Dibs.SyncV2 and type(Dibs.SyncV2.BroadcastCatalogDigest) == "function") then
+    return { ok = false, reasonCode = "SYNC_PENDING", localApproved = true, retryable = true }
+  end
+  local sent, sendReason = Dibs.SyncV2.BroadcastCatalogDigest()
+  if not sent then
+    return {
+      ok = false,
+      reasonCode = "SYNC_PENDING",
+      syncReasonCode = sendReason,
+      localApproved = true,
+      retryable = true,
+    }
   end
 
-  if Dibs.SyncV2 and Dibs.SyncV2.BroadcastCatalogDigest then
-    Dibs.SyncV2.BroadcastCatalogDigest()
-  end
-
-  return { ok = true }
+  return { ok = true, replayed = recordReason == "IDEMPOTENT_REPLAY" }
 end
 
 function MultiLedger.ArchiveLedger(actor, ledgerId)
@@ -284,25 +300,74 @@ function MultiLedger.DeleteLedger(actor, ledgerId, options)
   end
   if not options or options.confirmed ~= true then return { ok = false, reasonCode = "CONFIRMATION_REQUIRED" } end
   if ledgerId == DEFAULT_LEDGER_ID then return { ok = false, reasonCode = "CANNOT_DELETE_DEFAULT" } end
-  local ledger = db.ledgers[ledgerId]
-  if not ledger then return { ok = false, reasonCode = "LEDGER_NOT_FOUND" } end
-  if ledger.status ~= "ARCHIVED" then return { ok = false, reasonCode = "LEDGER_MUST_BE_ARCHIVED" } end
+  if type(ledgerId) ~= "string" or ledgerId == "" then return { ok = false, reasonCode = "INVALID_LEDGER_ID" } end
   if not (Dibs.SyncV2 and type(Dibs.SyncV2.Send) == "function") then
     return { ok = false, reasonCode = "SYNC_UNAVAILABLE" }
   end
-  local actorName = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()) or "Unknown"
-  local timestamp = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+
+  local tombstones = ensureDeletionTombstones(db)
+  local existingTombstone = tombstones[ledgerId]
+  local ledger = db.ledgers[ledgerId]
+  if not existingTombstone then
+    if not ledger then return { ok = false, reasonCode = "LEDGER_NOT_FOUND" } end
+    if ledger.status ~= "ARCHIVED" then return { ok = false, reasonCode = "LEDGER_MUST_BE_ARCHIVED" } end
+    if db.activeLedgerId == ledgerId then return { ok = false, reasonCode = "ACTIVE_LEDGER_CANNOT_DELETE" } end
+  end
+
+  if not (Dibs.Governance and type(Dibs.Governance.RecordLedgerDeletion) == "function") then
+    return { ok = false, reasonCode = "AUDIT_UNAVAILABLE" }
+  end
+  local ledgerName = (existingTombstone and existingTombstone.name) or (ledger and ledger.name) or ledgerId
+  local timestamp, actorName
+  local replayed = existingTombstone ~= nil
+  if not existingTombstone then
+    if type(Dibs.Governance.PrepareLedgerDeletion) ~= "function" then
+      return { ok = false, reasonCode = "AUDIT_UNAVAILABLE" }
+    end
+    local prepared, prepareReason, request = Dibs.Governance.PrepareLedgerDeletion(actor, ledgerId, ledgerName)
+    if not prepared then return { ok = false, reasonCode = prepareReason or "AUDIT_RECORD_FAILED" } end
+    replayed = prepareReason == "IDEMPOTENT_REPLAY"
+    timestamp = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+    actorName = (Dibs.GetPlayerName and Dibs.GetPlayerName()) or (request and request.actor) or "Unknown"
+  else
+    local recorded, recordReason = Dibs.Governance.RecordLedgerDeletion(actor, ledgerId, ledgerName)
+    if not recorded then return { ok = false, reasonCode = recordReason or "AUDIT_RECORD_FAILED" } end
+    timestamp = existingTombstone.deletedAt
+    actorName = existingTombstone.deletedBy
+  end
+
   local sent, sendReason = Dibs.SyncV2.Send({
     type = "LEDGER_DELETE",
     ledgerId = ledgerId,
     deletedBy = actorName,
     timestamp = timestamp,
+    name = ledgerName,
   }, "GUILD")
-  if not sent then return { ok = false, reasonCode = sendReason or "SYNC_UNAVAILABLE" } end
-  local recorded, recordReason = Dibs.Governance and Dibs.Governance.RecordLedgerDeletion
-    and Dibs.Governance.RecordLedgerDeletion(actor, ledgerId, ledger.name)
-  if not recorded then return { ok = false, reasonCode = recordReason or "AUDIT_RECORD_FAILED" } end
-  return MultiLedger.ApplyLedgerDeletion(actor, ledgerId, { timestamp = timestamp, deletedBy = actorName })
+  if not sent then
+    return {
+      ok = false,
+      reasonCode = "SYNC_PENDING",
+      syncReasonCode = sendReason,
+      localDeleted = existingTombstone ~= nil,
+      retryable = true,
+    }
+  end
+
+  if not existingTombstone then
+    local recorded, recordReason, auditRecord = Dibs.Governance.RecordLedgerDeletion(actor, ledgerId, ledgerName)
+    if not recorded then return { ok = false, reasonCode = recordReason or "AUDIT_RECORD_FAILED" } end
+    actorName = auditRecord and auditRecord.actor or actorName
+    local applied = MultiLedger.ApplyLedgerDeletion(actor, ledgerId, {
+      timestamp = timestamp,
+      deletedBy = actorName,
+    })
+    if not applied or not applied.ok then
+      return { ok = false, reasonCode = applied and applied.reasonCode or "LEDGER_DELETE_FAILED" }
+    end
+    existingTombstone = tombstones[ledgerId]
+  end
+  existingTombstone.lastBroadcastAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  return { ok = true, replayed = replayed }
 end
 
 local function getSenderRaidAuthority(sender)
@@ -321,11 +386,6 @@ local function getSenderRaidAuthority(sender)
     if ok and isAssist then return true end
     local ok2, isAssist2 = pcall(UnitIsGroupAssistant, cleanSender)
     if ok2 and isAssist2 then return true end
-  end
-
-  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsTestAuthority
-    and Dibs.DeveloperMode.IsTestAuthority(sender) then
-    return true
   end
 
   if Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.GetMasterLooter) == "function" then
@@ -358,10 +418,6 @@ function MultiLedger.CanBroadcastRaidLedger(actor)
   end
 
   local actorName = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()) or "player"
-  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsTestAuthority
-    and Dibs.DeveloperMode.IsTestAuthority(actorName) then
-    return true
-  end
   if type(UnitIsGroupLeader) == "function" and UnitIsGroupLeader("player") then
     return true
   end

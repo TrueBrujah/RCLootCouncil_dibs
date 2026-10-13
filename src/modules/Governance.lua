@@ -295,11 +295,6 @@ local function currentGMSnapshot(actor)
   if not Dibs.Identity or type(Dibs.Identity.CreateSnapshot) ~= "function" then return nil, "IDENTITY_UNAVAILABLE" end
   local snapshot, reason = Dibs.Identity.CreateSnapshot(actor)
   if not snapshot then return nil, reason end
-  -- TEST-ONLY: remove this override before publishing.
-  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
-    and Dibs.DeveloperMode.IsTestAuthority(actor) then
-    return snapshot
-  end
   local isGM, gmReason = Dibs.Identity.IsCurrentGuildMaster(snapshot)
   if not isGM then return nil, gmReason end
   return snapshot
@@ -759,34 +754,101 @@ function Governance.RecordLedgerApproval(actor, ledgerId, ledgerName)
   local gm, gmReason = currentGMSnapshot(actor)
   if not gm then return false, gmReason end
   state.approvedLedgers = state.approvedLedgers or {}
-  state.approvedLedgers[ledgerId] = {
+  local existing = state.approvedLedgers[ledgerId]
+  if existing then
+    if existing.status ~= "APPROVED" or existing.name ~= (ledgerName or ledgerId) then
+      return false, "LEDGER_APPROVAL_CONFLICT"
+    end
+    return true, "IDEMPOTENT_REPLAY", copy(existing)
+  end
+  local approval = {
     id = ledgerId,
     name = ledgerName or ledgerId,
     approvedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
     approvedBy = gm.displayName,
     status = "APPROVED",
   }
+  state.approvedLedgers[ledgerId] = {
+    id = approval.id,
+    name = approval.name,
+    approvedAt = approval.approvedAt,
+    approvedBy = approval.approvedBy,
+    status = approval.status,
+  }
   boundedInsert(state.auditLog, {
     action = "LEDGER_APPROVED",
     ledgerId = ledgerId,
     actor = gm.displayName,
-    timestamp = state.approvedLedgers[ledgerId].approvedAt,
+    timestamp = approval.approvedAt,
   }, 100)
+  return true, nil, copy(approval)
+end
+
+function Governance.ApplyLedgerApproval(sender, record)
+  if type(record) ~= "table" or type(record.id) ~= "string" or record.id == ""
+    or record.status ~= "APPROVED" or type(record.name) ~= "string"
+    or type(record.approvedBy) ~= "string" or not isInteger(record.approvedAt) then
+    return false, "INVALID_LEDGER_APPROVAL"
+  end
+  local snapshot, snapshotReason = Dibs.Identity and Dibs.Identity.CreateSnapshot
+    and Dibs.Identity.CreateSnapshot(sender)
+  if not snapshot then return false, snapshotReason or "IDENTITY_UNAVAILABLE" end
+  local isGM, gmReason = Dibs.Identity.IsCurrentGuildMaster(snapshot)
+  if not isGM then return false, gmReason or "GUILD_MASTER_REQUIRED" end
+  local state = ensureState()
+  state.approvedLedgers = state.approvedLedgers or {}
+  state.approvedLedgers[record.id] = {
+    id = record.id,
+    name = record.name,
+    approvedAt = record.approvedAt,
+    approvedBy = snapshot.displayName,
+    status = "APPROVED",
+  }
   return true
+end
+
+function Governance.PrepareLedgerDeletion(actor, ledgerId, ledgerName)
+  local state = ensureState()
+  local gm, gmReason = currentGMSnapshot(actor)
+  if not gm then return false, gmReason end
+  state.ledgerDeletionRequests = state.ledgerDeletionRequests or {}
+  local existing = state.ledgerDeletionRequests[ledgerId]
+  if existing then return true, "IDEMPOTENT_REPLAY", copy(existing) end
+  local request = {
+    action = "LEDGER_DELETION_AUTHORIZED",
+    ledgerId = ledgerId,
+    ledgerName = ledgerName or ledgerId,
+    actor = gm.displayName,
+    timestamp = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
+  }
+  state.ledgerDeletionRequests[ledgerId] = copy(request)
+  boundedInsert(state.auditLog, copy(request), 100)
+  return true, nil, copy(request)
 end
 
 function Governance.RecordLedgerDeletion(actor, ledgerId, ledgerName)
   local state = ensureState()
   local gm, gmReason = currentGMSnapshot(actor)
   if not gm then return false, gmReason end
-  boundedInsert(state.auditLog, {
+  state.ledgerDeletionRecords = state.ledgerDeletionRecords or {}
+  local existing = state.ledgerDeletionRecords[ledgerId]
+  if existing then return true, "IDEMPOTENT_REPLAY", copy(existing) end
+  local record = {
     action = "LEDGER_DELETED",
     ledgerId = ledgerId,
     ledgerName = ledgerName or ledgerId,
     actor = gm.displayName,
     timestamp = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
+  }
+  state.ledgerDeletionRecords[ledgerId] = copy(record)
+  boundedInsert(state.auditLog, {
+    action = record.action,
+    ledgerId = record.ledgerId,
+    ledgerName = record.ledgerName,
+    actor = record.actor,
+    timestamp = record.timestamp,
   }, 100)
-  return true
+  return true, nil, copy(record)
 end
 
 function Governance.IsLedgerApproved(ledgerId)

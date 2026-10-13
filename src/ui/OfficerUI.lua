@@ -105,7 +105,7 @@ local OFFICER_NAV_TREE = {
   { section = "GUILD RULES", text = "Announcements", value = "announcements", module = "announcements" },
   { section = "GUILD RULES", text = "Loot Eligibility", value = "eligibility", module = "lootEligibility" },
   { section = "INTEGRATIONS", text = "RCLootCouncil", value = "integration", module = "rclootcouncil" },
-  { section = "INTEGRATIONS", text = "Independent Raid", value = "independentRaid" },
+  { section = "INTEGRATIONS", text = "Independent Raid", value = "independentRaid", module = "rclootcouncil" },
   { section = "SYSTEM", text = "Settings", value = "settings" },
   { section = "SYSTEM", text = "Pre-Dibs Settings", value = "preDibs", module = "preDibs" },
   { section = "SYSTEM", text = "Modules", value = "modules" },
@@ -2926,7 +2926,7 @@ local function renderIndependentRaidPage(shell, parent, frame)
   if active then
     local session = Dibs.IndependentRaid.GetActiveSession()
     Dibs.AceGUI.AddLabel(shell, parent, "Status: ACTIVE SESSION IN PROGRESS", true)
-    Dibs.AceGUI.AddLabel(shell, parent, "Session Title: " .. tostring(session and session.title or "Unknown"), true)
+    Dibs.AceGUI.AddLabel(shell, parent, "Session Title: " .. tostring(session and session.name or "Unknown"), true)
     Dibs.AceGUI.AddLabel(shell, parent, "Starting Points: " .. tostring(session and session.startingPoints or 1), true)
     Dibs.AceGUI.AddLabel(shell, parent, "Network Sync: INHIBITED (Zero guild traffic)", true)
 
@@ -2962,13 +2962,13 @@ local function renderIndependentRaidPage(shell, parent, frame)
   end
 
   Dibs.AceGUI.AddHeading(shell, parent, "Past Sessions History", "Review previous independent raid sessions, export results, or reconcile awards into guild ledgers.")
-  local sessions = Dibs.IndependentRaid and Dibs.IndependentRaid.GetSessions and Dibs.IndependentRaid.GetSessions() or {}
+  local sessions = Dibs.IndependentRaid and Dibs.IndependentRaid.GetPastSessions and Dibs.IndependentRaid.GetPastSessions() or {}
   if #sessions == 0 then
     Dibs.AceGUI.AddLabel(shell, parent, "No past independent sessions recorded.", true)
   else
     for _, s in ipairs(sessions) do
       local awardCount = #(s.awards or {})
-      local headerText = string.format("%s (%s) - %d award(s)", tostring(s.title or s.id), tostring(s.status), awardCount)
+      local headerText = string.format("%s (%s) - %d award(s)", tostring(s.name or s.id), tostring(s.status), awardCount)
       Dibs.AceGUI.AddLabel(shell, parent, headerText, true)
       for _, awd in ipairs(s.awards or {}) do
         local awdText = string.format("  - %s: %s (Spent: %d)%s", tostring(awd.recipient), tostring(awd.itemLink or awd.itemID or "Item"), tonumber(awd.dibsSpent) or 0, awd.reconciled and " [Reconciled]" or "")

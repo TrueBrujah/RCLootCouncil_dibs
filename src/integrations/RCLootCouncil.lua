@@ -1987,9 +1987,8 @@ local getCandidateStatus
 
 local function buildLootFramePreDibIndex(seasonId)
   local index = {}
-  if not Dibs.GetDB then return index end
-  local db = Dibs.GetDB()
-  local requests = db and db.preDibs and db.preDibs.requests
+  if not Dibs.PreDibs or not Dibs.PreDibs.GetHistory then return index end
+  local requests = Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory()
   if type(requests) ~= "table" then return index end
 
   for _, request in ipairs(requests) do
@@ -2850,21 +2849,11 @@ function Dibs.RCLootCouncil.IsAvailable()
 end
 
 function Dibs.RCLootCouncil.GetMasterLooter()
-  -- TEST-ONLY: remove this override before publishing.
-  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
-    and Dibs.DeveloperMode.IsTestAuthority() then
-    return Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
-  end
   local rc = getRC()
   return rc and (rc.masterLooter or rc.masterLooterName) or nil
 end
 
 function Dibs.RCLootCouncil.IsMasterLooter(actor)
-  -- TEST-ONLY: remove this override before publishing.
-  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
-    and Dibs.DeveloperMode.IsTestAuthority(actor) then
-    return true
-  end
   local master = Dibs.RCLootCouncil.GetMasterLooter()
   local actorId = playerIdentity(actor or (Dibs.GetPlayerName and Dibs.GetPlayerName() or nil))
   local masterId = playerIdentity(master)
@@ -2888,11 +2877,6 @@ function Dibs.RCLootCouncil.EvaluateAuthority(actionId, actor)
     or (localNameId and string.lower(tostring(actorId)) == string.lower(tostring(localNameId)))
   if not actorIsLocal then
     return { allowed = false, authority = "rclootcouncil", availability = before, actionId = actionId, actorId = actorId, reasonCode = "RC_ACTOR_NOT_LOCAL", diagnostic = text("AUTHORITY_RC_NOT_LOCAL", "Only the local RCLootCouncil Master Looter may finalize this action.") }
-  end
-  -- TEST-ONLY: remove this override before publishing.
-  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
-    and Dibs.DeveloperMode.IsTestAuthority(actor) then
-    return { allowed = true, authority = "rclootcouncil", availability = before, actionId = actionId, actorId = actorId, reasonCode = "RC_TEST_AUTHORIZED", diagnostic = "Authorized by the temporary Developer Mode test authority." }
   end
   local after = Dibs.RCLootCouncil.GetAvailability()
   local currentRC = getRC()
@@ -3134,20 +3118,65 @@ local function normalizeAwardEvidence(callback, session, winner, status, itemLin
   return evidence
 end
 
+local function normalizeIndependentAwardEvidence(callback, session, winner, status, itemLink, responseText, historyId)
+  local rc = getRC()
+  local profile, profileReason, rcVersion = detectAwardAdapterProfile(rc)
+  if not profile then return nil, profileReason or "AWARD_EVIDENCE_UNSUPPORTED" end
+  if callback ~= profile.callback then return nil, "RC_AWARD_CALLBACK_UNSUPPORTED" end
+  if not winner or not itemLink then return nil, "AWARD_INVALID" end
+  local statusKey = string.lower(tostring(status or ""))
+  if profile.finalStatuses[statusKey] ~= "FINAL_AWARD" then return nil, "AWARD_STATUS_UNSUPPORTED" end
+  local itemID = tonumber(tostring(itemLink):match("item:(%d+)"))
+  if not itemID then return nil, "AWARD_INVALID_ITEM" end
+  local response, responseReason = normalizeDibResponse(responseText, rc)
+  local isDib = response == "DIB"
+  local responseTextNormalized = tostring(responseText or ""):match("^%s*(.-)%s*$")
+  if responseTextNormalized == "" then return nil, "AWARD_RESPONSE_UNAVAILABLE" end
+  local responseType = getAwardResponseType(rc, session)
+  local ref
+  if isDib then
+    local evidence, reason = normalizeAwardEvidence(callback, session, winner, status, itemLink, responseText, historyId)
+    if not evidence then return nil, reason end
+    return evidence, true
+  elseif responseReason == "AMBIGUOUS_RESPONSE" then
+    return nil, responseReason
+  elseif profile.identitySource == "history" then
+    local ml = getRCMLModule(rc)
+    local entry = ml and ml.lootTable and ml.lootTable[tonumber(session)]
+    local history = entry and entry.history
+    local historyItemID = history and tonumber(tostring(history.lootWon or ""):match("item:(%d+)"))
+    local historyResponse = tostring(history and history.response or ""):match("^%s*(.-)%s*$")
+    if not historyId or not history or tostring(history.id) ~= tostring(historyId)
+      or historyItemID ~= itemID or string.lower(historyResponse or "") ~= string.lower(responseTextNormalized) then
+      return nil, "AWARD_IDENTITY_UNAVAILABLE"
+    end
+    ref = "history:" .. tostring(historyId)
+  else
+    local identityReason
+    ref, identityReason = getAwardIdentity(rc, session, winner, itemID, itemLink, profile, historyId)
+    if not ref then return nil, identityReason or "AWARD_IDENTITY_UNAVAILABLE" end
+  end
+  local recipient = playerNameIdentity(winner)
+  if not recipient or not tostring(winner):find("-", 1, true) then return nil, "AWARD_IDENTITY_UNAVAILABLE" end
+  return {
+    evidenceSchemaVersion = profile.evidenceSchemaVersion,
+    adapterProfile = profile.id, rcVersion = rcVersion, callback = callback,
+    semanticStatus = "FINAL_AWARD", recipient = recipient, playerName = tostring(winner),
+    itemID = itemID, itemLink = tostring(itemLink), response = response or responseTextNormalized,
+    responseType = responseType, awardRef = ref, evidenceId = "rclc:" .. ref,
+  }, false
+end
+
 -- Narrow award-adapter entry point. It admits only a documented callback from
 -- an exact profile, persists no RC table, and can reach accounting solely via
 -- the protected command boundary.
 function Dibs.RCLootCouncil.HandleAwardCallback(callback, session, winner, status, itemLink, responseText, historyId)
   if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
-    local isDib = isDibLabel(responseText) or (Dibs.RCLootCouncil.NormalizeDibResponse(responseText) == "DIB")
-    local itemID = tonumber(tostring(itemLink or ""):match("item:(%d+)"))
-    return Dibs.IndependentRaid.RecordAward(winner, itemID, itemLink, isDib, {
-      callback = callback,
-      session = session,
-      status = status,
-      historyId = historyId,
-      responseText = responseText,
-    })
+    local evidence, isDibOrReason = normalizeIndependentAwardEvidence(
+      callback, session, winner, status, itemLink, responseText, historyId)
+    if not evidence then return ignoredAward(isDibOrReason) end
+    return Dibs.IndependentRaid.RecordAward(evidence.playerName, evidence.itemID, evidence.itemLink,
+      isDibOrReason, evidence)
   end
   if not Dibs.ProtectedActions then return ignoredAward("AWARD_INVALID") end
   local mode = Dibs.Permissions and Dibs.Permissions.GetInstallationMode and Dibs.Permissions.GetInstallationMode() or "AUTO"

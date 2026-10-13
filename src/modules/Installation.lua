@@ -25,11 +25,6 @@ local function actorSnapshot(actor)
 end
 
 local function isGM(actor)
-  -- TEST-ONLY: remove this override before publishing.
-  if Dibs.DeveloperMode and type(Dibs.DeveloperMode.IsTestAuthority) == "function"
-    and Dibs.DeveloperMode.IsTestAuthority(actor) then
-    return true
-  end
   if not Dibs.Identity or type(Dibs.Identity.IsCurrentGuildMaster) ~= "function" then return false end
   return Dibs.Identity.IsCurrentGuildMaster(actor or localPlayer()) == true
 end
@@ -79,7 +74,10 @@ local function detectRealLegacyData()
   end
   local preDibCount = 0
   local db = Dibs.GetDB and Dibs.GetDB()
-  if type(db) == "table" and type(db.preDibs) == "table" and type(db.preDibs.requests) == "table" then
+  if Dibs.PreDibs and Dibs.PreDibs.GetHistory then
+    local requests = Dibs.PreDibs.GetHistory()
+    if type(requests) == "table" then preDibCount = #requests end
+  elseif type(db) == "table" and type(db.preDibs) == "table" and type(db.preDibs.requests) == "table" then
     preDibCount = #db.preDibs.requests
   end
   return ledgerCount > 0 or preDibCount > 0, ledgerCount, preDibCount

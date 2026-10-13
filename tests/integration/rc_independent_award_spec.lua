@@ -45,6 +45,16 @@ describe("RCLootCouncil Independent Raid Award Integration", function()
     assert_true(result1.ok)
     assert_equal("independent_consumed", result1.outcome)
     assert_equal(0, dibs.IndependentRaid.GetPlayerBalance("RaiderA-Realm"))
+    local duplicate = dibs.RCLootCouncil.HandleAwardCallback(
+      "RCMLAwardSuccess", 7, "RaiderA-Realm", "normal", "item:19019", "DIB", "1700000000-1")
+    assert_true(duplicate.ok)
+    assert_true(duplicate.duplicate)
+    assert_equal(0, dibs.IndependentRaid.GetPlayerBalance("RaiderA-Realm"))
+
+    local missingIdentity = dibs.RCLootCouncil.HandleAwardCallback(
+      "RCMLAwardSuccess", 7, "RaiderA-Realm", "normal", "item:19019", "DIB")
+    assert_false(missingIdentity.ok)
+    assert_equal("AWARD_IDENTITY_UNAVAILABLE", missingIdentity.reasonCode)
 
     -- Verify guild sync is inhibited during independent session
     local sentToGuild = dibs.Sync.Send({ type = "HELLO" }, "GUILD")
