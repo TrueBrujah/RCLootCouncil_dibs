@@ -128,6 +128,7 @@ local function ensureRaidDibsChannel()
 end
 
 local DEFAULT_LEDGER_ID = "guild-primary"
+local migratedRequestLists = setmetatable({}, { __mode = "k" })
 
 local function activeLedgerId()
   return Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
@@ -161,6 +162,7 @@ local function ensureState(targetLedgerId, bindActive)
     for _, request in ipairs(primary.requests) do
       if type(request) == "table" and request.ledgerId == nil then request.ledgerId = DEFAULT_LEDGER_ID end
     end
+    migratedRequestLists[primary.requests] = true
     root.ledgers[DEFAULT_LEDGER_ID] = primary
     root.ledgerStorageVersion = 1
   end
@@ -177,8 +179,11 @@ local function ensureState(targetLedgerId, bindActive)
   store.modePolicies = type(store.modePolicies) == "table" and store.modePolicies or {}
   store.vaultConflicts = type(store.vaultConflicts) == "table" and store.vaultConflicts or {}
   store.ledgerId = ledgerId
-  for _, request in ipairs(store.requests) do
-    if type(request) == "table" and request.ledgerId == nil then request.ledgerId = ledgerId end
+  if not migratedRequestLists[store.requests] then
+    for _, request in ipairs(store.requests) do
+      if type(request) == "table" and request.ledgerId == nil then request.ledgerId = ledgerId end
+    end
+    migratedRequestLists[store.requests] = true
   end
   if bindActive == true or ledgerId == activeLedgerId() then
     root.requests, root.modePolicies, root.vaultConflicts = store.requests, store.modePolicies, store.vaultConflicts

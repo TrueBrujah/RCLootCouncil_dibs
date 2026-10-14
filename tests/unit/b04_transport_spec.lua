@@ -236,9 +236,10 @@ describe("B04 V2 transport", function()
 
   it("sends bounded GUILD digests and fetches missing detail by WHISPER", function()
     local dibs = load(); local payload = request(dibs, 2, "cancelled")
-    local digest = remote(dibs, { type = "DIGEST", entityType = "PREDIB_INDEX", entityId = "current", revision = 1, contentHash = "index", index = { { requestId = payload.requestId, revision = payload.revision, contentHash = dibs.Sync.CalculateRequestHash(payload), terminal = true } } }, "Officer-Realm")
+    local index = { { requestId = payload.requestId, revision = payload.revision, contentHash = dibs.Sync.CalculateRequestHash(payload), terminal = true } }
+    local digest = remote(dibs, { type = "DIGEST", entityType = "PREDIB_INDEX", entityId = "current", revision = 1, contentHash = dibs.Sync.CalculateContentHash(index), index = index }, "Officer-Realm")
     local ok, reason = dibs.Sync.Receive(digest, "Officer-Realm")
-    assert_true(ok); assert_equal("DETAIL_REQUESTED", reason); assert_true(dibs.Sync.IsSyncBehind())
+    assert_true(ok, tostring(reason)); assert_equal("DETAIL_REQUESTED", reason); assert_true(dibs.Sync.IsSyncBehind())
     local sent = dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent]
     assert_equal("WHISPER", sent.channel)
   end)
@@ -343,7 +344,7 @@ describe("B04 V2 transport", function()
     local ok, reason = transfer(dibs, payload)
     assert_true(ok, tostring(reason)); assert_equal("APPLIED", reason)
     assert_equal("fulfilled", dibs.PreDibs.GetHistory()[1].status)
-    assert_not_nil(dibs.GetDB().sync.v2.tombstones[payload.requestId])
+    assert_not_nil(dibs.GetDB().sync.v2.tombstones["guild-primary|" .. payload.requestId])
   end)
 
   it("allows officer-to-officer detail relay but rejects it for a player", function()

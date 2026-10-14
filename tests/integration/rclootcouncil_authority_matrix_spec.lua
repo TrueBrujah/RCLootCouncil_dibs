@@ -9,14 +9,15 @@ local function settingsDecision(wowOptions, rcOptions)
 end
 
 describe("RCLootCouncil authority matrix", function()
-  it("keeps GM-only settings independent of raid roles", function()
+  it("permits Officer settings while keeping raid roles independent", function()
     local gm, gmDibs = settingsDecision({ playerName = "GM-Realm", playerGUID = "Player-1-GM", guildLeader = true, guildMembers = { "GM-Realm" }, guildRankIndices = { [1] = 0 } }, { masterLooter = { guid = "Player-2-ML", name = "ML-Realm" } })
     local officer, officerDibs = settingsDecision({ playerName = "Officer-Realm", playerGUID = "Player-2-OFFICER", guildLeader = false, guildMembers = { "Officer-Realm" }, guildRankIndices = { [1] = 1 } }, { masterLooter = { guid = "Player-3-ML", name = "ML-Realm" } })
 
     assert_true(gm.allowed)
     assert_equal("gm", gm.role)
-    assert_false(officer.allowed)
-    assert_equal("GUILD_MASTER_REQUIRED", officer.reasonCode)
+    assert_true(officer.allowed)
+    assert_equal("officer", officer.role)
+    assert_equal("GUILD_OFFICER", officer.reasonCode)
   end)
 
   it("does not let a local non-admin Master Looter bypass guild authority", function()
