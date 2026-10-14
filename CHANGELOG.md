@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.4 - Guided setup, multi-ledger, and rank controls - 2026-10-13
+## 0.8.5 - Guided setup, multi-ledger, and rank controls - 2026-10-13
 
 - Replace the fourteen-page Guided Setup navigation with Choose, Configure, and Verify. Add Progression, Standard Loot, and Custom profiles with change previews, preserved-data explanations, deferred approvals, idempotent application, and explicit partial-failure details.
 - Add plain-language blocker causes, impacts, and direct correction routes while keeping warnings and optional raid context distinct.
@@ -13,6 +13,7 @@
 - (2026-10-13) Continue migrating legacy Pre-Dib requests appended by later snapshots without rescanning unchanged requests on every read; existing request history and ledger ownership remain unchanged.
 - (2026-10-13) Route unscoped legacy snapshot requests to `guild-primary` even while an alternate ledger is active; explicitly scoped requests remain isolated to their approved ledger.
 - (2026-10-13) Reject malformed explicit snapshot ledger scopes instead of treating false values as legacy omissions; no request is silently reassigned.
+- (2026-10-13) Bump the addon version for the behavior and synchronization fixes included in this release candidate; guild data and protocol compatibility remain unchanged.
 
 ## 0.8.3 - Guild whisper addressing and Pre-Dib loot rows - 2026-10-08
 
