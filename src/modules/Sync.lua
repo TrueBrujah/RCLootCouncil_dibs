@@ -428,9 +428,6 @@ function Dibs.Sync.ApplySnapshot(snapshot, actor)
   end
 
   if type(snapshot.preDibs) == "table" then
-    local db = Dibs.GetDB()
-    db.preDibs = db.preDibs or { requests = {} }
-    db.preDibs.requests = db.preDibs.requests or {}
     for _, request in ipairs(snapshot.preDibs) do
       if type(request) ~= "table" or type(request.requestId) ~= "string" or #request.requestId > 96
         or type(request.playerName) ~= "string" or #request.playerName > 64
@@ -438,12 +435,16 @@ function Dibs.Sync.ApplySnapshot(snapshot, actor)
         or type(request.seasonId) ~= "string" or type(request.status) ~= "string"
         or (request.status ~= "pending" and request.status ~= "confirmed" and request.status ~= "cancelled" and request.status ~= "invalidated" and request.status ~= "fulfilled")
       then return false end
+      local ledgerId = request.ledgerId or "guild-primary"
+      local requests, historyReason = Dibs.PreDibs.GetHistory(ledgerId)
+      if not requests then return false, historyReason end
+      request.ledgerId = ledgerId
       local found
-      for _, existing in ipairs(db.preDibs.requests) do
+      for _, existing in ipairs(requests) do
         if existing.requestId == request.requestId then found = existing break end
       end
       if not found then
-        table.insert(db.preDibs.requests, request)
+        table.insert(requests, request)
       elseif (tonumber(request.revision) or 1) > (tonumber(found.revision) or 1) then
         if found.playerName ~= request.playerName or tonumber(found.itemID) ~= tonumber(request.itemID) or found.seasonId ~= request.seasonId then
           return false
