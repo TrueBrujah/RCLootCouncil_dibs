@@ -25,7 +25,7 @@ describe("B03 local canonical ledger", function()
     local dibs = load()
     local before = dibs.Ledger.GetBalance("Tester-Realm")
     local result = command(dibs, { transactionId = "use" })
-    assert_true(result.accepted)
+    assert_true(result.accepted, tostring(result.reasonCode))
     assert_equal("COMMITTED_LOCAL", result.reasonCode)
     assert_equal(before - 1, dibs.Ledger.GetBalance("Tester-Realm"))
     assert_equal("tester-realm", result.value.memberKey)
@@ -113,17 +113,21 @@ describe("B03 local canonical ledger", function()
 
   it("isolates transactions between different ledger partitions", function()
     local dibs = load()
+    dibs.SyncV2.BroadcastCatalogDigest = function() return true, "TEST_SENT" end
     local primaryBefore = dibs.Ledger.GetBalance("Tester-Realm", nil, "guild-primary")
+    local proposal = dibs.MultiLedger.ProposeLedger("Tester-Realm", "Alt raid")
+    assert_true(proposal.ok)
+    assert_true(dibs.MultiLedger.ApproveLedger("Tester-Realm", proposal.ledgerId).ok)
 
     -- Commit transaction in secondary ledger partition
-    local result = command(dibs, { transactionId = "alt-grant", type = "DIB_GRANTED", amount = 2 }, { action = "ledger.grant", ledgerId = "alt-raid" })
-    assert_true(result.accepted)
+    local result = command(dibs, { transactionId = "alt-grant", type = "DIB_GRANTED", amount = 2 }, { action = "ledger.grant", ledgerId = proposal.ledgerId })
+    assert_true(result.accepted, tostring(result.reasonCode))
     assert_equal("COMMITTED_LOCAL", result.reasonCode)
 
     -- Primary balance must be unchanged
     assert_equal(primaryBefore, dibs.Ledger.GetBalance("Tester-Realm", nil, "guild-primary"))
     -- Alt raid balance must reflect the grant
-    assert_equal(2, dibs.Ledger.GetBalance("Tester-Realm", nil, "alt-raid"))
+    assert_equal(2, dibs.Ledger.GetBalance("Tester-Realm", nil, proposal.ledgerId))
   end)
 
   it("returns copies from read APIs and leaves B02a identity/governance available", function()

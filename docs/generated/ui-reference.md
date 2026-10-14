@@ -105,7 +105,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer
 
 **English:** Choose destinations for public Pre-Dib notices and Officer-only notices. Availability depends on this character joining the configured channel; test it before live use.
 **Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
-Source: `src/modules/PreDibs.lua:540` (`Dibs.PreDibs.GetAnnouncementSettings`)
+Source: `src/modules/PreDibs.lua:545` (`Dibs.PreDibs.GetAnnouncementSettings`)
 
 ## Encounter Mode (`predibs.encounter.mode`)
 
@@ -113,7 +113,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer, player
 
 **English:** Controls when players may submit a Pre-Dib. Encounter mode requires the matching raid and difficulty context; Wild Open may allow requests outside the raid under guild policy.
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
-Source: `src/modules/PreDibs.lua:518` (`Dibs.PreDibs.ValidatePublicRequest`)
+Source: `src/modules/PreDibs.lua:523` (`Dibs.PreDibs.ValidatePublicRequest`)
 
 ## Pre-Dib Request (`predibs.request`)
 
@@ -121,7 +121,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer, player
 
 **English:** A Pre-Dib records your interest in eligible loot. It does not award an item or spend a Dib; that happens only after a qualifying award is finalized.
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
-Source: `src/modules/PreDibs.lua:647` (`Dibs.PreDibs.CreatePublic`)
+Source: `src/modules/PreDibs.lua:652` (`Dibs.PreDibs.CreatePublic`)
 
 ## Rank Allocation (`rank.allocation`)
 

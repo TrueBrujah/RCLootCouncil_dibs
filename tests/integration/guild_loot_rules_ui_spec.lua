@@ -67,7 +67,7 @@ describe("Guild-authoritative Loot Rules UI", function()
     assert_equal(revision + 1, gm.Seasons.GetCatalogState().catalogRevision)
   end)
 
-  it("LRA11 renders adopted authority read-only for an Officer", function()
+  it("LRA11 lets an Officer edit a local draft without publishing guild authority", function()
     local gm = load("GameMaster-Realm")
     adoptPolicy(gm)
     local templateId = gm.RCOptions.CreateButtonTemplate("Shared assignment")
@@ -81,15 +81,17 @@ describe("Guild-authoritative Loot Rules UI", function()
     officer.OfficerUI.CreateWindow("lootTypes")
     local assignment = _G.DibsOfficerFrame.rcLootTemplateControls.TOKEN
     assert_not_nil(assignment)
-    assert_true(assignment.disabled)
+    assert_false(assignment.disabled)
     assert_equal("default", officer.RCOptions.GetButtonTemplateAssignment("TOKEN"))
     assert_equal(revision, officer.Seasons.GetCatalogState().catalogRevision)
     assert_not_nil(widget("Label", officer.L.LOOT_RULES_MANAGED_READ_ONLY))
     assert_equal(nil, widget("Button", "Adopt reviewed Loot Rules"))
     assert_equal(nil, widget("Button", "Publish Loot Rules changes"))
+    local checkboxes = 0
     for _, candidate in ipairs(_G.__dibsAceWidgets or {}) do
-      assert_true(candidate.kind ~= "CheckBox")
+      if candidate.kind == "CheckBox" then checkboxes = checkboxes + 1 end
     end
+    assert_true(checkboxes > 0)
   end)
 
   it("reflows Loot Rules across breakpoints without replacing navigation or footer", function()
@@ -163,7 +165,7 @@ describe("Guild-authoritative Loot Rules UI", function()
     assert_equal(1, #shell._dibsResponsiveScrolls)
   end)
 
-  it("keeps narrow Officer cards authoritative and read-only", function()
+  it("keeps narrow guild authority visible and Officer drafts editable", function()
     local gm = load("GameMaster-Realm")
     adoptPolicy(gm)
     assert_true(gm.LootRules.SetDraftValue("TOKEN", "rclootcouncil", false))
@@ -179,11 +181,14 @@ describe("Guild-authoritative Loot Rules UI", function()
     local resize = frame._scripts.OnSizeChanged
     resize(frame, 520, 360)
     assert_equal("NARROW", frame.lootRulesLayoutMode)
+    local checkboxes = 0
     for _, candidate in ipairs(_G.__dibsAceWidgets or {}) do
-      assert_true(candidate.kind ~= "CheckBox")
+      if candidate.kind == "CheckBox" then checkboxes = checkboxes + 1 end
     end
+    assert_true(checkboxes > 0)
     local tokenCard = frame.lootRulesCards.TOKEN
     assert_not_nil(tokenCard)
     assert_equal(true, tokenCard.children[1].title == officer.L.LOOT_RULES_GROUP_GUILD)
+    assert_equal(true, tokenCard.children[2].title == officer.L.LOOT_RULES_GROUP_DRAFT)
   end)
 end)

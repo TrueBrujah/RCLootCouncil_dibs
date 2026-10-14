@@ -82,19 +82,26 @@ describe("RCLootCouncil Dibs projections", function()
       { requestId = "candidate-other-season", playerName = "Tester-Realm", itemID = 280001, seasonId = "old-season", status = "confirmed" },
       { requestId = "other-item", playerName = "Tester-Realm", itemID = 280002, seasonId = seasonId, status = "confirmed" },
     }
-    dibs.GetDB().preDibs.requests = requests
+    dibs.PreDibs.GetHistory()
+    local preDibRoot = dibs.GetDB().preDibs
+    preDibRoot.ledgers["guild-primary"].requests = requests
+    preDibRoot.requests = requests
+    dibs.PreDibs.GetHistory()
 
     local originalIpairs = ipairs
-    local requestListScans = 0
+    local requestListScans, requestScanTraces = 0, {}
     ipairs = function(target)
-      if target == requests then requestListScans = requestListScans + 1 end
+      if target == requests then
+        requestListScans = requestListScans + 1
+        requestScanTraces[#requestScanTraces + 1] = debug.traceback()
+      end
       return originalIpairs(target)
     end
     local ok, status = pcall(dibs.RCLootCouncil.GetStatusForCandidate, "Tester-Realm", 280001, "INVTYPE_HEAD")
     ipairs = originalIpairs
 
     assert_true(ok, tostring(status))
-    assert_equal(1, requestListScans)
+    assert_equal(1, requestListScans, table.concat(requestScanTraces, "\n--- repeated request scan ---\n"))
     assert_true(status.hasPreDib)
     assert_true(status.hasAnyConfirmedPreDib)
     assert_equal("candidate-confirmed", status.preDibRequest.requestId)

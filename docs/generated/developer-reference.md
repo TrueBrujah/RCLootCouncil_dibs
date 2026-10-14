@@ -161,7 +161,7 @@ Source: [src/ui/PlayerUI.lua:408](../../src/ui/PlayerUI.lua#L408) - `Dibs.Player
 **Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:540](../../src/modules/PreDibs.lua#L540) - `Dibs.PreDibs.GetAnnouncementSettings`
+Source: [src/modules/PreDibs.lua:545](../../src/modules/PreDibs.lua#L545) - `Dibs.PreDibs.GetAnnouncementSettings`
 
 ## Encounter Mode
 
@@ -173,7 +173,7 @@ Source: [src/modules/PreDibs.lua:540](../../src/modules/PreDibs.lua#L540) - `Dib
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:518](../../src/modules/PreDibs.lua#L518) - `Dibs.PreDibs.ValidatePublicRequest`
+Source: [src/modules/PreDibs.lua:523](../../src/modules/PreDibs.lua#L523) - `Dibs.PreDibs.ValidatePublicRequest`
 
 ## Pre-Dib Request
 
@@ -185,7 +185,7 @@ Source: [src/modules/PreDibs.lua:518](../../src/modules/PreDibs.lua#L518) - `Dib
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:647](../../src/modules/PreDibs.lua#L647) - `Dibs.PreDibs.CreatePublic`
+Source: [src/modules/PreDibs.lua:652](../../src/modules/PreDibs.lua#L652) - `Dibs.PreDibs.CreatePublic`
 
 ## Rank Allocation
 

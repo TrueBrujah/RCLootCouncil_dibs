@@ -6183,6 +6183,8 @@ local function createAceWindow(initialRoute)
       end
       local status = lootRules and lootRules.GetStatus() or { status = "UNAVAILABLE" }
       local isGM = Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM() == true
+      local canEditDraft = Dibs.RCOptions and Dibs.RCOptions.CanEditDibsSettings
+        and Dibs.RCOptions.CanEditDibsSettings() == true
       local strings = Dibs.L or {}
       local statusText = {
         GUILD_LOOT_RULES_READY = strings.LOOT_RULES_STATUS_READY or "Guild Loot Rules are active.",
@@ -6233,8 +6235,7 @@ local function createAceWindow(initialRoute)
       Dibs.AceGUI.AddHeading(shell, tabs,
         strings.LOOT_RULES_SECTION_TITLE or "Loot type rules",
         strings.LOOT_RULES_SECTION_HELP or "Guild policy controls both Dibs response buttons and Adventure Guide eligibility.")
-      if Dibs.RCOptions and Dibs.RCOptions.CanEditDibsSettings
-        and Dibs.RCOptions.CanEditDibsSettings() then
+      if canEditDraft then
         Dibs.AceGUI.AddHeader(shell, tabs,
           strings.LOOT_RULES_PRESET_TITLE or "Quick presets",
           strings.LOOT_RULES_PRESET_HELP or "These actions update the draft only; adopt or publish below to activate them.")
@@ -6393,12 +6394,12 @@ local function createAceWindow(initialRoute)
         local blocks = Dibs.AceGUI.AddInlineGroup(shell, row)
         local rule = visibleRules and visibleRules[typeKey]
         if authority then
-          local guildBlock = addMediumBlock(blocks, guildTitle, isGM)
+          local guildBlock = addMediumBlock(blocks, guildTitle, canEditDraft)
           addGuildFields(guildBlock, rule)
-        elseif not isGM then
+        elseif not canEditDraft then
           addLocalFields(addMediumBlock(blocks, localTitle, false), rule)
         end
-        if isGM then
+        if canEditDraft then
           local draftBlock = addMediumBlock(blocks, draftTitle, authority ~= nil)
           addDraftFields(draftBlock, typeKey)
         else
@@ -6415,22 +6416,20 @@ local function createAceWindow(initialRoute)
         local rule = visibleRules and visibleRules[typeKey]
         if authority then
           addGuildFields(Dibs.AceGUI.AddSection(shell, card, guildTitle), rule)
-        elseif isGM then
+        end
+        if canEditDraft then
           addDraftFields(Dibs.AceGUI.AddSection(shell, card, draftTitle), typeKey)
-        else
+        elseif not authority then
           addLocalFields(Dibs.AceGUI.AddSection(shell, card, localTitle), rule)
         end
-        if authority and isGM then
-          addDraftFields(Dibs.AceGUI.AddSection(shell, card, draftTitle), typeKey)
-        end
-        if not isGM then
+        if not canEditDraft then
           addDraftTemplateAssignment(Dibs.AceGUI.AddSection(shell, card, "Button template"), typeKey)
         end
       end
 
       local function wideHeaders()
         local labels
-        if authority and isGM then
+        if authority and canEditDraft then
           labels = {
             strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
             strings.LOOT_RULES_COLUMN_GUILD_RC or "Guild RC",
@@ -6446,7 +6445,7 @@ local function createAceWindow(initialRoute)
             templateTitle,
             strings.LOOT_RULES_COLUMN_GUILD_GUIDE or "Guild Adventure Guide",
           }
-        elseif isGM then
+        elseif canEditDraft then
           labels = {
             strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
             strings.LOOT_RULES_COLUMN_DRAFT_RC or "Draft RC",
@@ -6476,7 +6475,7 @@ local function createAceWindow(initialRoute)
           return addWideColumn(row, index, layoutState.columnCount)
         end
         addLootTypeLabel(cell(1), typeKey)
-        if authority and isGM then
+        if authority and canEditDraft then
           readOnlyValue(cell(2), rcTitle, rule and rule.rclootcouncil)
           local draftRC = cell(3)
           addDraftCheckbox(draftRC, typeKey, "rclootcouncil", "")
@@ -6487,7 +6486,7 @@ local function createAceWindow(initialRoute)
           readOnlyValue(cell(2), rcTitle, rule and rule.rclootcouncil)
           addDraftTemplateAssignment(cell(3), typeKey)
           readOnlyValue(cell(4), guideTitle, rule and rule.adventureGuide)
-        elseif isGM then
+        elseif canEditDraft then
           addDraftCheckbox(cell(2), typeKey, "rclootcouncil", "")
           addDraftTemplateAssignment(cell(3), typeKey)
           addDraftCheckbox(cell(4), typeKey, "adventureGuide", "")

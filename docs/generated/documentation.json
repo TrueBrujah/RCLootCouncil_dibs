@@ -566,7 +566,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 540,
+        "line": 545,
         "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
@@ -610,7 +610,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 518,
+        "line": 523,
         "symbol": "Dibs.PreDibs.ValidatePublicRequest"
       }
     },
@@ -654,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 647,
+        "line": 652,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },

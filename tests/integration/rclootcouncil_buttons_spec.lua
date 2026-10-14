@@ -741,7 +741,11 @@ describe("RCLootCouncil DIB response projection", function()
       { playerName = "Pending-Realm", itemID = 280001, seasonId = seasonId, status = "pending" },
       { playerName = "Old-Realm", itemID = 280001, seasonId = "old-season", status = "confirmed" },
     }
-    dibs.GetDB().preDibs.requests = requests
+    dibs.PreDibs.GetHistory()
+    local preDibRoot = dibs.GetDB().preDibs
+    preDibRoot.ledgers["guild-primary"].requests = requests
+    preDibRoot.requests = requests
+    dibs.PreDibs.GetHistory()
 
     local entries = {}
     local nativeDibButton = _G.CreateFrame("Button")
@@ -778,10 +782,13 @@ describe("RCLootCouncil DIB response projection", function()
     end
     lootFrame.EntryManager.entries = entries
 
-    local requestScans = 0
+    local requestScans, requestScanTraces = 0, {}
     local originalIpairs = ipairs
     ipairs = function(target)
-      if target == requests then requestScans = requestScans + 1 end
+      if target == requests then
+        requestScans = requestScans + 1
+        requestScanTraces[#requestScanTraces + 1] = debug.traceback()
+      end
       return originalIpairs(target)
     end
     local ok, err = pcall(function()
@@ -792,7 +799,7 @@ describe("RCLootCouncil DIB response projection", function()
     _G.RAID_CLASS_COLORS = originalClassColors
 
     assert_true(ok, tostring(err))
-    assert_equal(1, requestScans)
+    assert_equal(1, requestScans, table.concat(requestScanTraces, "\n--- repeated request scan ---\n"))
     local label = entries[1].__dibsPreDibLabel
     assert_not_nil(label)
     assert_true(label.shown)
