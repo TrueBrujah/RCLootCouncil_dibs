@@ -1,7 +1,7 @@
 # RCLootCouncil_dibs
 
-Development compatibility baseline: **0.8.x**. Target stable release:
-**0.8.5**.
+Development compatibility baseline: **0.8.x**. Current development build:
+**0.8.6-dev**. Latest stable release: **0.8.5**.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -18,7 +18,7 @@ guild Dibs ledger, reservations, permissions, and audit history.
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.5 is
-the target stable publication. Development builds use the 0.8.x compatibility
+the latest stable publication. Development builds use the 0.8.x compatibility
 family and reject 0.7.x peers until they update. Release validation, including
 the documented deferred historical-confirmation check, is recorded in the
 [release checklist](B12_Release_Candidate_Checklist.md) and

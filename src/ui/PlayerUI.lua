@@ -96,6 +96,7 @@ local PLAYER_NAV_TREE = {
   { text = "My Dibs", value = "my-dibs" },
   { text = "Requests", value = "requests", module = "requests" },
   { text = "History", value = "history" },
+  { text = helpText.PLAYER_VAULT_TITLE or "Great Vault", value = "vault" },
   { text = "Diagnostics", value = "diagnostics" },
 }
 
@@ -555,6 +556,71 @@ function Dibs.PlayerUI.GetVaultAcquisitionPresentation(record)
     resetId = record.resetId, syncState = record.syncState }
 end
 
+local function renderVaultHistory(shell, parent, frame, widthHint)
+  local gui = Dibs.AceGUI
+  local page = gui.AddTablePage(shell, parent, { footer = true, boundsFrame = parent.content or parent.frame })
+  if not page then
+    Dibs.Message(helpText.PLAYER_VAULT_UNAVAILABLE or "Great Vault history is unavailable.")
+    return
+  end
+  frame.vaultTablePage = page
+  gui.AddHeading(shell, page.header, helpText.PLAYER_VAULT_TITLE or "Great Vault",
+    helpText.PLAYER_VAULT_HELP or "Your recorded rewards across seasons in the current guild scope. Read-only; no Dibs are spent.")
+  if not (Dibs.PreDibs and type(Dibs.PreDibs.GetAcquisitionsForPlayer) == "function"
+    and type(Dibs.PreDibs.ProjectVaultAcquisition) == "function") then
+    gui.AddLabel(shell, page.header, helpText.PLAYER_VAULT_UNAVAILABLE or "Great Vault history is unavailable.", true)
+    page.UpdateViewportHeight()
+    return
+  end
+  gui.AddLabel(shell, page.header, helpText.PLAYER_VAULT_MANUAL
+    or "Only recorded acquisitions appear here. If automatic claim detection is unavailable, use /dibs vault <itemID> [difficulty].", true)
+  local records = {}
+  for _, record in ipairs(Dibs.PreDibs.GetAcquisitionsForPlayer(Dibs.GetPlayerName())) do
+    records[#records + 1] = Dibs.PreDibs.ProjectVaultAcquisition(record, "player")
+  end
+  table.sort(records, function(first, second)
+    local firstDate, secondDate = tonumber(first.acquiredAt) or 0, tonumber(second.acquiredAt) or 0
+    if firstDate ~= secondDate then return firstDate > secondDate end
+    return tostring(first.acquisitionId or "") < tostring(second.acquisitionId or "")
+  end)
+  local visible, currentPage = gui.GetPageSlice(records, frame.vaultPage, 10)
+  frame.vaultPage = currentPage
+  local rows = {}
+  for _, record in ipairs(visible) do
+    local status = Dibs.PlayerUI.GetVaultAcquisitionPresentation(record)
+    rows[#rows + 1] = {
+      formatDate(record.acquiredAt),
+      tostring(record.itemLink or record.itemName or ("Item " .. tostring(record.itemID))),
+      tostring(record.difficulty or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
+      status.label,
+      tooltip = table.concat({
+        status.label, status.explanation,
+        (helpText.PLAYER_VAULT_SOURCE or "Source") .. ": " .. tostring(record.source or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
+        (helpText.PLAYER_VAULT_RESET or "Weekly reset") .. ": " .. tostring(record.resetId or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
+        (helpText.PLAYER_VAULT_SYNC or "Synchronization") .. ": " .. tostring(record.syncState or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
+      }, "\n"),
+    }
+  end
+  frame.vaultHistoryTable = gui.AddTable(shell, page.scroll, {
+    { title = helpText.PLAYER_VAULT_DATE or "Date", width = 145, minWidth = 90, weight = 1 },
+    { title = helpText.PLAYER_VAULT_ITEM or "Item", width = 260, minWidth = 120, weight = 3 },
+    { title = helpText.PLAYER_VAULT_DIFFICULTY or "Difficulty", width = 100, minWidth = 70, weight = 1 },
+    { title = helpText.PLAYER_VAULT_STATUS or "Verification", width = 200, minWidth = 90, weight = 2 },
+  }, rows, 300, nil, {
+    fluidColumns = true, widthHint = widthHint, allowTableSort = false,
+    noScrolling = true, headerParent = page.columnHeader, scrollbarReserve = 26,
+    emptyText = helpText.PLAYER_VAULT_EMPTY or "No Great Vault acquisitions recorded for your character in this guild scope.",
+    cellTooltip = function(row) return row.tooltip end,
+  })
+  local pagination = gui.AddPaginationFooter(shell, page, {
+    showPageSize = false,
+    onPrevious = function() frame.vaultPage = frame.vaultPage - 1; frame:Refresh() end,
+    onNext = function() frame.vaultPage = frame.vaultPage + 1; frame:Refresh() end,
+  })
+  if pagination then pagination.UpdateState(currentPage, #records, 10) end
+  page.UpdateViewportHeight()
+end
+
 function Dibs.PlayerUI.GetHistory(playerName)
   if not Dibs.Ledger then
     return {}
@@ -639,6 +705,10 @@ local function createLegacyAceWindow()
 
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
+    if self.playerTab == "vault" then
+      renderVaultHistory(shell, tabs, self, 480)
+      return
+    end
     local summary = Dibs.PlayerUI.GetSummary()
     if self.playerTab == "requests" then
       -- Keep the report form, request list and details in one bounded page so
@@ -1179,8 +1249,12 @@ local function createAceWindow()
 
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
-    local view = Dibs.PlayerUI.GetViewModel()
     if self.playerTab ~= "diagnostics" then stopAutoPing() end
+    if self.playerTab == "vault" then
+      renderVaultHistory(shell, tabs, self, playerContentWidthHint())
+      return
+    end
+    local view = Dibs.PlayerUI.GetViewModel()
     if self.playerTab == "diagnostics" then
       local diagnosticsPage = Dibs.AceGUI.AddTablePage(shell, tabs, {
         footer = true, boundsFrame = tabs.content or tabs.frame,

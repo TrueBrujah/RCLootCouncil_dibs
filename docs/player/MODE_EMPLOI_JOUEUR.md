@@ -133,6 +133,13 @@ Une meme demande active pour le meme joueur, objet, saison et difficulte n'est p
 
 ## 4. Suivi du Grand Coffre
 
+Ouvrez `/dibs ui`, puis **Grand coffre**. Cette page en lecture seule affiche
+vos objets enregistres, toutes saisons confondues dans le perimetre de guilde
+actuel, du plus recent au plus ancien, avec 10 entrees par page. Les colonnes
+montrent la date, l'objet, la difficulte et la verification; survolez une ligne
+pour la source, la semaine de reset, la synchronisation et l'explication des
+preuves. Les preuves privees des officiers ne sont pas affichees.
+
 La fenetre Joueur affiche les acquisitions du Grand Coffre avec l'objet, la
 source, la semaine de reset, l'etat de verification, l'explication
 d'eligibilite et l'etat de synchronisation. Ouvrir le coffre ou regarder un

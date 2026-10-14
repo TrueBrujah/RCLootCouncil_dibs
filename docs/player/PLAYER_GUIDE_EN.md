@@ -100,6 +100,12 @@ If you participate in an independent raid run by a Master Looter using Dibs:
 
 ## Great Vault acquisitions
 
+Open `/dibs ui` and select **Great Vault**. This read-only page shows your
+recorded items across seasons in the current guild scope, newest first, with
+10 entries per page. Columns show date, item, difficulty, and verification;
+hover a row for its source, weekly reset, synchronization state, and evidence
+explanation. Private Officer review evidence is not displayed.
+
 The Player window can show Great Vault acquisitions with their item, source,
 weekly reset, verification state, eligibility explanation, and sync state.
 Opening the Vault or viewing a reward choice is not a completed claim. When

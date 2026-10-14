@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.5"
+Dibs.VERSION = "0.8.6-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -1376,9 +1376,17 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "" or action == "help" then
-    Dibs.Message("Dibs commands: /dibs help | /dibs status | /dibs sync probe|report|repair <player> | /dibs readiness | /dibs dryrun <item> <winner> <response> <status> [session] | /dibs balance | /dibs ui | /dibs requests | /dibs vault <itemID> [difficulty] | /dibs options | /dibs data | /dibs officer | /dibs review | /dibs reconcile | /dibs grant <player> <amount> | /dibs use <player> <amount> | /dibs pre <itemID> [itemName] | /dibs season create [name] | /dibs season set <id> | /dibs rank set <index> <amount> [name] | /dibs ledger [list|set <id>] | /dibs raid [ledger <id>|sync|start|stop|status]")
-    Dibs.Message("Developer commands (Developer Mode required): /dibs dev on | /dibs dev off | /dibs dev status | /dibs testitem <itemID>")
-    Dibs.Message("Debug commands: /dibs ejdebug | /dibs ejsub list|scan|matrix|apply recommended|block <SUB>|allow <SUB>|clear | /dibs announce debug on|off|scan")
+    local help = Dibs.L or {}
+    Dibs.Message(help.SLASH_HELP_TITLE or "Dibs commands - prefix each command with /dibs:")
+    Dibs.Message(help.SLASH_HELP_PLAYER or "Player: ui | balance | requests | pre <itemID> | vault <itemID> [difficulty]")
+    Dibs.Message(help.SLASH_HELP_OFFICER or "Officer: officer | options | review | reconcile | data")
+    Dibs.Message(help.SLASH_HELP_GUILD or "Guild setup: season create|list|set <id> | rank list|set <index> <amount> [name] | ledger list|set <id>")
+    Dibs.Message(help.SLASH_HELP_RAID or "Raid: raid [status|sync|start|stop|ledger <id>] | remind <message>")
+    Dibs.Message(help.SLASH_HELP_STATUS or "Checks: status | readiness | dryrun <item> <winner> <response> <status> [session] | sync probe|report|repair <player>")
+    Dibs.Message(help.SLASH_HELP_ADMIN or "Administration (GM/Officer): grant/use <player> <amount> | admin list|add|remove <Name-Realm> | mode <AUTO|STANDALONE|RCLootCouncil> | predibmode <mode>")
+    Dibs.Message(help.SLASH_HELP_DATA or "Data: data | backup | profiles | import | export")
+    Dibs.Message(help.SLASH_HELP_DEBUG or "Diagnostics: debug <module|all> 0-5 | debug report|rc|logs | ejdebug | ejsub ... | announce debug on|off|scan | rcopts")
+    Dibs.Message(help.SLASH_HELP_DEVELOPER or "Developer Mode only: dev on|off|status | testitem <itemID>")
     return
   end
 

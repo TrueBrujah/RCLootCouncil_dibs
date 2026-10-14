@@ -80,8 +80,12 @@ describe("Developer mode", function()
     for index = #(_G.__dibsMessages or {}), 1, -1 do _G.__dibsMessages[index] = nil end
     dibs.HandleSlashCommand("help")
     local helpCount = #(_G.__dibsMessages or {})
-    assert_equal(3, helpCount)
+    assert_equal(10, helpCount)
     assert_true((_G.__dibsMessages[1] or ""):find("Dibs commands", 1, true) ~= nil)
+    assert_true((_G.__dibsMessages[2] or ""):find("Player:", 1, true) ~= nil)
+    assert_true((_G.__dibsMessages[3] or ""):find("Officer:", 1, true) ~= nil)
+    assert_true((_G.__dibsMessages[8] or ""):find("Data:", 1, true) ~= nil)
+    assert_true((_G.__dibsMessages[10] or ""):find("Developer Mode only", 1, true) ~= nil)
 
     dibs.HandleSlashCommand("dryrun")
     dibs.HandleSlashCommand("testitem 275658")

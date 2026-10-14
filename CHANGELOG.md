@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.6-dev - Unreleased
+
+- (2026-10-14) Group `/dibs help` output by usage and localize it in English and French to improve command discovery; command execution and permissions remain unchanged.
+- (2026-10-14) Add a dedicated Player Great Vault history page with newest-first pagination, item, date, difficulty, verification status, and player-safe source/reset/sync tooltips. Show all recorded seasons in the current guild scope, with explicit empty and unavailable states and manual-recording guidance. No migration, accounting, eligibility, or synchronization changes.
+
 ## 0.8.5 - Guided setup, multi-ledger, and rank controls - 2026-10-13
 
 - Replace the fourteen-page Guided Setup navigation with Choose, Configure, and Verify. Add Progression, Standard Loot, and Custom profiles with change previews, preserved-data explanations, deferred approvals, idempotent application, and explicit partial-failure details.
