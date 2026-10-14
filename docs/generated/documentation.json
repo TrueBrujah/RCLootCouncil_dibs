@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.8.4",
+  "addonVersion": "0.8.5",
   "concepts": [
     {
       "id": "guild.ledger.status",
@@ -566,7 +566,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 545,
+        "line": 548,
         "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
@@ -610,7 +610,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 523,
+        "line": 526,
         "symbol": "Dibs.PreDibs.ValidatePublicRequest"
       }
     },
@@ -654,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 652,
+        "line": 655,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },

@@ -69,5 +69,14 @@ describe("Pre-Dib migration", function()
     assert_equal(0, #alternateHistory)
     assert_equal(0, #dibs.GetDB().preDibs.requests)
     assert_equal(proposal.ledgerId, dibs.MultiLedger.GetActiveLedgerId())
+
+    local invalidScope = dibs.DeepCopy(request)
+    invalidScope.requestId = "snapshot-invalid-scope"
+    invalidScope.ledgerId = false
+    local applied, reason = dibs.Sync.ApplySnapshot({ transactions = {}, preDibs = { invalidScope } })
+    assert_false(applied)
+    assert_equal("INVALID_LEDGER_ID", reason)
+    assert_equal(1, #dibs.PreDibs.GetHistory("guild-primary"))
+    assert_equal(0, #dibs.PreDibs.GetHistory(proposal.ledgerId))
   end)
 end)

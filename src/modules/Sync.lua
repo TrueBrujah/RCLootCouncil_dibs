@@ -435,7 +435,8 @@ function Dibs.Sync.ApplySnapshot(snapshot, actor)
         or type(request.seasonId) ~= "string" or type(request.status) ~= "string"
         or (request.status ~= "pending" and request.status ~= "confirmed" and request.status ~= "cancelled" and request.status ~= "invalidated" and request.status ~= "fulfilled")
       then return false end
-      local ledgerId = request.ledgerId or "guild-primary"
+      local ledgerId = request.ledgerId
+      if ledgerId == nil then ledgerId = "guild-primary" end
       local requests, historyReason = Dibs.PreDibs.GetHistory(ledgerId)
       if not requests then return false, historyReason end
       request.ledgerId = ledgerId
