@@ -45,4 +45,24 @@ describe("Pre-Dib migration", function()
     assert_equal("Heroic", heroic.difficulty)
     assert_equal(2, #migrated.preDibs.requests)
   end)
+
+  it("migrates legacy requests appended by a later snapshot", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local history = dibs.PreDibs.GetHistory()
+    local request = {
+      requestId = "snapshot-legacy-request",
+      playerName = "Tester-Realm",
+      itemID = 21063,
+      seasonId = dibs.GetCurrentSeasonId(),
+      status = "confirmed",
+    }
+
+    assert_true(dibs.Sync.ApplySnapshot({ transactions = {}, preDibs = { request } }))
+    assert_equal(1, #history)
+    assert_nil(history[1].ledgerId)
+
+    local migratedHistory = dibs.PreDibs.GetHistory()
+    assert_equal(history, migratedHistory)
+    assert_equal("guild-primary", migratedHistory[1].ledgerId)
+  end)
 end)

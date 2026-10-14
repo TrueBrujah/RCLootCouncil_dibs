@@ -128,7 +128,18 @@ local function ensureRaidDibsChannel()
 end
 
 local DEFAULT_LEDGER_ID = "guild-primary"
-local migratedRequestLists = setmetatable({}, { __mode = "k" })
+local migratedRequestCounts = setmetatable({}, { __mode = "k" })
+
+local function migrateRequestList(requests, ledgerId)
+  local previousCount = migratedRequestCounts[requests] or 0
+  local requestCount = #requests
+  if requestCount < previousCount then previousCount = 0 end
+  for index = previousCount + 1, requestCount do
+    local request = requests[index]
+    if type(request) == "table" and request.ledgerId == nil then request.ledgerId = ledgerId end
+  end
+  migratedRequestCounts[requests] = requestCount
+end
 
 local function activeLedgerId()
   return Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
@@ -159,10 +170,7 @@ local function ensureState(targetLedgerId, bindActive)
     primary.requests = type(primary.requests) == "table" and primary.requests or root.requests
     primary.modePolicies = type(primary.modePolicies) == "table" and primary.modePolicies or root.modePolicies
     primary.vaultConflicts = type(primary.vaultConflicts) == "table" and primary.vaultConflicts or root.vaultConflicts
-    for _, request in ipairs(primary.requests) do
-      if type(request) == "table" and request.ledgerId == nil then request.ledgerId = DEFAULT_LEDGER_ID end
-    end
-    migratedRequestLists[primary.requests] = true
+    migrateRequestList(primary.requests, DEFAULT_LEDGER_ID)
     root.ledgers[DEFAULT_LEDGER_ID] = primary
     root.ledgerStorageVersion = 1
   end
@@ -179,12 +187,7 @@ local function ensureState(targetLedgerId, bindActive)
   store.modePolicies = type(store.modePolicies) == "table" and store.modePolicies or {}
   store.vaultConflicts = type(store.vaultConflicts) == "table" and store.vaultConflicts or {}
   store.ledgerId = ledgerId
-  if not migratedRequestLists[store.requests] then
-    for _, request in ipairs(store.requests) do
-      if type(request) == "table" and request.ledgerId == nil then request.ledgerId = ledgerId end
-    end
-    migratedRequestLists[store.requests] = true
-  end
+  migrateRequestList(store.requests, ledgerId)
   if bindActive == true or ledgerId == activeLedgerId() then
     root.requests, root.modePolicies, root.vaultConflicts = store.requests, store.modePolicies, store.vaultConflicts
   end
