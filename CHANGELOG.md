@@ -11,6 +11,7 @@
 - Preserve authority checks, guild and character data isolation, existing ledgers, transactions, history, and advanced configuration pages. Keep Serialized baseline identifiers compatible while renaming the module to `Dibs.HistoricalBaseline`.
 - Update English and French officer guidance and release documentation.
 - (2026-10-13) Continue migrating legacy Pre-Dib requests appended by later snapshots without rescanning unchanged requests on every read; existing request history and ledger ownership remain unchanged.
+- (2026-10-13) Route unscoped legacy snapshot requests to `guild-primary` even while an alternate ledger is active; explicitly scoped requests remain isolated to their approved ledger.
 
 ## 0.8.3 - Guild whisper addressing and Pre-Dib loot rows - 2026-10-08
 

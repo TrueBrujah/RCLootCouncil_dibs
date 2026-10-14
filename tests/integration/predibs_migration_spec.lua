@@ -48,7 +48,11 @@ describe("Pre-Dib migration", function()
 
   it("migrates legacy requests appended by a later snapshot", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
-    local history = dibs.PreDibs.GetHistory()
+    dibs.SyncV2.BroadcastCatalogDigest = function() return true, "TEST_SENT" end
+    local proposal = dibs.MultiLedger.ProposeLedger("Tester-Realm", "Alt Raid")
+    assert_true(proposal.ok)
+    assert_true(dibs.MultiLedger.ApproveLedger("Tester-Realm", proposal.ledgerId).ok)
+    assert_true(dibs.MultiLedger.SetActiveLedger(proposal.ledgerId))
     local request = {
       requestId = "snapshot-legacy-request",
       playerName = "Tester-Realm",
@@ -58,11 +62,12 @@ describe("Pre-Dib migration", function()
     }
 
     assert_true(dibs.Sync.ApplySnapshot({ transactions = {}, preDibs = { request } }))
-    assert_equal(1, #history)
-    assert_nil(history[1].ledgerId)
-
-    local migratedHistory = dibs.PreDibs.GetHistory()
-    assert_equal(history, migratedHistory)
-    assert_equal("guild-primary", migratedHistory[1].ledgerId)
+    local primaryHistory = dibs.PreDibs.GetHistory("guild-primary")
+    local alternateHistory = dibs.PreDibs.GetHistory(proposal.ledgerId)
+    assert_equal(1, #primaryHistory)
+    assert_equal("guild-primary", primaryHistory[1].ledgerId)
+    assert_equal(0, #alternateHistory)
+    assert_equal(0, #dibs.GetDB().preDibs.requests)
+    assert_equal(proposal.ledgerId, dibs.MultiLedger.GetActiveLedgerId())
   end)
 end)
