@@ -74,6 +74,15 @@ function GreatVault.RecordClaim(observation)
   local input = type(observation) == "table" and observation or {}
   local evaluated = GreatVault.EvaluateObservation(input)
   if evaluated.status ~= "CONFIRMED" then return evaluated end
+  local normalize = Dibs.PreDibs and Dibs.PreDibs.NormalizeDifficulty
+  local difficulty = input.difficulty
+  if input.itemLink then
+    local detected = GreatVault.ResolveItemDifficulty(input.itemLink)
+    if detected then difficulty = detected end
+  end
+  if not normalize or normalize(difficulty) == "UNKNOWN" then
+    return result("AMBIGUOUS", "PARTIAL", "DIFFICULTY_UNAVAILABLE", input)
+  end
   if not Dibs.PreDibs or type(Dibs.PreDibs.RecordVaultAcquisition) ~= "function" then
     evaluated.status, evaluated.reasonCode = "UNAVAILABLE", "ACQUISITIONS_UNAVAILABLE"
     return evaluated
@@ -81,7 +90,7 @@ function GreatVault.RecordClaim(observation)
   local acquisition, reason = Dibs.PreDibs.RecordVaultAcquisition(
     input.playerName or (Dibs.GetPlayerName and Dibs.GetPlayerName()),
     input.itemID,
-    input.difficulty,
+    difficulty,
     {
       source = "GREAT_VAULT",
       verificationState = "AUTOMATIC_CONFIRMED",
@@ -108,11 +117,136 @@ function GreatVault.RecordClaim(observation)
 end
 
 local function reportFailure(reason)
-  if Dibs.Message then Dibs.Message("[GreatVault] " .. tostring(reason)) end
+  local text = Dibs.L and Dibs.L["VAULT_REASON_" .. tostring(reason)]
+  if Dibs.Message then Dibs.Message("[GreatVault] " .. tostring(text or reason)) end
 end
 
 local function isReadable(value)
   return type(_G.issecretvalue) ~= "function" or not issecretvalue(value)
+end
+
+local function itemStringOf(link)
+  if not isReadable(link) then return nil end
+  if type(link) ~= "string" then return nil end
+  return link:match("|H(item:[^|]+)|h") or link:match("^(item:[^|%s]+)$")
+end
+
+local DIFFICULTY_BY_TOOLTIP_LABEL = {
+  ["Raid Finder"] = "LFR",
+  ["Looking For Raid"] = "LFR",
+  ["Looking for Raid"] = "LFR",
+  ["Outil Raids"] = "LFR",
+  ["Outil de raid"] = "LFR",
+  Normal = "Normal",
+  Heroic = "Heroic",
+  ["Héroïque"] = "Heroic",
+  Mythic = "Mythic",
+  Mythique = "Mythic",
+}
+
+local KEYSTONE_LABELS = { ["Mythic+"] = true, ["Mythique+"] = true }
+
+local TRACK_BY_LABEL = {
+  Adventurer = "ADVENTURER", Aventurier = "ADVENTURER",
+  Veteran = "VETERAN", ["Vétéran"] = "VETERAN",
+  Champion = "CHAMPION",
+  Hero = "HERO", ["Héros"] = "HERO",
+  Myth = "MYTH", Mythe = "MYTH",
+}
+
+local DIFFICULTY_BY_TRACK = { VETERAN = "LFR", CHAMPION = "Normal", HERO = "Heroic", MYTH = "Mythic" }
+
+-- Raid origin labels are kept only on tracks a raid of that difficulty can award.
+local RAID_TRACKS = {
+  LFR = { VETERAN = true },
+  Normal = { CHAMPION = true, HERO = true },
+  Heroic = { HERO = true, MYTH = true },
+  Mythic = { MYTH = true },
+}
+
+local function cleanText(text)
+  if not isReadable(text) or type(text) ~= "string" then return nil end
+  return trim(text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))
+end
+
+local function trackOf(text)
+  local label = type(text) == "string" and text:match("([^%s:]+)%s+%d+%s*/%s*%d+%s*$")
+  return label and TRACK_BY_LABEL[label] or nil
+end
+
+local function tooltipDifficulty(text)
+  local label = cleanText(text)
+  if not label then return nil end
+  local keystone = _G.PLAYER_DIFFICULTY_MYTHIC_PLUS
+  if KEYSTONE_LABELS[label] or (isReadable(keystone) and label == keystone) then return "KEYSTONE" end
+  for _, entry in ipairs({
+    { "PLAYER_DIFFICULTY3", "LFR" },
+    { "ITEM_RAID_FINDER", "LFR" },
+    { "RAID_FINDER", "LFR" },
+    { "PLAYER_DIFFICULTY1", "Normal" },
+    { "PLAYER_DIFFICULTY2", "Heroic" },
+    { "PLAYER_DIFFICULTY6", "Mythic" },
+    { "ITEM_HEROIC", "Heroic" },
+    { "ITEM_MYTHIC", "Mythic" },
+  }) do
+    local localized = _G[entry[1]]
+    if isReadable(localized) and type(localized) == "string" and label == localized then return entry[2] end
+  end
+  return DIFFICULTY_BY_TOOLTIP_LABEL[label]
+end
+
+local function upgradeTrackOf(itemLink, lines)
+  local api = _G.C_Item
+  if type(api) == "table" and type(api.GetItemUpgradeInfo) == "function" then
+    local ok, info = pcall(api.GetItemUpgradeInfo, itemLink)
+    if ok and isReadable(info) and type(info) == "table" and isReadable(info.trackString)
+      and type(info.trackString) == "string" then
+      local track = TRACK_BY_LABEL[trim(info.trackString)]
+      if track then return track end
+    end
+  end
+  for index, line in ipairs(lines) do
+    if index > 1 and isReadable(line) and type(line) == "table" then
+      local track = trackOf(cleanText(line.leftText))
+      if track then return track end
+    end
+  end
+  return nil
+end
+
+-- Heroic/Veteran and Mythic/Champion identify dungeon rewards rather than raids.
+function GreatVault.ResolveItemDifficulty(itemLink)
+  if not itemStringOf(itemLink) then return nil end
+  local api = _G.C_TooltipInfo
+  if type(api) ~= "table" or type(api.GetHyperlink) ~= "function" then return nil end
+  local ok, info = pcall(api.GetHyperlink, itemLink)
+  if not ok then
+    reportFailure("TOOLTIP_UNAVAILABLE")
+    return nil
+  end
+  if not isReadable(info) or type(info) ~= "table" or not isReadable(info.lines)
+    or type(info.lines) ~= "table" then return nil end
+  local origin
+  for index, line in ipairs(info.lines) do
+    -- The first line is the item name, not its difficulty.
+    if index > 1 and isReadable(line) and type(line) == "table" then
+      local detected = tooltipDifficulty(line.leftText)
+      if detected and origin and detected ~= origin then return nil end
+      origin = detected or origin
+    end
+  end
+  if not origin then return nil end
+  local track = upgradeTrackOf(itemLink, info.lines)
+  if not track then return nil end
+  if origin == "Heroic" and track == "VETERAN" then return "Heroic", "DUNGEON_TRACK" end
+  if origin == "KEYSTONE" or (origin == "Mythic" and track == "CHAMPION")
+  then
+    local difficulty = DIFFICULTY_BY_TRACK[track]
+    if difficulty then return difficulty, "DUNGEON_TRACK" end
+    return nil
+  end
+  if RAID_TRACKS[origin] and RAID_TRACKS[origin][track] then return origin, "RAID_ORIGIN" end
+  return nil
 end
 
 local function cacheRewardChoices()
@@ -128,7 +262,10 @@ local function cacheRewardChoices()
           local link = api.GetItemHyperlink(reward.itemDBID)
           if isReadable(link) and type(link) == "string" and link:match("item:(%d+)") then
             itemCount = itemCount + 1
-            choice = { itemLink = link, itemID = tonumber(link:match("item:(%d+)")) }
+            choice = {
+              itemLink = link, itemID = tonumber(link:match("item:(%d+)")),
+              difficulty = GreatVault.ResolveItemDifficulty(link),
+            }
           end
         end
       end
@@ -167,8 +304,10 @@ local function onClaimRequested(claimID)
   if type(seconds) ~= "number" or seconds <= 0 then return reportFailure("RESET_ID_UNAVAILABLE") end
   local claimedAt = time()
   local resetId = "weekly:" .. tostring(math.floor((claimedAt + seconds) / 86400))
+  local difficulty = choice.difficulty or GreatVault.ResolveItemDifficulty(choice.itemLink)
   pendingClaim = {
     itemID = choice.itemID, itemLink = choice.itemLink,
+    difficulty = difficulty,
     claimId = resetId .. ":" .. tostring(claimID), resetId = resetId,
     claimedAt = claimedAt, playerName = Dibs.GetPlayerName(),
     guildKey = Dibs.GetGuildKey(), seasonId = Dibs.GetCurrentSeasonId(),

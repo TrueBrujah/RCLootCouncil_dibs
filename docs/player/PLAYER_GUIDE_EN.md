@@ -72,8 +72,8 @@ starting allocation appears out of date.
 /dibs help        Show command help
 /dibs ui          Open the Player window
 /dibs balance     Show your balance
-/dibs requests    Show your Pre-Dib requests
-/dibs vault <itemID> [difficulty]  Record a Great Vault item manually
+/dibs requests    Open your problem reports (Reports page)
+/dibs vault <link|[Name]|itemID> <LFR|Normal|Heroic|Mythic>  Record a Great Vault item manually
 /dibs pre <itemID> [item name]  Create a Pre-Dib request
 /dibs options     Open configuration and launch controls
 ```
@@ -133,16 +133,47 @@ Real-client validation remains pending. When Retail does not expose all the
 required evidence, use:
 
 ```text
-/dibs vault <itemID> [difficulty]
+/dibs vault <item link | [Item Name] | itemID> <LFR | Normal | Heroic | Mythic>
 ```
+
+With a shift-clicked link alone, Dibs reads that exact item's tooltip:
+
+- **Raid** items keep their origin **Raid Finder (LFR)**, **Normal**, **Heroic** or **Mythic**, even when
+  the upgrade track is higher: **Heroic** with **Myth 5/6** stays **Heroic**.
+  **Raid Finder** on the **Veteran** track is recorded as **LFR**.
+- **Dungeon** items (labelled **Mythic+**, or **Mythic** on the Champion track for
+  Mythic 0, or **Heroic** on the Veteran track) follow their upgrade track:
+  a **Heroic** dungeon reward on **Veteran** remains **Heroic**;
+  **Champion** = Normal, **Hero** = Heroic,
+  **Myth** = Mythic. **Mythic+** with **Hero 6/6** is Heroic.
+- Tracks below **Veteran**, conflicting lines or an unexpected origin/track
+  combination are not classified automatically.
+
+Item level and Vault activity level are not used. When the client exposes no
+readable classification through `C_TooltipInfo.GetHyperlink`, the difficulty is required (`Hero`
+and `Myth` are accepted); without a valid
+difficulty nothing is recorded and the usage is shown. `LFR` and `Raid Finder`
+are accepted for manual LFR classification. A typed bracketed name,
+such as `[Item Name] Heroic`, must be known to the client; otherwise use the
+shift-clicked link or the item ID.
 
 Manual records are marked `MANUAL_RECORDED` until an authorized Officer reviews
 them. Vault records are evidence only and never spend, grant, or change a Dib.
 History is scoped to the current guild, or to the character while unguilded.
 For an exact variant, type `/dibs vault `, shift-click the item in your bags or
-equipment to insert its full link, then optionally append ` Mythic`, ` Heroic`,
-or ` Normal`. The full link preserves the item's level and bonus information.
-An ID-only entry loads its name but cannot establish the acquired variant.
+equipment to insert its full link. Add ` LFR`, ` Mythic`, ` Heroic`, or ` Normal` only
+for an explicit manual classification; an explicitly supplied tier takes priority.
+The full link preserves the item's level and bonus information.
+Automatic claims use the same detection and still require completed-claim
+evidence. If no difficulty can be classified (for example an Adventurer dungeon
+reward), nothing is recorded automatically; use the manual command with an
+explicit difficulty for review. Missing difficulty never defaults to Normal.
+Existing recorded classifications are not rewritten.
+The table gives item names most of the available space; long names and verification
+text wrap rather than being shortened. Hover over an item to see its tooltip, or
+click its name to open the item link. Dates are compact, with full timestamps in row help.
+An ID-only entry loads its name but cannot establish the acquired variant. Its
+clickable base-item link is marked **item reference**, not the acquired variant.
 If exactly one variant with that ID is equipped or carried, an **owned preview**
 shows its tooltip without changing the saved record or proving Vault origin.
 Multiple different owned variants leave the exact variant unavailable.
@@ -187,8 +218,14 @@ policy closes it.
 
 ## Review reports and follow-up (0.8.8-dev)
 
-The **Requests** review center (`/dibs requests`) is separate from Pre-Dib
-reservations. Report only your own issue and evidence. Saving a report is not
+The **Reports** page (`/dibs requests`) is separate from Pre-Dib
+reservations, which stay on **My Dibs** (active, won, and past Pre-Dibs).
+Report only your own issue and evidence. In the Player window,
+open **Reports**: **Report a problem** lets you pick
+a problem type (for example a wrong debit or wrong item/player), optionally the
+related ledger entry, and a note. History details also offer **Report a problem
+with this entry**, which preselects that entry. A report never changes your
+balance; an officer reviews it and records any correction. Saving a report is not
 proof that an officer received it: details show **Queued**, **Sent; awaiting
 receipt**, **Received**, or **Delivery error**. Receipt never means resolved.
 Offline or older clients do not receive whispers; work stays saved across reload.

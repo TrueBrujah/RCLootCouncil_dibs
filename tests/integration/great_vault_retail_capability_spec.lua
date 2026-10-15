@@ -8,11 +8,14 @@ local function installRetail(dibs)
     CanClaimRewards = function() return available end,
     ClaimReward = function() end,
     GetActivities = function()
-      return { { claimID = 77, rewards = { { itemDBID = 9001 } } } }
+      return { { claimID = 77, type = 3, level = 15, rewards = { { itemDBID = 9001 } } } }
     end,
     GetItemHyperlink = function() return link end,
   }
   _G.C_DateAndTime = { GetSecondsUntilWeeklyReset = function() return 86400 end }
+  _G.C_TooltipInfo = { GetHyperlink = function()
+    return { lines = { { leftText = "Vault Ring" }, { leftText = "Heroic" }, { leftText = "Upgrade Level: Hero 1/6" } } }
+  end }
   dibs.GreatVault.Initialize()
   local function claim()
     for _, hook in ipairs(C_WeeklyRewards.__secureHooks.ClaimReward) do hook(77) end
@@ -25,6 +28,13 @@ local function installRetail(dibs)
 end
 
 describe("Great Vault Retail capability", function()
+  local previousTooltip
+  before_each(function()
+    previousTooltip = _G.C_TooltipInfo
+    _G.C_TooltipInfo = nil
+  end)
+  after_each(function() _G.C_TooltipInfo = previousTooltip end)
+
   it("initializes safely when no Retail Great Vault API is present", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
 
@@ -52,6 +62,7 @@ describe("Great Vault Retail capability", function()
     local records = dibs.PreDibs.GetAcquisitions()
     assert_equal(1, #records)
     assert_equal(21016, records[1].itemID)
+    assert_equal("Heroic", records[1].difficulty)
     assert_equal("AUTOMATIC_CONFIRMED", records[1].verificationState)
     assert_equal(before, #dibs.Ledger.GetAllTransactions())
     loot()
@@ -136,5 +147,130 @@ describe("Great Vault Retail capability", function()
     complete()
     loot()
     assert_equal(0, #dibs.PreDibs.GetAcquisitions())
+  end)
+
+  it("classifies a Mythic+ reward by its Hero upgrade track", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    C_WeeklyRewards.GetActivities = function()
+      return { { claimID = 77, type = 1, level = 10, rewards = { { itemDBID = 9001 } } } }
+    end
+    C_Item.GetItemUpgradeInfo = function() return { trackString = "Hero", currentLevel = 2, maxLevel = 6 } end
+    C_TooltipInfo.GetHyperlink = function()
+      return { lines = {
+        { leftText = "Vault Ring" }, { leftText = "Mythic+" }, { leftText = "Upgrade Level: Hero 2/6" },
+      } }
+    end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    claim()
+    complete()
+    loot()
+    local records = dibs.PreDibs.GetAcquisitions()
+    assert_equal(1, #records)
+    assert_equal("Heroic", records[1].difficulty)
+    assert_nil(records[1].upgradeTrack)
+  end)
+
+  it("preserves each raid origin instead of promoting it to the reward's upgrade track", function()
+    for _, case in ipairs({
+      { "Raid Finder", "Veteran", "LFR" },
+      { "Normal", "Hero", "Normal" }, { "Heroic", "Myth", "Heroic" }, { "Mythic", "Myth", "Mythic" },
+    }) do
+      local _, dibs = loader.load()
+      local claim, loot, complete = installRetail(dibs)
+      C_Item.GetItemUpgradeInfo = function() return { trackString = case[2], currentLevel = 2, maxLevel = 6 } end
+      C_TooltipInfo.GetHyperlink = function()
+        return { lines = {
+          { leftText = "Vault Ring" }, { leftText = case[1] }, { leftText = "Upgrade Level: " .. case[2] .. " 2/6" },
+        } }
+      end
+      wow.dispatch("WEEKLY_REWARDS_UPDATE")
+      local balance = dibs.Ledger.GetBalance(dibs.GetPlayerName())
+      claim()
+      complete()
+      loot()
+      local records = dibs.PreDibs.GetAcquisitions()
+      assert_equal(1, #records)
+      assert_equal(case[3], records[1].difficulty)
+      assert_nil(records[1].upgradeTrack)
+      assert_equal("AUTOMATIC_CONFIRMED", records[1].verificationState)
+      assert_equal(balance, dibs.Ledger.GetBalance(dibs.GetPlayerName()))
+    end
+  end)
+
+  it("records a completed Heroic dungeon reward on Veteran as Heroic without spending Dibs", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    C_Item.GetItemUpgradeInfo = function() return { trackString = "Veteran", currentLevel = 3, maxLevel = 6 } end
+    C_TooltipInfo.GetHyperlink = function()
+      return { lines = {
+        { leftText = "Vault Ring" }, { leftText = "Heroic" }, { leftText = "Upgrade Level: Veteran 3/6" },
+      } }
+    end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    local before = #dibs.Ledger.GetAllTransactions()
+    claim()
+    loot()
+    assert_equal(0, #dibs.PreDibs.GetAcquisitions())
+    complete()
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    loot()
+    local records = dibs.PreDibs.GetAcquisitions()
+    assert_equal(1, #records)
+    assert_equal("Heroic", records[1].difficulty)
+    assert_equal("AUTOMATIC_CONFIRMED", records[1].verificationState)
+    assert_nil(records[1].upgradeTrack)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
+  end)
+
+  it("retries unavailable item data when the selected reward is finally received", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    C_TooltipInfo.GetHyperlink = function() return nil end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    claim()
+    complete()
+    C_TooltipInfo.GetHyperlink = function()
+      return { lines = { { leftText = "Vault Ring" }, { leftText = "Normal" }, { leftText = "Upgrade Level: Champion 3/6" } } }
+    end
+    loot()
+    local records = dibs.PreDibs.GetAcquisitions()
+    assert_equal(1, #records)
+    assert_equal("Normal", records[1].difficulty)
+    assert_nil(records[1].upgradeTrack)
+  end)
+
+  it("records nothing when only the upgrade track is known, not the original difficulty", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    C_WeeklyRewards.GetActivities = function()
+      return { { claimID = 77, type = 1, level = 10, rewards = { { itemDBID = 9001 } } } }
+    end
+    C_Item.GetItemUpgradeInfo = function() return { trackString = "Myth" } end
+    C_TooltipInfo.GetHyperlink = function()
+      return { lines = { { leftText = "Vault Ring" }, { leftText = "Upgrade Level: Myth 2/6" } } }
+    end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    _G.__dibsMessages = {}
+    claim()
+    complete()
+    loot()
+    assert_equal(0, #dibs.PreDibs.GetAcquisitions())
+    local reported = false
+    for _, message in ipairs(_G.__dibsMessages) do
+      if message:find(dibs.L.VAULT_REASON_DIFFICULTY_UNAVAILABLE, 1, true) then reported = true end
+    end
+    assert_true(reported)
+  end)
+
+  it("lets the manual command retain the original difficulty from the item tooltip", function()
+    local _, dibs = loader.load()
+    installRetail(dibs)
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    dibs.HandleSlashCommand("vault |cffa335ee|Hitem:21016::::::::::::|h[Vault Ring]|h|r")
+    local records = dibs.PreDibs.GetAcquisitions()
+    assert_equal(1, #records)
+    assert_equal("Heroic", records[1].difficulty)
+    assert_equal("MANUAL_RECORDED", records[1].verificationState)
   end)
 end)

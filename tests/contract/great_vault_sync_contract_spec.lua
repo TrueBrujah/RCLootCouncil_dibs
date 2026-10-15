@@ -80,6 +80,28 @@ describe("Great Vault sync contract", function()
     assert_equal(before, #dibs.PreDibs.GetAcquisitions())
   end)
 
+  it("preserves LFR difficulty through owner-authenticated sync and replay", function()
+    local _, dibs = load()
+    local before = #dibs.Ledger.GetAllTransactions()
+    local incoming = {
+      acquisitionId = "vault-lfr", guildKey = dibs.GetGuildKey(), playerName = "Owner-Realm",
+      characterId = "Player-2-OWNER", itemID = 282005, difficulty = "LFR", seasonId = dibs.GetCurrentSeasonId(),
+      resetId = "week-lfr", verificationState = "AUTOMATIC_CONFIRMED", evidenceState = "COMPLETE",
+      source = "GREAT_VAULT", evidenceId = "claim:282005", revision = 1,
+    }
+    local detail = dibs.Sync.BuildVaultDetail(incoming)
+    local accepted, reason = dibs.Sync.Receive(remote(dibs, detail, "Owner-Realm"), "Owner-Realm")
+    assert_true(accepted, reason)
+    local record = dibs.PreDibs.GetVaultAcquisition("vault-lfr")
+    assert_equal("LFR", record.difficulty)
+    assert_equal("LFR", dibs.PreDibs.ProjectVaultAcquisition(record, "player").difficulty)
+    accepted, reason = dibs.Sync.Receive(remote(dibs, detail, "Owner-Realm"), "Owner-Realm")
+    assert_true(accepted, reason)
+    assert_equal("IDEMPOTENT_REPLAY", reason)
+    assert_equal(1, #dibs.PreDibs.GetAcquisitions())
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
+  end)
+
   it("transfers Vault detail through the bounded chunk machinery", function()
     local _, dibs = load()
     local record = dibs.PreDibs.RecordVaultAcquisition("Tester-Realm", 282004, "Normal", {

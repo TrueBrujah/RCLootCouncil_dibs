@@ -42,7 +42,7 @@ Persisted request records include normalized `Normal`, `Heroic`, `Mythic`, or `U
 
 Great Vault acquisitions are display-only SavedVariables records and bounded
 sync projections. They never cause a request transition or ledger transaction.
-Automatic records are evidence-only; `/dibs vault <itemID> [difficulty]` is the
+Automatic records are evidence-only; `/dibs vault <item link|[Item Name]|itemID> <LFR|Normal|Heroic|Mythic>` is the
 manual fallback when Retail claim detection is unavailable.
 
 ## Snapshot projection

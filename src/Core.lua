@@ -1380,7 +1380,7 @@ function Dibs.HandleSlashCommand(msg)
   if action == "" or action == "help" then
     local help = Dibs.L or {}
     Dibs.Message(help.SLASH_HELP_TITLE or "Dibs commands - prefix each command with /dibs:")
-    Dibs.Message(help.SLASH_HELP_PLAYER or "Player: ui | balance | requests | pre <itemID> | vault <itemID> [difficulty] | minimap show|hide")
+    Dibs.Message(help.SLASH_HELP_PLAYER or "Player: ui | balance | requests | pre <itemID> | vault <item link | [Item Name] | itemID> <LFR | Normal | Heroic | Mythic> | minimap show|hide")
     Dibs.Message(help.SLASH_HELP_OFFICER or "Officer: officer | options | review | reconcile | data")
     Dibs.Message(help.SLASH_HELP_GUILD or "Guild setup: season create|list|set <id> | rank list|set <index> <amount> [name] | ledger list|set <id>")
     Dibs.Message(help.SLASH_HELP_RAID or "Raid: raid [status|sync|start|stop|ledger <id>] | remind <message>")
@@ -1601,24 +1601,87 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "vault" then
-    local itemLink, trailing = rest:match("^(|c%x+|Hitem:[^|]+|h%[.-%]|h|r)%s*(.*)$")
-    if not itemLink then itemLink, trailing = rest:match("^(|cn[%w_]+:|Hitem:[^|]+|h%[.-%]|h|r)%s*(.*)$") end
-    if not itemLink then itemLink, trailing = rest:match("^(|Hitem:[^|]+|h%[.-%]|h)%s*(.*)$") end
+    local strings = Dibs.L or {}
+    local usage = strings.VAULT_COMMAND_USAGE
+      or "Usage: /dibs vault <item link | [Item Name] | itemID> <LFR | Normal | Heroic | Mythic>"
+    local function difficultyOf(text)
+      local value = Dibs.PreDibs and Dibs.PreDibs.NormalizeDifficulty and Dibs.PreDibs.NormalizeDifficulty(text)
+      return value ~= "UNKNOWN" and value or nil
+    end
+    local input = rest:match("^%s*(.-)%s*$") or ""
+    local itemLink, trailing = input:match("^(|c%x+|Hitem:[^|]+|h%[.-%]|h|r)%s*(.*)$")
+    if not itemLink then itemLink, trailing = input:match("^(|cn[%w_]+:|Hitem:[^|]+|h%[.-%]|h|r)%s*(.*)$") end
+    if not itemLink then itemLink, trailing = input:match("^(|Hitem:[^|]+|h%[.-%]|h)%s*(.*)$") end
+    local itemID, itemName, difficultyText
+    local idText, idTrailing = input:match("^(%d+)$")
+    if not idText then idText, idTrailing = input:match("^(%d+)%s+(.*)$") end
+    if itemLink then
+      itemID, itemName, difficultyText = tonumber(itemLink:match("item:(%d+)")), itemLink:match("|h%[(.-)%]|h"), trailing
+    elseif idText then
+      itemID, difficultyText = tonumber(idText), idTrailing
+    else
+      local bracketName, bracketTrailing = input:match("^%[(.-)%]%s*(.*)$")
+      if bracketName then
+        itemName, difficultyText = bracketName, bracketTrailing
+      else
+        -- Unbracketed names may contain spaces; only a recognized last word is a difficulty.
+        local head, last = input:match("^(.-)%s+(%S+)$")
+        if head and difficultyOf(last) then itemName, difficultyText = head, last else itemName = input end
+      end
+      itemName = itemName and itemName:match("^%s*(.-)%s*$") or ""
+      if itemName ~= "" then
+        local getInfo = (type(C_Item) == "table" and C_Item.GetItemInfo) or GetItemInfo
+        local resolvedName, resolvedLink
+        if type(getInfo) == "function" then
+          local ok, nameValue, linkValue = pcall(getInfo, itemName)
+          if ok then resolvedName, resolvedLink = nameValue, linkValue end
+        end
+        itemID = type(resolvedLink) == "string" and tonumber(resolvedLink:match("item:(%d+)")) or nil
+        if itemID then itemName = resolvedName or itemName end
+      end
+    end
+    local difficulty = difficultyOf(difficultyText)
+    local detectedDifficulty = false
+    if not difficulty and itemLink and not (difficultyText or ""):find("%S")
+      and Dibs.GreatVault and Dibs.GreatVault.ResolveItemDifficulty then
+      difficulty = Dibs.GreatVault.ResolveItemDifficulty(itemLink)
+      detectedDifficulty = difficulty ~= nil
+    end
+    if not itemID then
+      Dibs.Message(itemName and itemName ~= ""
+        and string.format(strings.VAULT_COMMAND_ITEM_NOT_FOUND
+          or "Item not found: %s. Shift-click the item link or use its item ID.", itemName)
+        or (strings.VAULT_COMMAND_ITEM_REQUIRED or "An item link, [Item Name], or item ID is required."))
+      Dibs.Message(usage)
+      return
+    end
+    if not difficulty then
+      Dibs.Message(strings.VAULT_COMMAND_DIFFICULTY_REQUIRED
+        or "Difficulty required: LFR (Raid Finder), Normal, Heroic (Hero), or Mythic (Myth); it could not be detected from the item. Nothing was recorded.")
+      Dibs.Message(usage)
+      return
+    end
     local record, reason
     if Dibs.PreDibs and Dibs.PreDibs.RecordVaultAcquisition then
-      record, reason = Dibs.PreDibs.RecordVaultAcquisition(Dibs.GetPlayerName(),
-        itemLink and tonumber(itemLink:match("item:(%d+)")) or args[2],
-        itemLink and trailing or args[3],
-        itemLink and { itemLink = itemLink, itemName = itemLink:match("|h%[(.-)%]|h") } or nil)
+      record, reason = Dibs.PreDibs.RecordVaultAcquisition(Dibs.GetPlayerName(), itemID, difficulty,
+        (itemLink or itemName) and {
+          itemLink = itemLink, itemName = itemName,
+        } or nil)
     else
       reason = "ACQUISITIONS_UNAVAILABLE"
     end
     if record then
       local resultKey = "VAULT_RESULT_" .. tostring(record.outcome or "RECORDED_MANUAL")
-      local resultText = Dibs.L and Dibs.L[resultKey] or "Vault acquisition recorded."
-      Dibs.Message(resultText .. " Item " .. tostring(record.itemID) .. " (" .. tostring(record.difficulty) .. ").")
+      local resultText = strings[resultKey] or "Vault acquisition recorded."
+      local label = record.itemLink or record.itemName or ("Item " .. tostring(record.itemID))
+      Dibs.Message(resultText .. " " .. tostring(label) .. " (" .. tostring(record.difficulty) .. ").")
+      if detectedDifficulty then
+        Dibs.Message(string.format(strings.VAULT_COMMAND_DIFFICULTY_DETECTED
+          or "Difficulty detected from the item (raid origin or dungeon upgrade track): %s.", tostring(record.difficulty)))
+      end
     else
       Dibs.Message(reason == "INVALID_ITEM" and "A valid item ID is required." or "Unable to record Vault acquisition.")
+      if reason == "INVALID_ITEM" then Dibs.Message(usage) end
     end
     return
   end

@@ -2,7 +2,23 @@ local loader = require("helpers.load_addon")
 local uiMocks = require("helpers.b11_ui_mocks")
 
 describe("Great Vault UI acceptance", function()
-  it("resolves ID-only names without presenting the base variant as the acquired item", function()
+  it("shows LFR in the Player Vault history without changing the recorded classification", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local record = dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 21016, "LFR")
+    local captured
+    local original = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+      captured = rows
+      return original(shell, parent, columns, rows, height, actions, options)
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("vault")
+    assert_equal(1, #captured)
+    assert_equal("LFR", captured[1][3])
+    assert_equal("LFR", record.difficulty)
+  end)
+
+  it("links ID-only item references without presenting them as the acquired variant", function()
     local _, dibs = loader.load({ withAce3 = true })
     local record = dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 275658)
     local captured
@@ -13,8 +29,9 @@ describe("Great Vault UI acceptance", function()
     end
     local frame = dibs.PlayerUI.CreateWindow()
     frame.SelectTab("vault")
-    assert_nil(captured[1][2]:find("|Hitem:", 1, true))
+    assert_true(captured[1][2]:find("|Hitem:275658|h", 1, true) ~= nil)
     assert_true(captured[1][2]:find("Primeval Skyfriend", 1, true) ~= nil)
+    assert_true(captured[1][4]:find(dibs.L.PLAYER_VAULT_REFERENCE_LABEL, 1, true) ~= nil)
     assert_true(captured[1].tooltip:find(dibs.L.PLAYER_VAULT_VARIANT_UNKNOWN, 1, true) ~= nil)
     assert_nil(record.itemLink)
     assert_nil(record.itemName)
@@ -44,7 +61,9 @@ describe("Great Vault UI acceptance", function()
       if slot == 12 then return link:gsub(":123:", ":987:") end
     end
     frame:Refresh()
-    assert_nil(captured[1][2]:find("|Hitem:", 1, true))
+    assert_true(captured[1][2]:find("|Hitem:159459|h", 1, true) ~= nil)
+    assert_true(captured[1][4]:find(dibs.L.PLAYER_VAULT_REFERENCE_LABEL, 1, true) ~= nil)
+    assert_nil(captured[1][2]:find(":123:", 1, true))
     _G.GetInventoryItemLink = previous
   end)
 
@@ -142,9 +161,10 @@ describe("Great Vault UI acceptance", function()
     frame.SelectTab("vault")
     assert_equal(4, #captured.columns)
     assert_equal(10, #captured.rows)
-    assert_equal("Vault Item 12", captured.rows[1][2])
+    assert_equal("|Hitem:1012|h[Vault Item 12]|h", captured.rows[1][2])
     assert_equal("Heroic", captured.rows[1][3])
-    assert_equal(dibs.L.VAULT_STATUS_MANUAL_RECORDED, captured.rows[1][4])
+    assert_true(captured.rows[1][4]:find(dibs.L.VAULT_STATUS_MANUAL_RECORDED, 1, true) ~= nil)
+    assert_true(captured.rows[1][4]:find(dibs.L.PLAYER_VAULT_REFERENCE_LABEL, 1, true) ~= nil)
     local tooltip = captured.options.cellTooltip(captured.rows[1], 2)
     assert_true(tooltip:find("week-42", 1, true) ~= nil)
     assert_true(tooltip:find("MANUAL", 1, true) ~= nil)
@@ -157,8 +177,8 @@ describe("Great Vault UI acceptance", function()
     nextButton.callbacks.OnClick(nextButton, "OnClick")
     assert_equal(2, frame.vaultPage)
     assert_equal(2, #captured.rows)
-    assert_equal("Vault Item 2", captured.rows[1][2])
-    assert_equal("Vault Item 1", captured.rows[2][2])
+    assert_equal("|Hitem:1002|h[Vault Item 2]|h", captured.rows[1][2])
+    assert_equal("|Hitem:1001|h[Vault Item 1]|h", captured.rows[2][2])
     assert_equal(13, #records)
     assert_equal(1001, records[1].itemID)
     assert_equal(balance, dibs.Ledger.GetBalance(dibs.GetPlayerName()))
@@ -200,13 +220,89 @@ describe("Great Vault UI acceptance", function()
     assert_true(labels[dibs.L.PLAYER_VAULT_UNAVAILABLE])
   end)
 
+  it("keeps full Vault names and statuses readable and opens exact or reference links", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local link = "|cffa335ee|Hitem:268263::::::::90:577::6:1:123|h[Frostscale's Mystic Frond]|h|r"
+    local saved = dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 268263, "Mythic", {
+      itemLink = link, itemName = "Frostscale's Mystic Frond",
+    })
+    local previousDate, previousItemRef, previousTooltip = _G.date, _G.SetItemRef, _G.GameTooltip
+    _G.date = function(pattern)
+      return pattern == "%Y-%m-%d" and "2026-10-15" or "2026-10-15 15:48:00"
+    end
+    local opened, hovered
+    _G.SetItemRef = function(itemString, text, button)
+      opened = { itemString, text, button }
+    end
+    _G.GameTooltip = {
+      SetOwner = function() end,
+      SetText = function() end,
+      SetHyperlink = function(_, value) hovered = value end,
+      Show = function() end,
+    }
+    local captured
+    local original = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+      captured = { columns = columns, rows = rows, options = options }
+      return original(shell, parent, columns, rows, height, actions, options)
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("vault")
+    frame.aceTabs.content = frame.aceTabs.frame
+    for _, width in ipairs({ 420, 600, 1240 }) do
+      frame.aceTabs.content.GetWidth = function() return width end
+      frame:Refresh()
+      local widths, overflow, total = dibs.AceGUI.AllocateFluidColumnWidths(
+        captured.columns, width, captured.options)
+      assert_false(overflow)
+      assert_true(total <= width + 0.01)
+      assert_equal(84, widths[1])
+      assert_equal(76, widths[3])
+      assert_true(widths[2] > widths[4])
+      for _, column in ipairs(captured.columns) do assert_true(column.wrap) end
+      local row = captured.rows[1]
+      assert_equal("2026-10-15", row[1])
+      assert_true(row.tooltip:find("2026-10-15 15:48:00", 1, true) ~= nil)
+      local rendered
+      for _, child in ipairs(frame.vaultHistoryTable.children) do
+        if child._dibsDataGridRow then rendered = child end
+      end
+      assert_not_nil(rendered)
+      assert_equal(link, rendered.children[2].text)
+      assert_equal(dibs.L.VAULT_STATUS_MANUAL_RECORDED, rendered.children[4].text)
+      rendered.children[2].frame:GetScript("OnEnter")(rendered.children[2].frame)
+      assert_equal(link, hovered)
+      rendered.children[2].frame:GetScript("OnMouseUp")(rendered.children[2].frame, "LeftButton")
+      assert_equal("item:268263::::::::90:577::6:1:123", opened[1])
+      assert_equal(link, opened[2])
+      assert_equal("LeftButton", opened[3])
+    end
+    dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 275658, "Heroic")
+    frame:Refresh()
+    local reference
+    for _, row in ipairs(captured.rows) do
+      if row.itemLink:find("|Hitem:275658|h", 1, true) then reference = row end
+    end
+    assert_not_nil(reference)
+    assert_true(reference[4]:find(dibs.L.PLAYER_VAULT_REFERENCE_LABEL, 1, true) ~= nil)
+    captured.options.onRowClick(reference, 2)
+    assert_equal("item:275658", opened[1])
+    assert_equal(link, saved.itemLink)
+    assert_nil(dibs.PreDibs.GetAcquisitions()[2].itemLink)
+    _G.SetItemRef = nil
+    _G.__dibsMessages = {}
+    captured.options.onRowClick(reference, 2)
+    assert_true(_G.__dibsMessages[1]:find(dibs.L.PLAYER_VAULT_LINK_UNAVAILABLE, 1, true) ~= nil)
+    _G.date, _G.SetItemRef, _G.GameTooltip = previousDate, previousItemRef, previousTooltip
+  end)
+
   it("documents the manual Vault fallback in slash command help", function()
     local _, dibs = loader.load({ withAce3 = true })
     dibs.HandleSlashCommand("help")
     local found = false
     local prefixExplained = false
     for _, message in ipairs(_G.__dibsMessages or {}) do
-      if message:find("vault <itemID> [difficulty]", 1, true) then found = true end
+      if message:find("vault <item link | [Item Name] | itemID> <LFR | Normal | Heroic | Mythic>", 1, true) then found = true end
       if message:find("prefix each command with /dibs", 1, true) then prefixExplained = true end
     end
     assert_true(found and prefixExplained)

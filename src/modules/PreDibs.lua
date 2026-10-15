@@ -213,7 +213,7 @@ function Dibs.PreDibs.SetLedgerContext(ledgerId)
 end
 
 local VALID_MODES = { WILD_OPEN = true, ENCOUNTER = true }
-local DIFFICULTY_NAMES = { [14] = "Normal", [15] = "Heroic", [16] = "Mythic" }
+local DIFFICULTY_NAMES = { [14] = "Normal", [15] = "Heroic", [16] = "Mythic", [17] = "LFR" }
 local function formatDateTime(format, timestamp)
   if type(date) == "function" then
     return date(format, timestamp)
@@ -252,10 +252,12 @@ end
 function Dibs.PreDibs.NormalizeDifficulty(value)
   local numeric = tonumber(value)
   if numeric and DIFFICULTY_NAMES[numeric] then return DIFFICULTY_NAMES[numeric] end
-  local label = string.lower(tostring(value or ""))
+  local label = string.lower(tostring(value or "")):match("^%s*(.-)%s*$")
+  if label == "lfr" or label == "raid finder" or label == "looking for raid"
+    or label == "looking_for_raid" or label == "outil raids" or label == "outil de raid" then return "LFR" end
   if label == "normal" then return "Normal" end
-  if label == "heroic" then return "Heroic" end
-  if label == "mythic" then return "Mythic" end
+  if label == "heroic" or label == "hero" or label == "hc" or label == "heroique" or label == "héroïque" then return "Heroic" end
+  if label == "mythic" or label == "myth" or label == "mythique" then return "Mythic" end
   return "UNKNOWN"
 end
 

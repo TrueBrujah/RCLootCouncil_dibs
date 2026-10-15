@@ -26,6 +26,7 @@ end
 function M.observation(overrides)
   local observation = {
     itemID = 21016,
+    difficulty = "Heroic",
     playerName = "Tester-Realm",
     resetId = "reset-test",
     claimedAt = 1700000000,
