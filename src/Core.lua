@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.7-dev"
+Dibs.VERSION = "0.8.8-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -206,7 +206,7 @@ local defaultDB = {
     vaultConflicts = {},
   },
   disputes = {
-    version = 1,
+    version = 2,
     requests = {},
     order = {},
     corrections = {},
@@ -498,6 +498,7 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   ensureTable(disputes, "requests", {}, root, changes, scope .. ".disputes.requests")
   ensureTable(disputes, "order", {}, root, changes, scope .. ".disputes.order")
   ensureTable(disputes, "corrections", {}, root, changes, scope .. ".disputes.corrections")
+  disputes.version = math.max(tonumber(disputes.version) or 1, 2)
 
   local reconciliation = ensureTable(db, "reconciliation", defaultDB.reconciliation, root, changes, scope .. ".reconciliation")
   for _, key in ipairs({ "sessions", "aliases", "aliasHistory", "decisions", "evidence", "evidenceIndex" }) do
@@ -2061,6 +2062,9 @@ local function onRuntimeEvent(event, ...)
     if Dibs.Readiness and Dibs.Readiness.Invalidate then Dibs.Readiness.Invalidate("PLAYER_ENTERING_WORLD") end
   end
   if event == "CHAT_MSG_ADDON" and Dibs.Sync and Dibs.Sync.OnAddonMessage then return Dibs.Sync.OnAddonMessage(...) end
+  if event == "CHAT_MSG_SYSTEM" and Dibs.Ace3 and Dibs.Ace3.OnWhisperSystemMessage then
+    return Dibs.Ace3.OnWhisperSystemMessage(...)
+  end
   if event == "GROUP_ROSTER_UPDATE" and Dibs.Sync and Dibs.Sync.OnRosterChanged then Dibs.Sync.OnRosterChanged() end
   if event == "GUILD_ROSTER_UPDATE" then
     if Dibs.Identity and Dibs.Identity.OnRosterChanged then Dibs.Identity.OnRosterChanged() end
@@ -2079,7 +2083,7 @@ end
 
 function Dibs.SetupRuntimeEvents()
   if Dibs.runtimeEventsRegistered then return true end
-  local events = { "PLAYER_LOGIN", "ADDON_LOADED", "GROUP_ROSTER_UPDATE", "GUILD_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_REGEN_ENABLED" }
+  local events = { "PLAYER_LOGIN", "ADDON_LOADED", "GROUP_ROSTER_UPDATE", "GUILD_ROSTER_UPDATE", "CHAT_MSG_SYSTEM", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_REGEN_ENABLED" }
   local usingAceEvent = Dibs.Ace3 and Dibs.Ace3.RegisterEvent
   if usingAceEvent then
     for _, event in ipairs(events) do Dibs.Ace3.RegisterEvent(event, onRuntimeEvent) end

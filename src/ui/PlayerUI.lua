@@ -296,6 +296,10 @@ local function playerRequestStatus(status, unavailable)
     ["Need information"] = { label = "Need information", nextAction = "Reply to Officer", explanation = "An Officer requested more information before deciding." },
     Resolved = { label = "Resolved", nextAction = "View resolution", explanation = "The Officer completed the review." },
     Rejected = { label = "Rejected", nextAction = "View resolution", explanation = "The Officer rejected the request with an audit reason." },
+    Closed = { label = Dibs.L.REQUEST_CLOSED or "Closed", nextAction = Dibs.L.REQUEST_VIEW_DOSSIER or "View dossier",
+      explanation = Dibs.L.REQUEST_RETAINED or "The complete dossier is retained; this stage does not change Dibs." },
+    Archived = { label = Dibs.L.REQUEST_ARCHIVED or "Archived", nextAction = Dibs.L.REQUEST_VIEW_DOSSIER or "View dossier",
+      explanation = Dibs.L.REQUEST_RETAINED or "The complete dossier is retained; this stage does not change Dibs." },
   }
   local value = values[status] or { label = tostring(status or "Unavailable"), nextAction = "View request", explanation = "Your request status is available." }
   return { label = value.label, nextAction = value.nextAction, explanation = value.explanation, tone = "normal" }
@@ -933,6 +937,7 @@ local function createLegacyAceWindow()
     end
     local summary = Dibs.PlayerUI.GetSummary()
     if self.playerTab == "requests" then
+      if Dibs.RequestDelivery then Dibs.RequestDelivery.Pump() end
       -- Keep the report form, request list and details in one bounded page so
       -- the lower controls remain reachable on smaller screens.
       local tabs = Dibs.AceGUI.AddScrollableList(shell, tabs, 535) or tabs
@@ -979,7 +984,7 @@ local function createLegacyAceWindow()
         local request = reportResult[1]
         local reason = reportResult[2] or "DISPUTES_UNAVAILABLE"
         if request then
-          self.disputeStatusText = "Request " .. tostring(request.requestId) .. " submitted. Officers can now review it."
+          self.disputeStatusText = (Dibs.L.REQUEST_SAVED or "Request saved. Delivery is tracked separately; receipt is not a resolution.") .. " " .. tostring(request.requestId)
           self.disputeNote = ""
           self.disputeTransactionId = ""
         else
@@ -1038,7 +1043,41 @@ local function createLegacyAceWindow()
       if self.selectedDisputeRequestId then
         local selected = Dibs.Disputes.GetRequest(self.selectedDisputeRequestId, summary.player)
         if selected then
+          local strings = Dibs.L or {}
           Dibs.AceGUI.AddHeader(shell, tabs, "Request details", disputeStatusLabel(selected))
+          local delivery = selected.delivery
+          if delivery then
+            local labels = { queued = strings.REQUEST_QUEUED or "Queued", sent = strings.REQUEST_SENT or "Sent; awaiting receipt",
+              received = strings.REQUEST_RECEIVED or "Received", error = strings.REQUEST_ERROR or "Delivery error" }
+            Dibs.AceGUI.AddLabel(shell, tabs, (strings.REQUEST_DELIVERY or "Delivery") .. ": " .. tostring(labels[delivery.state] or delivery.state)
+              .. (delivery.reason and (" — " .. delivery.reason) or ""), true)
+            if delivery.state ~= "received" then
+              Dibs.AceGUI.AddButton(shell, tabs, strings.REQUEST_RETRY or "Retry delivery", function()
+                local ok, reason = Dibs.RequestDelivery.Retry(selected.requestId)
+                self.disputeStatusText = ok and (strings.REQUEST_REPLY_SAVED or "Delivery retried; check its status.") or tostring(reason)
+                self:Refresh()
+              end, 150)
+            end
+          end
+          if selected.followUpAt then
+            Dibs.AceGUI.AddLabel(shell, tabs, (strings.REQUEST_FOLLOWUP or "Next follow-up") .. ": " .. formatDate(selected.followUpAt), true)
+            Dibs.AceGUI.AddButton(shell, tabs, strings.REQUEST_SNOOZE or "Snooze reminder for one hour", function()
+              local ok, reason = Dibs.RequestDelivery.Snooze(selected.requestId, time() + 3600)
+              self.disputeStatusText = ok and (strings.REQUEST_SNOOZED or "Reminder snoozed on this character.") or tostring(reason)
+              self:Refresh()
+            end, 240)
+          end
+          local replyRows = {}
+          for _, reply in ipairs(selected.replies or {}) do
+            replyRows[#replyRows + 1] = { tostring(reply.author), formatDate(reply.createdAt), tostring(reply.boundedText or "") }
+          end
+          if #replyRows > 0 then
+            Dibs.AceGUI.AddTable(shell, tabs, {
+              { title = strings.REQUEST_REPLY_AUTHOR or "Author", width = 85 },
+              { title = strings.REQUEST_REPLY_DATE or "Date", width = 145 },
+              { title = strings.REQUEST_PUBLIC_REPLY or "Public reply", width = 360 },
+            }, replyRows, 150)
+          end
           local evidence = selected.evidence and selected.evidence[1] or {}
           Dibs.AceGUI.AddPropertyTable(shell, tabs, {
             { "Status", tostring(selected.status) },
@@ -1054,7 +1093,7 @@ local function createLegacyAceWindow()
             setControlText(reply, self.disputeReply)
             Dibs.AceGUI.AddButton(shell, tabs, "Send reply", function()
               local result, reason = Dibs.Disputes.AddReply(self.selectedDisputeRequestId, self.disputeReply, summary.player)
-              self.disputeStatusText = result and "Reply sent to the Officer queue." or ("Unable to reply: " .. tostring(reason or "unknown error"))
+              self.disputeStatusText = result and (strings.REQUEST_REPLY_SAVED or "Reply saved; check delivery status.") or ("Unable to reply: " .. tostring(reason or "unknown error"))
               if result then self.disputeReply = "" end
               self:Refresh()
             end, 120)

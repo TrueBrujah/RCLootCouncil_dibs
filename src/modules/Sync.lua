@@ -124,6 +124,7 @@ end
 ---@param channel string|nil WoW addon channel, default `RAID`.
 ---@param target string|nil Whisper target when channel is `WHISPER`.
 ---@return boolean sent
+---@return string|nil reason Rejection code when sending is blocked.
 function Dibs.Sync.Send(message, channel, target)
   if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
     local effChannel = channel or "RAID"
@@ -132,11 +133,19 @@ function Dibs.Sync.Send(message, channel, target)
     end
   end
   if type(message) ~= "table" or not MESSAGE_TYPES[message.type] or Dibs.Sync.ContainsForbiddenLiveLootData(message) then return false end
+  if channel == "WHISPER" then
+    if not Dibs.Ace3 or not Dibs.Ace3.ResolveWhisperTarget then return false, "ROSTER_UNAVAILABLE" end
+    local resolved, reason = Dibs.Ace3.ResolveWhisperTarget(target)
+    if not resolved then return false, reason end
+    target = resolved
+  end
   if not message.version then message.version = Dibs.PROTOCOL_VERSION or 1 end
   if not message.guildKey and Dibs.GetGuildKey then message.guildKey = Dibs.GetGuildKey() end
   Dibs.Sync.TraceOutgoing(channel, target, message.type)
-  if Dibs.Ace3 and Dibs.Ace3.SendComm and Dibs.Ace3.SendComm("DIBS", message, channel or "RAID", target) then
-    return true
+  if Dibs.Ace3 and Dibs.Ace3.SendComm then
+    local sent, reason = Dibs.Ace3.SendComm("DIBS", message, channel or "RAID", target)
+    if sent then return true end
+    if reason and reason ~= "SYNC_UNAVAILABLE" then return false, reason end
   end
   local api = _G.C_ChatInfo
   if type(api) ~= "table" or type(api.SendAddonMessage) ~= "function" then return false end

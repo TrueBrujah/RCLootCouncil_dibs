@@ -67,6 +67,12 @@ from anonymous exports; unauthorized users receive no Officer data.
 - **FR-003**: Distinguish missing exact variants and display-only owned previews; never rewrite persisted evidence from bag inspection.
 - **FR-004**: Toggle Player/Officer minimap routes without expanding permissions; persist per-character icon visibility.
 - **FR-005**: Refuse targeted delivery to known-offline recipients explicitly and preserve existing recovery behavior.
+  The shared adapter must independently refresh roster presence before queuing
+  whispers. Localized player-not-found feedback for a recently contacted,
+  unambiguous recipient must suspend further sends to that recipient for 60
+  seconds without hiding Blizzard errors or discarding recoverable work.
+  Every outgoing whisper address must include a nonempty player name and realm;
+  qualify short names from verified roster identity and reject incomplete results.
 - **FR-006**: Provide Officer-only descriptive period statistics and separate bounded anonymous audit export.
 - **FR-007**: Retain features 022/023 history, privacy and read-only health contracts rather than duplicating their scope.
 - **FR-008**: Record retrospective traceability honestly and leave real-client gates open until performed.

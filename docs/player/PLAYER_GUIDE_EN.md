@@ -185,6 +185,27 @@ You can cancel your own active request. You cannot cancel another player's
 request. A request that did not win may remain active until you cancel it or the
 policy closes it.
 
+## Review reports and follow-up (0.8.8-dev)
+
+The **Requests** review center (`/dibs requests`) is separate from Pre-Dib
+reservations. Report only your own issue and evidence. Saving a report is not
+proof that an officer received it: details show **Queued**, **Sent; awaiting
+receipt**, **Received**, or **Delivery error**. Receipt never means resolved.
+Offline or older clients do not receive whispers; work stays saved across reload.
+Delivery requires a current verified capable coordinator and both clients online.
+
+Officer questions allow an owner reply. Public officer replies and conclusions
+appear in the same thread, without internal administrative evidence. **Retry
+delivery** retries pending work; for a stale requested reply it uses the latest
+received revision. Changed authority is blocked rather than silently reassigning
+a possibly accepted request.
+
+An optional follow-up can produce a local reminder while WoW is running.
+Snooze postpones only this character's reminder; notifications respect your local
+notification preference. Nothing runs while the client is closed.
+Resolved or rejected reports may subsequently be Closed and Archived; these
+stages retain the dossier and do not spend/refund a Dib.
+
 ## Drop-Dib workflow
 
 A Drop-Dib is the debit associated with a finalized eligible award.

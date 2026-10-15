@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.8-dev - Unreleased
+
+- (2026-10-15) Require a qualified `PlayerName-Realm` address at the shared whisper boundary, rejecting incomplete resolved addresses before AceComm. Cover same-realm roster completion and missing-realm rejection with regression tests; no persisted identity or protocol changes.
+- (2026-10-15) Harden the shared AceComm whisper boundary against stale roster presence and repeated player-not-found errors. Recheck current roster presence before private sends and pause a recently contacted, unambiguous failed recipient for 60 seconds on localized Blizzard feedback. Keep errors visible, preserve pending work, and leave guild broadcasts unchanged; no schema or protocol migration.
+- (2026-10-15) Extend the existing request center with private persisted submission/reply delivery and receipts on SyncV2, verified coordinator-only shared mutations, public replies, responsible officers, follow-up scheduling, online-only snoozable reminders, and safe owner updates. Offline or unsupported recipients remain pending; receipt is not resolution. Shared replicas are read-only and unproven coordinator handoff is blocked.
+- (2026-10-15) Add explicit Closed and Archived request stages with reasons while preserving existing serialized statuses and correction links. Additive disputes schema 2 retains complete stored dossiers and rejects request/audit capacity instead of silently deleting history. Existing immutable compensation workflows remain unchanged; archiving never changes balances.
+- (2026-10-15) Add EN/FR controls and documentation. Protocol 2.1 gains the additive `requestDelivery` capability and WHISPER-only `REQUEST_MESSAGE` entity; older clients cannot receive tickets. Local outbox/reminders remain character/guild isolated. Real Retail multi-client and UI certification remains pending; this is a development version, not a release.
+
 ## 0.8.7-dev - Unreleased
 
 - (2026-10-14) Toggle Player/Officer windows from the minimap shortcut instead of always forcing them open; retain permission-based left-click routing and the personal right-click view.

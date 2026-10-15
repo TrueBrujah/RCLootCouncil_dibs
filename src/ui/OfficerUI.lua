@@ -3475,6 +3475,7 @@ local function createAceWindow(initialRoute)
 
   local requestDetailShell
   local requestDetailRoot
+  local requestDetailFooter
   local requestChildDialog
   local activeConfirmationDialog
   local openRequestDetail
@@ -3801,7 +3802,8 @@ local function createAceWindow(initialRoute)
         return
       end
       local action = draft.action == "refund" and "refund" or draft.action == "revoke" and "revoke" or "adjustment"
-      local options = { amount = draft.action == "manual" and tonumber(draft.amount) or math.abs(tonumber(draft.amount)), reason = draft.reason, confirmed = true }
+      local options = { amount = draft.action == "manual" and tonumber(draft.amount) or math.abs(tonumber(draft.amount)), reason = draft.reason, confirmed = true,
+        expectedRevision = request.revision }
       draft.committing = true
       local callOK, result, reasonCode = pcall(Dibs.Disputes.Resolve, request.requestId, action, options, Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
       if not callOK then
@@ -3901,6 +3903,7 @@ local function createAceWindow(initialRoute)
       end, (height or 64) + 36)
     end
     local function executeRequestAction(options, validate, successText, service)
+      options.expectedRevision = request.revision
       local allowed, permissionReason = permissionDecision()
       if not allowed then return false, permissionReason end
       if validate then
@@ -4170,7 +4173,7 @@ local function createAceWindow(initialRoute)
       if not isReview then frame.requestActionReview = action; openRequestActionDialog(request, action, title); return end
       if action == "correct_target" and trimText(frame.disputeCorrectPlayer) == ""
         and (frame.disputeCorrectItemKey == nil or trimText(frame.disputeCorrectItem) == "") then return end
-      local options = { reason = frame.requestDetailReason or "", confirmed = frame.requestActionConfirmed == true }
+      local options = { reason = frame.requestDetailReason or "", confirmed = frame.requestActionConfirmed == true, expectedRevision = request.revision }
       if action == "correct_target" then
         options.playerName = frame.disputeCorrectPlayer
         options.itemLink = frame.disputeCorrectItem
@@ -4198,12 +4201,17 @@ local function createAceWindow(initialRoute)
       requestDetailShell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Request", 600, 430, { "CENTER", 0, 0 }, "OfficerRequestDetail")
       if not requestDetailShell then return false end
       frame.requestDetailShell = requestDetailShell
-      requestDetailRoot = Dibs.AceGUI.Create(requestDetailShell, "SimpleGroup", requestDetailShell.window)
+      requestDetailRoot = Dibs.AceGUI.AddScrollableList(requestDetailShell, requestDetailShell.window, 320, 110)
+      requestDetailFooter = Dibs.AceGUI.Create(requestDetailShell, "SimpleGroup", requestDetailShell.window)
+      if requestDetailFooter then
+        requestDetailFooter:SetFullWidth(true); requestDetailFooter:SetHeight(38); requestDetailFooter:SetLayout("Flow")
+      end
     end
     if not requestDetailRoot then return false end
     frame.requestDetailRoot = requestDetailRoot
     Dibs.AceGUI.Clear(requestDetailRoot)
-    requestDetailRoot:SetFullWidth(true); requestDetailRoot:SetFullHeight(true); requestDetailRoot:SetLayout("List")
+    requestDetailRoot:SetFullWidth(true); requestDetailRoot:SetFullHeight(false); requestDetailRoot:SetLayout("List")
+    if requestDetailFooter then Dibs.AceGUI.Clear(requestDetailFooter) end
     frame.disputeDetailOpen = true
     frame.disputeSelectedId = request.requestId
     local evidence = request.evidence and request.evidence[1] or {}
@@ -4242,6 +4250,32 @@ local function createAceWindow(initialRoute)
     addRequestField("Status", tostring(request.status or "Open"))
     addRequestField("Description", summary.note ~= "" and summary.note or "No note provided")
     addRequestField("Evidence", summary.evidence)
+    local strings = Dibs.L or {}
+    addRequestField(strings.REQUEST_ASSIGNED or "Responsible officer", request.assignedTo or (strings.REQUEST_UNASSIGNED or "Unassigned"))
+    addRequestField(strings.REQUEST_ACTIVITY or "Last activity", formatHistoryDate(request.lastUpdatedAt or request.createdAt))
+    addRequestField(strings.REQUEST_FOLLOWUP or "Next follow-up", request.followUpAt and formatHistoryDate(request.followUpAt) or (strings.REQUEST_NO_DUE or "Not scheduled"))
+    if request.delivery then
+      local labels = { queued = strings.REQUEST_QUEUED or "Queued", sent = strings.REQUEST_SENT or "Sent; awaiting receipt",
+        received = strings.REQUEST_RECEIVED or "Received", error = strings.REQUEST_ERROR or "Delivery error" }
+      addRequestField(strings.REQUEST_DELIVERY or "Delivery",
+        tostring(labels[request.delivery.state] or request.delivery.state)
+          .. (request.delivery.reason and (" — " .. request.delivery.reason) or ""))
+    end
+    local sharedWritable = not request.deliveryAuthority or Dibs.RequestDelivery and Dibs.RequestDelivery.CanMutate(request)
+    if not sharedWritable then
+      Dibs.AceGUI.AddLabel(requestDetailShell, summarySection, strings.REQUEST_COORDINATOR_ONLY or "Shared request: review is read-only here. Use the current coordinator client for changes.", true)
+    end
+    local replyRows = {}
+    for _, reply in ipairs(request.replies or {}) do
+      replyRows[#replyRows + 1] = { tostring(reply.author), formatHistoryDate(reply.createdAt), tostring(reply.boundedText or "") }
+    end
+    if #replyRows > 0 then
+      Dibs.AceGUI.AddTable(requestDetailShell, summarySection, {
+        { title = strings.REQUEST_REPLY_AUTHOR or "Author", width = 85 },
+        { title = strings.REQUEST_REPLY_DATE or "Date", width = 125 },
+        { title = strings.REQUEST_PUBLIC_REPLY or "Public reply", width = 300 },
+      }, replyRows, 150)
+    end
     Dibs.AceGUI.AddButton(requestDetailShell, summarySection, frame.disputeTechnicalExpanded and "Hide technical details" or "Show technical details", function()
       frame.disputeTechnicalExpanded = not frame.disputeTechnicalExpanded
       openRequestDetail(request)
@@ -4257,26 +4291,79 @@ local function createAceWindow(initialRoute)
     end
     local actionSection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Officer actions") or requestDetailRoot
     local actions = Dibs.AceGUI.AddInlineGroup(requestDetailShell, actionSection)
-    local terminal = request.status == "Resolved" or request.status == "Rejected"
-    if request.status == "Open" or request.status == "Pending" then
+    local terminal = request.status == "Resolved" or request.status == "Rejected" or request.status == "Closed" or request.status == "Archived"
+    if sharedWritable and (request.status == "Open" or request.status == "Pending") then
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Start review", function() openRequestActionDialog(request, "under_review", "Start review") end, 110)
     end
-    if not terminal then
+    if sharedWritable and not terminal then
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Ask for information", function() openRequestActionDialog(request, "ask_information", "Ask for information") end, 155)
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Resolve", function() openRequestActionDialog(request, "no_correction", "Resolve") end, 90)
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reject", function() openRequestActionDialog(request, "reject", "Reject") end, 90)
-    else
-      Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reopen", function() openRequestActionDialog(request, "reopen", "Reopen") end, 90)
+    elseif sharedWritable then
+      if not request.correctionTransactionId then
+        Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reopen", function() openRequestActionDialog(request, "reopen", "Reopen") end, 90)
+      end
+      if request.status == "Resolved" or request.status == "Rejected" then
+        Dibs.AceGUI.AddButton(requestDetailShell, actions, strings.REQUEST_CLOSE or "Close request", function()
+          openRequestActionDialog(request, "close", strings.REQUEST_CLOSE or "Close request")
+        end, 140)
+      elseif request.status == "Closed" then
+        Dibs.AceGUI.AddButton(requestDetailShell, actions, strings.REQUEST_ARCHIVE or "Archive request", function()
+          openRequestActionDialog(request, "archive", strings.REQUEST_ARCHIVE or "Archive request")
+        end, 140)
+      end
+    end
+    if sharedWritable and not terminal then
+      local followup = Dibs.AceGUI.AddSection(requestDetailShell, requestDetailRoot, strings.REQUEST_FOLLOWUP or "Next follow-up",
+        strings.REQUEST_FOLLOWUP_HELP or "Public replies reach the owner. Assignment and internal audit remain officer-only.")
+      local publicReply = ""
+      Dibs.AceGUI.AddEditBox(requestDetailShell, followup, strings.REQUEST_PUBLIC_REPLY or "Public reply", function(value) publicReply = value or "" end, 380)
+      local feedback = Dibs.AceGUI.AddLabel(requestDetailShell, followup, "", true)
+      Dibs.AceGUI.AddButton(requestDetailShell, followup, strings.REQUEST_SEND_REPLY or "Send public reply", function()
+        local result, reason = Dibs.Disputes.AddOfficerReply(request.requestId, publicReply, nil, request.revision)
+        if not result then feedback:SetText(tostring(reason)); return end
+        openRequestDetail(Dibs.Disputes.GetRequest(request.requestId, nil))
+      end, 170)
+      local choices = { [""] = strings.REQUEST_UNASSIGNED or "Unassigned" }
+      for index = 1, GetNumGuildMembers(true) do
+        local name = GetGuildRosterInfo(index)
+        local resolved = name and Dibs.Identity.ResolveRosterMember(name)
+        if resolved and resolved.status == "RESOLVED" and (resolved.role == "gm" or resolved.role == "officer") then choices[resolved.displayName] = resolved.displayName end
+      end
+      local assignee = request.assignedTo or ""
+      local assign = Dibs.AceGUI.AddDropdown(requestDetailShell, followup, strings.REQUEST_ASSIGNED or "Responsible officer", choices, function(value) assignee = value or "" end, 240)
+      Dibs.AceGUI.SetValue(assign, assignee)
+      local offset
+      local due = Dibs.AceGUI.AddDropdown(requestDetailShell, followup, strings.REQUEST_RESCHEDULE or "Reschedule",
+        { keep = strings.REQUEST_KEEP_DUE or "Keep current follow-up", ["0"] = strings.REQUEST_NO_DUE or "Not scheduled",
+          ["3600"] = strings.REQUEST_ONE_HOUR or "In one hour", ["86400"] = strings.REQUEST_ONE_DAY or "In one day",
+          ["259200"] = strings.REQUEST_THREE_DAYS or "In three days" }, function(value) offset = tonumber(value) end, 240)
+      Dibs.AceGUI.SetValue(due, "keep")
+      local function saveFollowUp(target)
+        local result, reason = Dibs.Disputes.UpdateFollowUp(request.requestId, { assignedTo = target,
+          followUpAt = offset and (offset == 0 and 0 or time() + offset) or nil, expectedRevision = request.revision }, nil)
+        if not result then feedback:SetText(tostring(reason)); return end
+        openRequestDetail(Dibs.Disputes.GetRequest(request.requestId, nil))
+      end
+      Dibs.AceGUI.AddButton(requestDetailShell, followup, strings.REQUEST_ASSIGN_ME or "Assign to me", function() saveFollowUp(Dibs.GetPlayerName()) end, 140)
+      Dibs.AceGUI.AddButton(requestDetailShell, followup, strings.REQUEST_SAVE_FOLLOWUP or "Save follow-up", function() saveFollowUp(assignee) end, 150)
+    end
+    if Dibs.RequestDelivery and request.followUpAt then
+      Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, strings.REQUEST_SNOOZE or "Snooze reminder for one hour", function()
+        local ok, reason = Dibs.RequestDelivery.Snooze(request.requestId, time() + 3600)
+        frame.disputeStatusMessage = ok and (strings.REQUEST_SNOOZED or "Reminder snoozed on this character.") or tostring(reason)
+        openRequestDetail(request)
+      end, 240)
     end
     local unavailable = request.unavailable == true or request.status == "Unavailable"
     if unavailable then frame.disputeAdvancedExpanded = false end
-    if not unavailable then
+    if not unavailable and sharedWritable and not terminal then
       Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, frame.disputeAdvancedExpanded and "Hide advanced officer tools" or "Advanced Officer Tools", function()
         frame.disputeAdvancedExpanded = not frame.disputeAdvancedExpanded
         openRequestDetail(request)
       end, 190)
     end
-    if not unavailable and frame.disputeAdvancedExpanded then
+    if not unavailable and sharedWritable and not terminal and frame.disputeAdvancedExpanded then
       local advancedSection = Dibs.AceGUI.AddSection(requestDetailShell, requestDetailRoot, "Advanced Officer Tools", "Secondary accounting and correction workflows.")
       local advancedPermissions = {
         correct_target = "ledger.adjust",
@@ -4312,7 +4399,7 @@ local function createAceWindow(initialRoute)
         Dibs.AceGUI.AddButton(requestDetailShell, advancedSection, "Admin adjustment", function() openRequestActionDialog(request, "adjustment", "Admin adjustment") end, 150)
       end
     end
-    Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, "Close", closeRequestDetail, 90)
+    Dibs.AceGUI.AddButton(requestDetailShell, requestDetailFooter or requestDetailRoot, "Close", closeRequestDetail, 90)
     requestDetailShell.window:Show()
     if requestDetailShell.window.DoLayout then requestDetailShell.window:DoLayout() end
     return true
@@ -5754,9 +5841,11 @@ local function createAceWindow(initialRoute)
       self.disputeTablePage = tablePage
       local pageHeader = tablePage.header
       Dibs.AceGUI.AddHeader(shell, pageHeader, "Officer review requests", helpText.UI_HELP_REVIEW_REQUESTS)
+      if Dibs.RequestDelivery then Dibs.RequestDelivery.Pump() end
       local statusChoices = { [""] = "All statuses" }
       for key, value in pairs(Dibs.Disputes and Dibs.Disputes.GetStatuses and Dibs.Disputes.GetStatuses() or {}) do
-        statusChoices[value] = value
+        statusChoices[value] = value == "Closed" and (Dibs.L.REQUEST_CLOSED or "Closed")
+          or value == "Archived" and (Dibs.L.REQUEST_ARCHIVED or "Archived") or value
       end
       self.disputeStatusFilter = self.disputeStatusFilter or ""
       self.disputeQuery = self.disputeQuery or ""
@@ -5767,6 +5856,15 @@ local function createAceWindow(initialRoute)
         self:Refresh()
       end, 190)
       Dibs.AceGUI.SetValue(filter, self.disputeStatusFilter)
+      local strings = Dibs.L or {}
+      local followUpFilter = Dibs.AceGUI.AddDropdown(shell, filterSection, strings.REQUEST_QUEUE_FILTER or "Follow-up",
+        { all = strings.REQUEST_ALL or "All requests", due = strings.REQUEST_DUE or "Due",
+          assigned = strings.REQUEST_ASSIGNED_ME or "Assigned to me", waiting = strings.REQUEST_WAITING or "Waiting for player",
+          resolved = strings.REQUEST_CONCLUDED or "Concluded", archived = strings.REQUEST_ARCHIVED or "Archived" }, function(value)
+          self.disputeFollowUpFilter, self.disputePage = value or "all", 1
+          self:Refresh()
+        end, 190)
+      Dibs.AceGUI.SetValue(followUpFilter, self.disputeFollowUpFilter or "all")
       self.disputeSearchBox = Dibs.AceGUI.AddEditBox(shell, filterSection, "Search", function(value)
         self.disputeQuery = value or ""
         self.disputePage = 1
@@ -5775,6 +5873,7 @@ local function createAceWindow(initialRoute)
       setControlText(self.disputeSearchBox, self.disputeQuery)
       Dibs.AceGUI.AddButton(shell, filterSection, "Clear", function()
         self.disputeQuery, self.disputeStatusFilter, self.disputeSelectedId = "", "", nil
+        self.disputeFollowUpFilter = "all"
         self:Refresh()
       end, 70)
 
@@ -5783,6 +5882,7 @@ local function createAceWindow(initialRoute)
         requests, queueReason = Dibs.Disputes.ListForOfficer(nil, {
           status = self.disputeStatusFilter ~= "" and self.disputeStatusFilter or nil,
           query = self.disputeQuery,
+          filter = self.disputeFollowUpFilter,
         })
       end
       if queueReason then

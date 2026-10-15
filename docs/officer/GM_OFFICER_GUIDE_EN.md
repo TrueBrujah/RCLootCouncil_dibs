@@ -233,6 +233,31 @@ Corrections, refunds, revokes, historical imports, and adjustments are
 append-only. They add linked transactions and retain actor, timestamp, reason,
 before/after values, delta, request reference, and canonical evidence.
 
+### Request follow-up and private delivery (0.8.8-dev)
+
+Use the existing request detail to send a **Public reply**, **Assign to me** or
+choose a verified guild officer, and schedule/reschedule a follow-up. The queue
+also filters Due, Assigned to me, Waiting for player, Concluded, and Archived.
+Last activity and responsibility are explicit. Internal audit reasons are not
+public replies. Reminders are per-character, throttled to one per request/hour
+while online, and can be snoozed without changing the shared due time.
+
+Delivered requests are writable only on the current verified coordinator client.
+Other capable officers receive private read-only replicas (up to 16 online
+capable officer peers per bounded pump); this is not remote correction authority.
+Unproven epoch/coordinator handoff blocks old shared dossiers. Legacy local-only
+dossiers retain their workflow; if changed before first coordinator binding,
+their queued submission stops with `REQUEST_LOCAL_DOSSIER_CHANGED` rather than
+publishing an incomplete or already-corrected dossier.
+
+After Resolved or Rejected, **Close request**, then **Archive request**, each with
+an explicit reviewed reason. Archives remain searchable including stored replies,
+evidence references and audit reasons. Closing/archiving never touches accounting.
+A linked compensation prevents reopening/reapplying it. At 500 retained dossiers
+or 120 audit events, further affected writes fail explicitly; do not delete
+history to make space. Oversized private transfers remain in error with their
+source retained. Real-client delivery and handoff certification remains pending.
+
 In **Dibs Administration**, choose the guild member and current-season action.
 Add and Remove require a reason and explicit confirmation; the audit record
 retains the acting Officer/GM, target, previous balance, resulting balance, and

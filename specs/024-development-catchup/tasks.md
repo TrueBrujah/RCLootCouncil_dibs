@@ -38,8 +38,11 @@ Independent test: reports are read-only and privacy-safe.
 ## Phase 6: Validation and checkpoint
 
 - [X] T011 Run full regression through `tests/run.lua`, inspect failures and record the exact result in `specs/024-development-catchup/quickstart.md`.
-- [ ] T012 Verify documentation links, no private data and `git diff --check`; commit the development checkpoint and push `dev` before ticket source changes; record the commit in `specs/024-development-catchup/quickstart.md`.
+- [X] T012 Verify documentation links, no private data and `git diff --check`; commit the development checkpoint and push `dev` before ticket source changes; record the commit in `specs/024-development-catchup/quickstart.md`.
 - [ ] T013 Perform outstanding Retail scenarios in `specs/024-development-catchup/quickstart.md` and original feature 013 T051/T052 plus 022 T022 (manual; cannot be certified by Fengari).
+- [X] T014 Validate the 2026-10-15 FR-005 hardening in `tests/unit/b04_transport_spec.lua`: stale cached presence, repeated offline sends, localized player-not-found circuit breaker and expiry, unrelated/ambiguous feedback, pending Vault retention and unchanged guild delivery. Full regression: 998 passed, 0 failed across 157 suites, followed by final focused transport, request, tracing and load-order validation: 82 passed, 0 failed across five suites.
+
+- [X] T015 Verify mandatory outgoing `PlayerName-Realm` at the shared adapter boundary, including same-realm completion, cross-realm preservation and incomplete resolved-address rejection. Final focused validation: 84 passed, 0 failed across five suites (2026-10-15).
 
 ## Dependencies and execution
 

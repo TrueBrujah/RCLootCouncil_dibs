@@ -28,6 +28,10 @@ suites covering the dashboard, transport, sync status, anonymous export and
 period statistics. `git diff --check` passed. This is a full run followed by a
 targeted successful rerun, not a claim of a second all-green full run.
 
+Checkpoint `07a6ce1` was committed and pushed to `origin/dev` before any ticket
+source extension. Immediately after the push, local and remote dev had zero
+divergence and the tracked worktree was clean.
+
 ## Manual gates still open
 
 - Actual Retail selected Vault claim and local loot payload correlation.
@@ -37,3 +41,31 @@ targeted successful rerun, not a claim of a second all-green full run.
 - Visual scale/layout checks for history, health, statistics and export.
 
 Original feature 013 tasks T051/T052 and feature 022 T022 remain unchecked.
+
+## 2026-10-15 whisper guard follow-up
+
+FR-005 is enforced again at the shared Ace3 transport boundary. Current roster
+presence is refreshed before private sends; localized player-not-found feedback
+for a recently contacted unambiguous recipient pauses retries for 60 seconds.
+No chat errors are hidden and no saved work is discarded.
+
+Full regression: **998 passed, 0 failed** across 157 suites before the final
+pending-Vault retention test and legacy fallback rejection preservation edit.
+Final focused run: **82 passed, 0 failed** across `tests/unit/b04_transport_spec.lua`,
+`tests/integration/request_delivery_spec.lua`,
+`tests/integration/request_followup_spec.lua`, `tests/unit/sync_trace_spec.lua`
+and `tests/integration/toc_load_spec.lua`. This includes stale presence, repeated
+blocked sends, English/French feedback, expiry, unrelated/ambiguous feedback and
+pending Vault retention with a deterministic clock, plus unchanged guild sends.
+`git diff --check` passed. The editor still reports the pre-existing single-return
+annotation diagnostic in legacy `Sync.lua`; no diagnostics were reported in
+the checked Ace3 adapter, Core or SyncV2 files.
+Real Retail feedback ordering and already-queued AceComm
+messages remain manual validation boundaries.
+
+Qualified-address follow-up (2026-10-15): **84 passed, 0 failed** across the same
+five focused suites after adding same-realm short-name completion and explicit
+missing-realm rejection tests at the shared adapter boundary. Existing
+cross-realm, realm-space and ambiguous-name coverage remains green. Editor
+diagnostics for the changed adapter and transport tests are clear;
+`git diff --check` passed.

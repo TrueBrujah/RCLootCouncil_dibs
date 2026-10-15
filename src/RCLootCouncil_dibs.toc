@@ -2,7 +2,7 @@
 ## Title: RCLootCouncil_dibs
 ## Notes: Seasonal guild Dibs, Pre-Dibs, audit history, and optional RCLootCouncil integration.
 ## Author: Contributors
-## Version: 0.8.7-dev
+## Version: 0.8.8-dev
 ## IconTexture: Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo
 ## SavedVariables: RCLootCouncil_dibsDB,RCLootCouncil_dibsSandboxDB
 ## SavedVariablesPerCharacter: RCLootCouncil_dibsLocalDB
@@ -34,6 +34,7 @@ modules/CharacterEligibility.lua
 modules/LootPipeline.lua
 modules/Sync.lua
 modules/SyncV2.lua
+modules/RequestDelivery.lua
 modules/HistoricalBaseline.lua
 modules/Installation.lua
 modules/Wizard.lua

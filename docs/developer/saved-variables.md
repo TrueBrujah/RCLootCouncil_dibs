@@ -38,6 +38,23 @@ Adventure Guide discovery state are personal to the character and never
 synchronized. Older values found in the guild `settings` subtree are migrated
 to this local root and removed from the guild copy.
 
+Development 0.8.8 adds local `requestDelivery[guildKey]` with `pending`, `statuses`
+and `reminders`. It is character-local retry/receipt/snooze metadata, never a guild
+snapshot. Pending private request operations are bounded to 128 and persist
+across reload; a matching acknowledgement removes an operation. Due reminders
+are throttled and deduplicated using the existing notification mechanism: one per
+request/hour, at most three per minute across the character's current guild queue.
+The persisted `lastReminderBatchAt` and rotating `reminderCursor` prevent reload
+bursts and let later due requests receive their reminder fairly.
+
+Guild `disputes.version=2` is an additive migration preserving existing request
+IDs/statuses, evidence, replies, timeline and correction map. New fields are
+`revision`, `assignedTo`, `followUpAt`, `deliveryAuthority`; Closed/Archived are
+additive serialized statuses. No terminal dossier or timeline is silently pruned:
+new writes fail at 500 dossiers / 120 audit events. Previously removed history
+cannot be recovered by this migration. Shared replicas contain a full officer
+dossier or an explicit safe owner body and never apply accounting by themselves.
+
 Legacy flat roots are wrapped into a guild bucket during `Core.lua` initialization. Runtime code uses `Dibs.db`; `_G.DibsDB` remains a compatibility alias for the active guild bucket. The guild schema currently reports version 6, with versioned reconciliation and character-eligibility sub-stores.
 
 Startup validates the root and active guild bucket before indexing persisted

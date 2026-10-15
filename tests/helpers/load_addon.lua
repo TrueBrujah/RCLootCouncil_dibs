@@ -28,6 +28,7 @@ local TOC_FILES = {
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
   "modules/SyncV2.lua",
+  "modules/RequestDelivery.lua",
   "modules/HistoricalBaseline.lua",
   "modules/Installation.lua",
   "modules/Wizard.lua",

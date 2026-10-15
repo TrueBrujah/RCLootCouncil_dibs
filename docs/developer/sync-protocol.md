@@ -42,6 +42,41 @@ contract exists.
 
 ## V2 multi-raid behavior
 
+### Private review requests (additive 2.1 capability, 0.8.8-dev)
+
+`requestDelivery=true` advertises support for WHISPER-only `REQUEST_MESSAGE`
+detail transfers. Kinds are `submit`, `reply`, `snapshot`, `receipt`; identity,
+guild scope, revision, operation ID and pinned coordinator epoch are validated.
+The same existing maximum 8192 bytes / 16 chunks of 480 bytes / eight active
+transfers / 300-second TTL applies (effective encoded body limit 7680 bytes).
+Ticket bodies are never included in GUILD digests, HELLOs, or live loot state.
+
+Submissions/replies are non-authoritative. Acceptance resolves the actual sender
+as the current same-guild owner and requires the local verified coordinator.
+Snapshots require that actual coordinator at receipt; verified officer recipients
+receive private dossiers, owners always receive an explicit safe projection even
+if they are also officers. Internal audit and assignment never enter the owner
+body. Snapshot acceptance does not import transactions.
+
+Per-character/per-guild durable outboxes retain at most 128 operations, retry no
+more than four sends per pump with 60-second spacing, and distinguish queued,
+sent, received, error. A matching private receipt acknowledges acceptance, not
+resolution. Actual roster-online/capable targets are checked before any whisper.
+Unadvertised/old peers remain unsupported/pending. Replay uses retained request
+and reply IDs; fresh transfers can recover a lost receipt after reload.
+Snapshots coalesce per request/recipient and catch up eight dossiers per pump,
+to the owner plus at most 16 online capable officer peers. Oversize/capacity
+failures preserve source data and expose error/pending state.
+
+Only the verified pinned coordinator may mutate shared dossiers or compensate.
+Replicas are read-only; optimistic revisions are an additional stale-form guard,
+not distributed accounting authority. Changed epochs fail closed; automated
+handoff of old dossiers is not implemented. Legacy local dossiers changed before
+initial binding do not silently become shared. Developer Mode and Independent
+Raid contexts do not send or accept production request delivery.
+
+### Guild state
+
 V2 is enabled only by an explicit GM governance record after baseline and
 compatible-writer checks. Guild-wide revision digests and shared detail
 transfers use the `GUILD` addon channel. The active coordinator emits bounded
@@ -70,6 +105,23 @@ This applies to every private transfer frame, response, saved Vault retry, and
 older-peer fallback. Detail transfers preserve the exact send failure reason
 and stop at the first rejected frame rather than reporting every failure as
 `SYNC_UNAVAILABLE`.
+
+The shared Ace3 adapter independently refreshes roster presence immediately
+before queuing a whisper, including direct adapter callers. This is a transport
+invariant: new private senders must use this boundary, not raw addon whispers.
+The final resolved address must contain both a player name and a nonempty realm;
+otherwise sending returns `INVALID_WHISPER_TARGET`. A same-realm short roster
+name is qualified by Identity using the current realm; cross-realm recipients
+retain their own roster realm. Never send a bare player name or guess another
+recipient's realm.
+Localized `CHAT_MSG_SYSTEM` player-not-found feedback for an unambiguous target
+contacted in the last 30 seconds opens a 60-second circuit breaker
+(`WHISPER_TARGET_UNREACHABLE`). The feedback is not hidden or chat-filtered.
+Tracking is runtime-only, guild-scoped, and limited to 128 destinations; capacity
+returns `WHISPER_TARGET_CAPACITY` rather than evicting an active block.
+After expiry a retry still requires current online roster evidence. A disconnect
+after queuing or traffic from another addon can still produce a Blizzard error;
+this guard does not cancel AceComm/ChatThrottleLib messages already queued.
 
 No coordinator or canonical Dibs consumption is allowed while the client is
 `SYNC_BEHIND`, `COORDINATOR_UNAVAILABLE`, or `RECOVERY_PENDING`. An award in

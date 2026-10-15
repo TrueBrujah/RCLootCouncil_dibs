@@ -46,6 +46,8 @@ Disputes.STATUSES = {
   NEED_INFORMATION = "Need information",
   RESOLVED = "Resolved",
   REJECTED = "Rejected",
+  CLOSED = "Closed",
+  ARCHIVED = "Archived",
 }
 
 Disputes.ACTIONS = {
@@ -164,7 +166,7 @@ end
 local function ensureState()
   local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   db.disputes = db.disputes or {}
-  db.disputes.version = tonumber(db.disputes.version) or 1
+  db.disputes.version = math.max(tonumber(db.disputes.version) or 1, 2)
   db.disputes.requests = db.disputes.requests or {}
   db.disputes.order = db.disputes.order or {}
   db.disputes.corrections = db.disputes.corrections or {}
@@ -195,6 +197,8 @@ local function normalizeStatus(status)
     waiting_for_information = Disputes.STATUSES.NEED_INFORMATION,
     resolved = Disputes.STATUSES.RESOLVED,
     rejected = Disputes.STATUSES.REJECTED,
+    closed = Disputes.STATUSES.CLOSED,
+    archived = Disputes.STATUSES.ARCHIVED,
   }
   return aliases[value]
 end
@@ -305,6 +309,7 @@ function Disputes.NormalizeEvidence(payload, owner)
   local list = {}
   local rawList = payload.evidence or payload.attachedEvidence
   if type(rawList) == "table" and #rawList > 0 then
+    if #rawList > 8 then return nil, "EVIDENCE_CAPACITY" end
     for _, raw in ipairs(rawList) do table.insert(list, raw) end
   elseif type(rawList) == "table" then
     table.insert(list, rawList)
@@ -360,6 +365,7 @@ function Disputes.NormalizeEvidence(payload, owner)
   if hasExplicit and not transaction then table.insert(list, explicit) end
 
   local normalized = {}
+  if #list > 8 then return nil, "EVIDENCE_CAPACITY" end
   for _, raw in ipairs(list) do
     local value, reason = normalizeOneEvidence(raw, payload.source, ownerId)
     if not value then return nil, reason end
@@ -410,15 +416,18 @@ local function audit(request, action, actor, previousStatus, newStatus, reason, 
   for key, value in pairs(extra or {}) do event[key] = copy(value) end
   request.timeline = request.timeline or {}
   table.insert(request.timeline, event)
-  while #request.timeline > MAX_TIMELINE do table.remove(request.timeline, 1) end
   request.lastUpdatedAt = event.timestamp
+  request.revision = (tonumber(request.revision) or 0) + 1
+  if Dibs.RequestDelivery and Dibs.RequestDelivery.OnChanged then
+    Dibs.RequestDelivery.OnChanged(request, action)
+  end
   return event
 end
 
 local function findActiveByKey(state, key)
   for _, requestId in ipairs(state.order or {}) do
     local request = state.requests[requestId]
-    if request and request.duplicateKey == key and ACTIVE_STATUSES[request.status] then return request end
+    if request and request.guildScope == currentScope() and request.duplicateKey == key and ACTIVE_STATUSES[request.status] then return request end
   end
   return nil
 end
@@ -426,18 +435,10 @@ end
 local function insertRequest(state, request)
   state.requests[request.requestId] = request
   table.insert(state.order, 1, request.requestId)
-  -- Keep request storage bounded without deleting open cases. Closed cases remain
-  -- in the append-only audit history until the configured retention policy acts.
-  while #state.order > MAX_REQUESTS do
-    local removeIndex
-    for index = #state.order, 1, -1 do
-      local candidate = state.requests[state.order[index]]
-      if candidate and not ACTIVE_STATUSES[candidate.status] then removeIndex = index break end
-    end
-    if not removeIndex then break end
-    state.requests[state.order[removeIndex]] = nil
-    table.remove(state.order, removeIndex)
-  end
+end
+
+local function hasAuditCapacity(request)
+  return #(request.timeline or {}) < MAX_TIMELINE
 end
 
 local function requestOwner(request)
@@ -497,6 +498,7 @@ end
 -- Side effects: Persists a bounded dispute request and normalized evidence.
 function Disputes.CreateReport(payload, actor)
   payload = type(payload) == "table" and payload or {}
+  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() then return nil, "REQUEST_CONTEXT_ISOLATED" end
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsModuleEnabled then
     local enabled = Dibs.OperationalPolicy.IsModuleEnabled("requests")
     if enabled ~= true then return nil, "MODULE_DISABLED_REQUESTS" end
@@ -523,9 +525,18 @@ function Disputes.CreateReport(payload, actor)
   local key = duplicateKey(ownerId, category, primaryEvidence({ evidence = evidence }), payload)
   local existing = findActiveByKey(state, key)
   if existing then
+    if existing.deliveryAuthority and Dibs.RequestDelivery and not Dibs.RequestDelivery.CanMutate(existing) then
+      return existing, "DUPLICATE_ACTIVE", true
+    end
+    if not hasAuditCapacity(existing) then return nil, "REQUEST_AUDIT_CAPACITY" end
     existing.duplicateSubmissionCount = (tonumber(existing.duplicateSubmissionCount) or 0) + 1
     audit(existing, "duplicate_submission", player, existing.status, existing.status, "Linked to existing active request.", { linkedRequestId = existing.requestId })
     return existing, "DUPLICATE_ACTIVE", true
+  end
+  if #state.order >= MAX_REQUESTS then return nil, "REQUEST_CAPACITY" end
+  if Dibs.RequestDelivery and Dibs.RequestDelivery.CanQueue then
+    local allowed, queueReason = Dibs.RequestDelivery.CanQueue()
+    if not allowed then return nil, queueReason end
   end
 
   local createdAt = now()
@@ -563,6 +574,7 @@ function Disputes.CreateReport(payload, actor)
       return ids
     end)(),
   })
+  if Dibs.RequestDelivery then Dibs.RequestDelivery.QueueSubmission(request) end
   return request
 end
 
@@ -624,9 +636,22 @@ function Disputes.ListForOfficer(actor, options)
   local query = string.lower(trim(options.query))
   for _, requestId in ipairs(state.order or {}) do
     local request = state.requests[requestId]
-    if request and request.guildScope == currentScope() and (not status or request.status == status) then
+    local filterOk = request and (
+      not options.filter
+      or options.filter == "all"
+      or (options.filter == "due" and ACTIVE_STATUSES[request.status] and tonumber(request.followUpAt) and request.followUpAt <= now())
+      or (options.filter == "assigned" and samePlayer(request.assignedTo, Dibs.GetPlayerName and Dibs.GetPlayerName()))
+      or (options.filter == "waiting" and request.status == Disputes.STATUSES.NEED_INFORMATION)
+      or (options.filter == "resolved" and (request.status == Disputes.STATUSES.RESOLVED or request.status == Disputes.STATUSES.REJECTED or request.status == Disputes.STATUSES.CLOSED))
+      or (options.filter == "archived" and request.status == Disputes.STATUSES.ARCHIVED))
+    if request and filterOk and request.guildScope == currentScope() and (not status or request.status == status) then
       local evidence = primaryEvidence(request)
       local haystack = string.lower(table.concat({ request.player and request.player.name or "", request.categoryLabel or "", request.status or "", request.note or "", evidence and evidence.item or "" }, " "))
+      for _, item in ipairs(request.evidence or {}) do
+        haystack = haystack .. " " .. string.lower(table.concat({ tostring(item.item or ""), tostring(item.transactionRef or ""), tostring(item.awardRef or ""), tostring(item.historyRef or "") }, " "))
+      end
+      for _, reply in ipairs(request.replies or {}) do haystack = haystack .. " " .. string.lower(tostring(reply.boundedText or "")) end
+      for _, event in ipairs(request.timeline or {}) do haystack = haystack .. " " .. string.lower(tostring(event.reason or "")) end
       if query == "" or string.find(haystack, query, 1, true) then table.insert(result, Disputes.BuildOfficerView(request)) end
     end
   end
@@ -651,12 +676,17 @@ Disputes.GetReviewQueue = Disputes.ListForOfficer
 ---@return table|nil reply Stored reply record.
 ---@return string|nil reasonCode
 function Disputes.AddReply(requestId, replyText, actor)
+  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() then return nil, "REQUEST_CONTEXT_ISOLATED" end
   local request, officer = canReadRequest(requestId, actor)
   if not request then return nil, officer end
   if officer then return nil, "PLAYER_REPLY_REQUIRED" end
   if request.status ~= Disputes.STATUSES.NEED_INFORMATION then return nil, "REPLY_NOT_REQUESTED" end
   local value = bounded(replyText, MAX_REPLY_LENGTH)
   if value == "" then return nil, "REPLY_REQUIRED" end
+  if not hasAuditCapacity(request) then return nil, "REQUEST_AUDIT_CAPACITY" end
+  if request.deliveryAuthority and Dibs.RequestDelivery then
+    return Dibs.RequestDelivery.QueueReply(request, value)
+  end
   local reply = {
     replyId = Dibs.NewId and Dibs.NewId("reply") or ("reply-" .. tostring(now())),
     requestId = requestId,
@@ -676,6 +706,7 @@ end
 Disputes.Reply = Disputes.AddReply
 
 local function requireOfficer(requestId, actor)
+  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() then return nil, "REQUEST_CONTEXT_ISOLATED" end
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
     local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
     if not enabled then return nil, reason end
@@ -683,6 +714,13 @@ local function requireOfficer(requestId, actor)
   if not isOfficer(actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   local request = ensureState().requests[requestId]
   if not request then return nil, "REQUEST_NOT_FOUND" end
+  if request.guildScope ~= currentScope() then return nil, "REQUEST_NOT_FOUND" end
+  if not hasAuditCapacity(request) then return nil, "REQUEST_AUDIT_CAPACITY" end
+  if request.deliveryAuthority then
+    if not Dibs.RequestDelivery then return nil, "CURRENT_COORDINATOR_REQUIRED" end
+    local allowed, mutationReason = Dibs.RequestDelivery.CanMutate(request)
+    if not allowed then return nil, mutationReason or "CURRENT_COORDINATOR_REQUIRED" end
+  end
   return request
 end
 
@@ -999,7 +1037,25 @@ function Disputes.Resolve(requestId, action, options, actor)
   actor = actor or options.actor
   local request, reason = requireOfficer(requestId, actor)
   if not request then return nil, reason end
+  if options.expectedRevision and tonumber(options.expectedRevision) ~= (tonumber(request.revision) or 0) then
+    return nil, "REQUEST_REVISION_CONFLICT"
+  end
   action = string.lower(trim(action)):gsub("[%s%-]+", "_")
+  if action == "close" or action == "archive" then
+    local explanation = requireReason(options)
+    if not explanation then return nil, "REASON_REQUIRED" end
+    local allowed = action == "close" and (request.status == Disputes.STATUSES.RESOLVED or request.status == Disputes.STATUSES.REJECTED)
+      or action == "archive" and request.status == Disputes.STATUSES.CLOSED
+    if not allowed then return nil, "INVALID_REQUEST_TRANSITION" end
+    local previous = request.status
+    request.status = action == "close" and Disputes.STATUSES.CLOSED or Disputes.STATUSES.ARCHIVED
+    audit(request, action, actor, previous, request.status, explanation)
+    return { ok = true, request = copy(request), changedBalance = false }
+  end
+  if request.correctionTransactionId and action == Disputes.ACTIONS.REOPEN then return nil, "REQUEST_ALREADY_RESOLVED" end
+  if request.status == Disputes.STATUSES.CLOSED or request.status == Disputes.STATUSES.ARCHIVED then
+    if action ~= Disputes.ACTIONS.REOPEN then return nil, "REQUEST_ALREADY_RESOLVED" end
+  end
   if request.status == Disputes.STATUSES.RESOLVED or request.status == Disputes.STATUSES.REJECTED then
     if request.correctionTransactionId then
       return nil, "REQUEST_ALREADY_RESOLVED"
@@ -1083,8 +1139,94 @@ function Disputes.Reopen(requestId, reason, actor)
   return Disputes.Resolve(requestId, Disputes.ACTIONS.REOPEN, { reason = reason }, actor)
 end
 
+function Disputes.UpdateFollowUp(requestId, options, actor)
+  options = type(options) == "table" and options or {}
+  local request, reason = requireOfficer(requestId, actor)
+  if not request then return nil, reason end
+  if not ACTIVE_STATUSES[request.status] then return nil, "REQUEST_ALREADY_RESOLVED" end
+  if options.expectedRevision and tonumber(options.expectedRevision) ~= (tonumber(request.revision) or 0) then return nil, "REQUEST_REVISION_CONFLICT" end
+  local assignee
+  if options.assignedTo ~= nil and options.assignedTo ~= "" then
+    assignee = Dibs.Identity and Dibs.Identity.ResolveRosterMember(options.assignedTo)
+    if not assignee or assignee.status ~= "RESOLVED" or (assignee.role ~= "gm" and assignee.role ~= "officer") then
+      return nil, "VERIFIED_OFFICER_REQUIRED"
+    end
+  end
+  local due = options.followUpAt ~= nil and tonumber(options.followUpAt) or nil
+  if options.followUpAt ~= nil and (not due or due ~= due or due < 0 or due == math.huge or due ~= math.floor(due)) then return nil, "INVALID_FOLLOWUP" end
+  if options.assignedTo ~= nil then request.assignedTo = assignee and assignee.displayName or nil end
+  if options.followUpAt ~= nil then request.followUpAt = due > 0 and due or nil end
+  audit(request, "follow_up", actor, request.status, request.status, requireReason(options), {
+    assignedTo = request.assignedTo, followUpAt = request.followUpAt,
+  })
+  return { ok = true, request = copy(request), changedBalance = false }
+end
+
+function Disputes.AddOfficerReply(requestId, replyText, actor, expectedRevision)
+  local request, reason = requireOfficer(requestId, actor)
+  if not request then return nil, reason end
+  if expectedRevision and tonumber(expectedRevision) ~= (tonumber(request.revision) or 0) then return nil, "REQUEST_REVISION_CONFLICT" end
+  if not ACTIVE_STATUSES[request.status] then return nil, "REQUEST_ALREADY_RESOLVED" end
+  local value = bounded(replyText, MAX_REPLY_LENGTH)
+  if value == "" then return nil, "REPLY_REQUIRED" end
+  local reply = { replyId = Dibs.NewId("reply"), requestId = requestId, author = "officer",
+    authorId = localIdentity(), boundedText = value, createdAt = now() }
+  table.insert(request.replies, reply)
+  audit(request, "officer_reply", actor, request.status, request.status, nil, { replyId = reply.replyId })
+  return copy(reply)
+end
+
+function Disputes.ReceiveSubmission(payload, sender, authority)
+  if type(payload) ~= "table" or type(payload.requestId) ~= "string" or #payload.requestId > 128
+    or not samePlayer(payload.playerName, sender) then return nil, "PLAYER_SCOPE_REQUIRED" end
+  local state = ensureState()
+  local existing = state.requests[payload.requestId]
+  if existing then
+    if existing.guildScope ~= currentScope() then return nil, "REQUEST_NOT_FOUND" end
+    if not samePlayer(requestOwner(existing), sender) then return nil, "PLAYER_SCOPE_REQUIRED" end
+    if not existing.deliveryAuthority then return nil, "REQUEST_LOCAL_DOSSIER_CHANGED" end
+    if existing.deliveryAuthority.memberKey ~= authority.memberKey or existing.deliveryAuthority.epoch ~= authority.epoch then return nil, "REQUEST_AUTHORITY_CHANGED" end
+    return existing, "IDEMPOTENT_REPLAY"
+  end
+  if #state.order >= MAX_REQUESTS then return nil, "REQUEST_CAPACITY" end
+  local evidence, reason = Disputes.NormalizeEvidence({ evidence = payload.evidence }, sender)
+  if not evidence then return nil, reason end
+  local category = normalizeCategory(payload.category)
+  local key = duplicateKey(identity(sender), category, evidence[1], payload)
+  local duplicate = findActiveByKey(state, key)
+  if duplicate then return nil, "DUPLICATE_ACTIVE" end
+  local request = {
+    requestId = payload.requestId, guildScope = currentScope(), player = { id = identity(sender), name = bounded(sender, 80) },
+    category = category, categoryLabel = categoryLabel(category), note = bounded(payload.note, MAX_NOTE_LENGTH),
+    evidence = evidence, attachedContext = {}, status = Disputes.STATUSES.OPEN, duplicateKey = key,
+    createdAt = now(), lastUpdatedAt = now(), replies = {}, timeline = {}, version = 1,
+    deliveryAuthority = copy(authority),
+  }
+  insertRequest(state, request)
+  audit(request, "created", sender, nil, request.status, request.note)
+  return request
+end
+
+function Disputes.ReceiveReply(requestId, value, replyId, sender, expectedRevision)
+  local request = ensureState().requests[requestId]
+  if not request or request.guildScope ~= currentScope() or not samePlayer(requestOwner(request), sender) then return nil, "PLAYER_SCOPE_REQUIRED" end
+  for _, reply in ipairs(request.replies or {}) do if reply.replyId == replyId then return reply, "IDEMPOTENT_REPLAY" end end
+  if tonumber(expectedRevision) ~= (tonumber(request.revision) or 0) then return nil, "REQUEST_REVISION_CONFLICT" end
+  if request.status ~= Disputes.STATUSES.NEED_INFORMATION then return nil, "REPLY_NOT_REQUESTED" end
+  if not hasAuditCapacity(request) then return nil, "REQUEST_AUDIT_CAPACITY" end
+  value = bounded(value, MAX_REPLY_LENGTH)
+  if value == "" then return nil, "REPLY_REQUIRED" end
+  local reply = { replyId = replyId, author = "player", authorId = identity(sender), boundedText = value, createdAt = now() }
+  table.insert(request.replies, reply)
+  local previous = request.status
+  request.status, request.question = Disputes.STATUSES.OPEN, nil
+  audit(request, "player_reply", sender, previous, request.status, nil, { replyId = replyId })
+  return copy(reply)
+end
+
 function Disputes.BuildSafeView(request)
   request = request or {}
+  local context = request.attachedContext or {}
   local evidence = {}
   for _, item in ipairs(request.evidence or {}) do
     table.insert(evidence, {
@@ -1124,8 +1266,12 @@ function Disputes.BuildSafeView(request)
     status = request.status,
     createdAt = request.createdAt,
     lastUpdatedAt = request.lastUpdatedAt,
+    revision = request.revision,
+    followUpAt = request.followUpAt,
+    delivery = Dibs.RequestDelivery and Dibs.RequestDelivery.GetStatus(request.requestId) or nil,
     note = request.note,
-    attachedContext = copy(request.attachedContext),
+    attachedContext = { source = context.source, itemID = context.itemID, item = context.item,
+      seasonId = context.seasonId, timestamp = context.timestamp },
     evidence = evidence,
     question = request.question,
     replies = replies,
@@ -1138,6 +1284,7 @@ function Disputes.BuildOfficerView(request)
   local result = copy(request)
   result.officerOnly = true
   result.guildScope = request.guildScope
+  result.delivery = Dibs.RequestDelivery and Dibs.RequestDelivery.GetStatus(request.requestId) or nil
   return result
 end
 

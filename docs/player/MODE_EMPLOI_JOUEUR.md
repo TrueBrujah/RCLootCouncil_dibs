@@ -234,6 +234,27 @@ Vous ne pouvez pas annuler la demande d'un autre joueur.
 - **fulfilled** : demande associee a un gain finalise ;
 - **cancelled** : demande annulee par son proprietaire ou la politique.
 
+## Signalements et suivi (0.8.8-dev)
+
+Le centre **Demandes** (`/dibs requests`) est distinct des réservations Pre-Dib.
+Signalez uniquement votre propre problème. L'enregistrement ne prouve pas la
+réception : les détails indiquent **En attente d'envoi**, **Envoyée ; réception
+attendue**, **Reçue** ou **Erreur de livraison**. Reçue ne signifie pas résolue.
+Un destinataire hors ligne ou ancien ne reçoit aucun chuchotement ; la demande
+reste enregistrée après rechargement. La livraison nécessite un coordinateur
+vérifié compatible et les deux clients connectés.
+
+Répondez à une question de l'officier dans le même fil. Ses réponses publiques
+et la conclusion restent visibles, mais pas les preuves administratives internes.
+**Réessayer la livraison** reprend le travail en attente ; une réponse devenue
+obsolète utilise la dernière révision reçue. Un changement d'autorité bloque
+la reprise automatique pour éviter les doubles corrections.
+
+Les rappels de suivi fonctionnent uniquement lorsque WoW est ouvert et respectent
+la préférence locale de notifications. Reporter le rappel ne concerne que ce
+personnage. Les étapes Résolue/Rejetée, Clôturée, puis Archivée conservent le
+dossier et ne modifient jamais le solde.
+
 ## Solde et historique
 
 Le solde est calcule a partir des transactions du ledger pour la saison active.

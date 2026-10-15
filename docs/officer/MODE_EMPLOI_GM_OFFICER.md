@@ -296,6 +296,32 @@ Dans **Review Requests** :
 
 Les corrections sont append-only et conservent l'acteur, la date, la raison, les anciennes valeurs, les nouvelles valeurs et les references associees.
 
+### Suivi privé des signalements (0.8.8-dev)
+
+Dans les détails existants, envoyez une **Réponse publique**, choisissez **Me
+l'attribuer** ou un officier de guilde vérifié, puis planifiez/replanifiez le
+suivi. La file filtre les demandes À suivre, Mes attributions, En attente du
+joueur, Conclues et Archivées. La responsabilité et la dernière activité sont
+affichées. Les raisons d'audit internes ne sont pas des réponses publiques.
+
+Les demandes livrées sont modifiables uniquement sur le client du coordinateur
+actuel vérifié ; les autres officiers compatibles reçoivent des copies privées
+en lecture seule (au plus 16 pairs officiers connectés par cycle borné).
+Un changement d'époque ou de coordinateur non prouvé bloque l'ancien dossier.
+Une demande locale modifiée avant sa première liaison au coordinateur conserve
+son audit, mais son envoi reste bloqué avec `REQUEST_LOCAL_DOSSIER_CHANGED`.
+
+Après Résolue ou Rejetée, utilisez **Clore la demande**, puis **Archiver la
+demande**, avec une raison revue explicitement. La recherche conserve le
+dossier, les réponses, les références et les raisons d'audit. Aucun solde n'est
+modifié par le fil ou l'archivage. Une compensation liée ne peut pas être
+réappliquée par réouverture. Les limites de 500 dossiers et 120 événements
+bloquent les écritures supplémentaires sans supprimer l'historique.
+Les transferts trop volumineux restent en erreur, source conservée.
+Les rappels personnels fonctionnent en ligne, au plus une fois par heure et
+par demande ; le report ne change pas l'échéance commune. Certification Retail
+multi-client et changement de coordinateur encore requise.
+
 ### RC History
 
 La page **RC History** sert a examiner d'anciens gains RCLootCouncil :

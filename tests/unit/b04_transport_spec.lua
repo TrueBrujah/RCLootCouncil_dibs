@@ -94,6 +94,33 @@ describe("B04 V2 transport", function()
     assert_equal(sentBefore, #dibs.Ace3.libs.comm.sent)
   end)
 
+  it("always qualifies same-realm roster names at the shared adapter boundary", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Zata" },
+      guildRankIndices = { [1] = 0, [2] = 3 },
+    } })
+    local expected = "Zata-" .. GetRealmName():gsub("%s+", "")
+    local sent, reason = dibs.Ace3.SendComm("DIBS", { type = "SYNC_PROBE" }, "WHISPER", "Zata")
+    assert_true(sent, tostring(reason))
+    assert_equal(expected, dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
+  end)
+
+  it("refuses unqualified resolved identities instead of sending a bare player name", function()
+    local dibs = load()
+    local resolve = dibs.Identity.ResolveRosterMember
+    local before = #dibs.Ace3.libs.comm.sent
+    for _, display in ipairs({ "Zata", "Zata-", "Zata-   ", "-Realm" }) do
+      dibs.Identity.ResolveRosterMember = function()
+        return { status = "RESOLVED", online = true, displayName = display }
+      end
+      local sent, reason = dibs.Ace3.SendComm("DIBS", { type = "SYNC_PROBE" }, "WHISPER", "Zata")
+      assert_false(sent)
+      assert_equal("INVALID_WHISPER_TARGET", reason)
+    end
+    dibs.Identity.ResolveRosterMember = resolve
+    assert_equal(before, #dibs.Ace3.libs.comm.sent)
+  end)
+
   it("leaves automatic Vault retries pending without whispering an offline member", function()
     local _, dibs = loader.load({ withAce3 = true, wow = {
       guildMembers = { "Tester-Realm", "Owner-OtherRealm" },
@@ -120,6 +147,101 @@ describe("B04 V2 transport", function()
     assert_true(dibs.Sync.OnLifecycle("HEARTBEAT"))
     assert_equal(2, pending.attempts)
     assert_true(countWhispers() > sentBefore)
+  end)
+
+  it("checks live roster presence at the adapter even when the identity cache is stale", function()
+    local dibs = load()
+    assert_true(dibs.Identity.ResolveRosterMember("Owner").online)
+    local wow = require("helpers.wow_api")
+    wow.setGuildRoster({ "Tester-Realm", "Owner-Realm" }, { [1] = 0, [2] = 3 },
+      { guildOnline = { [2] = false } })
+    local before = #dibs.Ace3.libs.comm.sent
+    for _ = 1, 20 do
+      local sent, reason = dibs.Ace3.SendComm("DIBS", { type = "SYNC_PROBE" }, "WHISPER", "Owner")
+      assert_false(sent)
+      assert_equal("WHISPER_TARGET_OFFLINE", reason)
+    end
+    assert_equal(before, #dibs.Ace3.libs.comm.sent)
+    wow.setGuildRoster({ "Tester-Realm", "Owner-Realm" }, { [1] = 0, [2] = 3 })
+    assert_true(dibs.Ace3.SendComm("DIBS", { type = "SYNC_PROBE" }, "WHISPER", "Owner"))
+  end)
+
+  it("opens a bounded circuit breaker on localized player-not-found feedback without hiding chat", function()
+    local dibs = load()
+    local oldFormat, oldTime = _G.ERR_CHAT_PLAYER_NOT_FOUND_S, _G.GetTime
+    local now = 100
+    _G.GetTime = function() return now end
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
+    local ok, failure = pcall(function()
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner"))
+      local event = dibs.Ace3.libs.event.handlers.CHAT_MSG_SYSTEM
+      assert_not_nil(event)
+      event("CHAT_MSG_SYSTEM", "No player named 'Owner' is currently playing.")
+      local before = #dibs.Ace3.libs.comm.sent
+      for _ = 1, 20 do
+        local sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner")
+        assert_false(sent)
+        assert_equal("WHISPER_TARGET_UNREACHABLE", reason)
+      end
+      assert_equal(before, #dibs.Ace3.libs.comm.sent)
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Officer"))
+      now = now + 61
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner"))
+      _G.ERR_CHAT_PLAYER_NOT_FOUND_S = "Aucun joueur nomme '%s' ne joue actuellement."
+      event("CHAT_MSG_SYSTEM", "Aucun joueur nomme 'Owner-Realm' ne joue actuellement.")
+      local sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner")
+      assert_false(sent)
+      assert_equal("WHISPER_TARGET_UNREACHABLE", reason)
+    end)
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S, _G.GetTime = oldFormat, oldTime
+    assert_true(ok, tostring(failure))
+  end)
+
+  it("ignores unrelated or ambiguous player-not-found messages", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Owner-Realm", "Owner-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 3, [3] = 3 },
+    } })
+    local oldFormat = _G.ERR_CHAT_PLAYER_NOT_FOUND_S
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
+    local ok, failure = pcall(function()
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner-Realm"))
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner-OtherRealm"))
+      dibs.Ace3.OnWhisperSystemMessage("No player named 'Unrelated' is currently playing.")
+      dibs.Ace3.OnWhisperSystemMessage("No player named 'Owner' is currently playing.")
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner-Realm"))
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner-OtherRealm"))
+      assert_true(dibs.Ace3.SendComm("DIBS", { type = "HELLO" }, "GUILD"))
+    end)
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S = oldFormat
+    assert_true(ok, tostring(failure))
+  end)
+
+  it("preserves pending Vault work while player-not-found feedback blocks retries", function()
+    local dibs = load()
+    local oldFormat, oldTime = _G.ERR_CHAT_PLAYER_NOT_FOUND_S, _G.GetTime
+    _G.GetTime = function() return 100 end
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
+    local ok, failure = pcall(function()
+      assert_true(dibs.Sync.Send({ type = "SYNC_PROBE" }, "WHISPER", "Owner"))
+      dibs.Ace3.OnWhisperSystemMessage("No player named 'Owner' is currently playing.")
+      local pending = { target = "Owner", revision = 1, contentHash = "vault-hash", attempts = 1 }
+      dibs.GetDB().sync.v2.vaultPending["blocked-vault"] = pending
+      local function countWhispers()
+        local count = 0
+        for _, message in ipairs(dibs.Ace3.libs.comm.sent) do
+          if message.channel == "WHISPER" and message.target == "Owner-Realm" then count = count + 1 end
+        end
+        return count
+      end
+      local before = countWhispers()
+      for _ = 1, 10 do assert_true(dibs.Sync.OnLifecycle("HEARTBEAT")) end
+      assert_equal(before, countWhispers())
+      assert_equal(pending, dibs.GetDB().sync.v2.vaultPending["blocked-vault"])
+      assert_equal(1, pending.attempts)
+    end)
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S, _G.GetTime = oldFormat, oldTime
+    assert_true(ok, tostring(failure))
   end)
 
   it("removes realm spaces from whisper addresses without changing roster identities", function()
