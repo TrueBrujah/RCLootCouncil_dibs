@@ -95,6 +95,7 @@ local OFFICER_NAV_TREE = {
   { section = "DIBS", text = "Automatic Dibs", value = "automaticDibs" },
   { section = "DIBS", text = "Dibs Administration", value = "dibsAdmin" },
   { section = "DIBS", text = "History", value = "history" },
+  { section = "DIBS", text = "Statistics", labelKey = "OFFICER_NAV_STATISTICS_LABEL", value = "statistics" },
   { section = "REQUESTS", text = "Requests", value = "disputes", module = "requests" },
   { section = "REQUESTS", text = "Pre-Dib Requests", value = "preDibRequests", module = "preDibs" },
   { section = "REQUESTS", text = "Pending Awards", value = "pendingAwards" },
@@ -392,6 +393,30 @@ function Dibs.OfficerUI.BuildRequestView(scope, filter)
     source = {}
   end
   if reason then return {} end
+  if filter.kind == "predibs" then
+    if not Dibs.HistoryFilters or type(Dibs.HistoryFilters.FilterRecords) ~= "function" then
+      return {}, "FILTER_UNAVAILABLE"
+    end
+    local filtered, filterError = Dibs.HistoryFilters.FilterRecords(source or {}, filter, {
+      queryFields = {
+        "itemName", "itemLink", "itemID", "playerName", "source", "status",
+        "verificationState", "difficulty", "modeAtCreation", "raidName",
+        "instanceName", "bossName", "encounterName",
+      },
+      fieldMap = {
+        item = { "itemName", "itemLink", "itemID" },
+        playerName = { "playerName" },
+        raid = { "raidName", "instanceName" },
+        boss = { "bossName", "encounterName" },
+        status = { "status", "verificationState" },
+        source = { "source" },
+      },
+      timestampFields = { "createdAt", "timestamp" },
+      identityFields = { "requestId" },
+    })
+    if not filtered then return {}, filterError end
+    source = filtered
+  end
   local rows, limit = {}, math.max(1, math.min(50, tonumber(filter.limit) or 25))
   for _, request in ipairs(source or {}) do
     if #rows >= limit then break end
@@ -1139,6 +1164,33 @@ function Dibs.OfficerUI.GetLedgerOverview()
   }
 end
 
+local function filterOfficerHistoryRecords(records, criteria, options)
+  if not Dibs.HistoryFilters or type(Dibs.HistoryFilters.FilterRecords) ~= "function" then
+    return nil, "FILTER_UNAVAILABLE"
+  end
+  return Dibs.HistoryFilters.FilterRecords(records, criteria, options)
+end
+
+local function officerHistoryFilterErrorText(reason)
+  local strings = Dibs.L or {}
+  local keys = {
+    INVALID_FROM_DATE = "HISTORY_FILTER_INVALID_FROM_DATE",
+    INVALID_TO_DATE = "HISTORY_FILTER_INVALID_TO_DATE",
+    INVALID_DATE_RANGE = "HISTORY_FILTER_INVALID_DATE_RANGE",
+    DATE_UNAVAILABLE = "HISTORY_FILTER_DATE_UNAVAILABLE",
+  }
+  local key = keys[reason]
+  return key and (strings[key] or reason)
+    or strings.HISTORY_FILTER_SOURCE_UNAVAILABLE or "This history source is currently unavailable."
+end
+
+local function hasOfficerHistoryFilters(criteria)
+  for _, field in ipairs({ "query", "fromDate", "toDate", "source", "status" }) do
+    if trimText(criteria and criteria[field]) ~= "" then return true end
+  end
+  return false
+end
+
 function Dibs.OfficerUI.BuildLedgerDetails(seasonId, filter)
   if not canViewOfficerData() then
     return { players = {}, actions = {}, transactionCount = 0, hiddenTransactionCount = 0, hidden = true }
@@ -1146,21 +1198,60 @@ function Dibs.OfficerUI.BuildLedgerDetails(seasonId, filter)
   filter = type(filter) == "table" and filter or {}
   local allTransactions = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(seasonId) or {}
   local memberNames = getCurrentGuildMemberNames()
-  local transactions = {}
+  local authorizedTransactions = {}
   local hiddenTransactionCount = 0
   for _, tx in ipairs(allTransactions) do
     local playerName = getCurrentGuildMemberName(memberNames, tx.playerName or tx.playerKey or tx.playerId)
     local timestamp = tonumber(tx.createdAt or tx.timestamp) or 0
-    local matchesPlayer = not filter.playerName or string.lower(playerName or "") == string.lower(tostring(filter.playerName))
+    local playerNeedle = string.lower(trimText(filter.playerName or ""))
+    local matchesPlayer = playerNeedle == "" or string.find(string.lower(playerName or ""), playerNeedle, 1, true) ~= nil
     local matchesType = not filter.actionType or tostring(tx.type or tx.actionType) == tostring(filter.actionType)
-    local matchesSource = not filter.source or tostring(tx.source or "") == tostring(filter.source)
+    local sourceNeedle = string.lower(trimText(filter.source or ""))
+    local matchesSource = sourceNeedle == "" or string.find(string.lower(tostring(tx.source or "")), sourceNeedle, 1, true) ~= nil
     local matchesFrom = not filter.fromTime or timestamp >= tonumber(filter.fromTime)
     local matchesTo = not filter.toTime or timestamp <= tonumber(filter.toTime)
     if playerName and matchesPlayer and matchesType and matchesSource and matchesFrom and matchesTo then
-      table.insert(transactions, { transaction = tx, playerName = playerName })
+      local searchable = {}
+      for key, value in pairs(tx) do searchable[key] = value end
+      searchable.playerName = playerName
+      searchable.status = tx.status or tx.type or tx.actionType
+      searchable.transaction = tx
+      searchable.guildPlayerName = playerName
+      authorizedTransactions[#authorizedTransactions + 1] = searchable
     else
       hiddenTransactionCount = hiddenTransactionCount + 1
     end
+  end
+  local searchableTransactions, filterError = filterOfficerHistoryRecords(authorizedTransactions, filter, {
+    queryFields = {
+      "itemName", "itemLink", "itemID", "playerName", "playerKey", "source", "status",
+      "verificationState", "state", "type", "actionType", "reason", "raidName",
+      "instanceName", "bossName", "encounterName",
+    },
+    fieldMap = {
+      item = { "itemName", "itemLink", "itemID" },
+      playerName = { "playerName" },
+      raid = { "raidName", "instanceName" },
+      boss = { "bossName", "encounterName" },
+      status = { "status", "verificationState", "state", "type", "actionType" },
+      source = { "source" },
+    },
+    timestampFields = { "createdAt", "timestamp" },
+    identityFields = { "transactionId", "id" },
+  })
+  if not searchableTransactions then
+    return {
+      players = {}, actions = {}, transactionCount = 0,
+      hiddenTransactionCount = hiddenTransactionCount, filterError = filterError,
+    }
+  end
+  local transactions = {}
+  hiddenTransactionCount = hiddenTransactionCount + (#authorizedTransactions - #searchableTransactions)
+  for _, searchable in ipairs(searchableTransactions) do
+    transactions[#transactions + 1] = {
+      transaction = searchable.transaction,
+      playerName = searchable.guildPlayerName,
+    }
   end
   local players = {}
 
@@ -1530,12 +1621,13 @@ function Dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, query, sortKey, 
   return { state = #rows > 0 and "ready" or "empty", rows = rows }
 end
 
-function Dibs.OfficerUI.BuildPreDibDetails(seasonId)
+function Dibs.OfficerUI.BuildPreDibDetails(seasonId, filter)
   if not canViewOfficerData() then
     return { requests = {}, activeRequestCount = 0, hiddenRequestCount = 0, hidden = true }
   end
+  filter = type(filter) == "table" and filter or {}
   local memberNames = getCurrentGuildMemberNames()
-  local lines = {}
+  local records = {}
   local hiddenRequestCount = 0
   local requests = Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}
   local activeRequestCount = 0
@@ -1545,13 +1637,13 @@ function Dibs.OfficerUI.BuildPreDibDetails(seasonId)
     if request.seasonId == seasonId then
       local playerName = getCurrentGuildMemberName(memberNames, request.playerName)
       if playerName then
-        if isActive then
-          activeRequestCount = activeRequestCount + 1
-        end
-        table.insert(lines, {
-          createdAt = request.createdAt or 0,
-          text = formatHistoryDate(request.createdAt) .. " | " .. playerName .. " | " .. tostring(request.status) .. " | " .. tostring(request.itemName or ("Item " .. tostring(request.itemID or "?"))) .. " | " .. tostring(request.difficulty or "UNKNOWN") .. " | " .. tostring(request.modeAtCreation or "WILD_OPEN") .. " | " .. tostring(request.delivery and request.delivery.state or "PENDING"),
-        })
+        local searchable = {}
+        for key, value in pairs(request) do searchable[key] = value end
+        searchable.playerName = playerName
+        searchable.request = request
+        searchable.isActiveRequest = isActive
+        searchable.deliveryState = request.delivery and request.delivery.state
+        records[#records + 1] = searchable
       else
         hiddenRequestCount = hiddenRequestCount + 1
       end
@@ -1563,73 +1655,149 @@ function Dibs.OfficerUI.BuildPreDibDetails(seasonId)
     if record.seasonId == nil or record.seasonId == seasonId then
       local playerName = getCurrentGuildMemberName(memberNames, record.playerName)
       if playerName then
-        table.insert(lines, {
-          createdAt = record.acquiredAt or 0,
-          text = formatHistoryDate(record.acquiredAt) .. " | " .. playerName .. " | Acquired | Item " .. tostring(record.itemID) .. " | " .. tostring(record.difficulty or "UNKNOWN") .. " | " .. tostring(record.source or "VAULT"),
-        })
+        local searchable = {}
+        for key, value in pairs(record) do searchable[key] = value end
+        searchable.playerName = playerName
+        searchable.status = record.verificationState or "Acquired"
+        searchable.historyKind = "Acquired"
+        searchable.acquisition = record
+        searchable.createdAt = record.acquiredAt or record.createdAt
+        searchable.isActiveRequest = false
+        records[#records + 1] = searchable
       else
         hiddenRequestCount = hiddenRequestCount + 1
       end
     end
   end
 
-  table.sort(lines, function(a, b)
-    return a.createdAt > b.createdAt
-  end)
+  local filtered, filterError = filterOfficerHistoryRecords(records, filter, {
+    queryFields = {
+      "itemName", "itemLink", "itemID", "playerName", "source", "status",
+      "verificationState", "difficulty", "modeAtCreation", "deliveryState",
+      "historyKind", "raidName", "instanceName", "bossName", "encounterName",
+    },
+    fieldMap = {
+      item = { "itemName", "itemLink", "itemID" },
+      playerName = { "playerName" },
+      raid = { "raidName", "instanceName" },
+      boss = { "bossName", "encounterName" },
+      status = { "status", "verificationState" },
+      source = { "source" },
+    },
+    timestampFields = { "createdAt", "acquiredAt" },
+    identityFields = { "requestId", "acquisitionId" },
+  })
+  if not filtered then
+    return {
+      requests = {}, activeRequestCount = 0, hiddenRequestCount = hiddenRequestCount,
+      filterError = filterError,
+    }
+  end
+  hiddenRequestCount = hiddenRequestCount + (#records - #filtered)
 
   local result = {}
-  for _, line in ipairs(lines) do
-    table.insert(result, line.text)
+  for _, record in ipairs(filtered) do
+    if record.isActiveRequest then activeRequestCount = activeRequestCount + 1 end
+    if record.request then
+      local request = record.request
+      table.insert(result, formatHistoryDate(request.createdAt) .. " | " .. record.playerName
+        .. " | " .. tostring(request.status) .. " | "
+        .. tostring(request.itemName or ("Item " .. tostring(request.itemID or "?"))) .. " | "
+        .. tostring(request.difficulty or "UNKNOWN") .. " | "
+        .. tostring(request.modeAtCreation or "WILD_OPEN") .. " | "
+        .. tostring(request.delivery and request.delivery.state or "PENDING"))
+    else
+      local acquisition = record.acquisition
+      table.insert(result, formatHistoryDate(acquisition.acquiredAt) .. " | " .. record.playerName
+        .. " | Acquired | Item " .. tostring(acquisition.itemID) .. " | "
+        .. tostring(acquisition.difficulty or "UNKNOWN") .. " | "
+        .. tostring(acquisition.source or "VAULT"))
+    end
   end
-  return { requests = result, activeRequestCount = activeRequestCount, hiddenRequestCount = hiddenRequestCount }
+  return {
+    requests = result, activeRequestCount = activeRequestCount,
+    hiddenRequestCount = hiddenRequestCount,
+  }
 end
 
 function Dibs.OfficerUI.BuildVaultAcquisitionReview(filter)
   filter = type(filter) == "table" and filter or {}
   if not canViewOfficerData() then return { rows = {}, hidden = true, hiddenCount = 0 } end
-  local query = string.lower(trimText(filter.query))
-  local requestedState = trimText(filter.verificationState or filter.status)
-  local rows, hiddenCount = {}, 0
+  local criteria = {}
+  for key, value in pairs(filter) do criteria[key] = value end
+  criteria.query = filter.query or ""
+  criteria.status = filter.verificationState or filter.status or ""
+  criteria.seasonId = nil
+  local searchableRows, hiddenCount = {}, 0
   local members = getCurrentGuildMemberNames()
-    for _, conflict in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetVaultConflicts and Dibs.PreDibs.GetVaultConflicts() or {}) do
-      local incoming = conflict.incoming or {}
-      local playerName = getCurrentGuildMemberName(members, incoming.playerName)
-      if playerName and conflict.status == "REVIEW_REQUIRED" then
-        rows[#rows + 1] = {
-          acquisitionId = conflict.acquisitionId, conflictId = conflict.conflictId, conflict = true,
-          playerName = playerName, projection = incoming,
-          text = table.concat({ formatHistoryDate(conflict.createdAt), playerName, "CONFLICT_REVIEW_REQUIRED",
-            incoming.itemName or ("Item " .. tostring(incoming.itemID)), incoming.source or "VAULT",
-            incoming.resetId or "UNKNOWN", incoming.syncState or "SYNCED", "Immutable identity conflict" }, " | "),
-        }
-      end
+  for _, conflict in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetVaultConflicts and Dibs.PreDibs.GetVaultConflicts() or {}) do
+    local incoming = conflict.incoming or {}
+    local playerName = getCurrentGuildMemberName(members, incoming.playerName)
+    if playerName and conflict.status == "REVIEW_REQUIRED"
+      and (not filter.seasonId or incoming.seasonId == nil or incoming.seasonId == filter.seasonId) then
+      local searchable = {}
+      for key, value in pairs(incoming) do searchable[key] = value end
+      searchable.acquisitionId = conflict.acquisitionId
+      searchable.conflictId = conflict.conflictId
+      searchable.playerName = playerName
+      searchable.status = conflict.status
+      searchable.createdAt = conflict.createdAt
+      searchable.conflict = true
+      searchable.projection = incoming
+      searchable.text = table.concat({ formatHistoryDate(conflict.createdAt), playerName, "CONFLICT_REVIEW_REQUIRED",
+        incoming.itemName or ("Item " .. tostring(incoming.itemID)), incoming.source or "VAULT",
+        incoming.resetId or "UNKNOWN", incoming.syncState or "SYNCED", "Immutable identity conflict" }, " | ")
+      searchableRows[#searchableRows + 1] = searchable
+    elseif not playerName then
+      hiddenCount = hiddenCount + 1
     end
+  end
   for _, record in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetAcquisitions and Dibs.PreDibs.GetAcquisitions() or {}) do
     local playerName = getCurrentGuildMemberName(members, record.playerName)
     if not playerName then
       hiddenCount = hiddenCount + 1
-    elseif (not filter.seasonId or record.seasonId == nil or record.seasonId == filter.seasonId)
-      and (requestedState == "" or record.verificationState == requestedState) then
-      local projection = Dibs.PreDibs.ProjectVaultAcquisition(record, "officer")
-      local searchable = string.lower(table.concat({ tostring(playerName), tostring(record.itemName or record.itemID or ""),
-        tostring(record.source or ""), tostring(record.verificationState or ""), tostring(record.resetId or ""),
-        tostring(record.syncState or "") }, " "))
-      if query == "" or string.find(searchable, query, 1, true) then
-        rows[#rows + 1] = {
-          acquisitionId = record.acquisitionId,
-          projection = projection,
-          playerName = playerName,
-          text = table.concat({ formatHistoryDate(record.acquiredAt or record.createdAt), playerName,
-            record.verificationState or "UNVERIFIED", record.itemName or ("Item " .. tostring(record.itemID)),
-            record.source or "VAULT", record.resetId or "UNKNOWN", record.syncState or "LOCAL",
-            record.review and record.review.reason or "" }, " | "),
-        }
-      end
+    elseif (not filter.seasonId or record.seasonId == nil or record.seasonId == filter.seasonId) then
+      local searchable = {}
+      for key, value in pairs(record) do searchable[key] = value end
+      searchable.playerName = playerName
+      searchable.projection = Dibs.PreDibs.ProjectVaultAcquisition(record, "officer")
+      searchable.text = table.concat({ formatHistoryDate(record.acquiredAt or record.createdAt), playerName,
+        record.verificationState or "UNVERIFIED", record.itemName or ("Item " .. tostring(record.itemID)),
+        record.source or "VAULT", record.resetId or "UNKNOWN", record.syncState or "LOCAL",
+        record.review and record.review.reason or "" }, " | ")
+      searchableRows[#searchableRows + 1] = searchable
     end
   end
-  table.sort(rows, function(first, second)
-    return (first.projection.acquiredAt or first.projection.createdAt or 0) > (second.projection.acquiredAt or second.projection.createdAt or 0)
-  end)
+  local filtered, filterError = filterOfficerHistoryRecords(searchableRows, criteria, {
+    queryFields = {
+      "itemName", "itemLink", "itemID", "playerName", "playerKey", "source",
+      "status", "verificationState", "state", "resetId", "syncState",
+      "raidName", "instanceName", "bossName", "encounterName",
+    },
+    fieldMap = {
+      item = { "itemName", "itemLink", "itemID" },
+      playerName = { "playerName" },
+      raid = { "raidName", "instanceName" },
+      boss = { "bossName", "encounterName" },
+      status = { "status", "verificationState", "state" },
+      source = { "source" },
+    },
+    timestampFields = { "acquiredAt", "createdAt" },
+    identityFields = { "acquisitionId", "conflictId" },
+  })
+  if not filtered then return { rows = {}, hiddenCount = hiddenCount, filterError = filterError } end
+  hiddenCount = hiddenCount + (#searchableRows - #filtered)
+  local rows = {}
+  for _, searchable in ipairs(filtered) do
+    rows[#rows + 1] = {
+      acquisitionId = searchable.acquisitionId,
+      conflictId = searchable.conflictId,
+      conflict = searchable.conflict,
+      projection = searchable.projection,
+      playerName = searchable.playerName,
+      text = searchable.text,
+    }
+  end
   return { rows = rows, hiddenCount = hiddenCount }
 end
 
@@ -1667,32 +1835,46 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
     return emptyOfficerPage(view, query)
   end
   local selectedView = view == "actions" and "actions" or (view == "automaticDibs" and "automaticDibs" or (view == "predibs" and "predibs" or (view == "vault" and "vault" or "players")))
-  local structuredFilter = type(statusFilter) == "table" and statusFilter or {}
+  local structuredFilter = {}
+  if type(statusFilter) == "table" then
+    for key, value in pairs(statusFilter) do structuredFilter[key] = value end
+  end
   if type(query) == "table" then
-    structuredFilter = query
-    query = query.query
+    for key, value in pairs(query) do structuredFilter[key] = value end
+    query = query.query or structuredFilter.query
+  elseif query ~= nil then
+    structuredFilter.query = query
+  end
+  if type(statusFilter) == "string" and selectedView == "vault" then
+    structuredFilter.verificationState = statusFilter
   end
   local lines, structuredRows, hiddenCount
+  local filterError
   if selectedView == "actions" or selectedView == "players" then
     local ledger = Dibs.OfficerUI.BuildLedgerDetails(seasonId, structuredFilter)
     lines = selectedView == "actions" and ledger.actions or ledger.players
     hiddenCount = ledger.hiddenTransactionCount
+    filterError = ledger.filterError
   elseif selectedView == "automaticDibs" then
     local automatic = Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
     lines = automatic.allocations
     structuredRows = automatic.rows or {}
     hiddenCount = automatic.hiddenTransactionCount
   elseif selectedView == "predibs" then
-    local preDibs = Dibs.OfficerUI.BuildPreDibDetails(seasonId)
+    local preDibs = Dibs.OfficerUI.BuildPreDibDetails(seasonId, structuredFilter)
     lines = preDibs.requests
     hiddenCount = preDibs.hiddenRequestCount
+    filterError = preDibs.filterError
   else
-    local vault = Dibs.OfficerUI.BuildVaultAcquisitionReview({
-      seasonId = seasonId, query = query, verificationState = statusFilter,
-    })
+    structuredFilter.seasonId = seasonId
+    if structuredFilter.verificationState == nil then
+      structuredFilter.verificationState = structuredFilter.status
+    end
+    local vault = Dibs.OfficerUI.BuildVaultAcquisitionReview(structuredFilter)
     lines = {}
     for _, row in ipairs(vault.rows) do lines[#lines + 1] = row.text end
     hiddenCount = vault.hiddenCount
+    filterError = vault.filterError
   end
   local emptyText = selectedView == "actions" and "No history for this season."
     or (selectedView == "automaticDibs" and "No automatic Dibs allocations for this season."
@@ -1702,7 +1884,7 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
     or (selectedView == "automaticDibs" and "Automatic Dibs"
     or (selectedView == "predibs" and "Pre-Dibs" or (selectedView == "vault" and "Vault Review" or "Players")))
   local needle = string.lower(tostring(query or ""))
-  if needle ~= "" then
+  if selectedView == "automaticDibs" and needle ~= "" then
     local filtered, filteredRows = {}, {}
     for originalIndex, line in ipairs(lines) do
       if string.find(string.lower(line), needle, 1, true) then
@@ -1724,7 +1906,9 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
     if selectedView == "automaticDibs" and structuredRows[index] then table.insert(visibleRows, structuredRows[index]) end
   end
   if #visible == 0 then
-    visible[1] = emptyText
+    visible[1] = filterError and officerHistoryFilterErrorText(filterError)
+      or (hasOfficerHistoryFilters(structuredFilter) and ((Dibs.L or {}).HISTORY_FILTER_NO_RESULTS or "No history records match these filters."))
+      or emptyText
   end
 
   return {
@@ -1736,6 +1920,7 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
     totalCount = #lines,
     query = needle,
     hiddenCount = hiddenCount,
+    filterError = filterError,
   }
 end
 
@@ -1805,6 +1990,132 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId)
       minAwards = awardValues[1] or 0,
       maxAwards = awardValues[#awardValues] or 0,
     },
+  }
+end
+
+function Dibs.OfficerUI.BuildPlayerPeriodStatistics(seasonId, criteria)
+  local empty = {
+    status = "UNAVAILABLE",
+    rows = {},
+    count = 0,
+    undatedExcluded = 0,
+    unmatchedPlayers = 0,
+  }
+  if not canViewOfficerData() then
+    empty.status = "DENIED"
+    return empty
+  end
+  if not Dibs.Ledger or type(Dibs.Ledger.GetTransactions) ~= "function" then
+    empty.reason = "LEDGER_UNAVAILABLE"
+    return empty
+  end
+  local ok, transactions = pcall(Dibs.Ledger.GetTransactions, seasonId)
+  if not ok or type(transactions) ~= "table" then
+    empty.reason = "LEDGER_UNAVAILABLE"
+    return empty
+  end
+  local filters = Dibs.HistoryFilters
+  if not filters or type(filters.FilterRecords) ~= "function" then
+    empty.reason = "FILTER_UNAVAILABLE"
+    return empty
+  end
+  criteria = type(criteria) == "table" and criteria or {}
+  local fromDate, toDate = tostring(criteria.fromDate or ""), tostring(criteria.toDate or "")
+  local filtered, filterError = filters.FilterRecords(transactions, {
+    fromDate = fromDate,
+    toDate = toDate,
+  }, {
+    timestampFields = { "createdAt", "timestamp" },
+    identityFields = { "transactionId", "id" },
+  })
+  if not filtered then
+    empty.status = "INVALID_RANGE"
+    empty.reason = filterError
+    return empty
+  end
+
+  local memberNames = getCurrentGuildMemberNames()
+  local rowsByPlayer = {}
+  local function rowForPlayer(playerName)
+    if playerName == nil or tostring(playerName) == "" then return nil end
+    local displayName = getCurrentGuildMemberName(memberNames, playerName)
+    if not displayName or displayName == "" then return nil end
+    local key = string.lower(displayName)
+    local row = rowsByPlayer[key]
+    if not row then
+      row = {
+        playerName = displayName,
+        transactions = 0,
+        awards = 0,
+        grantedDibs = 0,
+        usedDibs = 0,
+        corrections = 0,
+        undatedExcluded = 0,
+        partial = false,
+      }
+      rowsByPlayer[key] = row
+    end
+    return row
+  end
+
+  if memberNames then
+    local knownNames = {}
+    for _, memberName in pairs(memberNames) do
+      if type(memberName) == "string" and memberName ~= "" then
+        knownNames[string.lower(memberName)] = memberName
+      end
+    end
+    for _, memberName in pairs(knownNames) do rowForPlayer(memberName) end
+  end
+
+  local hasDateFilter = fromDate:match("%S") ~= nil or toDate:match("%S") ~= nil
+  if hasDateFilter then
+    for _, transaction in ipairs(transactions) do
+      if type(transaction) == "table" and not tonumber(transaction.createdAt or transaction.timestamp) then
+        empty.undatedExcluded = empty.undatedExcluded + 1
+        local row = rowForPlayer(transaction.playerName or transaction.playerKey or transaction.memberKey or transaction.playerId)
+        if row then
+          row.undatedExcluded = row.undatedExcluded + 1
+          row.partial = true
+        end
+      end
+    end
+  end
+
+  for _, transaction in ipairs(filtered) do
+    local playerName = transaction.playerName or transaction.playerKey or transaction.memberKey or transaction.playerId
+    local row = rowForPlayer(playerName)
+    if row then
+      row.transactions = row.transactions + 1
+      local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+      if transaction.type == "DIB_USED" then
+        row.awards = row.awards + 1
+        row.usedDibs = row.usedDibs + math.abs(amount)
+      elseif transaction.type == "DIB_GRANTED" then
+        row.grantedDibs = row.grantedDibs + amount
+      elseif transaction.type == "DIB_REFUNDED" or transaction.type == "DIB_REVOKED"
+        or transaction.type == "DIB_ADMIN_ADJUSTMENT" then
+        row.corrections = row.corrections + 1
+      end
+    else
+      empty.unmatchedPlayers = empty.unmatchedPlayers + 1
+    end
+  end
+
+  local rows = {}
+  for _, row in pairs(rowsByPlayer) do rows[#rows + 1] = row end
+  table.sort(rows, function(first, second)
+    return string.lower(first.playerName) < string.lower(second.playerName)
+  end)
+  return {
+    status = "READY",
+    rows = rows,
+    count = #filtered,
+    undatedExcluded = empty.undatedExcluded,
+    unmatchedPlayers = empty.unmatchedPlayers,
+    rosterAvailable = memberNames ~= nil,
+    fromDate = fromDate,
+    toDate = toDate,
   }
 end
 
@@ -3164,6 +3475,7 @@ local function createAceWindow(initialRoute)
 
   local requestDetailShell
   local requestDetailRoot
+  local requestDetailFooter
   local requestChildDialog
   local activeConfirmationDialog
   local openRequestDetail
@@ -3490,7 +3802,8 @@ local function createAceWindow(initialRoute)
         return
       end
       local action = draft.action == "refund" and "refund" or draft.action == "revoke" and "revoke" or "adjustment"
-      local options = { amount = draft.action == "manual" and tonumber(draft.amount) or math.abs(tonumber(draft.amount)), reason = draft.reason, confirmed = true }
+      local options = { amount = draft.action == "manual" and tonumber(draft.amount) or math.abs(tonumber(draft.amount)), reason = draft.reason, confirmed = true,
+        expectedRevision = request.revision }
       draft.committing = true
       local callOK, result, reasonCode = pcall(Dibs.Disputes.Resolve, request.requestId, action, options, Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
       if not callOK then
@@ -3590,6 +3903,7 @@ local function createAceWindow(initialRoute)
       end, (height or 64) + 36)
     end
     local function executeRequestAction(options, validate, successText, service)
+      options.expectedRevision = request.revision
       local allowed, permissionReason = permissionDecision()
       if not allowed then return false, permissionReason end
       if validate then
@@ -3859,7 +4173,7 @@ local function createAceWindow(initialRoute)
       if not isReview then frame.requestActionReview = action; openRequestActionDialog(request, action, title); return end
       if action == "correct_target" and trimText(frame.disputeCorrectPlayer) == ""
         and (frame.disputeCorrectItemKey == nil or trimText(frame.disputeCorrectItem) == "") then return end
-      local options = { reason = frame.requestDetailReason or "", confirmed = frame.requestActionConfirmed == true }
+      local options = { reason = frame.requestDetailReason or "", confirmed = frame.requestActionConfirmed == true, expectedRevision = request.revision }
       if action == "correct_target" then
         options.playerName = frame.disputeCorrectPlayer
         options.itemLink = frame.disputeCorrectItem
@@ -3887,12 +4201,17 @@ local function createAceWindow(initialRoute)
       requestDetailShell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Request", 600, 430, { "CENTER", 0, 0 }, "OfficerRequestDetail")
       if not requestDetailShell then return false end
       frame.requestDetailShell = requestDetailShell
-      requestDetailRoot = Dibs.AceGUI.Create(requestDetailShell, "SimpleGroup", requestDetailShell.window)
+      requestDetailRoot = Dibs.AceGUI.AddScrollableList(requestDetailShell, requestDetailShell.window, 320, 110)
+      requestDetailFooter = Dibs.AceGUI.Create(requestDetailShell, "SimpleGroup", requestDetailShell.window)
+      if requestDetailFooter then
+        requestDetailFooter:SetFullWidth(true); requestDetailFooter:SetHeight(38); requestDetailFooter:SetLayout("Flow")
+      end
     end
     if not requestDetailRoot then return false end
     frame.requestDetailRoot = requestDetailRoot
     Dibs.AceGUI.Clear(requestDetailRoot)
-    requestDetailRoot:SetFullWidth(true); requestDetailRoot:SetFullHeight(true); requestDetailRoot:SetLayout("List")
+    requestDetailRoot:SetFullWidth(true); requestDetailRoot:SetFullHeight(false); requestDetailRoot:SetLayout("List")
+    if requestDetailFooter then Dibs.AceGUI.Clear(requestDetailFooter) end
     frame.disputeDetailOpen = true
     frame.disputeSelectedId = request.requestId
     local evidence = request.evidence and request.evidence[1] or {}
@@ -3931,6 +4250,32 @@ local function createAceWindow(initialRoute)
     addRequestField("Status", tostring(request.status or "Open"))
     addRequestField("Description", summary.note ~= "" and summary.note or "No note provided")
     addRequestField("Evidence", summary.evidence)
+    local strings = Dibs.L or {}
+    addRequestField(strings.REQUEST_ASSIGNED or "Responsible officer", request.assignedTo or (strings.REQUEST_UNASSIGNED or "Unassigned"))
+    addRequestField(strings.REQUEST_ACTIVITY or "Last activity", formatHistoryDate(request.lastUpdatedAt or request.createdAt))
+    addRequestField(strings.REQUEST_FOLLOWUP or "Next follow-up", request.followUpAt and formatHistoryDate(request.followUpAt) or (strings.REQUEST_NO_DUE or "Not scheduled"))
+    if request.delivery then
+      local labels = { queued = strings.REQUEST_QUEUED or "Queued", sent = strings.REQUEST_SENT or "Sent; awaiting receipt",
+        received = strings.REQUEST_RECEIVED or "Received", error = strings.REQUEST_ERROR or "Delivery error" }
+      addRequestField(strings.REQUEST_DELIVERY or "Delivery",
+        tostring(labels[request.delivery.state] or request.delivery.state)
+          .. (request.delivery.reason and (" — " .. request.delivery.reason) or ""))
+    end
+    local sharedWritable = not request.deliveryAuthority or Dibs.RequestDelivery and Dibs.RequestDelivery.CanMutate(request)
+    if not sharedWritable then
+      Dibs.AceGUI.AddLabel(requestDetailShell, summarySection, strings.REQUEST_COORDINATOR_ONLY or "Shared request: review is read-only here. Use the current coordinator client for changes.", true)
+    end
+    local replyRows = {}
+    for _, reply in ipairs(request.replies or {}) do
+      replyRows[#replyRows + 1] = { tostring(reply.author), formatHistoryDate(reply.createdAt), tostring(reply.boundedText or "") }
+    end
+    if #replyRows > 0 then
+      Dibs.AceGUI.AddTable(requestDetailShell, summarySection, {
+        { title = strings.REQUEST_REPLY_AUTHOR or "Author", width = 85 },
+        { title = strings.REQUEST_REPLY_DATE or "Date", width = 125 },
+        { title = strings.REQUEST_PUBLIC_REPLY or "Public reply", width = 300 },
+      }, replyRows, 150)
+    end
     Dibs.AceGUI.AddButton(requestDetailShell, summarySection, frame.disputeTechnicalExpanded and "Hide technical details" or "Show technical details", function()
       frame.disputeTechnicalExpanded = not frame.disputeTechnicalExpanded
       openRequestDetail(request)
@@ -3946,26 +4291,79 @@ local function createAceWindow(initialRoute)
     end
     local actionSection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Officer actions") or requestDetailRoot
     local actions = Dibs.AceGUI.AddInlineGroup(requestDetailShell, actionSection)
-    local terminal = request.status == "Resolved" or request.status == "Rejected"
-    if request.status == "Open" or request.status == "Pending" then
+    local terminal = request.status == "Resolved" or request.status == "Rejected" or request.status == "Closed" or request.status == "Archived"
+    if sharedWritable and (request.status == "Open" or request.status == "Pending") then
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Start review", function() openRequestActionDialog(request, "under_review", "Start review") end, 110)
     end
-    if not terminal then
+    if sharedWritable and not terminal then
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Ask for information", function() openRequestActionDialog(request, "ask_information", "Ask for information") end, 155)
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Resolve", function() openRequestActionDialog(request, "no_correction", "Resolve") end, 90)
       Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reject", function() openRequestActionDialog(request, "reject", "Reject") end, 90)
-    else
-      Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reopen", function() openRequestActionDialog(request, "reopen", "Reopen") end, 90)
+    elseif sharedWritable then
+      if not request.correctionTransactionId then
+        Dibs.AceGUI.AddButton(requestDetailShell, actions, "Reopen", function() openRequestActionDialog(request, "reopen", "Reopen") end, 90)
+      end
+      if request.status == "Resolved" or request.status == "Rejected" then
+        Dibs.AceGUI.AddButton(requestDetailShell, actions, strings.REQUEST_CLOSE or "Close request", function()
+          openRequestActionDialog(request, "close", strings.REQUEST_CLOSE or "Close request")
+        end, 140)
+      elseif request.status == "Closed" then
+        Dibs.AceGUI.AddButton(requestDetailShell, actions, strings.REQUEST_ARCHIVE or "Archive request", function()
+          openRequestActionDialog(request, "archive", strings.REQUEST_ARCHIVE or "Archive request")
+        end, 140)
+      end
+    end
+    if sharedWritable and not terminal then
+      local followup = Dibs.AceGUI.AddSection(requestDetailShell, requestDetailRoot, strings.REQUEST_FOLLOWUP or "Next follow-up",
+        strings.REQUEST_FOLLOWUP_HELP or "Public replies reach the owner. Assignment and internal audit remain officer-only.")
+      local publicReply = ""
+      Dibs.AceGUI.AddEditBox(requestDetailShell, followup, strings.REQUEST_PUBLIC_REPLY or "Public reply", function(value) publicReply = value or "" end, 380)
+      local feedback = Dibs.AceGUI.AddLabel(requestDetailShell, followup, "", true)
+      Dibs.AceGUI.AddButton(requestDetailShell, followup, strings.REQUEST_SEND_REPLY or "Send public reply", function()
+        local result, reason = Dibs.Disputes.AddOfficerReply(request.requestId, publicReply, nil, request.revision)
+        if not result then feedback:SetText(tostring(reason)); return end
+        openRequestDetail(Dibs.Disputes.GetRequest(request.requestId, nil))
+      end, 170)
+      local choices = { [""] = strings.REQUEST_UNASSIGNED or "Unassigned" }
+      for index = 1, GetNumGuildMembers(true) do
+        local name = GetGuildRosterInfo(index)
+        local resolved = name and Dibs.Identity.ResolveRosterMember(name)
+        if resolved and resolved.status == "RESOLVED" and (resolved.role == "gm" or resolved.role == "officer") then choices[resolved.displayName] = resolved.displayName end
+      end
+      local assignee = request.assignedTo or ""
+      local assign = Dibs.AceGUI.AddDropdown(requestDetailShell, followup, strings.REQUEST_ASSIGNED or "Responsible officer", choices, function(value) assignee = value or "" end, 240)
+      Dibs.AceGUI.SetValue(assign, assignee)
+      local offset
+      local due = Dibs.AceGUI.AddDropdown(requestDetailShell, followup, strings.REQUEST_RESCHEDULE or "Reschedule",
+        { keep = strings.REQUEST_KEEP_DUE or "Keep current follow-up", ["0"] = strings.REQUEST_NO_DUE or "Not scheduled",
+          ["3600"] = strings.REQUEST_ONE_HOUR or "In one hour", ["86400"] = strings.REQUEST_ONE_DAY or "In one day",
+          ["259200"] = strings.REQUEST_THREE_DAYS or "In three days" }, function(value) offset = tonumber(value) end, 240)
+      Dibs.AceGUI.SetValue(due, "keep")
+      local function saveFollowUp(target)
+        local result, reason = Dibs.Disputes.UpdateFollowUp(request.requestId, { assignedTo = target,
+          followUpAt = offset and (offset == 0 and 0 or time() + offset) or nil, expectedRevision = request.revision }, nil)
+        if not result then feedback:SetText(tostring(reason)); return end
+        openRequestDetail(Dibs.Disputes.GetRequest(request.requestId, nil))
+      end
+      Dibs.AceGUI.AddButton(requestDetailShell, followup, strings.REQUEST_ASSIGN_ME or "Assign to me", function() saveFollowUp(Dibs.GetPlayerName()) end, 140)
+      Dibs.AceGUI.AddButton(requestDetailShell, followup, strings.REQUEST_SAVE_FOLLOWUP or "Save follow-up", function() saveFollowUp(assignee) end, 150)
+    end
+    if Dibs.RequestDelivery and request.followUpAt then
+      Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, strings.REQUEST_SNOOZE or "Snooze reminder for one hour", function()
+        local ok, reason = Dibs.RequestDelivery.Snooze(request.requestId, time() + 3600)
+        frame.disputeStatusMessage = ok and (strings.REQUEST_SNOOZED or "Reminder snoozed on this character.") or tostring(reason)
+        openRequestDetail(request)
+      end, 240)
     end
     local unavailable = request.unavailable == true or request.status == "Unavailable"
     if unavailable then frame.disputeAdvancedExpanded = false end
-    if not unavailable then
+    if not unavailable and sharedWritable and not terminal then
       Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, frame.disputeAdvancedExpanded and "Hide advanced officer tools" or "Advanced Officer Tools", function()
         frame.disputeAdvancedExpanded = not frame.disputeAdvancedExpanded
         openRequestDetail(request)
       end, 190)
     end
-    if not unavailable and frame.disputeAdvancedExpanded then
+    if not unavailable and sharedWritable and not terminal and frame.disputeAdvancedExpanded then
       local advancedSection = Dibs.AceGUI.AddSection(requestDetailShell, requestDetailRoot, "Advanced Officer Tools", "Secondary accounting and correction workflows.")
       local advancedPermissions = {
         correct_target = "ledger.adjust",
@@ -4001,7 +4399,7 @@ local function createAceWindow(initialRoute)
         Dibs.AceGUI.AddButton(requestDetailShell, advancedSection, "Admin adjustment", function() openRequestActionDialog(request, "adjustment", "Admin adjustment") end, 150)
       end
     end
-    Dibs.AceGUI.AddButton(requestDetailShell, requestDetailRoot, "Close", closeRequestDetail, 90)
+    Dibs.AceGUI.AddButton(requestDetailShell, requestDetailFooter or requestDetailRoot, "Close", closeRequestDetail, 90)
     requestDetailShell.window:Show()
     if requestDetailShell.window.DoLayout then requestDetailShell.window:DoLayout() end
     return true
@@ -4158,6 +4556,128 @@ local function createAceWindow(initialRoute)
     if activateRoute then activateRoute(tab, true) end
   end
 
+  local function renderStatisticsPage(pageFrame, currentSeasonId, pageTabs)
+    local statistics = Dibs.OfficerUI.BuildSeasonStatistics(currentSeasonId)
+    local strings = Dibs.L or {}
+    Dibs.AceGUI.AddHeader(shell, pageTabs,
+      strings.OFFICER_STATISTICS_TITLE or "Season statistics",
+      strings.OFFICER_STATISTICS_INTRO or "Descriptive activity counts; not a score or award ranking.")
+    Dibs.AceGUI.AddLabel(shell, pageTabs,
+      "Active players: " .. tostring(statistics.players)
+        .. " | Transactions: " .. tostring(statistics.transactions)
+        .. " | Dibs used: " .. tostring(statistics.used)
+        .. " | Active Pre-Dibs: " .. tostring(statistics.activePreDibs), true)
+
+    pageFrame.statisticsFromDate = pageFrame.statisticsFromDate or ""
+    pageFrame.statisticsToDate = pageFrame.statisticsToDate or ""
+    pageFrame.statisticsPage = pageFrame.statisticsPage or 1
+    local periodControls = Dibs.AceGUI.AddInlineGroup(shell, pageTabs)
+    local fromControl = Dibs.AceGUI.AddEditBox(shell, periodControls,
+      strings.OFFICER_STATISTICS_FROM_DATE or "From date (YYYY-MM-DD)", function(value)
+        pageFrame.statisticsFromDate = value or ""
+        pageFrame.statisticsPage = 1
+      end, 165)
+    setControlText(fromControl, pageFrame.statisticsFromDate)
+    local toControl = Dibs.AceGUI.AddEditBox(shell, periodControls,
+      strings.OFFICER_STATISTICS_TO_DATE or "To date (YYYY-MM-DD)", function(value)
+        pageFrame.statisticsToDate = value or ""
+        pageFrame.statisticsPage = 1
+      end, 165)
+    setControlText(toControl, pageFrame.statisticsToDate)
+    Dibs.AceGUI.AddLabel(shell, periodControls,
+      strings.OFFICER_STATISTICS_PERIOD_HELP or "Date bounds are inclusive; leave both blank for the full season.", true)
+    Dibs.AceGUI.AddButton(shell, periodControls, strings.OFFICER_STATISTICS_APPLY or "Apply period", function()
+      pageFrame.statisticsPage = 1
+      pageFrame:Refresh()
+    end, 130)
+    if pageFrame.statisticsFromDate ~= "" or pageFrame.statisticsToDate ~= "" then
+      Dibs.AceGUI.AddButton(shell, periodControls, strings.OFFICER_STATISTICS_CLEAR or "Clear dates", function()
+        pageFrame.statisticsFromDate, pageFrame.statisticsToDate, pageFrame.statisticsPage = "", "", 1
+        pageFrame:Refresh()
+      end, 110)
+    end
+
+    local playerStatistics = Dibs.OfficerUI.BuildPlayerPeriodStatistics(currentSeasonId, {
+      fromDate = pageFrame.statisticsFromDate,
+      toDate = pageFrame.statisticsToDate,
+    })
+    if playerStatistics.status == "INVALID_RANGE" then
+      Dibs.AceGUI.AddLabel(shell, pageTabs,
+        strings.OFFICER_STATISTICS_INVALID_RANGE or "Enter a valid inclusive date range.", true)
+      return
+    elseif playerStatistics.status ~= "READY" then
+      local stateText = playerStatistics.status == "DENIED"
+        and (strings.OFFICER_STATISTICS_DENIED or "Officer access is required.")
+        or (strings.OFFICER_STATISTICS_UNAVAILABLE or "Player activity statistics are unavailable.")
+      Dibs.AceGUI.AddLabel(shell, pageTabs, stateText, true)
+      return
+    end
+    if playerStatistics.undatedExcluded > 0 then
+      Dibs.AceGUI.AddLabel(shell, pageTabs, string.format(
+        strings.OFFICER_STATISTICS_UNDATED or "%d undated transactions were excluded from this period.",
+        playerStatistics.undatedExcluded), true)
+    end
+    if playerStatistics.unmatchedPlayers > 0 then
+      Dibs.AceGUI.AddLabel(shell, pageTabs, strings.OFFICER_STATISTICS_UNMATCHED
+        or "Some transactions could not be matched to the current guild roster.", true)
+    end
+    if not playerStatistics.rosterAvailable then
+      Dibs.AceGUI.AddLabel(shell, pageTabs, strings.OFFICER_STATISTICS_ROSTER_UNAVAILABLE
+        or "Guild roster unavailable; only players present in the ledger are shown.", true)
+    end
+
+    local pageSize = 25
+    local totalPages = math.max(1, math.ceil(#playerStatistics.rows / pageSize))
+    local page = math.max(1, math.min(tonumber(pageFrame.statisticsPage) or 1, totalPages))
+    pageFrame.statisticsPage = page
+    local visibleRows = {}
+    for index = ((page - 1) * pageSize) + 1, math.min(page * pageSize, #playerStatistics.rows) do
+      local row = playerStatistics.rows[index]
+      visibleRows[#visibleRows + 1] = {
+        row.playerName,
+        tostring(row.transactions),
+        tostring(row.awards),
+        tostring(row.grantedDibs),
+        tostring(row.usedDibs),
+        tostring(row.corrections),
+        row.partial and (strings.OFFICER_STATISTICS_PARTIAL or "Partial")
+          or (strings.OFFICER_STATISTICS_COMPLETE or "Complete"),
+      }
+    end
+    if #visibleRows == 0 then
+      Dibs.AceGUI.AddLabel(shell, pageTabs,
+        strings.OFFICER_STATISTICS_EMPTY or "No players or transactions are available for this season and period.", true)
+    else
+      local metrics = Dibs.AceGUI.GetLayoutMetrics()
+      Dibs.AceGUI.AddTable(shell, pageTabs, {
+        { title = strings.OFFICER_STATISTICS_PLAYER or "Player", width = 170, minWidth = 130, weight = 2 },
+        { title = strings.OFFICER_STATISTICS_TRANSACTIONS or "Transactions", width = 90, minWidth = 74, fixed = true, align = "RIGHT" },
+        { title = strings.OFFICER_STATISTICS_AWARDS or "Awards", width = 75, minWidth = 60, fixed = true, align = "RIGHT" },
+        { title = strings.OFFICER_STATISTICS_GRANTED or "Granted", width = 85, minWidth = 68, fixed = true, align = "RIGHT" },
+        { title = strings.OFFICER_STATISTICS_USED or "Used", width = 75, minWidth = 60, fixed = true, align = "RIGHT" },
+        { title = strings.OFFICER_STATISTICS_CORRECTIONS or "Corrections", width = 95, minWidth = 75, fixed = true, align = "RIGHT" },
+        { title = strings.OFFICER_STATISTICS_COVERAGE or "Coverage", width = 100, minWidth = 82, fixed = true, align = "CENTER" },
+      }, visibleRows, 360, nil, nil, {
+        fluidColumns = true, disableContextMenu = true,
+        widthHint = getOfficerContentWidth(frame, shell),
+        horizontalPadding = metrics.tableHorizontalPadding,
+        columnGap = metrics.tableColumnGap, rowHeight = metrics.rowHeight,
+        emptyText = strings.OFFICER_STATISTICS_EMPTY or "No players or transactions are available for this season and period.",
+      })
+    end
+    local pageControls = Dibs.AceGUI.AddInlineGroup(shell, pageTabs)
+    Dibs.AceGUI.AddButton(shell, pageControls, strings.OFFICER_STATISTICS_PREVIOUS or "Previous", function()
+      pageFrame.statisticsPage = math.max(1, page - 1)
+      pageFrame:Refresh()
+    end, 100)
+    Dibs.AceGUI.AddLabel(shell, pageControls,
+      string.format(strings.OFFICER_STATISTICS_PAGE or "Page %d of %d", page, totalPages), true)
+    Dibs.AceGUI.AddButton(shell, pageControls, strings.OFFICER_STATISTICS_NEXT or "Next", function()
+      pageFrame.statisticsPage = math.min(totalPages, page + 1)
+      pageFrame:Refresh()
+    end, 100)
+  end
+
   local function renderRoute(self)
     self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
     self.selectedRoute = self.activeTab
@@ -4189,6 +4709,17 @@ local function createAceWindow(initialRoute)
     pageRoot._dibsOwner = self
     contentHost._dibsCurrentPageRoot = pageRoot
     local tabs = pageRoot
+    local seasons = getSeasonList()
+    local current = getSelectedSeason(self)
+    if not current and #seasons > 0 then
+      current = seasons[#seasons]
+      self.selectedSeasonId = current.id
+    end
+    local currentId = current and current.id or nil
+    if self.activeTab == "statistics" then
+      renderStatisticsPage(self, currentId, tabs)
+      return
+    end
     local routeModules = {
       disputes = "requests", preDibs = "preDibs", preDibRequests = "preDibs", announcements = "announcements",
       integration = "rclootcouncil", eligibility = "lootEligibility",
@@ -4320,6 +4851,134 @@ local function createAceWindow(initialRoute)
         end
       else
         Dibs.AceGUI.AddLabel(shell, tabs, healthText.HEALTH_DASHBOARD_NO_REPORT or "Health report unavailable.", true)
+      end
+      local reviewText = Dibs.L or {}
+      local findingScan = Dibs.HealthUI and Dibs.HealthUI.ScanAnomalies
+        and Dibs.HealthUI.ScanAnomalies() or { status = "UNAVAILABLE", anomalies = {}, count = 0, sources = {} }
+      Dibs.AceGUI.AddHeader(shell, tabs,
+        reviewText.HEALTH_REVIEW_TITLE or "Review findings",
+        reviewText.HEALTH_REVIEW_INTRO or "Read-only review of guild data findings and Great Vault items.")
+      if findingScan.status == "DENIED" then
+        Dibs.AceGUI.AddLabel(shell, tabs, reviewText.HEALTH_REVIEW_DENIED or "Administrative review is unavailable.", true)
+      else
+        local unavailableSource = false
+        for _, source in pairs(findingScan.sources or {}) do
+          if source.status ~= "AVAILABLE" then unavailableSource = true; break end
+        end
+        if unavailableSource or findingScan.status == "UNAVAILABLE" then
+          Dibs.AceGUI.AddLabel(shell, tabs,
+            reviewText.HEALTH_REVIEW_UNAVAILABLE or "Some review sources are unavailable; this is not a clean scan.", true)
+        end
+        local findingRows = {}
+        for _, finding in ipairs(findingScan.anomalies or {}) do
+          local categoryKey = "HEALTH_REVIEW_CATEGORY_" .. tostring(finding.category or "")
+          findingRows[#findingRows + 1] = {
+            reviewText[categoryKey] or tostring(finding.category or "Unknown"),
+            tostring(finding.status or "UNAVAILABLE"),
+            tostring(finding.detail or ""),
+            "",
+            findingId = finding.id,
+            nextAction = finding.action,
+          }
+        end
+        if #findingRows == 0 and findingScan.status == "HEALTHY" then
+          Dibs.AceGUI.AddLabel(shell, tabs,
+            reviewText.HEALTH_REVIEW_EMPTY or "No data findings need review.", true)
+        elseif #findingRows > 0 then
+          Dibs.AceGUI.AddTable(shell, tabs, {
+            { title = "Category", width = 190, minWidth = 145, weight = 1 },
+            { title = "Status", width = 120, minWidth = 96, fixed = true, align = "CENTER" },
+            { title = "Details", width = 460, minWidth = 180, weight = 3, wrap = true },
+            { title = reviewText.HEALTH_REVIEW_ACTION or "Action", width = 140, minWidth = 115, action = true,
+              actionLabels = { reviewText.HEALTH_REVIEW_PREVIEW or "Preview finding" } },
+          }, findingRows, nil, function(row)
+            return {
+              text = reviewText.HEALTH_REVIEW_PREVIEW or "Preview finding",
+              callback = function()
+                local preview = Dibs.HealthUI.BuildCorrectionPreview(row.findingId)
+                self.healthFindingPreview = preview
+                if preview.status ~= "PREVIEW" then
+                  self:SetStatus(reviewText.HEALTH_REVIEW_PREVIEW_FAILED or "Unable to preview this finding: "
+                    .. tostring(preview.reason or preview.status))
+                end
+                self:Refresh()
+              end,
+            }
+          end, {
+            fluidColumns = true, disableContextMenu = true,
+            widthHint = getOfficerContentWidth(frame, shell),
+            rowHeight = 48,
+          })
+        end
+        local preview = self.healthFindingPreview
+        if preview then
+          if preview.status == "PREVIEW" and preview.finding then
+            Dibs.AceGUI.AddHeader(shell, tabs,
+              reviewText.HEALTH_REVIEW_PREVIEW_TITLE or "Finding preview",
+              reviewText.HEALTH_REVIEW_PREVIEW_INTRO or "This preview does not change saved data.")
+            local categoryKey = "HEALTH_REVIEW_CATEGORY_" .. tostring(preview.finding.category or "")
+            Dibs.AceGUI.AddLabel(shell, tabs,
+              (reviewText[categoryKey] or tostring(preview.finding.category or "Unknown")) .. "\n"
+                .. tostring(preview.finding.detail or ""), true)
+            if preview.nextAction == "OPEN_VAULT_REVIEW" then
+              Dibs.AceGUI.AddButton(shell, diagnosticActions,
+                reviewText.HEALTH_REVIEW_OPEN_VAULT or "Open Vault review", function()
+                  if type(self.SelectTab) == "function" then self.SelectTab("vault") end
+                end, 190)
+            else
+              Dibs.AceGUI.AddLabel(shell, tabs,
+                reviewText.HEALTH_REVIEW_INVESTIGATE_ONLY or "No automatic correction is available; investigate or export the report.", true)
+            end
+          else
+            Dibs.AceGUI.AddLabel(shell, tabs,
+              reviewText.HEALTH_REVIEW_PREVIEW_FAILED or "Unable to preview this finding.", true)
+          end
+        end
+        Dibs.AceGUI.AddButton(shell, diagnosticActions,
+          reviewText.HEALTH_REVIEW_EXPORT or "Export health report", function()
+            local exported, reportOrReason = Dibs.HealthUI.ExportAnomalies()
+            if not exported then
+              self.healthFindingExport = nil
+              self:SetStatus((reviewText.HEALTH_REVIEW_EXPORT_FAILED or "Health report export failed: ")
+                .. tostring(reportOrReason or "UNKNOWN_ERROR"))
+            else
+              self.healthFindingExport = exported
+              self:SetStatus(reviewText.HEALTH_REVIEW_EXPORTED or "Health report exported. Copy the complete text below.")
+            end
+            self:Refresh()
+          end, 210)
+        if self.healthFindingExport then
+          Dibs.AceGUI.AddSelectableText(shell, tabs,
+            reviewText.HEALTH_REVIEW_EXPORT_TEXT or "Health report (copy this text)",
+            self.healthFindingExport, 700, 180)
+        end
+        Dibs.AceGUI.AddHeader(shell, tabs,
+          reviewText.AUDIT_EXPORT_TITLE or "Anonymous audit export",
+          reviewText.AUDIT_EXPORT_INTRO or "A bounded audit report without player identities or executable transactions.")
+        Dibs.AceGUI.AddButton(shell, diagnosticActions,
+          reviewText.AUDIT_EXPORT_BUTTON or "Export anonymized audit", function()
+            local encoder = Dibs.AuditExport and Dibs.AuditExport.EncodeReport
+            local exported, reportOrReason
+            if type(encoder) == "function" then
+              exported, reportOrReason = encoder()
+            else
+              reportOrReason = "EXPORT_UNAVAILABLE"
+            end
+            if type(exported) ~= "string" then
+              self.anonymousAuditExport = nil
+              self:SetStatus((reviewText.AUDIT_EXPORT_FAILED or "Anonymous audit export failed: ")
+                .. tostring(reportOrReason or "UNKNOWN_ERROR"))
+            else
+              self.anonymousAuditExport = exported
+              self:SetStatus(reviewText.AUDIT_EXPORT_SUCCESS or "Anonymous audit exported. Copy the complete text below.")
+            end
+            self:Refresh()
+          end, 230)
+        if self.anonymousAuditExport then
+          Dibs.AceGUI.AddSelectableText(shell, tabs,
+            reviewText.AUDIT_EXPORT_COPY or "Anonymous audit report (copy this text)",
+            self.anonymousAuditExport, 700, 180)
+        end
       end
       Dibs.AceGUI.AddButton(shell, diagnosticActions, self.showRuntimeDiagnostics
         and (healthText.HEALTH_DASHBOARD_HIDE_RUNTIME or "Hide runtime diagnostics")
@@ -4528,14 +5187,6 @@ local function createAceWindow(initialRoute)
       tablePage.UpdateViewportHeight()
       return
     end
-    local seasons = getSeasonList()
-    local current = getSelectedSeason(self)
-    if not current and #seasons > 0 then
-      current = seasons[#seasons]
-      self.selectedSeasonId = current.id
-    end
-    local currentId = current and current.id or nil
-
     if self.activeTab == "overview" then
       renderDashboard(shell, tabs, self)
       return
@@ -5190,9 +5841,11 @@ local function createAceWindow(initialRoute)
       self.disputeTablePage = tablePage
       local pageHeader = tablePage.header
       Dibs.AceGUI.AddHeader(shell, pageHeader, "Officer review requests", helpText.UI_HELP_REVIEW_REQUESTS)
+      if Dibs.RequestDelivery then Dibs.RequestDelivery.Pump() end
       local statusChoices = { [""] = "All statuses" }
       for key, value in pairs(Dibs.Disputes and Dibs.Disputes.GetStatuses and Dibs.Disputes.GetStatuses() or {}) do
-        statusChoices[value] = value
+        statusChoices[value] = value == "Closed" and (Dibs.L.REQUEST_CLOSED or "Closed")
+          or value == "Archived" and (Dibs.L.REQUEST_ARCHIVED or "Archived") or value
       end
       self.disputeStatusFilter = self.disputeStatusFilter or ""
       self.disputeQuery = self.disputeQuery or ""
@@ -5203,6 +5856,15 @@ local function createAceWindow(initialRoute)
         self:Refresh()
       end, 190)
       Dibs.AceGUI.SetValue(filter, self.disputeStatusFilter)
+      local strings = Dibs.L or {}
+      local followUpFilter = Dibs.AceGUI.AddDropdown(shell, filterSection, strings.REQUEST_QUEUE_FILTER or "Follow-up",
+        { all = strings.REQUEST_ALL or "All requests", due = strings.REQUEST_DUE or "Due",
+          assigned = strings.REQUEST_ASSIGNED_ME or "Assigned to me", waiting = strings.REQUEST_WAITING or "Waiting for player",
+          resolved = strings.REQUEST_CONCLUDED or "Concluded", archived = strings.REQUEST_ARCHIVED or "Archived" }, function(value)
+          self.disputeFollowUpFilter, self.disputePage = value or "all", 1
+          self:Refresh()
+        end, 190)
+      Dibs.AceGUI.SetValue(followUpFilter, self.disputeFollowUpFilter or "all")
       self.disputeSearchBox = Dibs.AceGUI.AddEditBox(shell, filterSection, "Search", function(value)
         self.disputeQuery = value or ""
         self.disputePage = 1
@@ -5211,6 +5873,7 @@ local function createAceWindow(initialRoute)
       setControlText(self.disputeSearchBox, self.disputeQuery)
       Dibs.AceGUI.AddButton(shell, filterSection, "Clear", function()
         self.disputeQuery, self.disputeStatusFilter, self.disputeSelectedId = "", "", nil
+        self.disputeFollowUpFilter = "all"
         self:Refresh()
       end, 70)
 
@@ -5219,6 +5882,7 @@ local function createAceWindow(initialRoute)
         requests, queueReason = Dibs.Disputes.ListForOfficer(nil, {
           status = self.disputeStatusFilter ~= "" and self.disputeStatusFilter or nil,
           query = self.disputeQuery,
+          filter = self.disputeFollowUpFilter,
         })
       end
       if queueReason then
@@ -5753,6 +6417,8 @@ local function createAceWindow(initialRoute)
       self.reconLimit = self.reconLimit or "200"
       self.reconFromDate = self.reconFromDate or ""
       self.reconToDate = self.reconToDate or ""
+      self.reconQuery = self.reconQuery or ""
+      self.reconSource = self.reconSource or ""
       local form = Dibs.AceGUI.AddSection(shell, pageHeader, "Search History",
         helpText.UI_HELP_RC_HISTORY_SEARCH_INTRO or "Use exact response labels. Matching trims whitespace and ignores case; it never performs fuzzy matching.")
       local seasonControl = Dibs.AceGUI.AddDibsSelect(shell, form, "Target season", seasonChoices, function(value)
@@ -5764,6 +6430,20 @@ local function createAceWindow(initialRoute)
       local aliases = Dibs.AceGUI.AddEditBox(shell, form, "DIB response aliases (comma separated)", function(value) self.reconAliasesText = value or "" end, 500)
       setControlText(aliases, self.reconAliasesText)
       Dibs.AceGUI.AttachHelp(aliases, "DIB response aliases", helpText.UI_HELP_RC_HISTORY_ALIASES)
+      local historySearch = Dibs.AceGUI.AddEditBox(shell, form,
+        helpText.HISTORY_FILTER_SEARCH or "Search history", function(value)
+          self.reconQuery = value or ""
+        end, 360)
+      setControlText(historySearch, self.reconQuery)
+      Dibs.AceGUI.AttachHelp(historySearch, helpText.HISTORY_FILTER_SEARCH or "Search history",
+        helpText.HISTORY_FILTER_SEARCH_HELP or "Search recorded item, player, raid, boss, source, or status details.")
+      local historySource = Dibs.AceGUI.AddEditBox(shell, form,
+        helpText.HISTORY_FILTER_SOURCE or "Source", function(value)
+          self.reconSource = value or ""
+        end, 220)
+      setControlText(historySource, self.reconSource)
+      Dibs.AceGUI.AttachHelp(historySource, helpText.HISTORY_FILTER_SOURCE or "Source",
+        helpText.HISTORY_FILTER_SEARCH_HELP or "Only recorded source values are searchable.")
       local inferStatus = Dibs.AceGUI.AddCheckBox(shell, form, "Infer missing award status from RC history", self.reconInferFinalStatus, function(value)
         self.reconInferFinalStatus = value == true
       end, 500)
@@ -5798,6 +6478,48 @@ local function createAceWindow(initialRoute)
           self:Refresh()
         end, 100)
         Dibs.AceGUI.AttachHelp(clearDates, "Clear dates", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
+      end
+      Dibs.AceGUI.AddButton(shell, form, helpText.HISTORY_FILTER_CLEAR or "Clear filters", function()
+        self.reconQuery, self.reconSource = "", ""
+        self.reconFromDate, self.reconToDate, self.reconCalendarTarget = "", "", nil
+        self.reconSessionId = nil
+        self.reconPage = 1
+        self:Refresh()
+      end, 140)
+      local reconClearFields = {}
+      self.reconFilterClearFields = reconClearFields
+      local clearableFields = {
+        { field = "query", value = self.reconQuery, label = helpText.HISTORY_FILTER_SEARCH or "Search history" },
+        { field = "source", value = self.reconSource, label = helpText.HISTORY_FILTER_SOURCE or "Source" },
+        { field = "fromDate", value = self.reconFromDate, label = helpText.HISTORY_FILTER_FROM_DATE or "From date" },
+        { field = "toDate", value = self.reconToDate, label = helpText.HISTORY_FILTER_TO_DATE or "To date" },
+      }
+      local activeClearFields = {}
+      for _, definition in ipairs(clearableFields) do
+        if trimText(definition.value) ~= "" then activeClearFields[#activeClearFields + 1] = definition end
+      end
+      if #activeClearFields > 0 then
+        local clearGroup = Dibs.AceGUI.AddInlineGroup(shell, form)
+        for _, definition in ipairs(activeClearFields) do
+          local label = string.format(helpText.HISTORY_FILTER_CLEAR_FIELD or "Clear %s", definition.label)
+          local button = Dibs.AceGUI.AddButton(shell, clearGroup, label, function()
+            if definition.field == "query" then self.reconQuery = ""
+            elseif definition.field == "source" then self.reconSource = ""
+            elseif definition.field == "fromDate" then
+              self.reconFromDate = ""
+              if self.reconCalendarTarget == "from" then self.reconCalendarTarget = nil end
+            else
+              self.reconToDate = ""
+              if self.reconCalendarTarget == "to" then self.reconCalendarTarget = nil end
+            end
+            self.reconSessionId = nil
+            self.reconPage = 1
+            self.reconSelectedCandidate = nil
+            self:Refresh()
+          end, 180)
+          reconClearFields[definition.field] = button
+          Dibs.AceGUI.AddTooltip(button, definition.label, helpText.HISTORY_FILTER_CLEAR_FIELD_HELP)
+        end
       end
       Dibs.AceGUI.AttachHelp(fromDateButton, "Start date", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
       Dibs.AceGUI.AttachHelp(toDateButton, "End date", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
@@ -5863,6 +6585,8 @@ local function createAceWindow(initialRoute)
           seasonId = self.reconSeasonId, aliases = self.reconAliasesText, mode = self.reconMode, limit = tonumber(self.reconLimit) or 200,
           fromTime = historyDateTimestamp(self.reconFromDate, false),
           toTime = historyDateTimestamp(self.reconToDate, true),
+          fromDate = self.reconFromDate, toDate = self.reconToDate,
+          query = self.reconQuery, source = self.reconSource,
           inferFinalStatus = self.reconInferFinalStatus,
         }) or { ok = false, reasonCode = "HISTORY_UNAVAILABLE" }
         local session = search.session
@@ -5871,7 +6595,14 @@ local function createAceWindow(initialRoute)
         self.reconSelectedCandidate = nil
         self.reconReason = ""
         self.reconPage = 1
-        self.reconStatus = search.ok and "History scan complete. No ledger or RCLootCouncil history was changed." or ("Unable to search history: " .. tostring(search.reasonCode or "unknown"))
+        local filterErrors = {
+          HISTORY_INVALID_FROM_DATE = helpText.HISTORY_FILTER_INVALID_FROM_DATE,
+          HISTORY_INVALID_TO_DATE = helpText.HISTORY_FILTER_INVALID_TO_DATE,
+          HISTORY_INVALID_DATE_RANGE = helpText.HISTORY_FILTER_INVALID_DATE_RANGE,
+          HISTORY_DATE_UNAVAILABLE = helpText.HISTORY_FILTER_DATE_UNAVAILABLE,
+        }
+        self.reconStatus = search.ok and "History scan complete. No ledger or RCLootCouncil history was changed."
+          or (filterErrors[search.reasonCode] or ("Unable to search history: " .. tostring(search.reasonCode or "unknown")))
         self:Refresh()
       end, 190)
       Dibs.AceGUI.AttachHelp(searchButton, "Search history (preview)", helpText.UI_HELP_RC_HISTORY_PREVIEW)
@@ -7072,12 +7803,6 @@ local function createAceWindow(initialRoute)
       tablePage.UpdateViewportHeight()
       return
     end
-    if self.activeTab == "statistics" then
-      local statistics = Dibs.OfficerUI.BuildSeasonStatistics(currentId)
-      self.ledgerTitle = Dibs.AceGUI.AddLabel(shell, tabs, "Season statistics", true)
-      self.ledgerText = Dibs.AceGUI.AddLabel(shell, tabs, "Active players: " .. statistics.players .. "\nTransactions: " .. statistics.transactions .. "\nDibs used: " .. statistics.used .. "\nActive pre-Dibs: " .. statistics.activePreDibs, true)
-      return
-    end
     if self.activeTab == "automaticDibs" then
       local details = Dibs.OfficerUI.BuildAutomaticAllocationDetails(currentId)
       self.automaticDibsFilter = self.automaticDibsFilter or "needsReconciliation"
@@ -7309,12 +8034,75 @@ local function createAceWindow(initialRoute)
     self.ledgerTablePage = tablePage
     local pageHeader = tablePage.header
     local searchControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
-    self.searchBox = Dibs.AceGUI.AddEditBox(shell, searchControls, "Search", function(value)
-      self.ledgerQuery, self.ledgerPage = value, 1
+    local strings = Dibs.L or {}
+    local historyCriteria = {}
+    for key, value in pairs(type(self.historyFilters) == "table" and self.historyFilters or {}) do
+      historyCriteria[key] = value
+    end
+    if trimText(historyCriteria.query) == "" then historyCriteria.query = self.ledgerQuery or "" end
+    local filterDefinitions = {
+      { field = "query", label = strings.HISTORY_FILTER_SEARCH or "Search history", width = math.max(220, math.min(340, getOfficerContentWidth(frame, shell) * 0.35)) },
+      { field = "fromDate", label = strings.HISTORY_FILTER_FROM_DATE or "From date (YYYY-MM-DD)", width = 170 },
+      { field = "toDate", label = strings.HISTORY_FILTER_TO_DATE or "To date (YYYY-MM-DD)", width = 170 },
+      { field = "source", label = strings.HISTORY_FILTER_SOURCE or "Source", width = 150 },
+    }
+    if self.activeTab ~= "vault" then
+      filterDefinitions[#filterDefinitions + 1] = {
+        field = "status", label = strings.HISTORY_FILTER_STATUS or "Status", width = 150,
+      }
+    end
+    local filterInputs = {}
+    for _, definition in ipairs(filterDefinitions) do
+      local input = Dibs.AceGUI.AddEditBox(shell, searchControls, definition.label, nil, definition.width)
+      filterInputs[definition.field] = input
+      if input then
+        Dibs.AceGUI.AddTooltip(input, definition.label, strings.HISTORY_FILTER_SEARCH_HELP)
+        local value = historyCriteria[definition.field]
+        if definition.field == "query" and trimText(value) == "" then value = self.ledgerQuery end
+        setControlText(input, value or "")
+      end
+    end
+    self.searchBox = filterInputs.query
+    Dibs.AceGUI.AddButton(shell, searchControls, strings.HISTORY_FILTER_APPLY or "Apply filters", function()
+      local criteria = {}
+      for _, definition in ipairs(filterDefinitions) do
+        criteria[definition.field] = getControlText(filterInputs[definition.field])
+      end
+      self.historyFilters = criteria
+      self.ledgerQuery = criteria.query or ""
+      self.ledgerPage = 1
       self:Refresh()
-    end, 220)
-    setControlText(self.searchBox, self.ledgerQuery or "")
-    Dibs.AceGUI.AddButton(shell, searchControls, "Clear", function() self.ledgerQuery, self.ledgerPage = "", 1; self:Refresh() end, 60)
+    end, 145)
+    Dibs.AceGUI.AddButton(shell, searchControls, strings.HISTORY_FILTER_CLEAR or "Clear filters", function()
+      self.historyFilters, self.ledgerQuery, self.vaultStatusFilter, self.ledgerPage = {}, "", nil, 1
+      self:Refresh()
+    end, 130)
+    local clearFields = {}
+    self.historyFilterClearFields = clearFields
+    local activeFilters = {}
+    for _, definition in ipairs(filterDefinitions) do
+      if trimText(historyCriteria[definition.field]) ~= "" then
+        activeFilters[#activeFilters + 1] = definition
+      end
+    end
+    if #activeFilters > 0 then
+      local clearGroup = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
+      for _, definition in ipairs(activeFilters) do
+        local label = string.format(strings.HISTORY_FILTER_CLEAR_FIELD or "Clear %s", definition.label)
+        local button = Dibs.AceGUI.AddButton(shell, clearGroup, label, function()
+          local updated = {}
+          for key, value in pairs(historyCriteria) do
+            if key ~= definition.field then updated[key] = value end
+          end
+          self.historyFilters = updated
+          if definition.field == "query" then self.ledgerQuery = "" end
+          self.ledgerPage = 1
+          self:Refresh()
+        end, 180)
+        clearFields[definition.field] = button
+        Dibs.AceGUI.AddTooltip(button, definition.label, strings.HISTORY_FILTER_CLEAR_FIELD_HELP)
+      end
+    end
     if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
       local ledgers = Dibs.MultiLedger.GetLedgers()
       local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
@@ -7335,11 +8123,17 @@ local function createAceWindow(initialRoute)
       Dibs.AceGUI.SetValue(self.activeLedgerDropdown, activeLedgerId)
     end
     local isPreDibRequestRoute = self.activeTab == "preDibRequests" or self.activeTab == "predibs"
-    local preDibRows = isPreDibRequestRoute
-      and Dibs.OfficerUI.BuildRequestView("officer", { kind = "predibs", limit = 50 }) or {}
+    local requestCriteria = {}
+    for key, value in pairs(historyCriteria) do requestCriteria[key] = value end
+    requestCriteria.kind, requestCriteria.limit = "predibs", 50
+    local preDibRows, preDibFilterError = {}, nil
+    if isPreDibRequestRoute then
+      preDibRows, preDibFilterError = Dibs.OfficerUI.BuildRequestView("officer", requestCriteria)
+    end
     local viewName = self.activeTab == "history" and "actions" or (isPreDibRequestRoute and "predibs" or self.activeTab)
     self.ledgerPageSize = tonumber(self.ledgerPageSize) or 10
-    local view = Dibs.OfficerUI.GetPagedView(viewName, currentId, self.ledgerPage, self.ledgerPageSize, self.ledgerQuery, self.vaultStatusFilter)
+    local view = Dibs.OfficerUI.GetPagedView(viewName, currentId, self.ledgerPage, self.ledgerPageSize, historyCriteria, self.vaultStatusFilter)
+    view.filterError = view.filterError or preDibFilterError
     local totalCount, totalPages, pageNumber = view.totalCount, view.totalPages, view.page
     local pagedPreDibRows = preDibRows
     if isPreDibRequestRoute then
@@ -7350,6 +8144,9 @@ local function createAceWindow(initialRoute)
       self.ledgerPage = view.page
     end
     local pageTitle = self.activeTab == "preDibRequests" and "Pre-Dib Requests" or view.title
+    if preDibFilterError then
+      Dibs.AceGUI.AddLabel(shell, pageHeader, officerHistoryFilterErrorText(preDibFilterError), true)
+    end
     self.ledgerTitle = Dibs.AceGUI.AddHeading(shell, pageHeader, pageTitle .. " (" .. totalCount .. ")")
     local headerText, headerTooltip
     if self.activeTab == "history" or self.activeTab == "actions" then
@@ -7462,7 +8259,11 @@ local function createAceWindow(initialRoute)
           row[5], row[6], row[7], row[8] = nil, nil, nil, nil
         end
       end
-      local vaultRows = Dibs.OfficerUI.BuildVaultAcquisitionReview({ seasonId = currentId, query = self.ledgerQuery, verificationState = self.vaultStatusFilter }).rows
+      local vaultCriteria = {}
+      for key, value in pairs(historyCriteria) do vaultCriteria[key] = value end
+      vaultCriteria.seasonId = currentId
+      vaultCriteria.verificationState = self.vaultStatusFilter
+      local vaultRows = Dibs.OfficerUI.BuildVaultAcquisitionReview(vaultCriteria).rows
       local acquisitionValues, decisionValues = {}, { CONFIRM = "Confirm", REJECT = "Reject", REFERENCE = "Keep as reference" }
       for _, row in ipairs(vaultRows) do acquisitionValues[row.acquisitionId] = row.playerName .. " | " .. tostring(row.projection.verificationState or "UNVERIFIED") .. " | " .. tostring(row.projection.itemID) end
       local reviewControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
@@ -7605,7 +8406,8 @@ local function createAceWindow(initialRoute)
       "disputeAmount", "disputeConfirmed", "disputeTargetRequestId", "disputeCorrectPlayer", "disputeCorrectItem",
       "disputeCorrectPlayerQuery", "disputeCorrectItemQuery", "disputeCorrectItemKey", "disputeItemCatalogByKey",
       "rankRows", "rankDrafts", "rankRowCount", "selectedSeasonId", "inputBoundSeasonId", "ledgerPage", "ledgerQuery",
-      "preDibRequestDetailsId",
+      "preDibRequestDetailsId", "statisticsFromDate", "statisticsToDate", "statisticsPage",
+      "healthFindingPreview", "healthFindingExport", "anonymousAuditExport",
       "ledgerTitle", "ledgerText", "aceLedgerScroll", "pageText", "summaryText", "statusText", "activeTab",
       "selectedRoute", "Refresh", "RefreshAutomaticDibsTable", "ReflowAutomaticDibsTable", "automaticDibsTablePage", "dibsAdminTablePage", "automaticDibsCachedDetails", "automaticDibsCachedPresentation", "automaticDibsSearch", "automaticDibsStatusFilter", "automaticDibsPage", "automaticDibsPageSize", "automaticDibsPageIndicator", "automaticDibsPageSizeDropdown", "automaticDibsPreviousPage", "automaticDibsNextPage", "automaticDibsLayoutMode", "automaticDibsStructureMode", "_automaticDibsResizeHandlerInstalled", "_automaticDibsResizeWidth", "_automaticDibsReflowQueued", "SelectTab", "ActivateRoute", "routeDispatchCount", "_dibsRouteSyncing", "_dibsTreeRoute", "_dibsRenderingRoute", "SetStatus", "CloseHistoryTransfer", "dibsAceGUIShell", "_dibsUiShell",
       "_dibsSkipNextShowRefresh",
@@ -7767,19 +8569,42 @@ function Dibs.OfficerUI.CreateWindow(initialRoute)
   local statisticsButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
   statisticsButton:SetSize(72, 22)
   statisticsButton:SetPoint("LEFT", historyButton, "RIGHT", 4, 0)
-  statisticsButton:SetText("Stats")
+  statisticsButton:SetText((Dibs.L or {}).OFFICER_NAV_STATISTICS_LABEL or "Stats")
 
   local settingsButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
   settingsButton:SetSize(76, 22)
   settingsButton:SetPoint("LEFT", statisticsButton, "RIGHT", 4, 0)
   settingsButton:SetText("Settings")
 
+  local statisticsFromLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  statisticsFromLabel:SetPoint("TOPLEFT", 16, -145)
+  statisticsFromLabel:SetText((Dibs.L or {}).OFFICER_STATISTICS_FROM_SHORT or "From")
+  local statisticsFromDateInput = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+  statisticsFromDateInput:SetSize(104, 20)
+  statisticsFromDateInput:SetPoint("TOPLEFT", frame, "TOPLEFT", 58, -145)
+  setControlText(statisticsFromDateInput, "")
+  local statisticsToLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  statisticsToLabel:SetPoint("TOPLEFT", frame, "TOPLEFT", 174, -145)
+  statisticsToLabel:SetText((Dibs.L or {}).OFFICER_STATISTICS_TO_SHORT or "To")
+  local statisticsToDateInput = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
+  statisticsToDateInput:SetSize(104, 20)
+  statisticsToDateInput:SetPoint("TOPLEFT", frame, "TOPLEFT", 196, -145)
+  setControlText(statisticsToDateInput, "")
+  local statisticsApplyButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+  statisticsApplyButton:SetSize(70, 22)
+  statisticsApplyButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 310, -145)
+  statisticsApplyButton:SetText((Dibs.L or {}).OFFICER_STATISTICS_APPLY or "Apply")
+  local statisticsClearButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+  statisticsClearButton:SetSize(68, 22)
+  statisticsClearButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 384, -145)
+  statisticsClearButton:SetText((Dibs.L or {}).OFFICER_STATISTICS_CLEAR or "Clear")
+
   local ledgerTitle = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  ledgerTitle:SetPoint("TOPLEFT", 16, -150)
+  ledgerTitle:SetPoint("TOPLEFT", 16, -174)
   ledgerTitle:SetText("Dashboard")
 
   local searchLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  searchLabel:SetPoint("TOPLEFT", 310, -150)
+  searchLabel:SetPoint("TOPLEFT", 310, -174)
   searchLabel:SetText("Search:")
 
   local searchBox = CreateFrame("EditBox", nil, frame, "InputBoxTemplate")
@@ -7796,7 +8621,7 @@ function Dibs.OfficerUI.CreateWindow(initialRoute)
   clearSearchButton:SetText("Clear")
 
   local ledgerText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-  ledgerText:SetPoint("TOPLEFT", 16, -174)
+  ledgerText:SetPoint("TOPLEFT", 16, -198)
   ledgerText:SetWidth(610)
   ledgerText:SetJustifyH("LEFT")
 
@@ -7824,6 +8649,10 @@ function Dibs.OfficerUI.CreateWindow(initialRoute)
   frame.ledgerTitle = ledgerTitle
   frame.pageText = pageText
   frame.searchBox = searchBox
+  frame.statisticsFromDateInput = statisticsFromDateInput
+  frame.statisticsToDateInput = statisticsToDateInput
+  frame.statisticsApplyButton = statisticsApplyButton
+  frame.statisticsClearButton = statisticsClearButton
   frame.activeTab = "dashboard"
   frame.ledgerPage = 1
   frame.inputBoundSeasonId = nil
@@ -7904,11 +8733,16 @@ function Dibs.OfficerUI.CreateWindow(initialRoute)
     syncRowsToSeason(self, current)
 
     local isSettings = self.activeTab == "settings"
+    local isStatistics = self.activeTab == "statistics"
     local isSearchable = self.activeTab == "players" or self.activeTab == "predibs" or self.activeTab == "preDibRequests" or self.activeTab == "history"
     setControlsVisible(self.settingsControls, isSettings)
     setControlsVisible(self.rankRows, isSettings)
     setControlsVisible({ self.ledgerTitle, self.ledgerText }, not isSettings)
     setControlsVisible({ searchLabel, searchBox, clearSearchButton }, isSearchable)
+    setControlsVisible({
+      statisticsFromLabel, statisticsFromDateInput, statisticsToLabel, statisticsToDateInput,
+      statisticsApplyButton, statisticsClearButton,
+    }, isStatistics)
 
     if isSettings then
       setControlsVisible({ previousPageButton, pageText, nextPageButton }, false)
@@ -7924,11 +8758,51 @@ function Dibs.OfficerUI.CreateWindow(initialRoute)
 
     if self.activeTab == "statistics" then
       local statistics = Dibs.OfficerUI.BuildSeasonStatistics(current and current.id or nil)
-      self.ledgerTitle:SetText("Season statistics")
-      self.ledgerText:SetText("Active players: " .. tostring(statistics.players) .. "\n" ..
+      local fromDate = self.statisticsFromDate or ""
+      local toDate = self.statisticsToDate or ""
+      local playerStatistics = Dibs.OfficerUI.BuildPlayerPeriodStatistics(current and current.id or nil, {
+        fromDate = fromDate,
+        toDate = toDate,
+      })
+      self.ledgerTitle:SetText((Dibs.L or {}).OFFICER_STATISTICS_TITLE or "Season statistics")
+      local lines = {
+        "Active players: " .. tostring(statistics.players) .. "\n" ..
         "Transactions: " .. tostring(statistics.transactions) .. "\n" ..
         "Dibs used: " .. tostring(statistics.used) .. "\n" ..
-        "Active pre-Dibs: " .. tostring(statistics.activePreDibs))
+        "Active pre-Dibs: " .. tostring(statistics.activePreDibs),
+      }
+      if playerStatistics.status == "INVALID_RANGE" then
+        lines[#lines + 1] = (Dibs.L or {}).OFFICER_STATISTICS_INVALID_RANGE or "Enter a valid inclusive date range."
+      elseif playerStatistics.status == "READY" then
+        lines[#lines + 1] = (Dibs.L or {}).OFFICER_STATISTICS_FALLBACK_TITLE
+          or "Player activity for the selected period:"
+        lines[#lines + 1] = (Dibs.L or {}).OFFICER_STATISTICS_PERIOD_HELP
+          or "Date bounds are inclusive; leave both blank for the full season."
+        for _, row in ipairs(playerStatistics.rows) do
+          local summary = string.format((Dibs.L or {}).OFFICER_STATISTICS_ROW_SUMMARY
+            or "%s: %s awards, %s Dibs granted, %s used, %s corrections",
+            row.playerName, tostring(row.awards), tostring(row.grantedDibs), tostring(row.usedDibs), tostring(row.corrections))
+          if row.partial then
+            summary = summary .. " (" .. ((Dibs.L or {}).OFFICER_STATISTICS_PARTIAL or "Partial") .. ")"
+          end
+          lines[#lines + 1] = summary
+        end
+        if playerStatistics.unmatchedPlayers > 0 then
+          lines[#lines + 1] = (Dibs.L or {}).OFFICER_STATISTICS_UNMATCHED
+            or "Some transactions could not be matched to the current guild roster."
+        end
+        if not playerStatistics.rosterAvailable then
+          lines[#lines + 1] = (Dibs.L or {}).OFFICER_STATISTICS_ROSTER_UNAVAILABLE
+            or "Guild roster unavailable; only players present in the ledger are shown."
+        end
+        if playerStatistics.undatedExcluded > 0 then
+          lines[#lines + 1] = string.format((Dibs.L or {}).OFFICER_STATISTICS_UNDATED
+            or "%d undated transactions were excluded from this period.", playerStatistics.undatedExcluded)
+        end
+      else
+        lines[#lines + 1] = (Dibs.L or {}).OFFICER_STATISTICS_UNAVAILABLE or "Player activity statistics are unavailable."
+      end
+      self.ledgerText:SetText(table.concat(lines, "\n\n"))
       setControlsVisible({ previousPageButton, pageText, nextPageButton }, false)
       return
     end
@@ -8098,6 +8972,17 @@ function Dibs.OfficerUI.CreateWindow(initialRoute)
   preDibsButton:SetScript("OnClick", function() selectTab("predibs") end)
   historyButton:SetScript("OnClick", function() selectTab("history") end)
   statisticsButton:SetScript("OnClick", function() selectTab("statistics") end)
+  statisticsApplyButton:SetScript("OnClick", function()
+    frame.statisticsFromDate = getControlText(statisticsFromDateInput)
+    frame.statisticsToDate = getControlText(statisticsToDateInput)
+    frame:Refresh()
+  end)
+  statisticsClearButton:SetScript("OnClick", function()
+    setControlText(statisticsFromDateInput, "")
+    setControlText(statisticsToDateInput, "")
+    frame.statisticsFromDate, frame.statisticsToDate = "", ""
+    frame:Refresh()
+  end)
   settingsButton:SetScript("OnClick", function() selectTab("settings") end)
   searchBox:SetScript("OnTextChanged", function()
     frame.ledgerPage = 1

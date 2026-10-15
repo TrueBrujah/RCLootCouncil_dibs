@@ -3580,6 +3580,7 @@ local function historyRowsFromDB(historyDB)
       awardRef = historyRef,
       evidenceId = "reconciliation:" .. rowKey,
       historySource = legacySynthetic and "Dibs legacy synthetic history" or (row.source or "RCLootCouncil"),
+      recordedSource = row.source,
       legacySynthetic = legacySynthetic,
       historyEvent = row.event or row.eventName or row.sourceEvent,
       playerName = winner,
@@ -3643,6 +3644,33 @@ local historyRowsCache = { db = nil, signature = nil, rows = nil }
 local function historyRowMarker(row)
   if type(row) ~= "table" then return "" end
   return tostring(row.id or row.itemID or row.itemId or row.timestamp or row.date or row.lootWon or "")
+end
+
+local function historyFieldMatches(record, fields, value)
+  local needle = string.lower(trimHistoryText(value))
+  if needle == "" then return true end
+  for _, field in ipairs(fields) do
+    local candidate = record[field]
+    if candidate ~= nil and string.find(string.lower(trimHistoryText(candidate)), needle, 1, true) then
+      return true
+    end
+  end
+  return false
+end
+
+local function historyRowMatchesCriteria(row, criteria)
+  local queryFields = {
+    "itemName", "itemLink", "itemID", "playerName", "recordedSource",
+    "sourceStatus", "finalStatus", "instanceName", "encounterName",
+  }
+  if not historyFieldMatches(row, queryFields, criteria.query) then return false end
+  if not historyFieldMatches(row, { "itemName", "itemLink", "itemID" }, criteria.item) then return false end
+  if not historyFieldMatches(row, { "playerName" }, criteria.playerName) then return false end
+  if not historyFieldMatches(row, { "instanceName" }, criteria.raid) then return false end
+  if not historyFieldMatches(row, { "encounterName" }, criteria.boss) then return false end
+  if not historyFieldMatches(row, { "sourceStatus", "finalStatus" }, criteria.status) then return false end
+  if not historyFieldMatches(row, { "recordedSource" }, criteria.source) then return false end
+  return true
 end
 
 -- RCLootCouncil keeps one long-lived history table and appends to its player
@@ -3723,22 +3751,34 @@ function Dibs.RCLootCouncil.GetHistoryRows(options)
     for _, alias in ipairs(splitAliases(options.responseAliases)) do aliasSet[alias] = true end
   end
   local filtered = {}
+  local matchingRows = {}
   local hiddenNonDib = 0
   local scanned = 0
   local fromTime, toTime = tonumber(options.fromTime), tonumber(options.toTime)
   for _, sourceRow in ipairs(rows) do
     local stamp = sourceRow.originalAwardTime
-    if (not fromTime or not stamp or stamp >= fromTime) and (not toTime or not stamp or stamp <= toTime) then
+    local hasTimeBound = fromTime ~= nil or toTime ~= nil
+    local matchesTime = not hasTimeBound or (stamp ~= nil
+      and (not fromTime or stamp >= fromTime) and (not toTime or stamp <= toTime))
+    if matchesTime and historyRowMatchesCriteria(sourceRow, options) then
       scanned = scanned + 1
       local normalizedResponse = Dibs.RCLootCouncil.NormalizeResponseAlias(sourceRow.responseText)
       if aliasSet and not aliasSet[normalizedResponse] then
         hiddenNonDib = hiddenNonDib + 1
-      elseif #filtered < maxRows then
-        local row = copyHistoryRow(sourceRow)
-        row.itemLink, row.itemName = historyItemInfo(row, row.itemID, row.itemLink)
-        filtered[#filtered + 1] = row
+      else
+        matchingRows[#matchingRows + 1] = copyHistoryRow(sourceRow)
       end
     end
+  end
+  table.sort(matchingRows, function(first, second)
+    local firstTime, secondTime = tonumber(first.originalAwardTime) or 0, tonumber(second.originalAwardTime) or 0
+    if firstTime ~= secondTime then return firstTime > secondTime end
+    return tostring(first.candidateId) < tostring(second.candidateId)
+  end)
+  for index = 1, math.min(maxRows, #matchingRows) do
+    local row = matchingRows[index]
+    row.itemLink, row.itemName = historyItemInfo(row, row.itemID, row.itemLink)
+    filtered[#filtered + 1] = row
   end
   -- Keep the historical second return value reserved for an error reason for
   -- callers that already consume this adapter. Search metadata is additive in

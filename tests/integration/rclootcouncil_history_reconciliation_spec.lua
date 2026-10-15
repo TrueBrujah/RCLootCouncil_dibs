@@ -348,6 +348,14 @@ describe("RCLootCouncil history reconciliation", function()
     editSearch.callbacks.OnClick()
     assert_nil(frame.reconciliationTablePage)
     assert_not_nil(findWidget(frame.aceTabs, "Button", "Search history (preview)"))
+    frame.reconQuery, frame.reconSource = "Need", "Guild Archive"
+    frame:Refresh()
+    assert_not_nil(frame.reconFilterClearFields.query)
+    frame.reconPage = 3
+    frame.reconFilterClearFields.query.callbacks.OnClick(frame.reconFilterClearFields.query, "OnClick")
+    assert_equal("", frame.reconQuery)
+    assert_equal("Guild Archive", frame.reconSource)
+    assert_equal(1, frame.reconPage)
   end)
 
   it("uses an explicit empty state and keeps the fixed 40-row shared pager", function()

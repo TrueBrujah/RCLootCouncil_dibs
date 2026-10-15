@@ -31,16 +31,20 @@ Commandes principales :
 ```text
 /dibs ui          Ouvre la fenetre Joueur
 /dibs balance     Affiche votre solde
-/dibs requests    Affiche vos demandes Pre-Dibs
-/dibs vault <itemID> [difficulte]  Enregistre manuellement un objet du Grand Coffre
+/dibs requests    Ouvre vos signalements (page Signalements)
+/dibs vault <lien|[Nom]|itemID> <LFR|Normal|Heroic|Mythic>  Enregistre manuellement un objet du Grand Coffre
+/dibs minimap show|hide  Affiche ou masque l'icone Dibs sur la mini-carte
 /dibs help        Affiche l'aide des commandes
 ```
 
 Vous pouvez aussi utiliser `/dibs options`, puis les boutons de lancement des fenetres Joueur et Demandes.
 
-Apres la connexion, l'icone Dibs a cote de la mini-carte ouvre la vue
-appropriee. Elle ne donne aucun droit d'Officer ou de GM : c'est seulement un
-raccourci.
+Apres la connexion, le clic gauche sur l'icone Dibs ouvre/ferme la vue Officer
+si autorise, sinon la vue Joueur. Le clic droit ouvre/ferme la vue Joueur.
+Elle ne donne aucun droit d'Officer ou de GM : c'est seulement un
+raccourci. Vous pouvez aussi l'afficher ou la masquer dans **Joueur >
+Preferences**. Ce choix est enregistre pour le personnage et l'icone est
+affichee par defaut.
 
 ## Installation et premier lancement
 
@@ -102,6 +106,16 @@ Dans la fenetre Joueur, verifiez :
 - vos demandes Pre-Dibs actives ;
 - l'etat de l'integration RCLootCouncil, si elle est utilisee.
 
+Utilisez la recherche et les filtres de l'historique pour retrouver les objets,
+les details de rencontre enregistres, la source, le statut et les dates.
+Saisissez les dates au format `YYYY-MM-DD`; les dates de debut et de fin sont
+inclusives. La recherche ne porte que sur les metadonnees presentes dans
+l'enregistrement : un ancien enregistrement sans raid ni boss ne correspondra
+pas a une valeur de remplacement. Effacer un filtre conserve les autres; tout
+effacer restaure le perimetre initial de la page. La recherche est en lecture
+seule et n'expose ni les donnees d'autres joueurs ni les preuves privees des
+Officers.
+
 ### Raids Indépendants et PUGs
 
 Si vous participez à un raid indépendant mené par un Master Looter avec Dibs :
@@ -133,18 +147,76 @@ Une meme demande active pour le meme joueur, objet, saison et difficulte n'est p
 
 ## 4. Suivi du Grand Coffre
 
+Ouvrez `/dibs ui`, puis **Grand coffre**. Cette page en lecture seule affiche
+vos objets enregistres, toutes saisons confondues dans le perimetre de guilde
+actuel, du plus recent au plus ancien, avec 10 entrees par page. Les colonnes
+montrent la date, l'objet, la difficulte et la verification; survolez une ligne
+pour la source, la semaine de reset, la synchronisation et l'explication des
+preuves. Les preuves privees des officiers ne sont pas affichees.
+
 La fenetre Joueur affiche les acquisitions du Grand Coffre avec l'objet, la
 source, la semaine de reset, l'etat de verification, l'explication
 d'eligibilite et l'etat de synchronisation. Ouvrir le coffre ou regarder un
 choix ne constitue pas une acquisition confirmee.
+La detection automatique exige le choix effectivement reclame, la reception
+du meme objet par votre personnage et la fin de disponibilite des recompenses.
+Elle doit etre active avant le retrait; elle ne reconstruit pas les retraits
+passes a partir du chat ou du contenu des sacs. Si une de ces preuves manque,
+utilisez le secours manuel ci-dessous. La validation sur client Retail reste
+en attente.
+Les filtres de l'historique du Grand Coffre portent sur l'objet, la source, le
+statut et les dates enregistres. Les dates `YYYY-MM-DD` sont inclusives. Une
+metadonnee absente ne correspond pas a une valeur de remplacement; effacer un
+filtre conserve les autres. Les resultats restent limites a votre perimetre de
+guilde/personnage et n'incluent pas les preuves privees des Officers.
 
 Si le client Retail ne fournit pas de signal fiable, utilisez :
 
 ```text
-/dibs vault <itemID> [difficulte]
+/dibs vault <lien | [Nom de l'objet] | itemID> <LFR | Normal | Heroic | Mythic>
 ```
 
+Avec le lien complet seul (Maj-clic), Dibs lit l'infobulle de cette variante exacte :
+
+- Un objet de **raid** garde son origine **Raid Finder (LFR)**, **Normal**, **Heroic** ou **Mythic**, meme
+  si sa piste d'amelioration est superieure : **Heroic** avec **Mythe 5/6** reste **Heroic**.
+  **Raid Finder** sur la piste **Veteran** est enregistre comme **LFR**.
+- Un objet de **donjon** (marque **Mythic+**, ou **Mythic** sur la piste Champion
+  pour un Mythique 0, ou **Heroic** sur la piste Veteran) suit sa piste :
+  un objet de donjon **Heroic** sur **Veteran** reste **Heroic** ;
+  **Champion** = Normal, **Heros** = Heroic,
+  **Mythe** = Mythic. **Mythic+** avec **Heros 6/6** donne Heroic.
+- Une piste inferieure a **Veteran**, des lignes contradictoires ou une combinaison
+  origine/piste inattendue ne sont pas classees automatiquement.
+
+L'ilvl et le niveau de l'activite du coffre ne sont pas utilises. Si le client ne
+fournit aucun classement lisible via `C_TooltipInfo.GetHyperlink`, la difficulte est obligatoire
+(`LFR`/`Raid Finder`, `Hero`/`Heroique` et `Myth`/`Mythique` sont acceptes) ; sans difficulte valide, rien n'est enregistre et l'aide s'affiche.
+Un nom tape entre crochets, par exemple `[Nom de l'objet] Heroic`, doit etre
+connu du client ; sinon utilisez le lien (Maj-clic) ou l'ID.
+
 L'enregistrement manuel reste `MANUAL_RECORDED` jusqu'a la revue d'un Officer.
+Pour conserver la variante exacte, tapez `/dibs vault `, faites Maj-clic sur
+l'objet dans vos sacs ou votre equipement pour inserer son lien complet,
+Ajoutez ` LFR`, ` Mythic`, ` Heroic` ou ` Normal` seulement pour un classement manuel
+explicite ; une difficulte saisie explicitement est prioritaire. La detection automatique
+utilise la meme regle et exige toujours la preuve du retrait effectif.
+Si aucune difficulte ne peut etre classee (par exemple un objet de donjon Aventurier),
+rien n'est enregistre automatiquement ; utilisez la commande avec une difficulte
+explicite pour une revue manuelle. Une difficulte absente ne devient jamais Normal par defaut.
+Les classements deja enregistres ne sont pas reecrits.
+Les noms d'objets et les textes de verification reviennent a la ligne au lieu
+d'etre coupes. Survolez le nom pour afficher l'infobulle ou cliquez pour ouvrir
+le lien. La date est compacte ; l'aide de ligne conserve l'heure complete.
+Un lien de base marque **reference d'objet** ne prouve pas la variante acquise.
+Une saisie par identifiant seul charge le nom mais ne retrouve pas la variante
+acquise. Si une seule variante de cet ID est equipee ou dans les sacs, un
+**apercu possede** affiche son infobulle sans modifier l'enregistrement ni prouver
+son origine Grand Coffre. Plusieurs variantes differentes laissent la variante
+exacte indisponible. Ressaisir la commande ne remplace pas une acquisition existante.
+Pour invalider une saisie erronee, un Officer peut la rejeter dans Vault Review
+avec une raison. L'entree et la trace de revue sont conservees; il ne s'agit
+pas d'une suppression definitive ni d'une annulation libre par le joueur.
 Une acquisition du Grand Coffre est une preuve d'eligibilite et ne depense
 jamais de Dib. L'historique est propre a la guilde actuelle, ou au personnage
 lorsqu'il est sans guilde.
@@ -172,7 +244,7 @@ _Placeholder de capture : `docs/assets/guides/screenshots/fr/player/player-loot-
 
 ## 4. Gerer ses demandes
 
-Dans **Mes demandes**, vous pouvez :
+Dans **My Dibs** (Pre-Dibs actifs, Pre-Dibs gagnes et Pre-Dibs passes), vous pouvez :
 
 - consulter le statut d'une demande ;
 - annuler votre propre demande active ;
@@ -190,6 +262,27 @@ Vous ne pouvez pas annuler la demande d'un autre joueur.
 - **invalidated** : demande rendue invalide par la politique ou les donnees ;
 - **fulfilled** : demande associee a un gain finalise ;
 - **cancelled** : demande annulee par son proprietaire ou la politique.
+
+## Signalements et suivi (0.8.8)
+
+La page **Signalements** (`/dibs requests`) est distincte des réservations Pre-Dib, qui restent sur **My Dibs**.
+Signalez uniquement votre propre problème. L'enregistrement ne prouve pas la
+réception : les détails indiquent **En attente d'envoi**, **Envoyée ; réception
+attendue**, **Reçue** ou **Erreur de livraison**. Reçue ne signifie pas résolue.
+Un destinataire hors ligne ou ancien ne reçoit aucun chuchotement ; la demande
+reste enregistrée après rechargement. La livraison nécessite un coordinateur
+vérifié compatible et les deux clients connectés.
+
+Répondez à une question de l'officier dans le même fil. Ses réponses publiques
+et la conclusion restent visibles, mais pas les preuves administratives internes.
+**Réessayer la livraison** reprend le travail en attente ; une réponse devenue
+obsolète utilise la dernière révision reçue. Un changement d'autorité bloque
+la reprise automatique pour éviter les doubles corrections.
+
+Les rappels de suivi fonctionnent uniquement lorsque WoW est ouvert et respectent
+la préférence locale de notifications. Reporter le rappel ne concerne que ce
+personnage. Les étapes Résolue/Rejetée, Clôturée, puis Archivée conservent le
+dossier et ne modifient jamais le solde.
 
 ## Solde et historique
 
@@ -222,7 +315,7 @@ Avec RCLootCouncil, le Master Looter finalise le gain. Dibs enregistre ensuite l
 
 ## 6. Signaler un probleme
 
-Ouvrez **Mes demandes** ou utilisez `/dibs requests`, puis creez un signalement.
+Ouvrez **Signalements** dans la fenetre Joueur, ou utilisez `/dibs requests`, puis remplissez **Signaler un probleme** : type de probleme (par exemple debit incorrect ou objet/joueur incorrect), entree du registre concernee si possible, et note. Depuis **Historique**, les details d'une entree proposent aussi **Signaler un probleme sur cette operation**, qui preselectionne la transaction. Vos signalements apparaissent ensuite dans **Mes demandes de revision**.
 
 Ajoutez si possible :
 

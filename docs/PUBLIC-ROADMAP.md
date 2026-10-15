@@ -19,7 +19,7 @@ Optional local raid integration and finalized Dib award handling.
 Officer backbone, relay model, reconnect recovery, deduplication, reconciliation.
 
 ## Phase 5 - Audit UI - [x] Terminee
-Player history and complete officer/GM ledger views.
+Player history, complete officer/GM ledger views, and read-only descriptive player activity statistics by date range.
 
 ## Phase 6 - Protected Loot Governance - [~] Partiellement terminee
 Curio and Tier Set progression across linked characters, configurable seasonal
@@ -92,9 +92,9 @@ profil; elles ne devront jamais afficher l'historique prive d'un autre joueur.
 Critere de sortie: chaque notification est idempotente, liee a un evenement
 auditable et n'apparait pas plusieurs fois apres une reconnexion.
 
-#### Etape 4 - Recherche et filtres avances - [~] Partiellement terminee
+#### Etape 4 - Recherche et filtres avances - [x] Terminee
 
-> Les recherches et filtres Player/Officer existent pour les vues principales, les demandes et le Great Vault. Il reste a unifier la recherche par raid, boss, date et source sur tout l'historique.
+> La recherche et les filtres sont disponibles sur les vues d'historique Player et Officer existantes, y compris le Great Vault et l'apercu RCLootCouncil. Les resultats respectent le perimetre et les autorisations de chaque vue et ne correspondent qu'aux metadonnees enregistrees.
 
 Les vues Player et Officer pourront filtrer l'historique par joueur, objet,
 raid, boss, saison, date, statut et source. Les filtres Officer resteront
@@ -102,26 +102,31 @@ proteges par les memes controles d'acces que les donnees affichees.
 
 Critere de sortie: un Officer peut retrouver une attribution ou une acquisition
 Vault dans un historique volumineux sans parcourir manuellement toute la liste.
+Les tests automatises couvrent les filtres et les etats; les scenarios manuels
+dans Retail restent a verifier sur un client de jeu.
 
 #### Etape 5 - Centre de sante des donnees et migration - [~] Partiellement terminee
 
-> Les migrations, sauvegardes, diagnostics de taille, apercus d'import et conflits Great Vault existent. Il reste un centre unifie de controle/correction/export des anomalies.
+> Le centre de revue Officer est livre pour les references de saison invalides, les acquisitions Vault incompletes ou en double, les acquisitions a verifier et les conflits resolubles dans Vault Review. Les apercus restent en lecture seule; un export de sante distinct ne contient que des compteurs agreges.
 
-Ce centre controlera les doublons, references de saison invalides, acquisitions
-incompletes, anciennes versions et conflits de synchronisation. Il affichera
-un apercu avant correction et creera une sauvegarde avant toute operation
-destructive. Les transactions append-only existantes ne seront jamais reecrites.
+Il reste a relier les avertissements de migration et de synchronisation aux
+sources qui peuvent les verifier, ainsi qu'a fournir des parcours audites pour
+les corrections encore prises en charge. Toute action destructive devra garder
+un apercu, une sauvegarde et une confirmation. Les transactions append-only ne
+seront jamais reecrites.
 
-Critere de sortie: une anomalie peut etre corrigee, ignoree ou exportee pour
-revision avec une trace de l'acteur, de la raison et du resultat.
+Critere de sortie: chaque anomalie prise en charge peut etre examinee, puis
+corrigee par son flux audite existant ou exportee pour investigation, avec une
+trace appropriee de l'acteur, de la raison et du resultat.
 
-#### Etape 6 - Export d'audit anonymise - [ ] A faire
+#### Etape 6 - Export d'audit anonymise - [x] Terminee
 
-> L'export/import actuel sert aux packages de donnees et n'est pas encore un rapport d'audit anonymise garanti sans identites, permissions ou transactions executables.
+> Un export d'audit anonymise distinct est disponible dans les Diagnostics Officer. Son contrat et son interface sont couverts par les tests automatises.
 
-Un export distinct des packages complets supprimera les noms, identites,
-notes privees et donnees inutiles. Il conservera les dates, types d'evenements,
-objets, saisons, decisions et resultats necessaires a l'analyse d'un probleme.
+Cet export est distinct des packages complets et exclut les identites, notes
+privees, permissions et transactions executables. Il fournit une projection
+bornee des faits d'audit pris en charge, sans permettre leur reimportation
+comme donnees de guilde.
 
 Critere de sortie: un rapport anonymise ne contient aucune identite de joueur,
 aucune permission et aucune transaction executable, tout en restant lisible
@@ -197,7 +202,7 @@ acceptées et ne doivent pas être implémentées sans validation préalable.
   règle en même temps.
 - [x] Journal d'audit avec une raison obligatoire pour chaque décision importante.
 - [x] Export, import et sauvegarde de l'historique de guilde.
-- [ ] Statistiques d'équité : loots reçus, refusés, priorités et temps d'attente.
+- [ ] Statistiques comparatives d'équité : loots reçus/refusés, priorités et temps d'attente. La page Officer actuelle compte l'activité Dibs par joueur et période, sans score ni classement de l'équité du loot.
 - [~] Alertes lorsqu'une règle laisse trop peu de joueurs éligibles.
 - [~] Exceptions temporaires pour remplaçants, trials, nouveaux joueurs ou absences.
 - [x] Aperçu de l'éligibilité directement dans la fenêtre RCLootCouncil avant le vote.
@@ -234,7 +239,7 @@ acceptées et ne doivent pas être implémentées sans validation préalable.
 - Approbation obligatoire d'un deuxième officier pour les loots importants.
 - Annonces automatiques des règles avant le raid et avant un boss.
 - Rapport de fin de raid : loot distribué, joueurs ignorés et tokens restants.
-- Statistiques par joueur et par période pour démontrer l'équité.
+- Statistiques comparatives par joueur et période pour étudier l'équité du loot. La vue actuelle se limite aux comptes descriptifs d'activité Dibs.
 - Import et export des règles pour tester une nouvelle politique.
 - Protection contre les changements de règles pendant un vote actif.
 - Permission de consulter l'historique sans permission de modifier les règles.

@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Developer Documentation Reference
 
-Addon version: 0.8.5
+Addon version: 0.8.8
 
 ## Guild Ledger status
 
@@ -101,7 +101,7 @@ Source: [src/modules/Ledger.lua:897](../../src/modules/Ledger.lua#L897) - `Ledge
 **Francais:** Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/ui/OfficerUI.lua:436](../../src/ui/OfficerUI.lua#L436) - `Dibs.OfficerUI.GetEligibilityProjection`
+Source: [src/ui/OfficerUI.lua:461](../../src/ui/OfficerUI.lua#L461) - `Dibs.OfficerUI.GetEligibilityProjection`
 
 ## Request audit timeline
 
@@ -113,7 +113,7 @@ Source: [src/ui/OfficerUI.lua:436](../../src/ui/OfficerUI.lua#L436) - `Dibs.Offi
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Disputes.lua:1152](../../src/modules/Disputes.lua#L1152) - `Disputes.GetTimeline`
+Source: [src/modules/Disputes.lua:1299](../../src/modules/Disputes.lua#L1299) - `Disputes.GetTimeline`
 
 ## Officer review requests
 
@@ -125,7 +125,7 @@ Source: [src/modules/Disputes.lua:1152](../../src/modules/Disputes.lua#L1152) - 
 **Francais:** Affiche les signalements des joueurs et leurs preuves Dibs ou RCLootCouncil. Ouvrir une demande est en lecture seule; les decisions des officiers conservent une raison d'audit.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Disputes.lua:614](../../src/modules/Disputes.lua#L614) - `Disputes.ListForOfficer`
+Source: [src/modules/Disputes.lua:626](../../src/modules/Disputes.lua#L626) - `Disputes.ListForOfficer`
 
 ## Player raid readiness
 
@@ -149,7 +149,7 @@ Source: [src/modules/Readiness.lua:200](../../src/modules/Readiness.lua#L200) - 
 **Francais:** Indique si vos informations Dibs personnelles sont disponibles. Si certaines fonctions sont limitees ou indisponibles, reessayez plus tard ou contactez un officier; RCLootCouncil est optionnel et le mode Standalone peut rester disponible.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/ui/PlayerUI.lua:408](../../src/ui/PlayerUI.lua#L408) - `Dibs.PlayerUI.GetStatusPresentation`
+Source: [src/ui/PlayerUI.lua:414](../../src/ui/PlayerUI.lua#L414) - `Dibs.PlayerUI.GetStatusPresentation`
 
 ## Announcement channels
 
@@ -161,7 +161,7 @@ Source: [src/ui/PlayerUI.lua:408](../../src/ui/PlayerUI.lua#L408) - `Dibs.Player
 **Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:548](../../src/modules/PreDibs.lua#L548) - `Dibs.PreDibs.GetAnnouncementSettings`
+Source: [src/modules/PreDibs.lua:550](../../src/modules/PreDibs.lua#L550) - `Dibs.PreDibs.GetAnnouncementSettings`
 
 ## Encounter Mode
 
@@ -173,7 +173,7 @@ Source: [src/modules/PreDibs.lua:548](../../src/modules/PreDibs.lua#L548) - `Dib
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:526](../../src/modules/PreDibs.lua#L526) - `Dibs.PreDibs.ValidatePublicRequest`
+Source: [src/modules/PreDibs.lua:528](../../src/modules/PreDibs.lua#L528) - `Dibs.PreDibs.ValidatePublicRequest`
 
 ## Pre-Dib Request
 
@@ -185,7 +185,7 @@ Source: [src/modules/PreDibs.lua:526](../../src/modules/PreDibs.lua#L526) - `Dib
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:655](../../src/modules/PreDibs.lua#L655) - `Dibs.PreDibs.CreatePublic`
+Source: [src/modules/PreDibs.lua:657](../../src/modules/PreDibs.lua#L657) - `Dibs.PreDibs.CreatePublic`
 
 ## Rank Allocation
 
@@ -223,7 +223,7 @@ Source: [src/modules/ProtectedActions.lua:182](../../src/modules/ProtectedAction
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncil.lua:3696](../../src/integrations/RCLootCouncil.lua#L3696) - `Dibs.RCLootCouncil.GetHistoryRows`
+Source: [src/integrations/RCLootCouncil.lua:3724](../../src/integrations/RCLootCouncil.lua#L3724) - `Dibs.RCLootCouncil.GetHistoryRows`
 
 ## RCLootCouncil response mapping
 

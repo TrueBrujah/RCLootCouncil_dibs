@@ -12,7 +12,7 @@ describe("Synchronization status", function()
   it("accepts patch and dev changes within one major.minor addon family", function()
     local dibs = load()
     assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.2"))
-    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.5-dev"))
+    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.8-dev"))
     local message = assert(dibs.Sync.BuildEnvelope({ type = "HELLO" }))
     message.addonVersion = "0.8.2"
     local accepted, reason = dibs.Sync.Receive(message, "Tester-Realm")
@@ -87,12 +87,25 @@ describe("Synchronization status", function()
     assert_true(behind.nextAction:find("both clients online", 1, true) ~= nil)
   end)
 
+  it("reads guild roster online status from the correct API return value", function()
+    local dibs = load()
+    local peers = dibs.Sync.GetPeerStatuses("GUILD")
+    local officer
+    for _, peer in ipairs(peers) do
+      if peer.playerName == "Officer-Realm" then officer = peer; break end
+    end
+    assert_not_nil(officer)
+    assert_true(officer.rosterOnline)
+    assert_true(officer.online)
+    assert_equal("ROSTER", officer.presenceSource)
+  end)
+
   it("uses a recent addon response when the guild roster still reports offline", function()
     local dibs = load()
     local originalGetGuildRosterInfo = _G.GetGuildRosterInfo
     _G.GetGuildRosterInfo = function(index)
       local name, rankName, rankIndex = originalGetGuildRosterInfo(index)
-      return name, rankName, rankIndex, nil, nil, nil, false
+      return name, rankName, rankIndex, nil, nil, nil, nil, nil, false
     end
 
     local member = dibs.Identity.ResolveRosterMember("Officer-Realm")

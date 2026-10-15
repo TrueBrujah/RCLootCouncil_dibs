@@ -233,6 +233,31 @@ Corrections, refunds, revokes, historical imports, and adjustments are
 append-only. They add linked transactions and retain actor, timestamp, reason,
 before/after values, delta, request reference, and canonical evidence.
 
+### Request follow-up and private delivery (0.8.8)
+
+Use the existing request detail to send a **Public reply**, **Assign to me** or
+choose a verified guild officer, and schedule/reschedule a follow-up. The queue
+also filters Due, Assigned to me, Waiting for player, Concluded, and Archived.
+Last activity and responsibility are explicit. Internal audit reasons are not
+public replies. Reminders are per-character, throttled to one per request/hour
+while online, and can be snoozed without changing the shared due time.
+
+Delivered requests are writable only on the current verified coordinator client.
+Other capable officers receive private read-only replicas (up to 16 online
+capable officer peers per bounded pump); this is not remote correction authority.
+Unproven epoch/coordinator handoff blocks old shared dossiers. Legacy local-only
+dossiers retain their workflow; if changed before first coordinator binding,
+their queued submission stops with `REQUEST_LOCAL_DOSSIER_CHANGED` rather than
+publishing an incomplete or already-corrected dossier.
+
+After Resolved or Rejected, **Close request**, then **Archive request**, each with
+an explicit reviewed reason. Archives remain searchable including stored replies,
+evidence references and audit reasons. Closing/archiving never touches accounting.
+A linked compensation prevents reopening/reapplying it. At 500 retained dossiers
+or 120 audit events, further affected writes fail explicitly; do not delete
+history to make space. Oversized private transfers remain in error with their
+source retained. Real-client delivery and handoff certification remains pending.
+
 In **Dibs Administration**, choose the guild member and current-season action.
 Add and Remove require a reason and explicit confirmation; the audit record
 retains the acting Officer/GM, target, previous balance, resulting balance, and
@@ -249,6 +274,29 @@ Use **RC History** for historical RCLootCouncil evidence:
 
 RCLootCouncil is an optional evidence provider, not the Dibs ledger authority.
 History is never rewritten, and confirmed transfers are idempotent.
+
+### Searching existing history
+
+Use the search and filter controls on the existing Officer ledger, Pre-Dib,
+Great Vault, and RCLootCouncil history views to narrow records by player,
+item, recorded raid/boss details, date, status, and source where those fields
+are available. Enter dates as `YYYY-MM-DD`; date bounds are inclusive.
+Missing metadata does not match placeholder text. Clearing one filter
+preserves the others, while clearing all filters restores that page's default
+scope. Search is read-only; it does not change balances, requests, Vault
+records, or historical RCLootCouncil evidence. Existing Officer authorization
+and privacy boundaries continue to apply.
+
+### Player activity statistics
+
+Open **Officer > Statistics** and enter optional `YYYY-MM-DD` start and end
+dates. Bounds are inclusive; leave both empty for the full selected season.
+The table shows descriptive per-player ledger transaction, award, Dibs granted,
+Dibs used, and correction counts. It is read-only and does not change the
+ledger or consume Dibs. It is not a fairness score or a ranking of loot
+distribution, and it does not count loot that is outside Dibs ledger records.
+If undated transactions are excluded by a date filter, the page marks affected
+coverage as partial.
 
 ## Multi-raid synchronization and recovery
 
@@ -311,6 +359,23 @@ A cancelled preview must not change settings, balances, profiles, or history.
 
 Use the dispute center for wrong debit, missing debit, duplicate, wrong item or
 player, eligibility, and integration reports. Do not directly edit stored data.
+
+### Data health review
+
+Open **Officer > Diagnostics** to review guild-scoped invalid season references,
+incomplete or duplicate Great Vault acquisitions, acquisitions requiring
+verification, and unresolved Vault conflicts. Previews are read-only; use the
+existing **Vault Review** workflow for decisions that require an audited reason.
+Other findings remain investigation-only.
+
+The **Export health report** contains only scan status, source availability,
+and category counts. It is not the anonymized audit export and does not include
+record identifiers, player names, raw evidence, or transactions.
+
+Use **Export anonymized audit** for a separate, bounded summary of recorded
+audit events and ledger transaction types. Unknown event labels are replaced
+with fixed generic values; names, actor IDs, reasons, season identifiers, and
+executable transactions are not included. Review the output before sharing it.
 
 ## Optional modules and diagnostics
 

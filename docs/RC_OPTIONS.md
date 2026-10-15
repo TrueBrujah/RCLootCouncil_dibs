@@ -19,7 +19,7 @@ show merge/replace impact; full-data imports are append-only and deduplicated.
 
 ## Great Vault tracking
 
-Players can use `/dibs vault <itemID> [difficulty]` to record a manual Vault
+Players can use `/dibs vault <item link|[Item Name]|itemID> <LFR|Normal|Heroic|Mythic>` to record a manual Vault
 acquisition when the Retail claim signal is unavailable. Opening the Vault or
 viewing a reward choice is not treated as a claim. Automatic records require a
 claim identity and reset identity supplied by the Retail adapter.

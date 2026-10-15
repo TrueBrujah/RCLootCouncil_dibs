@@ -27,7 +27,7 @@ local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN
 TYPES.CHANNEL_TEST, TYPES.CHANNEL_TEST_ACK = true, true
 local CHANNEL_TEST_CHANNELS = { GUILD = true, OFFICER = true, RAID = true, PARTY = true, INSTANCE_CHAT = true, WHISPER = true, CHANNEL = true }
 local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, SEASON_CATALOG = true, LEDGER_CATALOG = true, LEDGER_BATCH = true }
-local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true }
+local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true, REQUEST_MESSAGE = true }
 local TRUSTED_RELAY_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, SEASON_CATALOG = true, LEGACY_BASELINE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 local awardReservationGenerations = {}
@@ -463,7 +463,7 @@ function Sync.GetPeerStatuses(rosterScope)
     local okCount, memberCount = pcall(GetNumGuildMembers, true)
     if not okCount then return rows end
     for index = 1, tonumber(memberCount) or 0 do
-      local ok, name, _, rankIndex, _, _, _, online = pcall(GetGuildRosterInfo, index)
+      local ok, name, _, rankIndex, _, _, _, _, _, online = pcall(GetGuildRosterInfo, index)
       if ok and type(name) == "string" and name ~= "" then
         roster[#roster + 1] = { name = name, online = online == true or online == 1 or online == "1", rankIndex = rankIndex }
       end
@@ -727,7 +727,7 @@ function Sync.BuildEnvelope(message)
   local snapshot = localSnapshot(); if not snapshot then return nil, "ROSTER_UNAVAILABLE" end
   message = copy(message or {}); if not TYPES[message.type] then return nil, "INVALID_MESSAGE_TYPE" end
   message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, guildDetail = true, whisperDetail = true,
-    requestTombstones = true, ledgerDigestOnly = true, ledgerScopedCommits = true, authoritySignals = true } }
+    requestTombstones = true, ledgerDigestOnly = true, ledgerScopedCommits = true, authoritySignals = true, requestDelivery = true } }
   message.messageId = message.messageId or Dibs.NewId("v2msg")
   message.guildKey = Dibs.GetGuildKey(); message.senderNameRealm = snapshot.displayName; message.senderMemberKey = snapshot.memberKey
   message.addonVersion = Dibs.VERSION
@@ -754,14 +754,18 @@ function Sync.Send(message, channel, target)
     if not targetName or targetName == "" or #target > 96 then return false, "INVALID_WHISPER_TARGET" end
     local recipient, targetReason = member(targetName)
     if not recipient then return false, targetReason end
+    if recipient.online ~= true then return false, "WHISPER_TARGET_OFFLINE" end
     -- Display realms may contain spaces; addon whispers require a qualified wire name.
     target = recipient.displayName:gsub("%s+", "")
   end
   if isChannelTest and channel == "CHANNEL"
     and (not finiteInteger(target) or tonumber(target) < 1) then return false, "INVALID_CUSTOM_CHANNEL_ID" end
   Sync.TraceOutgoing(channel, target, message.type)
-  local sent = Dibs.Ace3.SendComm("DIBS", envelope, channel, target, "BULK")
-  if not sent then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
+  local sent, sendReason = Dibs.Ace3.SendComm("DIBS", envelope, channel, target, "BULK")
+  if not sent then
+    if sendReason and sendReason ~= "SYNC_UNAVAILABLE" then return false, sendReason end
+    status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE"
+  end
   local state = ensure()
   if state.status == "SYNC_UNAVAILABLE" then
     status(state.syncBehind and "SYNC_BEHIND" or "SYNC_READY")
@@ -1396,7 +1400,7 @@ local function requestDetail(target, requestId, ledgerId)
   return Sync.SendDetail("PREDIB_REQUEST", requestId, tonumber(request.revision) or 1, requestHash(request), request, target)
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" and entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local channel = detailChannel(entityType)
   if not channel then return false, "UNSUPPORTED_ENTITY" end
@@ -1412,6 +1416,7 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
     ledgerId = payload.ledgerId
     if ledgerId == nil then ledgerId = "guild-primary" end
   end
+
   local sent, reason = Sync.Send({ type = "TRANSFER_BEGIN", transferId = transferId, entityType = entityType, entityId = entityId, revision = revision, contentHash = contentHash, payloadHash = rawHash, chunkCount = #chunks, ledgerId = ledgerId }, channel, recipient)
   if not sent then return false, reason end
   for index, chunk in ipairs(chunks) do
@@ -1420,6 +1425,28 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   end
   return Sync.Send({ type = "TRANSFER_END", transferId = transferId, entityType = entityType, entityId = entityId,
     revision = revision, contentHash = contentHash, ledgerId = ledgerId }, channel, recipient)
+end
+
+function Sync.GetRequestPeer(target)
+  local resolved, reason = member(target)
+  if not resolved then return nil, reason end
+  if resolved.online ~= true then return nil, "WHISPER_TARGET_OFFLINE" end
+  local peer = ensure().peers[resolved.memberKey]
+  if not peer or not peer.protocol or not (peer.protocol.capabilities or {}).requestDelivery then
+    return nil, "REQUEST_PEER_UNSUPPORTED"
+  end
+  return resolved
+end
+
+function Sync.GetRequestPeers()
+  local result = {}
+  for key in pairs(ensure().peers) do
+    local resolved = Sync.GetRequestPeer(key)
+    if resolved and (resolved.role == "gm" or resolved.role == "officer") then result[#result + 1] = resolved end
+  end
+  table.sort(result, function(a, b) return a.memberKey < b.memberKey end)
+  while #result > 16 do table.remove(result) end
+  return result
 end
 
 local function sendTransferAck(target, transfer, accepted, reason, channel)
@@ -2110,7 +2137,7 @@ function Sync.Receive(message, sender, channel)
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_BASELINE" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" and message.entityType ~= "AWARD_PROPOSAL" and message.entityType ~= "SEASON_CATALOG" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_BASELINE" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" and message.entityType ~= "AWARD_PROPOSAL" and message.entityType ~= "SEASON_CATALOG" and message.entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
     local transferLedgerId
     if message.entityType == "AWARD_COMMIT" or message.entityType == "PREDIB_REQUEST" then
       transferLedgerId = message.ledgerId
@@ -2287,6 +2314,12 @@ function Sync.Receive(message, sender, channel)
       end
       return accepted, applyReason
     end
+    if transfer.entityType == "REQUEST_MESSAGE" and Dibs.RequestDelivery then
+      if type(payload) ~= "table" or transfer.entityId ~= payload.operationId
+        or Sync.CalculateContentHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
+      if not (message.protocol.capabilities or {}).requestDelivery then return false, "REQUEST_PEER_UNSUPPORTED" end
+      return Dibs.RequestDelivery.Receive(payload, resolved.displayName)
+    end
     return false, "UNSUPPORTED_ENTITY"
   end
   return false, "UNSUPPORTED_MESSAGE"
@@ -2334,8 +2367,10 @@ local function scheduleHeartbeat()
   end, HEARTBEAT)
 end
 function Sync.OnLifecycle(reason)
-  if not Sync.RegisterTransport() then return false, "SYNC_UNAVAILABLE" end
+  if Dibs.RequestDelivery then Dibs.RequestDelivery.CheckReminders() end
   scheduleHeartbeat()
+  if not Sync.RegisterTransport() then return false, "SYNC_UNAVAILABLE" end
+  if Dibs.RequestDelivery then Dibs.RequestDelivery.Pump() end
   local now = time()
   if reason == "STARTUP" and Sync.startupLifecycleScheduled then
     return true, "STARTUP_COALESCED"

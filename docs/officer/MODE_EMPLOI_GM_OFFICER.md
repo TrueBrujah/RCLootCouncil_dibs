@@ -296,6 +296,32 @@ Dans **Review Requests** :
 
 Les corrections sont append-only et conservent l'acteur, la date, la raison, les anciennes valeurs, les nouvelles valeurs et les references associees.
 
+### Suivi privé des signalements (0.8.8)
+
+Dans les détails existants, envoyez une **Réponse publique**, choisissez **Me
+l'attribuer** ou un officier de guilde vérifié, puis planifiez/replanifiez le
+suivi. La file filtre les demandes À suivre, Mes attributions, En attente du
+joueur, Conclues et Archivées. La responsabilité et la dernière activité sont
+affichées. Les raisons d'audit internes ne sont pas des réponses publiques.
+
+Les demandes livrées sont modifiables uniquement sur le client du coordinateur
+actuel vérifié ; les autres officiers compatibles reçoivent des copies privées
+en lecture seule (au plus 16 pairs officiers connectés par cycle borné).
+Un changement d'époque ou de coordinateur non prouvé bloque l'ancien dossier.
+Une demande locale modifiée avant sa première liaison au coordinateur conserve
+son audit, mais son envoi reste bloqué avec `REQUEST_LOCAL_DOSSIER_CHANGED`.
+
+Après Résolue ou Rejetée, utilisez **Clore la demande**, puis **Archiver la
+demande**, avec une raison revue explicitement. La recherche conserve le
+dossier, les réponses, les références et les raisons d'audit. Aucun solde n'est
+modifié par le fil ou l'archivage. Une compensation liée ne peut pas être
+réappliquée par réouverture. Les limites de 500 dossiers et 120 événements
+bloquent les écritures supplémentaires sans supprimer l'historique.
+Les transferts trop volumineux restent en erreur, source conservée.
+Les rappels personnels fonctionnent en ligne, au plus une fois par heure et
+par demande ; le report ne change pas l'échéance commune. Certification Retail
+multi-client et changement de coordinateur encore requise.
+
 ### RC History
 
 La page **RC History** sert a examiner d'anciens gains RCLootCouncil :
@@ -308,6 +334,30 @@ La page **RC History** sert a examiner d'anciens gains RCLootCouncil :
 6. Cliquez une seule fois sur **Confirm as DIB**.
 
 La confirmation est idempotente : rejouer la meme operation ne cree pas un second debit.
+
+### Recherche dans les historiques
+
+Les controles de recherche et de filtre des pages Officer existantes
+(historique du ledger, Pre-Dibs, Grand Coffre et RCLootCouncil) permettent de
+retrouver les enregistrements par joueur, objet, details raid/boss disponibles,
+date, statut et source lorsque ces champs existent. Saisissez les dates au
+format `YYYY-MM-DD`; les bornes sont inclusives. Une metadonnee absente ne
+correspond pas a un texte de remplacement. Effacer un filtre conserve les
+autres; tout effacer restaure le perimetre initial de la page. La recherche
+est en lecture seule et ne modifie ni les soldes, ni les demandes, ni les
+acquisitions du Grand Coffre, ni les preuves RCLootCouncil. Les autorisations
+Officer et les limites de confidentialite existantes restent appliquees.
+
+### Statistiques d'activite par joueur
+
+Ouvrez **Officer > Statistiques** et saisissez au besoin des dates `YYYY-MM-DD`.
+Les bornes sont inclusives; laissez-les vides pour toute la saison selectionnee.
+Le tableau presente des comptes descriptifs par joueur : transactions du
+registre, attributions, Dibs accordes/utilises et corrections. La vue est en
+lecture seule; elle ne modifie pas le registre et ne consomme pas de Dibs. Ce
+n'est ni un score ni un classement de l'equite du butin et les loots hors du
+registre Dibs ne sont pas comptes. Si des transactions sans date sont exclues
+par le filtre, la couverture des joueurs concernes est indiquee comme partielle.
 
 ## 10. Sauvegardes, profils et import/export
 
@@ -377,6 +427,28 @@ Le GM peut desactiver un module dans **System > Modules**.
 - Les services de securite centraux restent actifs.
 
 ## 13. Depannage, diagnostics et release checks
+
+Dans **Officer > Diagnostics**, le centre de sante liste les references de
+saison invalides, les acquisitions Great Vault incompletes ou en double, les
+acquisitions a verifier et les conflits Vault. Les apercus ne modifient pas les
+donnees; les decisions Vault passent par la revue auditee existante.
+
+**Exporter le rapport de sante** ne partage que le statut, la disponibilite des
+sources et les compteurs d'anomalies. **Exporter l'audit anonymise** est un
+rapport distinct et borne; il exclut les noms, identifiants d'acteur, raisons,
+identifiants de saison et transactions executables. Verifiez le texte avant de
+le partager.
+
+Dans **Officer > Diagnostics**, le centre de sante liste les references de
+saison invalides, les acquisitions Great Vault incompletes ou en double, les
+acquisitions a verifier et les conflits Vault. Les apercus ne modifient pas les
+donnees; les decisions Vault passent par la revue auditee existante.
+
+**Exporter le rapport de sante** ne partage que le statut, la disponibilite des
+sources et les compteurs d'anomalies. **Exporter l'audit anonymise** est un
+rapport distinct et borne; il exclut les noms, identifiants d'acteur, raisons,
+identifiants de saison et transactions executables. Verifiez le texte avant de
+le partager.
 
 Utilisez :
 

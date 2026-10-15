@@ -21,6 +21,7 @@ describe("TOC load integrity", function()
       "integrations/EncounterJournal.lua",
       "integrations/RCLootCouncil.lua",
       "ui/AceGUI.lua",
+      "ui/HistoryFilters.lua",
       "ui/LogsUI.lua",
       "ui/DataUI.lua",
       "ui/PlayerUI.lua",

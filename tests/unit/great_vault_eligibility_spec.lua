@@ -2,6 +2,28 @@ local loader = require("helpers.load_addon")
 local fixture = require("helpers.great_vault_fixture")
 
 describe("Great Vault eligibility", function()
+  it("keeps LFR evidence separate from raid Heroic under same-difficulty policy", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local seasonId = dibs.GetCurrentSeasonId()
+    local policy = dibs.ProtectedActions.Execute("eligibility.policy.set", nil, {
+      seasonId = seasonId, family = "TOKEN", completionThreshold = 1, difficultyScope = "SAME",
+    })
+    assert_true(policy.ok)
+    assert_not_nil(dibs.PreDibs.RecordVaultAcquisition("Tester-Realm", 281014, "LFR", {
+      source = "GREAT_VAULT", verificationState = "AUTOMATIC_CONFIRMED", evidenceState = "COMPLETE",
+      family = "TOKEN", slot = "head", resetId = "week-1", evidenceId = "claim:281014",
+    }))
+    local lfr = dibs.CharacterEligibility.Evaluate({
+      seasonId = seasonId, family = "TOKEN", itemID = 281015, slot = "chest", difficulty = "LFR",
+    }, "Tester-Realm", seasonId)
+    assert_equal("block", lfr.outcome)
+    assert_equal("CURIO_COMPLETE", lfr.reasonCode)
+    local heroic = dibs.CharacterEligibility.Evaluate({
+      seasonId = seasonId, family = "TOKEN", itemID = 281015, slot = "chest", difficulty = "Heroic",
+    }, "Tester-Realm", seasonId)
+    assert_equal("allow", heroic.outcome)
+  end)
+
   it("counts confirmed Vault evidence without creating a ledger transaction", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local seasonId = dibs.GetCurrentSeasonId()
