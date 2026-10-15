@@ -12,6 +12,7 @@ describe("Local and guild persistence scopes", function()
             developerModeEnabled = true,
             debugLevels = { all = 4 },
             ejKnownSubCategories = { TIER = true },
+            minimapButtonShown = false,
           },
         },
       },
@@ -26,10 +27,12 @@ describe("Local and guild persistence scopes", function()
     assert_true(localSettings.developerModeEnabled)
     assert_equal(4, localSettings.debugLevels.all)
     assert_true(localSettings.ejKnownSubCategories.TIER)
+    assert_false(localSettings.minimapButtonShown)
     assert_nil(dibs.GetDB().settings.language)
     assert_nil(dibs.GetDB().settings.developerModeEnabled)
     assert_nil(dibs.GetDB().settings.debugLevels)
     assert_nil(dibs.GetDB().settings.ejKnownSubCategories)
+    assert_nil(dibs.GetDB().settings.minimapButtonShown)
   end)
 
   it("keeps local preferences outside guild-scoped state", function()

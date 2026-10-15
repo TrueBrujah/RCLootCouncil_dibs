@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.6-dev"
+Dibs.VERSION = "0.8.7-dev"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -99,7 +99,7 @@ function Dibs.GetLocalDB()
   local settings = localDB.settings
   if type(settings) ~= "table" then settings = {}; localDB.settings = settings end
   if type(legacy) == "table" then
-    for _, key in ipairs({ "language", "debugLevels", "developerModeEnabled", "ejKnownSubCategories", "ejBlockedSubCategories" }) do
+    for _, key in ipairs({ "language", "debugLevels", "developerModeEnabled", "ejKnownSubCategories", "ejBlockedSubCategories", "minimapButtonShown" }) do
       if settings[key] == nil and legacy[key] ~= nil then settings[key] = copyLocalValue(legacy[key]) end
       legacy[key] = nil
     end
@@ -107,6 +107,7 @@ function Dibs.GetLocalDB()
   if settings.language == nil then settings.language = "AUTO" end
   if type(settings.debugLevels) ~= "table" then settings.debugLevels = { all = 1 } end
   if settings.developerModeEnabled == nil then settings.developerModeEnabled = false end
+  if settings.minimapButtonShown == nil then settings.minimapButtonShown = true end
   return localDB
 end
 
@@ -1378,7 +1379,7 @@ function Dibs.HandleSlashCommand(msg)
   if action == "" or action == "help" then
     local help = Dibs.L or {}
     Dibs.Message(help.SLASH_HELP_TITLE or "Dibs commands - prefix each command with /dibs:")
-    Dibs.Message(help.SLASH_HELP_PLAYER or "Player: ui | balance | requests | pre <itemID> | vault <itemID> [difficulty]")
+    Dibs.Message(help.SLASH_HELP_PLAYER or "Player: ui | balance | requests | pre <itemID> | vault <itemID> [difficulty] | minimap show|hide")
     Dibs.Message(help.SLASH_HELP_OFFICER or "Officer: officer | options | review | reconcile | data")
     Dibs.Message(help.SLASH_HELP_GUILD or "Guild setup: season create|list|set <id> | rank list|set <index> <amount> [name] | ledger list|set <id>")
     Dibs.Message(help.SLASH_HELP_RAID or "Raid: raid [status|sync|start|stop|ledger <id>] | remind <message>")
@@ -1469,6 +1470,29 @@ function Dibs.HandleSlashCommand(msg)
     if Dibs.PlayerUI and Dibs.PlayerUI.Show then
       Dibs.PlayerUI.Show()
     end
+    return
+  end
+
+  if action == "minimap" then
+    local option = string.lower(args[2] or "")
+    local labels = Dibs.L or {}
+    if option ~= "show" and option ~= "hide" then
+      Dibs.Message(labels.MINIMAP_SLASH_USAGE or "Usage: /dibs minimap show|hide")
+      return
+    end
+    if not (Dibs.MinimapButton and Dibs.MinimapButton.SetVisible) then
+      Dibs.Message(labels.MINIMAP_UNAVAILABLE or "Minimap icon setting is unavailable.")
+      return
+    end
+    local visible = option == "show"
+    local ok, reason = Dibs.MinimapButton.SetVisible(visible)
+    if not ok then
+      Dibs.Message((labels.MINIMAP_SET_FAILED or "Unable to update the minimap icon: %s"):format(tostring(reason or "unknown error")))
+      return
+    end
+    Dibs.Message(visible
+      and (labels.MINIMAP_SHOWN or "Minimap icon shown.")
+      or (labels.MINIMAP_HIDDEN or "Minimap icon hidden."))
     return
   end
 
@@ -1576,7 +1600,18 @@ function Dibs.HandleSlashCommand(msg)
   end
 
   if action == "vault" then
-    local record, reason = Dibs.PreDibs and Dibs.PreDibs.RecordVaultAcquisition and Dibs.PreDibs.RecordVaultAcquisition(Dibs.GetPlayerName(), args[2], args[3]) or nil, "ACQUISITIONS_UNAVAILABLE"
+    local itemLink, trailing = rest:match("^(|c%x+|Hitem:[^|]+|h%[.-%]|h|r)%s*(.*)$")
+    if not itemLink then itemLink, trailing = rest:match("^(|cn[%w_]+:|Hitem:[^|]+|h%[.-%]|h|r)%s*(.*)$") end
+    if not itemLink then itemLink, trailing = rest:match("^(|Hitem:[^|]+|h%[.-%]|h)%s*(.*)$") end
+    local record, reason
+    if Dibs.PreDibs and Dibs.PreDibs.RecordVaultAcquisition then
+      record, reason = Dibs.PreDibs.RecordVaultAcquisition(Dibs.GetPlayerName(),
+        itemLink and tonumber(itemLink:match("item:(%d+)")) or args[2],
+        itemLink and trailing or args[3],
+        itemLink and { itemLink = itemLink, itemName = itemLink:match("|h%[(.-)%]|h") } or nil)
+    else
+      reason = "ACQUISITIONS_UNAVAILABLE"
+    end
     if record then
       local resultKey = "VAULT_RESULT_" .. tostring(record.outcome or "RECORDED_MANUAL")
       local resultText = Dibs.L and Dibs.L[resultKey] or "Vault acquisition recorded."

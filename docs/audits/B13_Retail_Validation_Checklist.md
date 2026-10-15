@@ -2,6 +2,14 @@
 
 Status: pending one-client Retail execution.
 
+2026-10-14: A reported claim showed an item receipt in chat but an empty Player
+Vault history. Code inspection found that the adapter had no Retail event or
+claim hook wiring. The adapter now correlates a cached selected reward, a
+passive `C_WeeklyRewards.ClaimReward` post-hook, a matching local
+`CHAT_MSG_LOOT` receipt, and `CanClaimRewards() == false`. This correction has
+automated regression coverage but has not yet been validated in Retail.
+Previously claimed rewards are not reconstructed automatically.
+
 Automated Fengari evidence is recorded in
 [B13_Implementation_Evidence.md](B13_Implementation_Evidence.md); it does not
 replace these client checks.

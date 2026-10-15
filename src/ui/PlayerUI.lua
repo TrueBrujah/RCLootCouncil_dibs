@@ -97,6 +97,7 @@ local PLAYER_NAV_TREE = {
   { text = "Requests", value = "requests", module = "requests" },
   { text = "History", value = "history" },
   { text = helpText.PLAYER_VAULT_TITLE or "Great Vault", value = "vault" },
+  { text = helpText.MINIMAP_SETTINGS_NAV or "Preferences", value = "preferences" },
   { text = "Diagnostics", value = "diagnostics" },
 }
 
@@ -478,17 +479,143 @@ local function projectHistory(playerName, seasonId)
   for _, transaction in ipairs(entries) do
     local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
     table.insert(history, {
+      transactionId = transaction.transactionId,
       date = formatDate(transaction.createdAt or transaction.timestamp),
       item = transaction.itemName or transaction.itemLink or (transaction.itemID and ("Item " .. tostring(transaction.itemID)) or "Dibs"),
+      itemID = transaction.itemID,
+      itemName = transaction.itemName,
+      itemLink = transaction.itemLink,
       action = tostring(transaction.type or transaction.actionType or "Activity"),
       result = tostring(transaction.reason or "Recorded"),
       balanceImpact = (amount >= 0 and "+" or "") .. tostring(amount),
+      createdAt = tonumber(transaction.createdAt or transaction.timestamp),
+      source = transaction.source,
+      status = transaction.status or transaction.sourceStatus,
+      sourceStatus = transaction.sourceStatus,
+      raidName = transaction.raidName or transaction.instanceName,
+      instanceName = transaction.instanceName,
+      bossName = transaction.bossName or transaction.encounterName,
+      encounterName = transaction.encounterName,
     })
   end
   return history
 end
 
-function Dibs.PlayerUI.GetViewModel(playerName)
+local PLAYER_HISTORY_FILTER_OPTIONS = {
+  queryFields = {
+    "itemName", "itemLink", "itemID", "source", "status", "sourceStatus",
+    "action", "raidName", "instanceName", "bossName", "encounterName",
+  },
+  fieldMap = {
+    item = { "itemName", "itemLink", "itemID" },
+    raid = { "raidName", "instanceName" },
+    boss = { "bossName", "encounterName" },
+    source = { "source" },
+    status = { "status", "sourceStatus", "action" },
+  },
+  timestampFields = { "createdAt" },
+  identityFields = { "transactionId" },
+}
+
+local function filterPlayerHistory(entries, criteria)
+  if type(criteria) ~= "table" then return entries end
+  if not Dibs.HistoryFilters or type(Dibs.HistoryFilters.FilterRecords) ~= "function" then
+    return nil, "FILTER_UNAVAILABLE"
+  end
+  return Dibs.HistoryFilters.FilterRecords(entries, criteria, PLAYER_HISTORY_FILTER_OPTIONS)
+end
+
+local function historyFilterErrorText(reason)
+  local keys = {
+    INVALID_FROM_DATE = "HISTORY_FILTER_INVALID_FROM_DATE",
+    INVALID_TO_DATE = "HISTORY_FILTER_INVALID_TO_DATE",
+    INVALID_DATE_RANGE = "HISTORY_FILTER_INVALID_DATE_RANGE",
+    DATE_UNAVAILABLE = "HISTORY_FILTER_DATE_UNAVAILABLE",
+  }
+  local key = keys[reason]
+  return key and helpText[key] or helpText.HISTORY_FILTER_SOURCE_UNAVAILABLE
+end
+
+local function hasActiveHistoryFilters(criteria)
+  for _, field in ipairs({ "query", "fromDate", "toDate", "source", "status" }) do
+    if trimText(criteria and criteria[field]) ~= "" then return true end
+  end
+  return false
+end
+
+local function addHistoryFilterControls(shell, parent, frame, filterKey, prefix, widthHint)
+  local gui = Dibs.AceGUI
+  local state = frame[filterKey] or {}
+  local inputs = {}
+  local group = gui.AddInlineGroup(shell, parent)
+  local definitions = {
+    { field = "query", label = helpText.HISTORY_FILTER_SEARCH or "Search history", width = math.max(220, math.min(340, widthHint * 0.52)) },
+    { field = "fromDate", label = helpText.HISTORY_FILTER_FROM_DATE or "From date (YYYY-MM-DD)", width = 170 },
+    { field = "toDate", label = helpText.HISTORY_FILTER_TO_DATE or "To date (YYYY-MM-DD)", width = 170 },
+    { field = "source", label = helpText.HISTORY_FILTER_SOURCE or "Source", width = 150 },
+    { field = "status", label = helpText.HISTORY_FILTER_STATUS or "Status", width = 150 },
+  }
+  for _, definition in ipairs(definitions) do
+    local input = gui.AddEditBox(shell, group, definition.label, nil, definition.width)
+    inputs[definition.field] = input
+    if input then
+      Dibs.AceGUI.AddTooltip(input, definition.label, helpText.HISTORY_FILTER_SEARCH_HELP)
+      if trimText(state[definition.field]) ~= "" then setControlText(input, state[definition.field]) end
+    end
+  end
+
+  local function applyFilters()
+    local criteria = {}
+    for _, definition in ipairs(definitions) do
+      criteria[definition.field] = getControlText(inputs[definition.field])
+    end
+    frame[filterKey] = criteria
+    if prefix == "vault" then frame.vaultPage = 1 else frame.historyPage = 1 end
+    frame:Refresh()
+  end
+  local apply = gui.AddButton(shell, group, helpText.HISTORY_FILTER_APPLY or "Apply filters", applyFilters, 145)
+  local clear = gui.AddButton(shell, group, helpText.HISTORY_FILTER_CLEAR or "Clear filters", function()
+    frame[filterKey] = {}
+    if prefix == "vault" then frame.vaultPage = 1 else frame.historyPage = 1 end
+    frame:Refresh()
+  end, 130)
+  local clearFields = {}
+  frame[prefix .. "FilterClearFields"] = clearFields
+  local activeFilters = {}
+  for _, definition in ipairs(definitions) do
+    if trimText(state[definition.field]) ~= "" then
+      activeFilters[#activeFilters + 1] = definition
+    end
+  end
+  if #activeFilters > 0 then
+    local clearGroup = gui.AddInlineGroup(shell, parent)
+    for _, definition in ipairs(activeFilters) do
+      local label = string.format(helpText.HISTORY_FILTER_CLEAR_FIELD or "Clear %s", definition.label)
+      local button = gui.AddButton(shell, clearGroup, label, function()
+        local updated = {}
+        for key, value in pairs(frame[filterKey] or {}) do
+          if key ~= definition.field then updated[key] = value end
+        end
+        frame[filterKey] = updated
+        if prefix == "vault" then frame.vaultPage = 1 else frame.historyPage = 1 end
+        frame:Refresh()
+      end, 180)
+      clearFields[definition.field] = button
+      gui.AddTooltip(button, definition.label, helpText.HISTORY_FILTER_CLEAR_FIELD_HELP)
+    end
+  end
+  if prefix == "vault" then
+    frame.vaultFilterSearch = inputs.query
+    frame.vaultFilterApply = apply
+    frame.vaultFilterClear = clear
+  else
+    frame.historyFilterSearch = inputs.query
+    frame.historyFilterApply = apply
+    frame.historyFilterClear = clear
+  end
+end
+
+function Dibs.PlayerUI.GetViewModel(playerName, historyFilters)
   local summary = Dibs.PlayerUI.GetSummary(playerName)
   local readiness = Dibs.Readiness and Dibs.Readiness.Evaluate and Dibs.Readiness.Evaluate({ allowPlayer = true }) or {}
   local active = {}
@@ -513,6 +640,16 @@ function Dibs.PlayerUI.GetViewModel(playerName)
     })
   end
   local history = projectHistory(summary.player, summary.season and summary.season.id)
+  local historyFilterError
+  if type(historyFilters) == "table" then
+    local filtered, reason = filterPlayerHistory(history, historyFilters)
+    if filtered then
+      history = filtered
+    else
+      history = {}
+      historyFilterError = historyFilterErrorText(reason)
+    end
+  end
   local requests = playerRequestHistory(summary.player, summary.activePreDibs)
   return {
     navigation = Dibs.PlayerUI.GetNavigation(),
@@ -526,6 +663,7 @@ function Dibs.PlayerUI.GetViewModel(playerName)
     requests = requests,
     pendingRequests = #active,
     history = history,
+    historyFilterError = historyFilterError,
     status = Dibs.PlayerUI.GetStatusPresentation(readiness),
     empty = {
       activePreDibs = #active == 0 and ((Dibs.L or {}).PLAYER_NO_ACTIVE_PREDIBS or "No active Pre-Dibs this season.") or nil,
@@ -556,6 +694,72 @@ function Dibs.PlayerUI.GetVaultAcquisitionPresentation(record)
     resetId = record.resetId, syncState = record.syncState }
 end
 
+local function getOwnedVaultItemLinks()
+  local links, ambiguous = {}, {}
+  local function addLink(link)
+    if type(_G.issecretvalue) == "function" and issecretvalue(link) then return end
+    if type(link) ~= "string" then return end
+    local itemID = tonumber(link:match("item:(%d+)"))
+    if not itemID then return end
+    local itemString = link:match("|H(item:[^|]+)|h")
+    local existing = links[itemID]
+    if existing and existing:match("|H(item:[^|]+)|h") ~= itemString then ambiguous[itemID] = true end
+    links[itemID] = link
+  end
+  if type(GetInventoryItemLink) == "function" then
+    for slot = 1, 19 do addLink(GetInventoryItemLink("player", slot)) end
+  end
+  if type(C_Container) == "table" and type(C_Container.GetContainerNumSlots) == "function"
+    and type(C_Container.GetContainerItemLink) == "function" then
+    for bag = 0, (_G.NUM_TOTAL_EQUIPPED_BAG_SLOTS or 5) do
+      for slot = 1, C_Container.GetContainerNumSlots(bag) do
+        addLink(C_Container.GetContainerItemLink(bag, slot))
+      end
+    end
+  end
+  for itemID in pairs(ambiguous) do links[itemID] = nil end
+  return links
+end
+
+local function resolveVaultItem(record, frame, ownedLinks)
+  if record.itemLink or not record.itemID then return record end
+  local ownedLink = ownedLinks[tonumber(record.itemID)]
+  if ownedLink then
+    record.isOwnedItemPreview = true
+    record.itemLink = ownedLink
+    record.itemName = record.itemName or ownedLink:match("|h%[(.-)%]|h")
+    record.itemPreviewHint = helpText.PLAYER_VAULT_OWNED_PREVIEW
+      or "Preview of the matching item currently owned; the acquired variant was not recorded."
+    return record
+  end
+  record.itemPreviewHint = helpText.PLAYER_VAULT_VARIANT_UNKNOWN
+    or "Exact acquired variant unavailable. Record the full item link to preserve its level and bonuses."
+  if record.itemName then return record end
+  frame.vaultItemCache = frame.vaultItemCache or {}
+  local key = tostring(record.itemID)
+  local cached = frame.vaultItemCache[key]
+  if not cached and Dibs.LootPipeline and Dibs.LootPipeline.ResolveItem then
+    cached = { loading = true }
+    frame.vaultItemCache[key] = cached
+    local synchronous = true
+    Dibs.LootPipeline.ResolveItem(record.itemID, function(item, reason)
+      cached.loading = false
+      cached.item = item
+      cached.reason = reason
+      if not item and Dibs.Message then
+        Dibs.Message("[GreatVault] " .. key .. ": " .. tostring(reason or "ITEM_LOAD_FAILED"), { chat = false })
+      end
+      if not synchronous and frame.playerTab == "vault"
+        and (not frame.IsShown or frame:IsShown()) and frame.Refresh then frame:Refresh() end
+    end)
+    synchronous = false
+  end
+  if cached and cached.item then
+    record.itemName = cached.item.itemName
+  end
+  return record
+end
+
 local function renderVaultHistory(shell, parent, frame, widthHint)
   local gui = Dibs.AceGUI
   local page = gui.AddTablePage(shell, parent, { footer = true, boundsFrame = parent.content or parent.frame })
@@ -572,17 +776,32 @@ local function renderVaultHistory(shell, parent, frame, widthHint)
     page.UpdateViewportHeight()
     return
   end
+  addHistoryFilterControls(shell, page.header, frame, "vaultFilters", "vault", widthHint)
   gui.AddLabel(shell, page.header, helpText.PLAYER_VAULT_MANUAL
     or "Only recorded acquisitions appear here. If automatic claim detection is unavailable, use /dibs vault <itemID> [difficulty].", true)
   local records = {}
+  local ownedLinks = getOwnedVaultItemLinks()
   for _, record in ipairs(Dibs.PreDibs.GetAcquisitionsForPlayer(Dibs.GetPlayerName())) do
-    records[#records + 1] = Dibs.PreDibs.ProjectVaultAcquisition(record, "player")
+    records[#records + 1] = resolveVaultItem(Dibs.PreDibs.ProjectVaultAcquisition(record, "player"), frame, ownedLinks)
   end
-  table.sort(records, function(first, second)
-    local firstDate, secondDate = tonumber(first.acquiredAt) or 0, tonumber(second.acquiredAt) or 0
-    if firstDate ~= secondDate then return firstDate > secondDate end
-    return tostring(first.acquisitionId or "") < tostring(second.acquisitionId or "")
-  end)
+  local filtered, filterReason = Dibs.HistoryFilters.FilterRecords(records, frame.vaultFilters or {}, {
+    queryFields = { "itemName", "itemLink", "itemID", "source", "verificationState",
+      "status", "raidName", "instanceName", "bossName", "encounterName" },
+    fieldMap = {
+      item = { "itemName", "itemLink", "itemID" },
+      raid = { "raidName", "instanceName" },
+      boss = { "bossName", "encounterName" },
+      source = { "source" },
+      status = { "status", "verificationState" },
+    },
+    timestampFields = { "acquiredAt", "createdAt" },
+    identityFields = { "acquisitionId" },
+  })
+  frame.vaultFilterError = filterReason and historyFilterErrorText(filterReason) or nil
+  records = filtered or {}
+  if frame.vaultFilterError then
+    gui.AddLabel(shell, page.header, frame.vaultFilterError, true)
+  end
   local visible, currentPage = gui.GetPageSlice(records, frame.vaultPage, 10)
   frame.vaultPage = currentPage
   local rows = {}
@@ -592,9 +811,10 @@ local function renderVaultHistory(shell, parent, frame, widthHint)
       formatDate(record.acquiredAt),
       tostring(record.itemLink or record.itemName or ("Item " .. tostring(record.itemID))),
       tostring(record.difficulty or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
-      status.label,
+      status.label .. (record.isOwnedItemPreview
+        and (" (" .. (helpText.PLAYER_VAULT_PREVIEW_LABEL or "owned preview") .. ")") or ""),
       tooltip = table.concat({
-        status.label, status.explanation,
+        status.label, status.explanation, record.itemPreviewHint or "",
         (helpText.PLAYER_VAULT_SOURCE or "Source") .. ": " .. tostring(record.source or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
         (helpText.PLAYER_VAULT_RESET or "Weekly reset") .. ": " .. tostring(record.resetId or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
         (helpText.PLAYER_VAULT_SYNC or "Synchronization") .. ": " .. tostring(record.syncState or helpText.PLAYER_VAULT_UNKNOWN or "Unknown"),
@@ -609,7 +829,9 @@ local function renderVaultHistory(shell, parent, frame, widthHint)
   }, rows, 300, nil, {
     fluidColumns = true, widthHint = widthHint, allowTableSort = false,
     noScrolling = true, headerParent = page.columnHeader, scrollbarReserve = 26,
-    emptyText = helpText.PLAYER_VAULT_EMPTY or "No Great Vault acquisitions recorded for your character in this guild scope.",
+    emptyText = frame.vaultFilterError or (hasActiveHistoryFilters(frame.vaultFilters)
+      and helpText.HISTORY_FILTER_NO_RESULTS or helpText.PLAYER_VAULT_EMPTY)
+      or "No Great Vault acquisitions recorded for your character in this guild scope.",
     cellTooltip = function(row) return row.tooltip end,
   })
   local pagination = gui.AddPaginationFooter(shell, page, {
@@ -1254,7 +1476,34 @@ local function createAceWindow()
       renderVaultHistory(shell, tabs, self, playerContentWidthHint())
       return
     end
-    local view = Dibs.PlayerUI.GetViewModel()
+    if self.playerTab == "preferences" then
+      local page = Dibs.AceGUI.AddTablePage(shell, tabs, {
+        footer = true, boundsFrame = tabs.content or tabs.frame,
+      })
+      if not page then return end
+      Dibs.AceGUI.AddHeading(shell, page.header,
+        helpText.MINIMAP_SETTINGS_TITLE or "Player preferences",
+        helpText.MINIMAP_SETTINGS_DESCRIPTION or "Personal display preferences for this character.")
+      local section = Dibs.AceGUI.AddSection(shell, page.header,
+        helpText.MINIMAP_SETTINGS_SECTION or "Minimap",
+        helpText.MINIMAP_SETTINGS_HELP or "Choose whether the Dibs shortcut appears beside the minimap.")
+      local visible = Dibs.MinimapButton and Dibs.MinimapButton.GetVisible and Dibs.MinimapButton.GetVisible() or true
+      self.minimapButtonToggle = Dibs.AceGUI.AddCheckBox(shell, section,
+        helpText.MINIMAP_SETTINGS_CHECKBOX or "Show Dibs minimap icon", visible, function(value)
+          if Dibs.MinimapButton and Dibs.MinimapButton.SetVisible then
+            local ok, reason = Dibs.MinimapButton.SetVisible(value)
+            if not ok then
+              Dibs.Message((helpText.MINIMAP_SETTINGS_FAILED or "Unable to update the minimap icon: %s"):format(tostring(reason or "unknown error")))
+            end
+          end
+        end, 360)
+      Dibs.AceGUI.AddLabel(shell, section,
+        helpText.MINIMAP_SETTINGS_COMMAND or "You can also use /dibs minimap show or /dibs minimap hide. This preference is saved for this character.",
+        true)
+      page.UpdateViewportHeight()
+      return
+    end
+    local view = Dibs.PlayerUI.GetViewModel(nil, self.historyFilters)
     if self.playerTab == "diagnostics" then
       local diagnosticsPage = Dibs.AceGUI.AddTablePage(shell, tabs, {
         footer = true, boundsFrame = tabs.content or tabs.frame,
@@ -1587,11 +1836,12 @@ local function createAceWindow()
     if self.playerTab == "history" then
       Dibs.AceGUI.AddHeading(shell, tabs, "History", "Your Dibs activity for the current season.")
       addActiveLedgerToolbar(tabs)
+      addHistoryFilterControls(shell, tabs, self, "historyFilters", "history", playerContentWidthHint())
+      if view.historyFilterError then Dibs.AceGUI.AddLabel(shell, tabs, view.historyFilterError, true) end
       local historyRows = {}
       for _, entry in ipairs(view.history or {}) do
         historyRows[#historyRows + 1] = { entry.date, entry.item, entry.action, entry.result, entry.balanceImpact, entry = entry }
       end
-      if #historyRows == 0 then historyRows[1] = { "", view.empty.history, "", "", "" } end
       Dibs.AceGUI.AddTable(shell, tabs, {
         { title = "Date", width = 145, minWidth = 100, weight = 1 },
         { title = "Item", width = 220, minWidth = 140, weight = 2 },
@@ -1606,6 +1856,8 @@ local function createAceWindow()
         scrollbarReserve = 26,
         shrinkToFit = true,
         hideScrollbarWhenFits = true,
+        emptyText = view.historyFilterError or (hasActiveHistoryFilters(self.historyFilters)
+          and helpText.HISTORY_FILTER_NO_RESULTS or view.empty.history),
         contextMenu = function(row)
           if not row.entry then return nil end
           return {

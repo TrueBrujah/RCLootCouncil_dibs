@@ -54,7 +54,7 @@ end
 function HealthUI.Evaluate(options)
   options = type(options) == "table" and options or {}
   local allowed, role = isAdmin()
-  if not allowed and options.allowPlayer ~= true then
+  if not allowed then
     return { status = "DENIED", role = role, checks = {}, warnings = {}, blockingCount = 0, warningCount = 0 }
   end
 
@@ -133,34 +133,147 @@ function HealthUI.Evaluate(options)
   return report
 end
 
-function HealthUI.ScanAnomalies(options)
-  options = type(options) == "table" and options or {}
-  local allowed = isAdmin()
-  if not allowed and options.allowPlayer ~= true then return { status = "DENIED", anomalies = {} } end
-  local db = safeCall(Dibs.GetDB) or {}
-  local seasons = db.seasons or {}
+function HealthUI.ScanAnomalies()
+  local allowed, role = isAdmin()
+  if not allowed then
+    return { status = "DENIED", role = role, anomalies = {}, count = 0, sources = {} }
+  end
+  local db
+  local dbStatus = "UNAVAILABLE"
+  if type(Dibs.GetDB) == "function" then
+    local ok, value = pcall(Dibs.GetDB)
+    if ok and type(value) == "table" then
+      db, dbStatus = value, "AVAILABLE"
+    elseif ok then
+      dbStatus = "INVALID_SOURCE"
+    else
+      dbStatus = "SOURCE_ERROR"
+    end
+  end
+  db = db or {}
+  local seasons = type(db.seasons) == "table" and db.seasons or nil
+  local transactions = type(db.ledger) == "table" and type(db.ledger.transactions) == "table"
+    and db.ledger.transactions or nil
+  local preDibsDB = type(db.preDibs) == "table" and db.preDibs or nil
+  local acquisitions = preDibsDB and type(preDibsDB.acquisitions) == "table"
+    and preDibsDB.acquisitions or nil
+  local vaultConflicts
+  if dbStatus == "AVAILABLE" and preDibsDB then
+    if preDibsDB.ledgerStorageVersion == 1 then
+      local ledgerId = tostring(db.activeLedgerId or "guild-primary")
+      local ledgerStore = type(preDibsDB.ledgers) == "table" and preDibsDB.ledgers[ledgerId] or nil
+      vaultConflicts = type(ledgerStore) == "table" and ledgerStore.vaultConflicts or nil
+    else
+      vaultConflicts = preDibsDB.vaultConflicts
+    end
+  end
+  local sources = {
+    ledger = { status = dbStatus == "AVAILABLE" and transactions and seasons and "AVAILABLE" or (dbStatus ~= "AVAILABLE" and dbStatus or "UNAVAILABLE") },
+    acquisitions = { status = dbStatus == "AVAILABLE" and acquisitions and "AVAILABLE" or (dbStatus ~= "AVAILABLE" and dbStatus or "UNAVAILABLE") },
+    vaultConflicts = { status = dbStatus == "AVAILABLE" and type(vaultConflicts) == "table" and "AVAILABLE" or (dbStatus ~= "AVAILABLE" and dbStatus or "UNAVAILABLE") },
+  }
   local anomalies = {}
-  for id, transaction in pairs(db.ledger and db.ledger.transactions or {}) do
-    if type(transaction) == "table" and transaction.seasonId and not seasons[transaction.seasonId] then
-      anomalies[#anomalies + 1] = { id = "ledger-season-" .. tostring(id), category = "INVALID_SEASON_REFERENCE", recordId = tostring(id), seasonId = transaction.seasonId, action = "REVIEW_REQUIRED" }
+  local function addAnomaly(category, sourceId, action, detail)
+    local detailKey = "HEALTH_REVIEW_DETAIL_" .. tostring(category)
+    anomalies[#anomalies + 1] = {
+      id = category .. ":" .. tostring(sourceId),
+      category = category,
+      status = "REVIEW_REQUIRED",
+      action = action,
+      detail = (Dibs.L and Dibs.L[detailKey]) or detail,
+    }
+  end
+  local function sortedKeys(map)
+    local keys = {}
+    for key in pairs(map or {}) do keys[#keys + 1] = key end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    return keys
+  end
+  if transactions and seasons then
+    for _, id in ipairs(sortedKeys(transactions)) do
+      local transaction = transactions[id]
+      if type(transaction) == "table" and transaction.seasonId and not seasons[transaction.seasonId] then
+        addAnomaly("INVALID_SEASON_REFERENCE", id, "INVESTIGATE",
+          "A ledger entry references a season that is not present.")
+      end
     end
   end
-  for index, acquisition in ipairs(db.preDibs and db.preDibs.acquisitions or {}) do
-    if type(acquisition) ~= "table" or not acquisition.acquisitionId then
-      anomalies[#anomalies + 1] = { id = "vault-identity-" .. tostring(index), category = "INCOMPLETE_ACQUISITION", recordId = tostring(index), action = "REVIEW_REQUIRED" }
+  local acquisitionIds = {}
+  if acquisitions then
+    for _, index in ipairs(sortedKeys(acquisitions)) do
+      local acquisition = acquisitions[index]
+      local acquisitionId = type(acquisition) == "table" and tostring(acquisition.acquisitionId or "") or ""
+      local itemID = type(acquisition) == "table" and tonumber(acquisition.itemID) or nil
+      local incomplete = type(acquisition) ~= "table" or acquisitionId == ""
+        or tostring(acquisition.playerName or "") == "" or not itemID or itemID <= 0
+      if acquisitionId ~= "" then
+        acquisitionIds[acquisitionId] = (acquisitionIds[acquisitionId] or 0) + 1
+      end
+      if incomplete then
+        addAnomaly("INCOMPLETE_ACQUISITION", index, "OPEN_VAULT_REVIEW",
+          "A Great Vault acquisition is missing required identity or item information.")
+      else
+        local verificationState = tostring(acquisition.verificationState or "")
+        if verificationState == "UNVERIFIED" or verificationState == "MANUAL_RECORDED"
+          or verificationState == "LEGACY_RECORDED" then
+          addAnomaly("ACQUISITION_REVIEW_REQUIRED", acquisitionId, "OPEN_VAULT_REVIEW",
+            "A Great Vault acquisition requires verification review.")
+        end
+      end
+    end
+    for _, acquisitionId in ipairs(sortedKeys(acquisitionIds)) do
+      if acquisitionIds[acquisitionId] > 1 then
+        addAnomaly("DUPLICATE_ACQUISITION", acquisitionId, "OPEN_VAULT_REVIEW",
+          "Multiple Great Vault acquisitions share the same acquisition identity.")
+      end
     end
   end
-  table.sort(anomalies, function(a, b) return a.id < b.id end)
-  return { status = #anomalies == 0 and "HEALTHY" or "REVIEW_REQUIRED", anomalies = anomalies, count = #anomalies }
+  if vaultConflicts then
+    for _, index in ipairs(sortedKeys(vaultConflicts)) do
+      local conflict = vaultConflicts[index]
+      if type(conflict) == "table" and conflict.status == "REVIEW_REQUIRED" then
+        addAnomaly("VAULT_CONFLICT", conflict.conflictId or index, "OPEN_VAULT_REVIEW",
+          "A Great Vault synchronization conflict requires Officer review.")
+      end
+    end
+  end
+  table.sort(anomalies, function(a, b)
+    if a.category ~= b.category then return a.category < b.category end
+    return a.id < b.id
+  end)
+  local unavailable = false
+  for _, source in pairs(sources) do
+    if source.status ~= "AVAILABLE" then unavailable = true; break end
+  end
+  local status = unavailable and "UNAVAILABLE" or (#anomalies == 0 and "HEALTHY" or "REVIEW_REQUIRED")
+  return { status = status, anomalies = anomalies, count = #anomalies, sources = sources }
 end
 
-function HealthUI.BuildCorrectionPreview(anomalyId, options)
-  local result = HealthUI.ScanAnomalies(options)
-  if result.status == "DENIED" then return result end
+function HealthUI.BuildCorrectionPreview(anomalyId)
+  local allowed, role = isAdmin()
+  if not allowed then
+    return { status = "DENIED", role = role, mutation = "NONE" }
+  end
+  local result = HealthUI.ScanAnomalies()
+  if result.status == "DENIED" then return { status = "DENIED", role = result.role, mutation = "NONE" } end
   for _, anomaly in ipairs(result.anomalies) do
     if anomaly.id == anomalyId then
-      return { status = "PREVIEW", anomaly = anomaly, backupRequired = true, mutation = "NONE", reason = "Append-only data requires an explicit Officer decision before correction." }
+      return {
+        status = "PREVIEW",
+        finding = {
+          id = anomaly.id,
+          category = anomaly.category,
+          status = anomaly.status,
+          action = anomaly.action,
+          detail = anomaly.detail,
+        },
+        nextAction = anomaly.action,
+        mutation = "NONE",
+      }
     end
+  end
+  if result.status == "UNAVAILABLE" then
+    return { status = "UNAVAILABLE", mutation = "NONE", reason = "FINDINGS_SOURCE_UNAVAILABLE" }
   end
   return { status = "NOT_FOUND", anomalyId = anomalyId }
 end
@@ -170,9 +283,37 @@ function HealthUI.ExportAnomalies(options)
   if report.status == "DENIED" then return nil, "GUILD_ADMIN_REQUIRED" end
   local encoder = Dibs.ImportExport and Dibs.ImportExport.Encode
   if type(encoder) ~= "function" then return nil, "ENCODER_UNAVAILABLE" end
-  local encoded, reason = encoder({ format = "DIBS_DATA_HEALTH", version = 1, createdAt = time(), anomalies = report.anomalies })
+  local categoryCounts, categoryKeys, sourceStatuses = {}, {}, {}
+  for _, anomaly in ipairs(report.anomalies or {}) do
+    categoryCounts[anomaly.category] = (categoryCounts[anomaly.category] or 0) + 1
+  end
+  for category in pairs(categoryCounts) do categoryKeys[#categoryKeys + 1] = category end
+  table.sort(categoryKeys)
+  local counts = {}
+  for _, category in ipairs(categoryKeys) do
+    counts[#counts + 1] = { category = category, count = categoryCounts[category] }
+  end
+  for source, value in pairs(report.sources or {}) do
+    sourceStatuses[#sourceStatuses + 1] = { source = source, status = value.status }
+  end
+  table.sort(sourceStatuses, function(a, b) return a.source < b.source end)
+  local db = safeCall(Dibs.GetDB) or {}
+  local anonymousReport = {
+    format = "DIBS_DATA_HEALTH",
+    version = 1,
+    createdAt = time(),
+    addonVersion = tostring(Dibs.VERSION or "unknown"),
+    schemaVersion = tonumber(db.version),
+    scanStatus = report.status,
+    sourceStatuses = sourceStatuses,
+    totalCount = tonumber(report.count) or 0,
+    categoryCounts = counts,
+    identityIncluded = false,
+    executableTransactionsIncluded = false,
+  }
+  local encoded, reason = encoder(anonymousReport)
   if not encoded then return nil, reason end
-  return HealthUI.ANOMALY_EXPORT_PREFIX .. encoded:sub(#Dibs.ImportExport.PACKAGE_PREFIX + 1), report
+  return HealthUI.ANOMALY_EXPORT_PREFIX .. encoded:sub(#Dibs.ImportExport.PACKAGE_PREFIX + 1), anonymousReport
 end
 
 HealthUI.GetReport = HealthUI.Evaluate

@@ -61,10 +61,11 @@ and explicit sync probes. These exceptions preserve the existing ownership or
 recipient checks; they do not carry shared revision state.
 
 Before queuing a V2 `WHISPER`, the transport resolves the target against the
-current guild roster and sends the full `Name-Realm` address, with realm spaces
-removed. Short names are accepted only when unambiguous; unknown or ambiguous
-targets return an explicit identity error without sending. Display names and
-persisted member keys are not rewritten by this transport normalization.
+current guild roster, verifies the roster reports the member online, and sends
+the full `Name-Realm` address, with realm spaces removed. Short names are
+accepted only when unambiguous; unknown, ambiguous, or offline targets return
+an explicit error without sending. Display names and persisted member keys are
+not rewritten by this transport normalization.
 This applies to every private transfer frame, response, saved Vault retry, and
 older-peer fallback. Detail transfers preserve the exact send failure reason
 and stop at the first rejected frame rather than reporting every failure as

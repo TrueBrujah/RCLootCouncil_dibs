@@ -250,6 +250,29 @@ Use **RC History** for historical RCLootCouncil evidence:
 RCLootCouncil is an optional evidence provider, not the Dibs ledger authority.
 History is never rewritten, and confirmed transfers are idempotent.
 
+### Searching existing history
+
+Use the search and filter controls on the existing Officer ledger, Pre-Dib,
+Great Vault, and RCLootCouncil history views to narrow records by player,
+item, recorded raid/boss details, date, status, and source where those fields
+are available. Enter dates as `YYYY-MM-DD`; date bounds are inclusive.
+Missing metadata does not match placeholder text. Clearing one filter
+preserves the others, while clearing all filters restores that page's default
+scope. Search is read-only; it does not change balances, requests, Vault
+records, or historical RCLootCouncil evidence. Existing Officer authorization
+and privacy boundaries continue to apply.
+
+### Player activity statistics
+
+Open **Officer > Statistics** and enter optional `YYYY-MM-DD` start and end
+dates. Bounds are inclusive; leave both empty for the full selected season.
+The table shows descriptive per-player ledger transaction, award, Dibs granted,
+Dibs used, and correction counts. It is read-only and does not change the
+ledger or consume Dibs. It is not a fairness score or a ranking of loot
+distribution, and it does not count loot that is outside Dibs ledger records.
+If undated transactions are excluded by a date filter, the page marks affected
+coverage as partial.
+
 ## Multi-raid synchronization and recovery
 
 Guild Configuration (Officer > System > Guild Configuration) is the normal way to initialize
@@ -311,6 +334,23 @@ A cancelled preview must not change settings, balances, profiles, or history.
 
 Use the dispute center for wrong debit, missing debit, duplicate, wrong item or
 player, eligibility, and integration reports. Do not directly edit stored data.
+
+### Data health review
+
+Open **Officer > Diagnostics** to review guild-scoped invalid season references,
+incomplete or duplicate Great Vault acquisitions, acquisitions requiring
+verification, and unresolved Vault conflicts. Previews are read-only; use the
+existing **Vault Review** workflow for decisions that require an audited reason.
+Other findings remain investigation-only.
+
+The **Export health report** contains only scan status, source availability,
+and category counts. It is not the anonymized audit export and does not include
+record identifiers, player names, raw evidence, or transactions.
+
+Use **Export anonymized audit** for a separate, bounded summary of recorded
+audit events and ledger transaction types. Unknown event labels are replaced
+with fixed generic values; names, actor IDs, reasons, season identifiers, and
+executable transactions are not included. Review the output before sharing it.
 
 ## Optional modules and diagnostics
 

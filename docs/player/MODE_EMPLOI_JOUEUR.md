@@ -33,14 +33,18 @@ Commandes principales :
 /dibs balance     Affiche votre solde
 /dibs requests    Affiche vos demandes Pre-Dibs
 /dibs vault <itemID> [difficulte]  Enregistre manuellement un objet du Grand Coffre
+/dibs minimap show|hide  Affiche ou masque l'icone Dibs sur la mini-carte
 /dibs help        Affiche l'aide des commandes
 ```
 
 Vous pouvez aussi utiliser `/dibs options`, puis les boutons de lancement des fenetres Joueur et Demandes.
 
-Apres la connexion, l'icone Dibs a cote de la mini-carte ouvre la vue
-appropriee. Elle ne donne aucun droit d'Officer ou de GM : c'est seulement un
-raccourci.
+Apres la connexion, le clic gauche sur l'icone Dibs ouvre/ferme la vue Officer
+si autorise, sinon la vue Joueur. Le clic droit ouvre/ferme la vue Joueur.
+Elle ne donne aucun droit d'Officer ou de GM : c'est seulement un
+raccourci. Vous pouvez aussi l'afficher ou la masquer dans **Joueur >
+Preferences**. Ce choix est enregistre pour le personnage et l'icone est
+affichee par defaut.
 
 ## Installation et premier lancement
 
@@ -102,6 +106,16 @@ Dans la fenetre Joueur, verifiez :
 - vos demandes Pre-Dibs actives ;
 - l'etat de l'integration RCLootCouncil, si elle est utilisee.
 
+Utilisez la recherche et les filtres de l'historique pour retrouver les objets,
+les details de rencontre enregistres, la source, le statut et les dates.
+Saisissez les dates au format `YYYY-MM-DD`; les dates de debut et de fin sont
+inclusives. La recherche ne porte que sur les metadonnees presentes dans
+l'enregistrement : un ancien enregistrement sans raid ni boss ne correspondra
+pas a une valeur de remplacement. Effacer un filtre conserve les autres; tout
+effacer restaure le perimetre initial de la page. La recherche est en lecture
+seule et n'expose ni les donnees d'autres joueurs ni les preuves privees des
+Officers.
+
 ### Raids Indépendants et PUGs
 
 Si vous participez à un raid indépendant mené par un Master Looter avec Dibs :
@@ -144,6 +158,17 @@ La fenetre Joueur affiche les acquisitions du Grand Coffre avec l'objet, la
 source, la semaine de reset, l'etat de verification, l'explication
 d'eligibilite et l'etat de synchronisation. Ouvrir le coffre ou regarder un
 choix ne constitue pas une acquisition confirmee.
+La detection automatique exige le choix effectivement reclame, la reception
+du meme objet par votre personnage et la fin de disponibilite des recompenses.
+Elle doit etre active avant le retrait; elle ne reconstruit pas les retraits
+passes a partir du chat ou du contenu des sacs. Si une de ces preuves manque,
+utilisez le secours manuel ci-dessous. La validation sur client Retail reste
+en attente.
+Les filtres de l'historique du Grand Coffre portent sur l'objet, la source, le
+statut et les dates enregistres. Les dates `YYYY-MM-DD` sont inclusives. Une
+metadonnee absente ne correspond pas a une valeur de remplacement; effacer un
+filtre conserve les autres. Les resultats restent limites a votre perimetre de
+guilde/personnage et n'incluent pas les preuves privees des Officers.
 
 Si le client Retail ne fournit pas de signal fiable, utilisez :
 
@@ -152,6 +177,17 @@ Si le client Retail ne fournit pas de signal fiable, utilisez :
 ```
 
 L'enregistrement manuel reste `MANUAL_RECORDED` jusqu'a la revue d'un Officer.
+Pour conserver la variante exacte, tapez `/dibs vault `, faites Maj-clic sur
+l'objet dans vos sacs ou votre equipement pour inserer son lien complet,
+puis ajoutez eventuellement ` Mythic`, ` Heroic` ou ` Normal`.
+Une saisie par identifiant seul charge le nom mais ne retrouve pas la variante
+acquise. Si une seule variante de cet ID est equipee ou dans les sacs, un
+**apercu possede** affiche son infobulle sans modifier l'enregistrement ni prouver
+son origine Grand Coffre. Plusieurs variantes differentes laissent la variante
+exacte indisponible. Ressaisir la commande ne remplace pas une acquisition existante.
+Pour invalider une saisie erronee, un Officer peut la rejeter dans Vault Review
+avec une raison. L'entree et la trace de revue sont conservees; il ne s'agit
+pas d'une suppression definitive ni d'une annulation libre par le joueur.
 Une acquisition du Grand Coffre est une preuve d'eligibilite et ne depense
 jamais de Dib. L'historique est propre a la guilde actuelle, ou au personnage
 lorsqu'il est sans guilde.

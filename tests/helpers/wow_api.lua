@@ -10,6 +10,7 @@ local guildLeader = true
 local inCombat = false
 local guildMembers = { "Tester-Realm" }
 local guildRankIndices = {}
+local guildOnline = {}
 local inRaid = false
 local raidLeader = false
 local raidAssistant = false
@@ -126,6 +127,7 @@ function M.install(opts)
   inCombat = opts.inCombat == true
   guildMembers = opts.guildMembers or { currentPlayerName }
   guildRankIndices = opts.guildRankIndices or {}
+  guildOnline = opts.guildOnline or {}
   inRaid = opts.inRaid == true
   raidLeader = opts.raidLeader == true
   raidAssistant = opts.raidAssistant == true
@@ -201,7 +203,10 @@ function M.install(opts)
     local rankIndex = guildRankIndices[index]
     if rankIndex == nil then rankIndex = index == 1 and 0 or 3 end
     local rankName = rankIndex == 0 and "Guild Master" or (rankIndex <= 1 and "Officer" or "Member")
-    return memberName, rankName, rankIndex
+    local online = guildOnline[index]
+    if online == nil then online = guildOnline[memberName] end
+    if online == nil then online = true end
+    return memberName, rankName, rankIndex, nil, nil, nil, nil, nil, online
   end
 
   _G.CreateFrame = function(kind, name, parent, template)
@@ -362,6 +367,8 @@ function M.resetGlobals()
   _G.C_Item = nil
   _G.C_Timer = nil
   _G.C_EncounterJournal = nil
+  _G.C_WeeklyRewards = nil
+  _G.C_DateAndTime = nil
   _G.__dibsMessages = nil
   _G.__sentChatMessages = nil
   _G.__sentAddonMessages = nil
@@ -487,6 +494,7 @@ function M.setGuildRoster(members, rankIndices, options)
   options = options or {}
   guildMembers = members or {}
   guildRankIndices = rankIndices or {}
+  guildOnline = options.guildOnline or {}
   if options.guildLeader ~= nil then guildLeader = options.guildLeader == true end
   if _G.Dibs and _G.Dibs.Identity and _G.Dibs.Identity.OnRosterChanged then
     _G.Dibs.Identity.OnRosterChanged()

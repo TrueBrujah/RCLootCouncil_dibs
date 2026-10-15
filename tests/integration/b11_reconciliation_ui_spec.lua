@@ -7,6 +7,15 @@ local function setup(history, wow)
 end
 
 describe("B11f reconciliation UI", function()
+  local originalTime
+
+  after_each(function()
+    if originalTime then
+      _G.time = originalTime
+      originalTime = nil
+    end
+  end)
+
   it("projects a guided search summary and bounded candidate review", function()
     local _, dibs = setup({
       ["Tester-Realm"] = {
@@ -34,6 +43,72 @@ describe("B11f reconciliation UI", function()
     assert_equal("DIB", detail.view.response)
     assert_not_nil(detail.view.technical)
     assert_equal("history:dib-1", detail.view.technical.historyRef)
+  end)
+
+  it("filters RCLootCouncil preview rows by recorded item, winner, encounter, source, and inclusive date", function()
+    originalTime = _G.time
+    _G.time = function(value) return os.time(value) end
+    local matchTime = time({ year = 2026, month = 4, day = 12, hour = 12 })
+    local otherDay = time({ year = 2026, month = 4, day = 13, hour = 12 })
+    local historyDB = {
+      ["Tester-Realm"] = {
+        {
+          id = "matching-award", playerName = "Tester-Realm", itemID = 19019,
+          itemName = "Midnight Blade", lootWon = "item:19019", response = "DIB",
+          status = "awarded", timestamp = matchTime, instanceName = "Nerub-ar Palace",
+          encounterName = "Sarkareth", source = "Guild Archive",
+        },
+        {
+          id = "different-boss", playerName = "Tester-Realm", itemID = 19019,
+          itemName = "Midnight Blade", lootWon = "item:19019", response = "DIB",
+          status = "awarded", timestamp = matchTime, instanceName = "Nerub-ar Palace",
+          encounterName = "Another Boss", source = "Guild Archive",
+        },
+        {
+          id = "outside-date", playerName = "Tester-Realm", itemID = 19019,
+          itemName = "Midnight Blade", lootWon = "item:19019", response = "DIB",
+          status = "awarded", timestamp = otherDay, instanceName = "Nerub-ar Palace",
+          encounterName = "Sarkareth", source = "Guild Archive",
+        },
+        {
+          id = "missing-date", playerName = "Tester-Realm", itemID = 19019,
+          itemName = "Midnight Blade", lootWon = "item:19019", response = "DIB",
+          status = "awarded", instanceName = "Nerub-ar Palace",
+          encounterName = "Sarkareth", source = "Guild Archive",
+        },
+        {
+          id = "missing-source", playerName = "Tester-Realm", itemID = 19019,
+          itemName = "Midnight Blade", lootWon = "item:19019", response = "DIB",
+          status = "awarded", timestamp = matchTime, instanceName = "Nerub-ar Palace",
+          encounterName = "Sarkareth",
+        },
+      },
+    }
+    local _, dibs = setup(historyDB)
+    _G.time = function(value) return os.time(value) end
+    local search = dibs.LogsUI.SearchHistory({
+      seasonId = dibs.GetCurrentSeasonId(), aliases = { "DIB" }, limit = 20,
+      query = "Midnight", playerName = "Tester", item = "19019",
+      raid = "Nerub-ar", boss = "Sarkareth", status = "awarded",
+      source = "Guild Archive", fromDate = "2026-04-12", toDate = "2026-04-12",
+    })
+    assert_true(search.ok)
+    assert_equal(1, #search.candidates)
+    assert_equal("history:matching-award", search.candidates[1].candidateId)
+    assert_equal(1, search.summary.rowsScanned)
+    assert_equal("DIB", historyDB["Tester-Realm"][1].response)
+
+    local missingSource = dibs.LogsUI.SearchHistory({
+      seasonId = dibs.GetCurrentSeasonId(), aliases = { "DIB" }, source = "RCLootCouncil", limit = 20,
+    })
+    assert_true(missingSource.ok)
+    assert_equal(0, #missingSource.candidates)
+
+    local invalidDate = dibs.LogsUI.SearchHistory({
+      seasonId = dibs.GetCurrentSeasonId(), aliases = { "DIB" }, fromDate = "2026-02-30",
+    })
+    assert_false(invalidDate.ok)
+    assert_equal("HISTORY_INVALID_FROM_DATE", invalidDate.reasonCode)
   end)
 
   it("keeps ambiguous evidence blocked and unavailable states readable", function()

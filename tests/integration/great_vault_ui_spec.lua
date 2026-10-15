@@ -2,6 +2,117 @@ local loader = require("helpers.load_addon")
 local uiMocks = require("helpers.b11_ui_mocks")
 
 describe("Great Vault UI acceptance", function()
+  it("resolves ID-only names without presenting the base variant as the acquired item", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local record = dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 275658)
+    local captured
+    local original = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+      captured = rows
+      return original(shell, parent, columns, rows, height, actions, options)
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("vault")
+    assert_nil(captured[1][2]:find("|Hitem:", 1, true))
+    assert_true(captured[1][2]:find("Primeval Skyfriend", 1, true) ~= nil)
+    assert_true(captured[1].tooltip:find(dibs.L.PLAYER_VAULT_VARIANT_UNKNOWN, 1, true) ~= nil)
+    assert_nil(record.itemLink)
+    assert_nil(record.itemName)
+    assert_equal("MANUAL_RECORDED", record.verificationState)
+  end)
+
+  it("previews an unambiguous owned variant without rewriting saved evidence", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local record = dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 159459)
+    local link = "|cffa335ee|Hitem:159459::::::::90:577::35:3:123:456:789::::::|h[Ritual Binder's Ring]|h|r"
+    local previous = _G.GetInventoryItemLink
+    _G.GetInventoryItemLink = function(_, slot) if slot == 11 then return link end end
+    local captured
+    local original = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+      captured = rows
+      return original(shell, parent, columns, rows, height, actions, options)
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("vault")
+    assert_true(captured[1][2]:find(link, 1, true) ~= nil)
+    assert_true(captured[1][4]:find(dibs.L.PLAYER_VAULT_PREVIEW_LABEL, 1, true) ~= nil)
+    assert_nil(record.itemLink)
+    assert_equal("MANUAL_RECORDED", record.verificationState)
+    _G.GetInventoryItemLink = function(_, slot)
+      if slot == 11 then return link end
+      if slot == 12 then return link:gsub(":123:", ":987:") end
+    end
+    frame:Refresh()
+    assert_nil(captured[1][2]:find("|Hitem:", 1, true))
+    _G.GetInventoryItemLink = previous
+  end)
+
+  it("previews carried variants and never replaces a recorded exact link", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 159459)
+    local link = "|cffa335ee|Hitem:159459::::::::90:577::35:3:123:456:789::::::|h[Ritual Binder's Ring]|h|r"
+    local exactLink = "|cffa335ee|Hitem:275658::::::::90:577::35:1:987::::::|h[Recorded variant]|h|r"
+    dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 275658, nil, { itemLink = exactLink })
+    local previous = _G.C_Container
+    _G.C_Container = {
+      GetContainerNumSlots = function(bag) return bag == 0 and 2 or 0 end,
+      GetContainerItemLink = function(_, slot)
+        return slot == 1 and link or exactLink:gsub(":987:", ":654:")
+      end,
+    }
+    local captured
+    local original = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+      captured = rows
+      return original(shell, parent, columns, rows, height, actions, options)
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("vault")
+    local foundPreview, foundExact = false, false
+    for _, row in ipairs(captured) do
+      if row[2] == link then foundPreview = true end
+      if row[2] == exactLink then
+        foundExact = true
+        assert_nil(row[4]:find(dibs.L.PLAYER_VAULT_PREVIEW_LABEL, 1, true))
+      end
+    end
+    assert_true(foundPreview and foundExact)
+    _G.C_Container = previous
+  end)
+
+  it("refreshes asynchronously loaded item details and retains an exact recorded variant", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 159459)
+    local exactLink = "|cffa335ee|Hitem:12345:999:::::::::::|h[Exact variant]|h|r"
+    dibs.PreDibs.RecordVaultAcquisition(dibs.GetPlayerName(), 12345, nil, { itemLink = exactLink })
+    local finish, calls = nil, 0
+    dibs.LootPipeline.ResolveItem = function(_, callback)
+      calls = calls + 1
+      finish = callback
+      return true
+    end
+    local captured
+    local original = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+      captured = rows
+      return original(shell, parent, columns, rows, height, actions, options)
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("vault")
+    frame:Show()
+    frame:Refresh()
+    assert_equal(1, calls)
+    finish({ itemName = "Loaded Ring", itemLink = "|Hitem:159459|h[Loaded Ring]|h" })
+    local foundLoaded, foundExact = false, false
+    for _, row in ipairs(captured) do
+      if row[2]:find("Loaded Ring", 1, true) then foundLoaded = true end
+      if row[2] == exactLink then foundExact = true end
+    end
+    assert_true(foundLoaded and foundExact)
+    assert_equal(1, calls)
+  end)
+
   it("shows a private newest-first paginated Player Vault history without spending Dibs", function()
     local _, dibs = loader.load({ withAce3 = true })
     local records = dibs.PreDibs.GetAcquisitions()
@@ -148,7 +259,7 @@ describe("Great Vault UI acceptance", function()
 
     local empty = dibs.OfficerUI.GetPagedView("vault", nil, 1, 8, "missing")
     assert_equal(0, empty.totalCount)
-    assert_equal("No Great Vault records for this season.", empty.lines[1])
+    assert_equal(dibs.L.HISTORY_FILTER_NO_RESULTS, empty.lines[1])
   end)
 
   it("preserves responsive minimums for the Vault table window", function()

@@ -95,7 +95,7 @@ local function shortName(value)
   return string.lower(display)
 end
 
-local function rosterMember(name, rankIndex, className, classFileName)
+local function rosterMember(name, rankIndex, className, classFileName, online)
   local key, display = parseNameRealm(name)
   if not key then
     -- WoW may return an unqualified name for a same-realm roster member.
@@ -111,6 +111,7 @@ local function rosterMember(name, rankIndex, className, classFileName)
     rankIndex = rankIndex,
     className = className,
     classFileName = classFileName,
+    online = online == true or online == 1 or online == "1",
     -- This is a current-roster observation only. Governance remains GM-only in
     -- B02a; no local SavedVariables rank setting can alter this result.
     role = rankIndex == 0 and "gm" or (rankIndex and rankIndex <= 1 and "officer" or "player"),
@@ -153,9 +154,9 @@ function Identity.RefreshRoster()
 
   local members, shortNames, displayNames = {}, {}, {}
   for index = 1, tonumber(count) or 0 do
-    local success, name, _, rankIndex, _, className, _, _, _, _, _, classFileName = pcall(GetGuildRosterInfo, index)
+    local success, name, _, rankIndex, _, className, _, _, _, online, _, classFileName = pcall(GetGuildRosterInfo, index)
     if success and name then
-      local member = rosterMember(name, rankIndex, className, classFileName)
+      local member = rosterMember(name, rankIndex, className, classFileName, online)
       if member then
         members[member.memberKey] = member
         local short = string.lower(member.displayName:match("^([^%-]+)"))
@@ -219,6 +220,7 @@ function Identity.ResolveRosterMember(value)
       rankIndex = member.rankIndex,
       className = member.className,
       classFileName = member.classFileName,
+      online = member.online,
       role = member.role,
       rosterGeneration = state.generation,
     }
@@ -237,6 +239,7 @@ function Identity.ResolveRosterMember(value)
     rankIndex = member.rankIndex,
     className = member.className,
     classFileName = member.classFileName,
+    online = member.online,
     role = member.role,
     rosterGeneration = state.generation,
   }

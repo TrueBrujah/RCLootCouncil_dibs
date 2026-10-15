@@ -309,6 +309,30 @@ La page **RC History** sert a examiner d'anciens gains RCLootCouncil :
 
 La confirmation est idempotente : rejouer la meme operation ne cree pas un second debit.
 
+### Recherche dans les historiques
+
+Les controles de recherche et de filtre des pages Officer existantes
+(historique du ledger, Pre-Dibs, Grand Coffre et RCLootCouncil) permettent de
+retrouver les enregistrements par joueur, objet, details raid/boss disponibles,
+date, statut et source lorsque ces champs existent. Saisissez les dates au
+format `YYYY-MM-DD`; les bornes sont inclusives. Une metadonnee absente ne
+correspond pas a un texte de remplacement. Effacer un filtre conserve les
+autres; tout effacer restaure le perimetre initial de la page. La recherche
+est en lecture seule et ne modifie ni les soldes, ni les demandes, ni les
+acquisitions du Grand Coffre, ni les preuves RCLootCouncil. Les autorisations
+Officer et les limites de confidentialite existantes restent appliquees.
+
+### Statistiques d'activite par joueur
+
+Ouvrez **Officer > Statistiques** et saisissez au besoin des dates `YYYY-MM-DD`.
+Les bornes sont inclusives; laissez-les vides pour toute la saison selectionnee.
+Le tableau presente des comptes descriptifs par joueur : transactions du
+registre, attributions, Dibs accordes/utilises et corrections. La vue est en
+lecture seule; elle ne modifie pas le registre et ne consomme pas de Dibs. Ce
+n'est ni un score ni un classement de l'equite du butin et les loots hors du
+registre Dibs ne sont pas comptes. Si des transactions sans date sont exclues
+par le filtre, la couverture des joueurs concernes est indiquee comme partielle.
+
 ## 10. Sauvegardes, profils et import/export
 
 Dans **Data** :
@@ -377,6 +401,28 @@ Le GM peut desactiver un module dans **System > Modules**.
 - Les services de securite centraux restent actifs.
 
 ## 13. Depannage, diagnostics et release checks
+
+Dans **Officer > Diagnostics**, le centre de sante liste les references de
+saison invalides, les acquisitions Great Vault incompletes ou en double, les
+acquisitions a verifier et les conflits Vault. Les apercus ne modifient pas les
+donnees; les decisions Vault passent par la revue auditee existante.
+
+**Exporter le rapport de sante** ne partage que le statut, la disponibilite des
+sources et les compteurs d'anomalies. **Exporter l'audit anonymise** est un
+rapport distinct et borne; il exclut les noms, identifiants d'acteur, raisons,
+identifiants de saison et transactions executables. Verifiez le texte avant de
+le partager.
+
+Dans **Officer > Diagnostics**, le centre de sante liste les references de
+saison invalides, les acquisitions Great Vault incompletes ou en double, les
+acquisitions a verifier et les conflits Vault. Les apercus ne modifient pas les
+donnees; les decisions Vault passent par la revue auditee existante.
+
+**Exporter le rapport de sante** ne partage que le statut, la disponibilite des
+sources et les compteurs d'anomalies. **Exporter l'audit anonymise** est un
+rapport distinct et borne; il exclut les noms, identifiants d'acteur, raisons,
+identifiants de saison et transactions executables. Verifiez le texte avant de
+le partager.
 
 Utilisez :
 

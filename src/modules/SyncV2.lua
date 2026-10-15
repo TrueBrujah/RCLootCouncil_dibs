@@ -463,7 +463,7 @@ function Sync.GetPeerStatuses(rosterScope)
     local okCount, memberCount = pcall(GetNumGuildMembers, true)
     if not okCount then return rows end
     for index = 1, tonumber(memberCount) or 0 do
-      local ok, name, _, rankIndex, _, _, _, online = pcall(GetGuildRosterInfo, index)
+      local ok, name, _, rankIndex, _, _, _, _, _, online = pcall(GetGuildRosterInfo, index)
       if ok and type(name) == "string" and name ~= "" then
         roster[#roster + 1] = { name = name, online = online == true or online == 1 or online == "1", rankIndex = rankIndex }
       end
@@ -754,6 +754,7 @@ function Sync.Send(message, channel, target)
     if not targetName or targetName == "" or #target > 96 then return false, "INVALID_WHISPER_TARGET" end
     local recipient, targetReason = member(targetName)
     if not recipient then return false, targetReason end
+    if recipient.online ~= true then return false, "WHISPER_TARGET_OFFLINE" end
     -- Display realms may contain spaces; addon whispers require a qualified wire name.
     target = recipient.displayName:gsub("%s+", "")
   end

@@ -52,6 +52,7 @@ local TOC_FILES = {
   "ui/HealthUI.lua",
   "ui/DeveloperUI.lua",
   "ui/DebugLogsUI.lua",
+  "ui/HistoryFilters.lua",
   "ui/LogsUI.lua",
   "ui/DataUI.lua",
   "ui/PlayerUI.lua",

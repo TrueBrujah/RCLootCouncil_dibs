@@ -1,7 +1,16 @@
 # Changelog
 
-## 0.8.6-dev - Unreleased
+## 0.8.7-dev - Unreleased
 
+- (2026-10-14) Toggle Player/Officer windows from the minimap shortcut instead of always forcing them open; retain permission-based left-click routing and the personal right-click view.
+- (2026-10-14) Preserve full shift-clicked item links in manual Vault commands, including names with spaces and variant bonuses. Resolve ID-only history names without showing a misleading base-item tooltip; offer a labeled, display-only preview when exactly one variant is currently equipped or carried. Saved acquisition evidence remains unchanged.
+- (2026-10-14) Wire Retail Great Vault claim observation to the acquisition service: correlate the selected reward with a local loot receipt and completed reward availability state. Ignore previews, other players, unrelated items, expired observations, context changes, and Developer Mode; retain manual fallback when evidence is unavailable. Real-client validation remains pending.
+- Prevent targeted sync whispers from being queued to offline guild members, and read the correct roster online-status field; this avoids repeated Blizzard "No player named … is currently playing" errors.
+- (2026-10-14) Add an Officer data-health review section with guild-scoped anomaly findings, read-only previews, routing to the existing audited Vault review, and a bounded aggregate health report. Scans do not mutate or synchronize source data; live Retail validation remains pending.
+- (2026-10-14) Integrate a separate Officer-only anonymous audit export with fixed-value filtering for event labels, bounded events, aggregate transaction types, and a non-importable prefix. The copyable report omits player and actor identities, reasons, season identifiers, and executable transactions.
+- (2026-10-14) Add Officer statistics by player and inclusive date range for ledger activity, awards, Dibs granted/used, and corrections. The view is read-only and descriptive; it does not score or rank loot fairness.
+- (2026-10-14) Add a per-character minimap icon visibility preference in the Player UI and `/dibs minimap show|hide` commands; the icon remains visible by default.
+- (2026-10-14) Add consistent search, inclusive date filters, sorting, and pagination to existing Player and Officer Dibs, Pre-Dib, Great Vault, and RCLootCouncil history views. Searches remain read-only, preserve each view's scope and authorization, and match only metadata present in the record.
 - (2026-10-14) Group `/dibs help` output by usage and localize it in English and French to improve command discovery; command execution and permissions remain unchanged.
 - (2026-10-14) Add a dedicated Player Great Vault history page with newest-first pagination, item, date, difficulty, verification status, and player-safe source/reset/sync tooltips. Show all recorded seasons in the current guild scope, with explicit empty and unavailable states and manual-recording guidance. No migration, accounting, eligibility, or synchronization changes.
 

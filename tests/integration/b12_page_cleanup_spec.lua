@@ -26,8 +26,9 @@ describe("B12b targeted page cleanup", function()
     local originalLedger = dibs.OfficerUI.BuildLedgerDetails
     local originalPreDibs = dibs.OfficerUI.BuildPreDibDetails
     local originalVault = dibs.OfficerUI.BuildVaultAcquisitionReview
-    dibs.OfficerUI.BuildLedgerDetails = function()
-      return { actions = { "Player-1 / Item 1", "Player-1 / Item 2", "Player-1 / Item 3" }, players = {}, hiddenTransactionCount = 0 }
+    dibs.OfficerUI.BuildLedgerDetails = function(_, criteria)
+      assert_equal("item", criteria.query)
+      return { actions = { "Player-1 / Item 2" }, players = {}, hiddenTransactionCount = 0 }
     end
     dibs.OfficerUI.BuildPreDibDetails = function()
       return { requests = {}, hiddenRequestCount = 0 }
@@ -40,8 +41,8 @@ describe("B12b targeted page cleanup", function()
     assert_equal("Actions", page.title)
     assert_equal(1, #page.lines)
     assert_equal("Player-1 / Item 2", page.lines[1])
-    assert_equal(3, page.totalCount)
-    assert_equal(3, page.totalPages)
+    assert_equal(1, page.totalCount)
+    assert_equal(1, page.totalPages)
 
     local ready = dibs.Midnight.GetStatusPresentation("ready")
     local warning = dibs.Midnight.GetStatePresentation("SYNC_BEHIND")

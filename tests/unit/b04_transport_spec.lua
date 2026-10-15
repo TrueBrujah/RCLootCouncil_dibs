@@ -81,6 +81,47 @@ describe("B04 V2 transport", function()
     assert_equal("Officer-OtherRealm", dibs.Ace3.libs.comm.sent[#dibs.Ace3.libs.comm.sent].target)
   end)
 
+  it("rejects offline whisper targets before queuing private sync traffic", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Zata-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 3 },
+      guildOnline = { [2] = false },
+    } })
+    local sentBefore = #dibs.Ace3.libs.comm.sent
+    local sent, reason = dibs.Sync.Send({ type = "SYNC_PROBE", requestId = "offline-target" }, "WHISPER", "Zata")
+    assert_false(sent)
+    assert_equal("WHISPER_TARGET_OFFLINE", reason)
+    assert_equal(sentBefore, #dibs.Ace3.libs.comm.sent)
+  end)
+
+  it("leaves automatic Vault retries pending without whispering an offline member", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = {
+      guildMembers = { "Tester-Realm", "Owner-OtherRealm" },
+      guildRankIndices = { [1] = 0, [2] = 3 },
+      guildOnline = { [2] = false },
+    } })
+    dibs.Sync.GetProtocolState()
+    local pending = { target = "Owner", revision = 1, contentHash = "vault-hash", attempts = 1 }
+    dibs.GetDB().sync.v2.vaultPending["saved-vault"] = pending
+    local function countWhispers()
+      local count = 0
+      for _, sent in ipairs(dibs.Ace3.libs.comm.sent) do
+        if sent.channel == "WHISPER" and sent.target == "Owner-OtherRealm" then count = count + 1 end
+      end
+      return count
+    end
+    local sentBefore = countWhispers()
+    assert_true(dibs.Sync.OnLifecycle("HEARTBEAT"))
+    assert_equal(sentBefore, countWhispers())
+    assert_equal(1, pending.attempts)
+
+    local wow = require("helpers.wow_api")
+    wow.setGuildRoster({ "Tester-Realm", "Owner-OtherRealm" }, { [1] = 0, [2] = 3 }, { guildOnline = { [2] = true } })
+    assert_true(dibs.Sync.OnLifecycle("HEARTBEAT"))
+    assert_equal(2, pending.attempts)
+    assert_true(countWhispers() > sentBefore)
+  end)
+
   it("removes realm spaces from whisper addresses without changing roster identities", function()
     local _, dibs = loader.load({ withAce3 = true, wow = {
       guildMembers = { "Tester-Realm", "Officer-Area 52" },

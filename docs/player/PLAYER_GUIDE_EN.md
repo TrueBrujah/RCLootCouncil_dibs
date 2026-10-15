@@ -28,7 +28,11 @@ _Screenshot placeholder: `docs/assets/guides/screenshots/en/player/player-overvi
 4. Ask a GM or Officer which season and loot policy are active.
 5. Run `/dibs ui` and check the season, balance, requests, and integration status.
 
-After login, the Dibs icon beside the minimap opens the appropriate Dibs view.
+After login, left-click the Dibs minimap icon to open/close the Officer view
+if authorized, otherwise the Player view. Right-click opens/closes the Player view.
+Show or hide it from **Player > Preferences**, or use `/dibs minimap show`
+and `/dibs minimap hide`. This preference is saved per character and defaults
+to shown.
 It is only a shortcut: it does not grant Officer or GM permissions.
 
 RCLootCouncil is optional. Standalone mode manages Dibs balances and requests
@@ -91,6 +95,14 @@ balance correction.
 A correction never silently deletes the original event. It appends a new,
 audited transaction linked to the original one.
 
+Use the history search and filters to narrow recorded items and encounter
+details, source, status, and dates. Enter dates as `YYYY-MM-DD`; start and end
+dates are inclusive. Search only matches metadata that the record actually
+contains, so older records without a raid or boss value will not match a
+placeholder. Clearing one filter preserves the others; clearing all filters
+restores the page's original scope. Search is read-only and does not expose
+other players' or private Officer data.
+
 ### Independent and PUG Raids
 
 If you participate in an independent raid run by a Master Looter using Dibs:
@@ -108,8 +120,17 @@ explanation. Private Officer review evidence is not displayed.
 
 The Player window can show Great Vault acquisitions with their item, source,
 weekly reset, verification state, eligibility explanation, and sync state.
-Opening the Vault or viewing a reward choice is not a completed claim. When
-Retail does not expose a reliable claim signal, use:
+Use the Great Vault history filters for recorded item/source/status/date
+details; dates use the inclusive `YYYY-MM-DD` format. Missing metadata does
+not match a placeholder, and clearing a filter preserves the others. Results
+remain limited to your current guild/character scope and never include private
+Officer evidence.
+Opening the Vault or viewing a reward choice is not a completed claim.
+Automatic detection requires the selected claim, receipt of the same item by
+your character, and the end of reward availability. Dibs must be active before
+the claim; it does not reconstruct past claims from chat or bag contents.
+Real-client validation remains pending. When Retail does not expose all the
+required evidence, use:
 
 ```text
 /dibs vault <itemID> [difficulty]
@@ -118,6 +139,17 @@ Retail does not expose a reliable claim signal, use:
 Manual records are marked `MANUAL_RECORDED` until an authorized Officer reviews
 them. Vault records are evidence only and never spend, grant, or change a Dib.
 History is scoped to the current guild, or to the character while unguilded.
+For an exact variant, type `/dibs vault `, shift-click the item in your bags or
+equipment to insert its full link, then optionally append ` Mythic`, ` Heroic`,
+or ` Normal`. The full link preserves the item's level and bonus information.
+An ID-only entry loads its name but cannot establish the acquired variant.
+If exactly one variant with that ID is equipped or carried, an **owned preview**
+shows its tooltip without changing the saved record or proving Vault origin.
+Multiple different owned variants leave the exact variant unavailable.
+An existing acquisition is not replaced by entering the command again.
+An Officer can reject an incorrect manual entry in
+Vault Review with a reason. The record and review trail are retained; this
+is not permanent deletion or unrestricted player cancellation.
 
 ![Player Great Vault acquisition status](../assets/guides/screenshots/en/player/player-vault-history.png)
 

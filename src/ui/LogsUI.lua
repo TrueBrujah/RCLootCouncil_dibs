@@ -73,6 +73,10 @@ local function bounded(value, limit)
   return text
 end
 
+local function trimText(value)
+  return tostring(value or ""):match("^%s*(.-)%s*$")
+end
+
 local function candidateStatus(candidate)
   local classification = tostring(candidate and candidate.classification or "unsupported")
   if classification == "eligible" then
@@ -199,8 +203,74 @@ function Dibs.LogsUI.SearchHistory(criteria)
   if not Dibs.RCLootCouncil or type(Dibs.RCLootCouncil.CreateReconciliationSession) ~= "function" then
     return { ok = false, reasonCode = "HISTORY_UNAVAILABLE", availability = reconciliationAvailability() }
   end
-  local session, reason = Dibs.RCLootCouncil.CreateReconciliationSession(criteria, localActor())
+  if not Dibs.HistoryFilters or type(Dibs.HistoryFilters.FilterRecords) ~= "function" then
+    return { ok = false, reasonCode = "HISTORY_FILTER_UNAVAILABLE" }
+  end
+  local searchCriteria = {}
+  for key, value in pairs(criteria) do searchCriteria[key] = value end
+  local fromDateStart, fromDateEnd, toDateStart, toDateExclusive
+  if trimText(searchCriteria.fromDate) ~= "" then
+    local reason
+    fromDateStart, fromDateEnd, reason = Dibs.HistoryFilters.ParseDate(searchCriteria.fromDate)
+    if not fromDateStart then
+      return { ok = false, reasonCode = reason == "DATE_UNAVAILABLE" and "HISTORY_DATE_UNAVAILABLE" or "HISTORY_INVALID_FROM_DATE" }
+    end
+  end
+  if trimText(searchCriteria.toDate) ~= "" then
+    local reason
+    toDateStart, toDateExclusive, reason = Dibs.HistoryFilters.ParseDate(searchCriteria.toDate)
+    if not toDateStart then
+      return { ok = false, reasonCode = reason == "DATE_UNAVAILABLE" and "HISTORY_DATE_UNAVAILABLE" or "HISTORY_INVALID_TO_DATE" }
+    end
+  end
+  if fromDateStart and toDateExclusive and fromDateStart >= toDateExclusive then
+    return { ok = false, reasonCode = "HISTORY_INVALID_DATE_RANGE" }
+  end
+  if fromDateStart then
+    searchCriteria.fromTime = math.max(tonumber(searchCriteria.fromTime) or fromDateStart, fromDateStart)
+  end
+  if toDateExclusive then
+    local inclusiveEnd = toDateExclusive - 1
+    searchCriteria.toTime = math.min(tonumber(searchCriteria.toTime) or inclusiveEnd, inclusiveEnd)
+  end
+  if searchCriteria.fromTime and searchCriteria.toTime
+    and tonumber(searchCriteria.fromTime) > tonumber(searchCriteria.toTime) then
+    return { ok = false, reasonCode = "HISTORY_INVALID_DATE_RANGE" }
+  end
+  local filterOptions = {
+    queryFields = {
+      "itemName", "itemLink", "itemID", "playerName", "recordedSource",
+      "sourceStatus", "finalStatus", "instanceName", "encounterName",
+    },
+    fieldMap = {
+      item = { "itemName", "itemLink", "itemID" },
+      playerName = { "playerName" },
+      raid = { "instanceName" },
+      boss = { "encounterName" },
+      status = { "sourceStatus", "finalStatus" },
+      source = { "recordedSource" },
+      seasonId = { "targetSeasonId" },
+    },
+    timestampFields = { "originalAwardTime" },
+    identityFields = { "candidateId" },
+  }
+  local _, validationError = Dibs.HistoryFilters.FilterRecords({}, searchCriteria, filterOptions)
+  if validationError then
+    local reasonCodes = {
+      INVALID_FROM_DATE = "HISTORY_INVALID_FROM_DATE",
+      INVALID_TO_DATE = "HISTORY_INVALID_TO_DATE",
+      INVALID_DATE_RANGE = "HISTORY_INVALID_DATE_RANGE",
+      DATE_UNAVAILABLE = "HISTORY_DATE_UNAVAILABLE",
+    }
+    return { ok = false, reasonCode = reasonCodes[validationError] or "HISTORY_FILTER_UNAVAILABLE" }
+  end
+  local session, reason = Dibs.RCLootCouncil.CreateReconciliationSession(searchCriteria, localActor())
   if not session then return { ok = false, reasonCode = reason or "HISTORY_UNAVAILABLE", availability = reconciliationAvailability() } end
+  local candidates, filterError = Dibs.HistoryFilters.FilterRecords(session.candidates, searchCriteria, filterOptions)
+  if not candidates then
+    return { ok = false, reasonCode = filterError or "HISTORY_FILTER_UNAVAILABLE", availability = reconciliationAvailability() }
+  end
+  session.candidates = candidates
   local view = Dibs.LogsUI.BuildReconciliationView(session.sessionId)
   return { ok = true, sessionId = session.sessionId, session = session, view = view,
     stage = view.stage, summary = view.summary, candidates = view.candidates, emptyState = view.emptyState }
