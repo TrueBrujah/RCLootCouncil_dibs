@@ -233,7 +233,7 @@ Corrections, refunds, revokes, historical imports, and adjustments are
 append-only. They add linked transactions and retain actor, timestamp, reason,
 before/after values, delta, request reference, and canonical evidence.
 
-### Request follow-up and private delivery (0.8.8-dev)
+### Request follow-up and private delivery (0.8.8)
 
 Use the existing request detail to send a **Public reply**, **Assign to me** or
 choose a verified guild officer, and schedule/reschedule a follow-up. The queue

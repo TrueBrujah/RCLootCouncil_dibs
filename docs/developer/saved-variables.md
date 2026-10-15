@@ -38,7 +38,7 @@ Adventure Guide discovery state are personal to the character and never
 synchronized. Older values found in the guild `settings` subtree are migrated
 to this local root and removed from the guild copy.
 
-Development 0.8.8 adds local `requestDelivery[guildKey]` with `pending`, `statuses`
+Version 0.8.8 adds local `requestDelivery[guildKey]` with `pending`, `statuses`
 and `reminders`. It is character-local retry/receipt/snooze metadata, never a guild
 snapshot. Pending private request operations are bounded to 128 and persist
 across reload; a matching acknowledgement removes an operation. Due reminders

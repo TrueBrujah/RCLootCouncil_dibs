@@ -11,7 +11,7 @@ For an RC history reconciliation:
 
 Disputes use explicit review, information-request, no-correction, balance-correction, target-correction, resolve, and reopen actions. Corrections append evidence and new accounting records; they do not rewrite old transactions. Create a safety backup before restore/import and keep the checksum with the audit record.
 
-Development 0.8.8 adds reasoned Resolved/Rejected -> Closed -> Archived stages.
+Version 0.8.8 adds reasoned Resolved/Rejected -> Closed -> Archived stages.
 These preserve the original stored dossier, full audit and correction links;
 archives remain searchable. Capacity is explicit (500 dossiers / 120 events):
 no terminal pruning or timeline truncation is performed. Previously truncated

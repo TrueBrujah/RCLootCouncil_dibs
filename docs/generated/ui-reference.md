@@ -65,7 +65,7 @@ Category: `governance` | Module: `OfficerUI` | Audience: gm, officer, player
 
 **English:** Shows whether a loot category may use Dibs under the active guild policy, and why a category is blocked or needs review.
 **Francais:** Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier.
-Source: `src/ui/OfficerUI.lua:436` (`Dibs.OfficerUI.GetEligibilityProjection`)
+Source: `src/ui/OfficerUI.lua:461` (`Dibs.OfficerUI.GetEligibilityProjection`)
 
 ## Request audit timeline (`officer.audit.timeline`)
 
@@ -73,7 +73,7 @@ Category: `ledger` | Module: `Disputes` | Audience: gm, officer, player
 
 **English:** Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
-Source: `src/modules/Disputes.lua:1152` (`Disputes.GetTimeline`)
+Source: `src/modules/Disputes.lua:1299` (`Disputes.GetTimeline`)
 
 ## Officer review requests (`officer.review.requests`)
 
@@ -81,7 +81,7 @@ Category: `ledger` | Module: `Disputes` | Audience: gm, officer
 
 **English:** Shows player reports and their attached Dibs or RCLootCouncil evidence. Opening a request is read-only; Officer resolutions retain an audit reason.
 **Francais:** Affiche les signalements des joueurs et leurs preuves Dibs ou RCLootCouncil. Ouvrir une demande est en lecture seule; les decisions des officiers conservent une raison d'audit.
-Source: `src/modules/Disputes.lua:614` (`Disputes.ListForOfficer`)
+Source: `src/modules/Disputes.lua:626` (`Disputes.ListForOfficer`)
 
 ## Player raid readiness (`player.readiness`)
 
@@ -97,7 +97,7 @@ Category: `setup` | Module: `PlayerUI` | Audience: player
 
 **English:** Explains whether your personal Dibs information is available. If features are limited or unavailable, retry later or contact an Officer; RCLootCouncil is optional and Standalone mode can remain available.
 **Francais:** Indique si vos informations Dibs personnelles sont disponibles. Si certaines fonctions sont limitees ou indisponibles, reessayez plus tard ou contactez un officier; RCLootCouncil est optionnel et le mode Standalone peut rester disponible.
-Source: `src/ui/PlayerUI.lua:408` (`Dibs.PlayerUI.GetStatusPresentation`)
+Source: `src/ui/PlayerUI.lua:414` (`Dibs.PlayerUI.GetStatusPresentation`)
 
 ## Announcement channels (`predibs.announcement.channels`)
 
@@ -105,7 +105,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer
 
 **English:** Choose destinations for public Pre-Dib notices and Officer-only notices. Availability depends on this character joining the configured channel; test it before live use.
 **Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
-Source: `src/modules/PreDibs.lua:548` (`Dibs.PreDibs.GetAnnouncementSettings`)
+Source: `src/modules/PreDibs.lua:550` (`Dibs.PreDibs.GetAnnouncementSettings`)
 
 ## Encounter Mode (`predibs.encounter.mode`)
 
@@ -113,7 +113,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer, player
 
 **English:** Controls when players may submit a Pre-Dib. Encounter mode requires the matching raid and difficulty context; Wild Open may allow requests outside the raid under guild policy.
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
-Source: `src/modules/PreDibs.lua:526` (`Dibs.PreDibs.ValidatePublicRequest`)
+Source: `src/modules/PreDibs.lua:528` (`Dibs.PreDibs.ValidatePublicRequest`)
 
 ## Pre-Dib Request (`predibs.request`)
 
@@ -121,7 +121,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer, player
 
 **English:** A Pre-Dib records your interest in eligible loot. It does not award an item or spend a Dib; that happens only after a qualifying award is finalized.
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
-Source: `src/modules/PreDibs.lua:655` (`Dibs.PreDibs.CreatePublic`)
+Source: `src/modules/PreDibs.lua:657` (`Dibs.PreDibs.CreatePublic`)
 
 ## Rank Allocation (`rank.allocation`)
 
@@ -145,7 +145,7 @@ Category: `ledger` | Module: `RCLootCouncil` | Audience: developer, gm, officer
 
 **English:** Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
-Source: `src/integrations/RCLootCouncil.lua:3696` (`Dibs.RCLootCouncil.GetHistoryRows`)
+Source: `src/integrations/RCLootCouncil.lua:3724` (`Dibs.RCLootCouncil.GetHistoryRows`)
 
 ## RCLootCouncil response mapping (`rclootcouncil.response.mapping`)
 

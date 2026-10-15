@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Officer Documentation Reference
 
-Addon version: 0.8.5
+Addon version: 0.8.8
 
 ## Guild Ledger status
 

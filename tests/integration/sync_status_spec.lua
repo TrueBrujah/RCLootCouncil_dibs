@@ -12,7 +12,7 @@ describe("Synchronization status", function()
   it("accepts patch and dev changes within one major.minor addon family", function()
     local dibs = load()
     assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.2"))
-    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.5-dev"))
+    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.8-dev"))
     local message = assert(dibs.Sync.BuildEnvelope({ type = "HELLO" }))
     message.addonVersion = "0.8.2"
     local accepted, reason = dibs.Sync.Receive(message, "Tester-Realm")

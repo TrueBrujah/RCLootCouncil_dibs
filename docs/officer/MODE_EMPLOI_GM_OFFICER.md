@@ -296,7 +296,7 @@ Dans **Review Requests** :
 
 Les corrections sont append-only et conservent l'acteur, la date, la raison, les anciennes valeurs, les nouvelles valeurs et les references associees.
 
-### Suivi privé des signalements (0.8.8-dev)
+### Suivi privé des signalements (0.8.8)
 
 Dans les détails existants, envoyez une **Réponse publique**, choisissez **Me
 l'attribuer** ou un officier de guilde vérifié, puis planifiez/replanifiez le

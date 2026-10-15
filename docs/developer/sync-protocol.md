@@ -42,7 +42,7 @@ contract exists.
 
 ## V2 multi-raid behavior
 
-### Private review requests (additive 2.1 capability, 0.8.8-dev)
+### Private review requests (additive 2.1 capability, 0.8.8)
 
 `requestDelivery=true` advertises support for WHISPER-only `REQUEST_MESSAGE`
 detail transfers. Kinds are `submit`, `reply`, `snapshot`, `receipt`; identity,

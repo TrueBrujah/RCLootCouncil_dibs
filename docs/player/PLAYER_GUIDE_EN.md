@@ -216,7 +216,7 @@ You can cancel your own active request. You cannot cancel another player's
 request. A request that did not win may remain active until you cancel it or the
 policy closes it.
 
-## Review reports and follow-up (0.8.8-dev)
+## Review reports and follow-up (0.8.8)
 
 The **Reports** page (`/dibs requests`) is separate from Pre-Dib
 reservations, which stay on **My Dibs** (active, won, and past Pre-Dibs).

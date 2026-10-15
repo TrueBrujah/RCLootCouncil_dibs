@@ -263,7 +263,7 @@ Vous ne pouvez pas annuler la demande d'un autre joueur.
 - **fulfilled** : demande associee a un gain finalise ;
 - **cancelled** : demande annulee par son proprietaire ou la politique.
 
-## Signalements et suivi (0.8.8-dev)
+## Signalements et suivi (0.8.8)
 
 La page **Signalements** (`/dibs requests`) est distincte des réservations Pre-Dib, qui restent sur **My Dibs**.
 Signalez uniquement votre propre problème. L'enregistrement ne prouve pas la

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.8-dev - Unreleased
+## 0.8.8 - 2026-10-15
 
 - (2026-10-15) Include Veteran rewards in Great Vault recording: Raid Finder/Veteran raid items classify as `LFR`, while Heroic-origin dungeon rewards on Veteran remain `Heroic`; Champion/Normal, Hero/Heroic and Myth/Mythic dungeon mappings are unchanged. Accept manual LFR/Raid Finder aliases and raid difficulty ID 17; preserve LFR across history, reload, replay and sync without changing existing records or Dibs balances. EN/FR help and the acquisition contract are updated. No schema or protocol version change; older clients need the updated normalizer before manually re-recording LFR evidence. Retail validation remains pending.
 - (2026-10-15) Classify Great Vault rewards from the exact variant's tooltip: raid items keep their origin difficulty on a compatible track (Heroic with Myth 5/6 stays Heroic), while dungeon items (Mythic+, or Mythic 0 on Champion) follow their upgrade track (Champion = Normal, Hero = Heroic, Myth = Mythic). Automatic claims and link-only manual commands share this detection; the result is not copied into upgrade-track evidence. Missing, unreadable or conflicting data require explicit manual review instead of an `UNKNOWN` record. Explicit manual difficulties retain priority. Existing history and ledger balances are unchanged; no schema or protocol change. EN/FR help and contracts updated; Retail verification remains pending.

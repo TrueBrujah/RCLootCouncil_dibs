@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.8.5",
+  "addonVersion": "0.8.8",
   "concepts": [
     {
       "id": "guild.ledger.status",
@@ -350,7 +350,7 @@
       },
       "source": {
         "file": "src/ui/OfficerUI.lua",
-        "line": 436,
+        "line": 461,
         "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
       }
     },
@@ -394,7 +394,7 @@
       },
       "source": {
         "file": "src/modules/Disputes.lua",
-        "line": 1152,
+        "line": 1299,
         "symbol": "Disputes.GetTimeline"
       }
     },
@@ -437,7 +437,7 @@
       },
       "source": {
         "file": "src/modules/Disputes.lua",
-        "line": 614,
+        "line": 626,
         "symbol": "Disputes.ListForOfficer"
       }
     },
@@ -523,7 +523,7 @@
       },
       "source": {
         "file": "src/ui/PlayerUI.lua",
-        "line": 408,
+        "line": 414,
         "symbol": "Dibs.PlayerUI.GetStatusPresentation"
       }
     },
@@ -566,7 +566,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 548,
+        "line": 550,
         "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
@@ -610,7 +610,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 526,
+        "line": 528,
         "symbol": "Dibs.PreDibs.ValidatePublicRequest"
       }
     },
@@ -654,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 655,
+        "line": 657,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },
@@ -788,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3696,
+        "line": 3724,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
