@@ -862,16 +862,29 @@ local function safeContextText(value)
   return tostring(value or "")
 end
 
+function Adapter.ResolveItemHyperlink(value)
+  if type(value) ~= "string" then return nil end
+  local itemString = value:match("|H(item:[^|]+)|h")
+  if not itemString then return nil end
+  if not itemString:match("^item:%d+$") then return value end
+  -- ID-only references need a client-generated link before tooltip hooks see them.
+  local getInfo = type(_G.C_Item) == "table" and _G.C_Item.GetItemInfo or _G.GetItemInfo
+  if type(getInfo) ~= "function" then return nil end
+  local _, link = getInfo(itemString)
+  if type(link) == "string" and link:match("|H(item:%d+:[^|]*)|h") then return link end
+  return nil
+end
+
 local function showTableCellTooltip(cellFrame, value)
   if type(value) ~= "string" or not _G.GameTooltip
     or type(_G.GameTooltip.SetOwner) ~= "function" then return false end
-  local isItemLink = value:find("|Hitem:", 1, true) ~= nil
-  if isItemLink and type(_G.GameTooltip.SetHyperlink) == "function" then
+  local itemLink = Adapter.ResolveItemHyperlink(value)
+  if itemLink and type(_G.GameTooltip.SetHyperlink) == "function" then
     _G.GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
-    _G.GameTooltip:SetHyperlink(value)
+    _G.GameTooltip:SetHyperlink(itemLink)
   elseif type(_G.GameTooltip.SetText) == "function" then
     _G.GameTooltip:SetOwner(cellFrame, "ANCHOR_RIGHT")
-    _G.GameTooltip:SetText(value, 1, 1, 1, 1, true)
+    _G.GameTooltip:SetText(value:match("|Hitem:[^|]+|h(.-)|h") or value, 1, 1, 1, 1, true)
   else
     return false
   end

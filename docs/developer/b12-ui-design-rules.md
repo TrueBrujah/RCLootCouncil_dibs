@@ -68,6 +68,11 @@ pattern rather than a data-grid page.
 
 ## Interaction Contract
 
+ID-only item references must be resolved to client-generated hyperlinks before being
+passed to tooltip or item-reference APIs, whose hooks may belong to other addons.
+If uncached, retain a text-only tooltip and report unavailable clicks through Dibs.
+Do not replace an exact recorded variant or persist a resolved reference as evidence.
+
 Use the following default row behavior:
 
 - **Left click** selects a row, opens or views details, or performs the primary

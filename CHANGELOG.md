@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.9 - 2026-10-16
+
+- (2026-10-15) Make the minimap icon movable and resizable: drag it with the left button around a round or square minimap edge, and adjust its size from 50% to 200% in **Player > Preferences** or with `/dibs minimap scale <50-200>`. `/dibs minimap reset` (or the Preferences button) restores the default position and size. The icon now uses the standard round minimap-button frame (gold ring, dark background, round-masked logo) like LibDBIcon addons such as BugSack. Clicks are unchanged. The angle and scale are stored per character in local settings (`minimapButtonAngle`, `minimapButtonScale`), with invalid values ignored; no guild data, ledger, or protocol change. EN/FR strings and player guides updated; Retail validation remains pending.
+
+- (2026-10-15) Guard secret WoW system messages before parsing whisper-failure feedback, avoiding Retail secret-string errors in the Ace3 adapter. Restricted feedback is ignored without logging its contents or changing target cooldowns; readable localized failures retain the existing retry pause. No SavedVariables or protocol migration.
+
+- (2026-10-15) Resolve ID-only item references to client-generated hyperlinks before table tooltips or Great Vault clicks reach other addons, preventing Outfitter from parsing truncated item data. Uncached references show their name on hover and report an unavailable link on click; exact recorded variants and acquisition evidence remain unchanged. No SavedVariables or protocol migration.
+
 ## 0.8.8 - 2026-10-15
 
 - (2026-10-15) Include Veteran rewards in Great Vault recording: Raid Finder/Veteran raid items classify as `LFR`, while Heroic-origin dungeon rewards on Veteran remain `Heroic`; Champion/Normal, Hero/Heroic and Myth/Mythic dungeon mappings are unchanged. Accept manual LFR/Raid Finder aliases and raid difficulty ID 17; preserve LFR across history, reload, replay and sync without changing existing records or Dibs balances. EN/FR help and the acquisition contract are updated. No schema or protocol version change; older clients need the updated normalizer before manually re-recording LFR evidence. Retail validation remains pending.

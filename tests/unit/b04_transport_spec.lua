@@ -197,6 +197,48 @@ describe("B04 V2 transport", function()
     assert_true(ok, tostring(failure))
   end)
 
+  it("does not inspect secret system feedback or block its whisper target", function()
+    local dibs = load()
+    local oldSecret, oldMatch = _G.issecretvalue, string.match
+    local oldFormat, oldTime = _G.ERR_CHAT_PLAYER_NOT_FOUND_S, _G.GetTime
+    local oldLog = dibs.DebugLogs.Add
+    local message = "No player named 'Owner' is currently playing."
+    local restricted, checked, diagnostic = true, false, nil
+    _G.GetTime = function() return 100 end
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S = "No player named '%s' is currently playing."
+    _G.issecretvalue = function(value)
+      if value == message then checked = true; return restricted end
+      return false
+    end
+    string.match = function(value, ...)
+      if restricted and value == message then error("Secret system message was inspected") end
+      return oldMatch(value, ...)
+    end
+    dibs.DebugLogs.Add = function(scope, level, text)
+      diagnostic = { scope, level, text }
+    end
+    local ok, failure = pcall(function()
+      assert_true(dibs.Ace3.SendComm("DIBS", { type = "SYNC_PROBE" }, "WHISPER", "Owner"))
+      local event = dibs.Ace3.libs.event.handlers.CHAT_MSG_SYSTEM
+      assert_not_nil(event)
+      event("CHAT_MSG_SYSTEM", message)
+      assert_true(checked)
+      assert_equal("Sync", diagnostic[1])
+      assert_equal(4, diagnostic[2])
+      assert_equal("WHISPER_SYSTEM_MESSAGE_SECRET: feedback ignored", diagnostic[3])
+      assert_true(dibs.Ace3.SendComm("DIBS", { type = "SYNC_PROBE" }, "WHISPER", "Owner"))
+      restricted = false
+      event("CHAT_MSG_SYSTEM", message)
+      local sent, reason = dibs.Ace3.SendComm("DIBS", { type = "SYNC_PROBE" }, "WHISPER", "Owner")
+      assert_false(sent)
+      assert_equal("WHISPER_TARGET_UNREACHABLE", reason)
+    end)
+    _G.issecretvalue, string.match = oldSecret, oldMatch
+    _G.ERR_CHAT_PLAYER_NOT_FOUND_S, _G.GetTime = oldFormat, oldTime
+    dibs.DebugLogs.Add = oldLog
+    assert_true(ok, tostring(failure))
+  end)
+
   it("ignores unrelated or ambiguous player-not-found messages", function()
     local _, dibs = loader.load({ withAce3 = true, wow = {
       guildMembers = { "Tester-Realm", "Owner-Realm", "Owner-OtherRealm" },

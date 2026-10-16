@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Player Documentation Reference
 
-Addon version: 0.8.8
+Addon version: 0.8.9
 
 ## Dibs audit history
 

@@ -34,8 +34,12 @@ Commandes principales :
 /dibs requests    Ouvre vos signalements (page Signalements)
 /dibs vault <lien|[Nom]|itemID> <LFR|Normal|Heroic|Mythic>  Enregistre manuellement un objet du Grand Coffre
 /dibs minimap show|hide  Affiche ou masque l'icone Dibs sur la mini-carte
+/dibs minimap scale <50-200>  Regle la taille de l'icone (en %)
+/dibs minimap reset  Remet l'icone a sa position et sa taille par defaut
 /dibs help        Affiche l'aide des commandes
 ```
+
+Glissez l'icone Dibs avec le clic gauche pour la deplacer autour de la mini-carte. La taille se regle aussi dans **Joueur > Preferences**; ces choix sont enregistres pour ce personnage.
 
 Vous pouvez aussi utiliser `/dibs options`, puis les boutons de lancement des fenetres Joueur et Demandes.
 
