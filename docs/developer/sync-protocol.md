@@ -33,6 +33,12 @@ visible in readiness; it must not trigger local fallback.
 
 ## Validation and privacy
 
+The whisper transport observes readable localized player-not-found system feedback
+to pause retries for a recently contacted target. Secret `CHAT_MSG_SYSTEM` text is
+ignored before string operations, with only a fixed level-4 Sync diagnostic and no
+message contents logged. It cannot identify or block a target from secret feedback;
+ordinary roster validation and retry handling remain unchanged.
+
 Receivers validate the message type, protocol version, sender identity, guild membership, guild key, revision bounds, chunk count/size, and request ownership. Messages containing live loot candidates, votes, or responses are rejected. Only authorized writers can approve new authoritative guild revisions. After a client directly observes an approved governance, operational-policy, season-catalog, or historical-baseline digest from the required authority, any compatible guild member may relay the immutable content matching that exact revision and hash. Unknown or conflicting hashes still require direct authority and fail closed. Transfers expire after a short TTL and duplicate transactions are guarded by `seenTransactions`.
 
 Canonical ledger commits are excluded from member relay. Their aggregate ledger

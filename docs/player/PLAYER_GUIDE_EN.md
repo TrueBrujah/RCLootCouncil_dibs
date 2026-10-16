@@ -31,8 +31,10 @@ _Screenshot placeholder: `docs/assets/guides/screenshots/en/player/player-overvi
 After login, left-click the Dibs minimap icon to open/close the Officer view
 if authorized, otherwise the Player view. Right-click opens/closes the Player view.
 Show or hide it from **Player > Preferences**, or use `/dibs minimap show`
-and `/dibs minimap hide`. This preference is saved per character and defaults
-to shown.
+and `/dibs minimap hide`. Drag the icon to move it around the minimap, and set
+its size (50-200%) in Preferences or with `/dibs minimap scale <50-200>`;
+`/dibs minimap reset` restores the default position and size. These preferences
+are saved per character; the icon is shown by default.
 It is only a shortcut: it does not grant Officer or GM permissions.
 
 RCLootCouncil is optional. Standalone mode manages Dibs balances and requests

@@ -1,7 +1,7 @@
 # RCLootCouncil_dibs
 
 Development compatibility baseline: **0.8.x**. Latest stable release:
-**0.8.8**.
+**0.8.9**.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -14,10 +14,10 @@ guild Dibs ledger, reservations, permissions, and audit history.
 
 ## Downloads
 
-- [Stable release v0.8.8](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.8.8)
+- [Stable release v0.8.9](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.8.9)
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
-Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.8 is
+Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.9 is
 the latest stable publication. Development builds use the 0.8.x compatibility
 family and reject 0.7.x peers until they update. Release validation, including
 the documented deferred historical-confirmation check, is recorded in the
@@ -77,9 +77,9 @@ delta, request reference, and canonical event/reference.
 
 See the complete illustrated guide:
 
-[Manual installation guide — v0.8.8](docs/INSTALLATION.md)
+[Manual installation guide — v0.8.9](docs/INSTALLATION.md)
 
-For a quick reference, download the stable v0.8.8 ZIP and extract
+For a quick reference, download the stable v0.8.9 ZIP and extract
 `RCLootCouncil_dibs` into `World of Warcraft\_retail_\Interface\AddOns\`.
 Return to WoW and run `/reload`, then verify the addon with `/dibs status`.
 

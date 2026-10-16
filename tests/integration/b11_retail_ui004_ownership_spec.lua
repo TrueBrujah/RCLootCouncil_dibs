@@ -37,6 +37,51 @@ local function setup()
 end
 
 describe("B11 Retail UI-004 ownership", function()
+  it("resolves ID-only references before exposing them to item tooltip hooks", function()
+    local _, dibs = setup()
+    local reference = "|Hitem:268263|h[Frostscale's Mystic Frond]|h"
+    local canonical = "|cnIQ4:|Hitem:268263::::::::90:257:::::::::|h[Frostscale's Mystic Frond]|h|r"
+    local previousInfo, previousTooltip = _G.C_Item.GetItemInfo, _G.GameTooltip
+    local cached, hovered, text
+    _G.C_Item.GetItemInfo = function(input)
+      assert_equal("item:268263", input)
+      if cached then return "Frostscale's Mystic Frond", canonical end
+    end
+    _G.GameTooltip = {
+      SetOwner = function() end,
+      SetHyperlink = function(_, value)
+        assert_equal(canonical, value)
+        hovered = value
+      end,
+      SetText = function(_, value) text = value end,
+      Show = function() end,
+    }
+    assert_true(dibs.AceGUI.ShowTableCellTooltip({}, reference))
+    assert_nil(hovered)
+    assert_equal("[Frostscale's Mystic Frond]", text)
+    cached = true
+    assert_true(dibs.AceGUI.ShowTableCellTooltip({}, reference))
+    assert_equal(canonical, hovered)
+    _G.C_Item.GetItemInfo, _G.GameTooltip = previousInfo, previousTooltip
+  end)
+
+  it("preserves exact variants and rejects unresolved reference links", function()
+    local _, dibs = setup()
+    local previousInfo, previousLegacy = _G.C_Item.GetItemInfo, _G.GetItemInfo
+    local reference = "|Hitem:268263|h[Frond]|h"
+    local exact = "|Hitem:268263::::::::90:257::5:2:123:456::::::|h[Frond]|h"
+    _G.C_Item.GetItemInfo = function() return "Frond", reference end
+    assert_nil(dibs.AceGUI.ResolveItemHyperlink(reference))
+    assert_equal(exact, dibs.AceGUI.ResolveItemHyperlink(exact))
+    _G.C_Item.GetItemInfo = nil
+    _G.GetItemInfo = function() return "Frond", exact end
+    assert_equal(exact, dibs.AceGUI.ResolveItemHyperlink(reference))
+    _G.GetItemInfo = nil
+    assert_nil(dibs.AceGUI.ResolveItemHyperlink(reference))
+    assert_nil(dibs.AceGUI.ResolveItemHyperlink(nil))
+    _G.C_Item.GetItemInfo, _G.GetItemInfo = previousInfo, previousLegacy
+  end)
+
   it("passes every supported table cell value through the Retail tooltip contract", function()
     local _, dibs = setup()
     local calls = {}

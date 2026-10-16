@@ -848,12 +848,13 @@ local function renderVaultHistory(shell, parent, frame, widthHint)
     cellTooltip = function(row) return row.tooltip end,
     onRowClick = function(row, column)
       if column ~= 2 or not row.itemLink then return end
-      if type(_G.SetItemRef) ~= "function" then
+      local itemLink = gui.ResolveItemHyperlink(row.itemLink)
+      if not itemLink or type(_G.SetItemRef) ~= "function" then
         Dibs.Message(helpText.PLAYER_VAULT_LINK_UNAVAILABLE or "The item link cannot be opened right now.")
         return
       end
-      local itemString = row.itemLink:match("|H(item:[^|]+)|h")
-      if itemString then SetItemRef(itemString, row.itemLink, "LeftButton") end
+      local itemString = itemLink:match("|H(item:[^|]+)|h")
+      if itemString then SetItemRef(itemString, itemLink, "LeftButton") end
     end,
   })
   local pagination = gui.AddPaginationFooter(shell, page, {
@@ -1575,7 +1576,7 @@ local function createAceWindow()
         helpText.MINIMAP_SETTINGS_DESCRIPTION or "Personal display preferences for this character.")
       local section = Dibs.AceGUI.AddSection(shell, page.header,
         helpText.MINIMAP_SETTINGS_SECTION or "Minimap",
-        helpText.MINIMAP_SETTINGS_HELP or "Choose whether the Dibs shortcut appears beside the minimap.")
+        helpText.MINIMAP_SETTINGS_HELP or "Choose whether the Dibs shortcut appears beside the minimap, and adjust its size.")
       local visible = Dibs.MinimapButton and Dibs.MinimapButton.GetVisible and Dibs.MinimapButton.GetVisible() or true
       self.minimapButtonToggle = Dibs.AceGUI.AddCheckBox(shell, section,
         helpText.MINIMAP_SETTINGS_CHECKBOX or "Show Dibs minimap icon", visible, function(value)
@@ -1586,8 +1587,31 @@ local function createAceWindow()
             end
           end
         end, 360)
+      local scaleLabel = helpText.MINIMAP_SETTINGS_SCALE or "Icon size (%)"
+      local minimapModule = Dibs.MinimapButton
+      local currentScale = minimapModule and minimapModule.GetScale and minimapModule.GetScale() or 1
+      self.minimapButtonScale = Dibs.AceGUI.AddRange(shell, section, scaleLabel, 50, 200, 5,
+        math.floor(currentScale * 100 + 0.5), function(value)
+          if minimapModule and minimapModule.SetScale then
+            local ok, reason = minimapModule.SetScale((tonumber(value) or 100) / 100)
+            if not ok then
+              Dibs.Message((helpText.MINIMAP_SETTINGS_FAILED or "Unable to update the minimap icon: %s"):format(tostring(reason or "unknown error")))
+            end
+          end
+        end, 360)
+      self.minimapButtonReset = Dibs.AceGUI.AddButton(shell, section,
+        helpText.MINIMAP_SETTINGS_RESET or "Reset position and size", function()
+          if minimapModule and minimapModule.ResetLayout then
+            local ok, reason = minimapModule.ResetLayout()
+            if not ok then
+              Dibs.Message((helpText.MINIMAP_SETTINGS_FAILED or "Unable to update the minimap icon: %s"):format(tostring(reason or "unknown error")))
+              return
+            end
+            if self.minimapButtonScale then Dibs.AceGUI.SetValue(self.minimapButtonScale, 100) end
+          end
+        end, 220)
       Dibs.AceGUI.AddLabel(shell, section,
-        helpText.MINIMAP_SETTINGS_COMMAND or "You can also use /dibs minimap show or /dibs minimap hide. This preference is saved for this character.",
+        helpText.MINIMAP_SETTINGS_COMMAND or "Drag the icon to move it around the minimap. You can also use /dibs minimap show|hide|scale <50-200>|reset. These preferences are saved for this character.",
         true)
       page.UpdateViewportHeight()
       return

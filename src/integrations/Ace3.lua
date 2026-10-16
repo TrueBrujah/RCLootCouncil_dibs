@@ -101,6 +101,12 @@ function Adapter.ResolveWhisperTarget(target)
 end
 
 function Adapter.OnWhisperSystemMessage(message)
+  if type(_G.issecretvalue) == "function" and issecretvalue(message) then
+    if Dibs.DebugLogs and Dibs.DebugLogs.Add then
+      Dibs.DebugLogs.Add("Sync", 4, "WHISPER_SYSTEM_MESSAGE_SECRET: feedback ignored")
+    end
+    return
+  end
   local format = _G.ERR_CHAT_PLAYER_NOT_FOUND_S
   if type(message) ~= "string" or type(format) ~= "string" then return end
   local before, after = format:match("^(.-)%%s(.*)$")

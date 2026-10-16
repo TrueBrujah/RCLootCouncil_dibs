@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.8"
+Dibs.VERSION = "0.8.9"
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -1380,7 +1380,7 @@ function Dibs.HandleSlashCommand(msg)
   if action == "" or action == "help" then
     local help = Dibs.L or {}
     Dibs.Message(help.SLASH_HELP_TITLE or "Dibs commands - prefix each command with /dibs:")
-    Dibs.Message(help.SLASH_HELP_PLAYER or "Player: ui | balance | requests | pre <itemID> | vault <item link | [Item Name] | itemID> <LFR | Normal | Heroic | Mythic> | minimap show|hide")
+    Dibs.Message(help.SLASH_HELP_PLAYER or "Player: ui | balance | requests | pre <itemID> | vault <item link | [Item Name] | itemID> <LFR | Normal | Heroic | Mythic> | minimap show|hide|scale|reset")
     Dibs.Message(help.SLASH_HELP_OFFICER or "Officer: officer | options | review | reconcile | data")
     Dibs.Message(help.SLASH_HELP_GUILD or "Guild setup: season create|list|set <id> | rank list|set <index> <amount> [name] | ledger list|set <id>")
     Dibs.Message(help.SLASH_HELP_RAID or "Raid: raid [status|sync|start|stop|ledger <id>] | remind <message>")
@@ -1477,8 +1477,32 @@ function Dibs.HandleSlashCommand(msg)
   if action == "minimap" then
     local option = string.lower(args[2] or "")
     local labels = Dibs.L or {}
+    if option == "scale" or option == "reset" then
+      if not (Dibs.MinimapButton and Dibs.MinimapButton.SetScale and Dibs.MinimapButton.ResetLayout) then
+        Dibs.Message(labels.MINIMAP_UNAVAILABLE or "Minimap icon setting is unavailable.")
+        return
+      end
+      if option == "reset" then
+        local ok, reason = Dibs.MinimapButton.ResetLayout()
+        if not ok then
+          Dibs.Message((labels.MINIMAP_SET_FAILED or "Unable to update the minimap icon: %s"):format(tostring(reason or "unknown error")))
+          return
+        end
+        Dibs.Message(labels.MINIMAP_RESET_DONE or "Minimap icon position and size reset.")
+        return
+      end
+      local percentText = tostring(args[3] or ""):gsub("%%$", "")
+      local percent = tonumber(percentText)
+      local ok = percent and Dibs.MinimapButton.SetScale(percent / 100)
+      if not ok then
+        Dibs.Message(labels.MINIMAP_SCALE_USAGE or "Usage: /dibs minimap scale <50-200>")
+        return
+      end
+      Dibs.Message((labels.MINIMAP_SCALE_DONE or "Minimap icon size set to %d%%."):format(math.floor(percent + 0.5)))
+      return
+    end
     if option ~= "show" and option ~= "hide" then
-      Dibs.Message(labels.MINIMAP_SLASH_USAGE or "Usage: /dibs minimap show|hide")
+      Dibs.Message(labels.MINIMAP_SLASH_USAGE or "Usage: /dibs minimap show|hide|scale <50-200>|reset")
       return
     end
     if not (Dibs.MinimapButton and Dibs.MinimapButton.SetVisible) then

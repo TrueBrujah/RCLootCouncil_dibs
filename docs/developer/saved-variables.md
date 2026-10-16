@@ -29,11 +29,15 @@ RCLootCouncil_dibsLocalDB = {
     developerModeEnabled = false,
     ejKnownSubCategories = {},
     ejBlockedSubCategories = {},
+    minimapButtonShown = true,
+    minimapButtonAngle = nil, -- optional degrees (0-360) around the minimap; default 135
+    minimapButtonScale = nil, -- optional 0.5-2.0; default 1.0
   },
 }
 ```
 
-Notification replay identities, language, diagnostics, Developer Mode, and
+Notification replay identities, language, diagnostics, Developer Mode,
+minimap icon preferences, and
 Adventure Guide discovery state are personal to the character and never
 synchronized. Older values found in the guild `settings` subtree are migrated
 to this local root and removed from the guild copy.

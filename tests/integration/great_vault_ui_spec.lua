@@ -285,14 +285,29 @@ describe("Great Vault UI acceptance", function()
     end
     assert_not_nil(reference)
     assert_true(reference[4]:find(dibs.L.PLAYER_VAULT_REFERENCE_LABEL, 1, true) ~= nil)
+    local previousInfo = _G.C_Item.GetItemInfo
+    local referenceLink = "|cnIQ4:|Hitem:275658::::::::90:257:::::::::|h[Primeval Skyfriend]|h|r"
+    _G.C_Item.GetItemInfo = function() return nil, nil end
+    opened = nil
+    _G.__dibsMessages = {}
     captured.options.onRowClick(reference, 2)
-    assert_equal("item:275658", opened[1])
+    assert_nil(opened)
+    assert_true(_G.__dibsMessages[1]:find(dibs.L.PLAYER_VAULT_LINK_UNAVAILABLE, 1, true) ~= nil)
+    _G.C_Item.GetItemInfo = function(input)
+      assert_equal("item:275658", input)
+      return "Primeval Skyfriend", referenceLink
+    end
+    captured.options.onRowClick(reference, 2)
+    assert_equal("item:275658::::::::90:257:::::::::", opened[1])
+    assert_equal(referenceLink, opened[2])
+    assert_equal("|Hitem:275658|h[Primeval Skyfriend]|h", reference.itemLink)
     assert_equal(link, saved.itemLink)
     assert_nil(dibs.PreDibs.GetAcquisitions()[2].itemLink)
     _G.SetItemRef = nil
     _G.__dibsMessages = {}
     captured.options.onRowClick(reference, 2)
     assert_true(_G.__dibsMessages[1]:find(dibs.L.PLAYER_VAULT_LINK_UNAVAILABLE, 1, true) ~= nil)
+    _G.C_Item.GetItemInfo = previousInfo
     _G.date, _G.SetItemRef, _G.GameTooltip = previousDate, previousItemRef, previousTooltip
   end)
 
