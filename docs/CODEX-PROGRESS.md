@@ -1,5 +1,10 @@
 # Documentation pass checkpoint
 
+> Historical checkpoint, not current coverage or release certification.
+> The schema, module inventory, API scope, and test counts below reflect the
+> original pass. Start with the maintained [developer references](developer/README.md)
+> and [current version status](../README.md#downloads).
+
 Date: 2026-09-11
 
 ## Scope

@@ -1,6 +1,10 @@
 # Synchronization Protocol Notes
 
-The maintained protocol reference is [docs/developer/sync-protocol.md](developer/sync-protocol.md). This file remains a compatibility note and lists only behavior confirmed by `src/modules/Sync.lua`.
+The maintained protocol reference is [docs/developer/sync-protocol.md](developer/sync-protocol.md).
+This page summarizes compatibility boundaries. `Sync.lua` owns legacy request
+recovery; `SyncV2.lua` owns versioned guild-state/canonical-ledger transport.
+`RequestDelivery.lua` uses the V2 private request capability. Do not treat the
+legacy message list below as the complete current protocol.
 
 The Pre-Dib recovery protocol uses the registered `DIBS` addon-message prefix. It is compact, versioned, bounded, and transfers only persisted active Pre-Dib state.
 
@@ -19,9 +23,13 @@ They never carry live candidates, votes, responses, loot sessions, or private
 evidence. Detail transfers are bounded, chunked when necessary, expire safely,
 and are retried after reconnect without applying partial data.
 
-The implementation accepts exactly: `HELLO`, `MANIFEST`, `FETCH`, `TRANSFER_BEGIN`,
-`TRANSFER_CHUNK`, `TRANSFER_END`, `REQUEST_ACK`, and `REQUEST`. Names such as
-`DIGEST`, `TX_COMMIT`, or `RELAY_ELECTION` are not protocol messages.
+The legacy `Sync.lua` path accepts `HELLO`, `MANIFEST`, `FETCH`, `TRANSFER_BEGIN`,
+`TRANSFER_CHUNK`, `TRANSFER_END`, `REQUEST_ACK`, and `REQUEST`.
+The separate V2 path additionally carries guild catalogs, canonical
+`LEDGER_DIGEST` / `AWARD_COMMIT` recovery, Vault details, and WHISPER-only
+`REQUEST_MESSAGE` submissions, replies, snapshots, and receipts. See the
+maintained reference for envelopes, bounds, channels, and acceptance authority.
+Names such as `TX_COMMIT` or `RELAY_ELECTION` are not substitutes for those contracts.
 
 ## Pre-Dib recovery
 

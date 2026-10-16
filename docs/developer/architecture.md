@@ -20,11 +20,21 @@ The addon uses one global namespace, `Dibs`. `Core.lua` creates the namespace, m
 ## Layers
 
 - **Composition/runtime:** `Core.lua` and `integrations/Ace3.lua` initialize dependencies and route events.
-- **Domain policy:** Seasons, RankRules, Permissions, CharacterEligibility, and PreDibs define policy and lifecycle validation.
-- **Accounting/persistence:** Ledger, Backup, ImportExport, Profiles, and Disputes operate on the guild database.
-- **Application adapters:** LootPipeline, RaidRelay, RaidPrompts, Readiness, DryRun, and Sync coordinate workflows.
-- **External integrations:** RCLootCouncil, RCLootCouncilOptions, and EncounterJournal probe optional or Blizzard APIs.
-- **UI:** Midnight, AceGUI, PlayerUI, OfficerUI, HealthUI, SetupAssistant, DataUI, LogsUI, and DebugLogsUI own bounded projections and delegate mutations to existing services.
+- **Domain policy:** Identity, Governance, OperationalPolicy, Seasons, RankRules,
+  LootRules, Permissions, CharacterEligibility, and PreDibs validate identity,
+  authority, published policy, and lifecycle.
+- **Accounting/persistence:** Ledger, MultiLedger, HistoricalBaseline, Backup,
+  ImportExport, Profiles, and Disputes operate on isolated guild/ledger state.
+- **Application adapters:** Installation, Wizard, LootPipeline, RaidRelay,
+  RaidPrompts, Readiness, DryRun, Capabilities, IndependentRaid, Sync/SyncV2, and
+  RequestDelivery coordinate setup, isolated raids, delivery, and recovery.
+- **External integrations:** RCLootCouncil, RCLootCouncilOptions, EncounterJournal,
+  and GreatVault probe optional or Blizzard APIs. DeveloperSandbox, its store,
+  and scenarios isolate synthetic work from production.
+- **UI:** Midnight, EnvironmentAdapters, WindowState, AceGUI, PlayerUI, OfficerUI,
+  HealthUI, SetupAssistant, DataUI, LogsUI, HistoryFilters, DeveloperUI,
+  MinimapButton, and DebugLogsUI project state and delegate mutations.
+  Notifications and AuditExport provide private/local or anonymized projections.
 - **Embedded/vendor libraries:** `src/libs/**` and `src/embeds.xml` provide Ace3, MSA dropdown, and serializer dependencies. Internal DIBS tables use one shared AceGUI Data Grid through `Dibs.AceGUI.AddTable`; the optional RCLootCouncil voting projection uses its public column API and requires RCLootCouncil 3.23.3 or newer. RCLootCouncil may use its own UI libraries independently.
 
 ## Authority boundaries
@@ -34,6 +44,16 @@ Guild GM/officer permission is the authority for Dibs administration. RCLootCoun
 ## Data flow
 
 Players create or confirm Pre-Dibs requests. Encounter context and RCLootCouncil responses can validate eligibility. A finalized qualifying award or an explicitly confirmed historical reconciliation creates an audited ledger use. Queries derive balances and history from append-only transactions. Sync exchanges bounded guild metadata and request revisions; live candidates, votes, and loot are deliberately excluded.
+
+After explicit GM-approved V2 cutover and baseline adoption, SyncV2 extends
+`Dibs.Sync` with coordinator-ordered canonical commits. MultiLedger separates
+raid-team balances; IndependentRaid uses ephemeral session points rather than
+the production guild ledger. Neither mode synchronizes live RC votes.
+
+Disputes owns retained dossiers and compensation links. RequestDelivery owns
+private delivery/retry/receipt and reminder metadata, not accounting. Shared
+dossier mutations require the verified pinned coordinator; replicas cannot
+compensate independently. Closing/archiving never rewrites ledger history.
 
 B12 UI hardening keeps PlayerUI, OfficerUI, and LogsUI as projections over those
 existing domain records. Midnight and AceGUI own window, page, and shared

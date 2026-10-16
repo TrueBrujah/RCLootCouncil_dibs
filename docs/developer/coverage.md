@@ -1,5 +1,12 @@
 # Documentation coverage report
 
+> Historical audit, 2026-09-11. Counts and completeness claims below apply only
+> to that pass, not the current source. Use [modules.md](modules.md) for the
+> current TOC inventory and [api-reference.md](api-reference.md) for a curated,
+> non-exhaustive API index. Generated references cover annotated concepts only.
+> Current known gaps include pending Retail screenshots and manual multi-client
+> certification; a fresh generator check does not validate every hand-written guide.
+
 Audit date: 2026-09-11. The implementation under `src/` and the automated tests are authoritative. Validation completed with 226 passing tests in 54 files.
 
 ## Covered

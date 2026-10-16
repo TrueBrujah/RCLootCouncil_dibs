@@ -1,4 +1,9 @@
-# RCLootCouncil_dibs v0.8.9 — Manual Installation Guide
+# RCLootCouncil_dibs — Manual Installation Guide
+
+Published stable version: **0.8.9** (published 2026-10-16). Install the
+published ZIP below unless you deliberately need a development build.
+The installation screenshots were captured for 0.8.0 and illustrate folder
+placement only, not the current in-game interface.
 
 Install the same compatible version as the rest of your guild so Dibs features work consistently. Installation is currently manual. This guide is for World of Warcraft Retail. RCLootCouncil_dibs is a separate addon from RCLootCouncil; the latter is optional and is only needed for the integrated loot workflow.
 
@@ -6,7 +11,7 @@ Install the same compatible version as the rest of your guild so Dibs features w
 
 [Download RCLootCouncil_dibs v0.8.9](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/download/v0.8.9/RCLootCouncil_dibs-v0.8.9.zip)
 
-**Version:** 0.8.9
+**Download version:** 0.8.9
 
 Download the stable release ZIP above, not a development build.
 
@@ -116,14 +121,22 @@ RCLootCouncil may also be installed separately if your guild uses the integrated
 
 ## Step 8 — Verify the installation
 
-After logging in, run either command:
+After logging in, check the version, then open the Player window:
 
 ```text
 /dibs status
 /dibs
 ```
 
-The status should report version 0.8.9 as loaded. A normal player not having Officer access is expected; players do not need Officer or GM permissions to install or use their player features.
+`/dibs status` should report version 0.8.9 for the published ZIP. `/dibs`
+opens the Player window; it is not the version-status command. A normal player
+not having Officer access is expected.
+
+Next, follow the [Player Guide](player/PLAYER_GUIDE_EN.md) or
+[Mode d'emploi joueur](player/MODE_EMPLOI_JOUEUR.md). Administrators should open
+`/dibs officer` > **Overview > Guided Setup** and use the
+[GM / Officer Guide](officer/GM_OFFICER_GUIDE_EN.md) or
+[guide GM / Officer en francais](officer/MODE_EMPLOI_GM_OFFICER.md).
 
 ### After installing or updating
 

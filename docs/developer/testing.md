@@ -3,14 +3,23 @@
 The automated suite runs in Lua through Fengari with WoW, Ace3, and optional RCLootCouncil doubles:
 
 ```powershell
-$files = (Get-ChildItem -Path tests -Recurse -File -Filter '*_spec.lua' | ForEach-Object { $_.FullName.Substring((Get-Location).Path.Length + 1).Replace('\', '/') }) -join ';'
-$env:DIBS_TEST_FILES = $files
-npx.cmd --yes --package=fengari-node-cli fengari tests/run.lua
-Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
+$previousTestFiles = $env:DIBS_TEST_FILES
+try {
+    $files = Get-ChildItem tests -Recurse -File -Filter '*_spec.lua' |
+        Sort-Object FullName |
+        ForEach-Object { $_.FullName.Substring((Get-Location).Path.Length + 1) }
+    $env:DIBS_TEST_FILES = $files -join ';'
+    npx.cmd --yes --package=fengari-node-cli fengari tests\run.lua
+    if ($LASTEXITCODE -ne 0) { throw "Fengari failed (exit $LASTEXITCODE)." }
+} finally {
+    $env:DIBS_TEST_FILES = $previousTestFiles
+}
 ```
 
 On Windows, provide `DIBS_TEST_FILES` because Fengari has no shell-based test
-discovery backend there. Use it to run a semicolon-separated subset. Tests cover domain
+discovery backend there. Run from the repository root. For a behavior change,
+prefer a semicolon-separated subset in the same `try/finally` wrapper; reserve
+full discovery above for shared changes or release gates. Tests cover domain
 policies, ledger invariants, SavedVariables migration, sync validation,
 import/export limits, RC capability degradation, UI callback wiring,
 optional-module navigation and guards, and TOC load integrity. The v0.8.0
@@ -20,9 +29,14 @@ validation remains separate.
 The First Installation Assistant focused slice is:
 
 ```powershell
-$env:DIBS_TEST_FILES = "tests/contract/setup_assistant_contract_spec.lua;tests/integration/setup_assistant_spec.lua;tests/integration/setup_assistant_ui_spec.lua"
-npx.cmd --yes --package=fengari-node-cli fengari tests/run.lua
-Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
+$previousTestFiles = $env:DIBS_TEST_FILES
+try {
+    $env:DIBS_TEST_FILES = 'tests\contract\setup_assistant_contract_spec.lua;tests\integration\setup_assistant_spec.lua;tests\integration\setup_assistant_ui_spec.lua'
+    npx.cmd --yes --package=fengari-node-cli fengari tests\run.lua
+    if ($LASTEXITCODE -ne 0) { throw "Fengari failed (exit $LASTEXITCODE)." }
+} finally {
+    $env:DIBS_TEST_FILES = $previousTestFiles
+}
 ```
 
 The assistant is an Officer-only transient projection. Its supported changes
@@ -65,11 +79,31 @@ normal production state must remain isolated when the limit is reached.
 The guild Loot Rules and rank-allocation reconciliation tests are exercised with:
 
 ```powershell
-$env:DIBS_TEST_FILES = "tests/unit/guild_loot_rules_spec.lua;tests/integration/guild_loot_rules_spec.lua;tests/integration/guild_loot_rules_ui_spec.lua;tests/integration/season_catalog_sync_spec.lua;tests/integration/sync_status_spec.lua"
-npx.cmd --yes --package=fengari-node-cli fengari tests/run.lua
-Remove-Item Env:DIBS_TEST_FILES -ErrorAction SilentlyContinue
+$previousTestFiles = $env:DIBS_TEST_FILES
+try {
+    $env:DIBS_TEST_FILES = 'tests\unit\guild_loot_rules_spec.lua;tests\integration\guild_loot_rules_spec.lua;tests\integration\guild_loot_rules_ui_spec.lua;tests\integration\season_catalog_sync_spec.lua;tests\integration\sync_status_spec.lua'
+    npx.cmd --yes --package=fengari-node-cli fengari tests\run.lua
+    if ($LASTEXITCODE -ne 0) { throw "Fengari failed (exit $LASTEXITCODE)." }
+} finally {
+    $env:DIBS_TEST_FILES = $previousTestFiles
+}
 ```
 
 The `LRA01`-`LRA22` scenarios cover adoption, publication, all dynamic keys,
 catalog recovery, readiness, old-peer rejection, and raid-time application.
 Retail two-client verification remains a separate release gate.
+
+## Documentation-only validation
+
+Documentation-only changes do not require Fengari or a package build.
+Check local links, code/guide consistency, historical/current scope, and the diff.
+Source-generated references can be checked without running addon code:
+
+```powershell
+.\scripts\Generate-DibsDocs.ps1 -Check
+git diff --check
+```
+
+The generator validates annotated concepts, locale keys, and generated-output
+freshness. It does not prove that every hand-written paragraph matches the UI,
+nor does it certify Retail behavior. See the [documentation index](README.md).

@@ -2,9 +2,23 @@
 
 RCLootCouncil is an optional dependency. `Dibs.RCLootCouncil` probes the addon and reports capability states (`absent`, `operational`, `degraded`, `unsupported`). The Dibs ledger, player UI, and officer administration remain useful when RC is absent.
 
-The adapter normalizes Dibs responses, projects supported loot semantic families (`TOKEN` and `TOKEN_SET`), and blocks unsupported cosmetic/catalyst projections. Equipment compatibility is a projection and does not by itself create a protected family. The adapter can expose candidate status, configuration projection status, voting status, and award evidence.
+The adapter normalizes Dibs responses and projects configured semantic loot
+families, including Curios (`TOKEN`) and class Tier Set tokens (`TOKEN_SET`).
+Personal `CATALYST` is always excluded. Cosmetic projection is capability-gated:
+the public RCLootCouncil classifier extension can provide a `COSMETIC` group;
+unsupported clients report that family as skipped. Ordinary equipment resolves
+through `OTHER`, independently of equipment-slot button sets. See
+[the mapping and template reference](../RC_OPTIONS.md) for current limits.
+The adapter exposes candidate, configuration, voting, and award-evidence status.
 
-Live finalization requires both Dibs guild authority and a verified local RC Master Looter callback. `RCMLAwardSuccess` is the integration callback. A higher balance never replaces RC’s winner decision (DIBS-RULE-004). A qualifying finalized award may consume a Dib through the protected accounting path (DIBS-RULE-003).
+Live finalization requires a verified local RC Master Looter callback plus the
+protected item's, winner's, season's, response's, and finalization checks.
+`RCMLAwardSuccess` is the integration callback. This narrow award authority
+does not require or grant Dibs GM/Officer administration. The Master Looter
+cannot grant, refund, or configure Dibs from that role alone. In canonical V2
+mode, the coordinator still revalidates and commits accounting; a callback is
+not permission to bypass ordering or recovery.
+A higher balance never replaces RC's winner decision (DIBS-RULE-004).
 
 ## Historical reconciliation
 

@@ -2,7 +2,39 @@
 
 Open AddOns > RCLootCouncil > Dibs, or use `/dibs options`. The Blizzard/RCLootCouncil Options page is the configuration surface: seasons, rank rules, permissions, installation mode, Pre-Dibs policy, announcements, loot-type mapping, RCLootCouncil projection, and debug levels. It contains launch buttons and status only; it does not render long searches, history tables, player reports or statistics. Those operational views open in separate modeless Player or Officer control-center windows, so WoW Settings can remain open beside them. Without RCLootCouncil, the command opens the same AceConfig settings as a standalone window.
 
-The Officer window mirrors the operational navigation: Overview, Review Requests, RC History, Loot Eligibility, Seasons, Rank Rules, Settings, Pre-Dibs, Announcements, Developer, RCLootCouncil, and Debug. It renders those pages from the shared AceConfig groups, so controls use the same Dibs services, SavedVariables, protected callbacks, dynamic loot types and diagnostics as the Blizzard/RCLootCouncil options panel. Review Requests is the private GM/Officer queue for player reports; evidence is read-only and every resolution requires a bounded reason, with explicit confirmation for ledger-changing actions. Wrong-item/player corrections offer a guild-roster player dropdown and a searchable Adventure Guide raid-loot dropdown (name, ID, raid, boss, Dibs category, and equipment metadata). If the client cannot expose Adventure Guide data, the form says why and does not accept arbitrary item text. The **Loot Eligibility** page configures Curio and Tier Set policy, reviews main/alt declarations, and displays probation and protected-loot progress; pending links never affect enforcement. The legacy Players, History and Statistics views remain available through the separate logs action and programmatic compatibility aliases. Existing protected actions continue to enforce authority: GM/officer for Dibs policy and ledger changes; the verified RCLootCouncil Master Looter may manage the loot session and finalize a qualifying DIB award, but cannot grant or remove Dibs.
+The Officer window has grouped navigation, defined in `OfficerUI.lua`:
+
+| Section | Pages |
+| --- | --- |
+| Overview | Dashboard, Guided Setup, Raid Readiness |
+| Dibs | Automatic Dibs, Dibs Administration, History, Statistics |
+| Requests | Requests, Pre-Dib Requests, Pending Awards, Vault Review |
+| Guild Rules | Seasons, Rank Rules, Loot Rules, Announcements, Loot Eligibility |
+| Integrations | RCLootCouncil, Independent Raid |
+| System | Settings, Pre-Dibs Settings, Modules, Guild Configuration, Synchronization, Diagnostics |
+| Developer | Developer, Debug (Developer Mode only) |
+
+Optional-module pages may be hidden, and labels are localized. Specialized
+operational controllers and shared configuration groups delegate to the same
+protected services; not every page is a rendering of AceConfig. Start setup at
+**Overview > Guided Setup**. **Raid Readiness** checks current raid context;
+**System > Guild Configuration** handles historical review and ledger activation.
+
+**Requests** is the private GM/Officer report queue (legacy **Review Requests**,
+`/dibs review`). Shared dossiers are writable only by the verified pinned
+coordinator. Evidence is read-only and resolutions require a bounded reason,
+with explicit confirmation for ledger-changing actions. Wrong-item/player
+corrections offer a guild-roster player dropdown and searchable Adventure Guide
+loot catalogue. If that catalogue is unavailable, the form explains why rather
+than accepting arbitrary item text. The **RC History** reconciliation workflow
+remains accessible with `/dibs reconcile`; it is not a top-level navigation
+entry. **Dibs > Statistics** is the current descriptive player-activity page,
+not an automatic winner or fairness ranking.
+
+**Loot Eligibility** configures Curio/Tier Set policy, main/alt approval, and
+probation. Pending links do not affect enforcement. Guild GM/Officer authority
+remains distinct from the verified RCLootCouncil Master Looter's narrow
+qualifying-award authority.
 
 History and correction item rows retain their WoW hyperlink. An Officer can use **Open in Adventure Guide** on a selected RCLootCouncil history row; when the catalogue has a matching raid and boss, the Adventure Guide opens directly on that encounter. Older rows without encounter metadata are matched against the cached Adventure Guide catalogue only after the Officer requests navigation.
 
@@ -93,8 +125,10 @@ unavailable, Draft RC generation reports the family as skipped.
 Button generation is marked unsupported unless the active profile exposes the
 paired `buttons`/`responses` schema and an RC config-refresh hook.
 
-The **Installation assistant** offers these two starting presets and refreshes
-the locked Dibs projection after applying one. It prepares the Dibs button in
+For initial setup, use **Overview > Guided Setup** and its reviewed profiles,
+not the former **Installation assistant** route. The policy presets provide
+the two starting configurations described above. The adapter refreshes the
+locked Dibs projection when applying a supported configuration. It prepares the Dibs button in
 the default RCLC response set and every additional set already enabled by the
 Master Looter, while preserving existing button text, colors, response order
 and slot selections. If RCLootCouncil is absent, the same presets configure
@@ -107,18 +141,20 @@ Players can choose another guild character from the roster to submit an **alt
 declaration** or a **main-change request**; both remain pending until an Officer
 reviews them.
 
-The **Raid Readiness & Dry-Run** page is available inside the Officer
-RCLootCouncil section. **Run readiness check** evaluates the active season,
+Open **Overview > Raid Readiness** for the current setup/readiness projection,
+or `/dibs readiness` for the selectable report. The old inline RCLootCouncil
+readiness group is hidden. Readiness evaluates the active season,
 rank policy, installation mode, RCLootCouncil capabilities, response projection,
 raid context, channel and local services. **Open selectable safe report** opens
 bounded diagnostic metadata in its own selectable window and includes the Dibs
-addon version plus the observed RCLootCouncil version. The dry-run fields accept an item, winner,
-response, finalization status and synthetic session identity; **Run local
-dry-run** reports `would_allow`, `would_reject`, `would_ignore`, or
+addon version plus the observed RCLootCouncil version. **Run local dry-run**
+uses a synthetic example. For an explicit item, winner, response, finalization
+status and synthetic session identity, use `/dibs dryrun`. Outcomes include
+`would_allow`, `would_reject`, `would_ignore`, or
 `would_require_review` without invoking live award controls or consuming a Dib.
 Players see only a safe readiness status in their Summary view.
 
-The **RC History** Officer page is a deliberate recovery workflow for history
+The **RC History** workflow (`/dibs reconcile`) deliberately recovers history
 that predates Dibs installation. Configure exact aliases, choose a target
 season and optional timestamp bounds, then press **Search history (preview)**.
 Only matching DIB rows are shown; the preview also reports how many unrelated
@@ -146,10 +182,24 @@ Raid Dibs is a community stream, distinct from RAID chat. Its selection remains 
 6. Submit/cancel a personal Pre-Dib and compare the player window. Review seasonal officer searches and pages.
 7. Open options during combat; verify opening is deferred until combat ends. Repeat the command with RCLootCouncil absent.
 
-## Automated validation
+## Historical automated validation (2026-09-11)
+
+The counts and coverage in this section describe the original pass only, not
+current test results or a Retail certification of later changes.
 
 2026-09-11: full Lua suite passed: 226 tests, 0 failures, 54 files. Coverage includes capability transitions, late-load recovery, authority matrix, local Master Looter enforcement, explicit response normalization, stable award provenance, reload idempotency, history preservation, exact DIB history filtering, precise date/time display with seconds, zero-date handling, simplified history confirmation, inferred history final-status rules, duplicate item difficulty context, separate transfer review window with required annotation, stable Officer option pages, transfer-only table actions, sync privacy, options fallback, combat deferral, standalone operation, RC loot policy cache invalidation, indexed DIB response projection, AceDB profile discovery, malformed-count bounds, normalized voting-row Dibs display, the real lib-st callback signature, slash output with diagnostics disabled, rank allocation for candidates without ledger history, Catalyst exclusion, semantic Curio/Tier Set mapping, ordinary equipment fallback, Miscellaneous Armor Token disambiguation, Cosmetic blocking, Installation assistant controls, Raid Readiness states and invalidation, safe reports, selectable report windows with version metadata, dry-run replay, shared award validation, and no-mutation checks. Retail visual and delivery checks remain pending.
 
-The `/dibs officer` window uses the same vertical navigation pattern as the RCLootCouncil options. It has a **Loot types** page with the same dynamic type list, checkboxes and both presets as the RCLootCouncil options. Changes use the same callbacks; reopening or refreshing either view reads the current values. The Player window uses the same navigation pattern for its Summary, History, and **My requests** pages. A player can submit a bounded report with an optional ledger entry, answer an Officer question, and read the final explanation. Use `/dibs requests` for the Player page and `/dibs review` for the authorized Officer queue. Focused options, history transfer and UI regression validation: 33 tests passed.
+An additional historical focused options/history/UI regression run recorded
+33 passing tests. That count is not a current full-suite result.
 
-The officer window also has a **Debug** tab. It exposes the global and module verbosity levels, the current runtime report, and a button that opens the selectable readiness report. `/dibs debug report` remains the compact chat diagnostic. The readiness report contains runtime metadata and channel identifiers only; it does not include live loot candidates, votes, or responses.
+## Current operational windows
+
+`/dibs officer` uses the grouped navigation listed at the top of this document.
+**Guild Rules > Loot Rules** is the single policy-editing surface; the old
+generic **Loot types** copy is hidden. Quick presets update a draft, not the
+published guild snapshot. The Player window separates Pre-Dibs from
+**Reports** (`/dibs requests`), where players submit a bounded report with an
+optional ledger entry, answer questions, and read conclusions. `/dibs review`
+opens the authorized Officer queue.
+
+With Developer Mode enabled, the Officer window also has **Developer > Debug**. It exposes the global and module verbosity levels, the current runtime report, and a button that opens the selectable readiness report. `/dibs debug report` remains the compact chat diagnostic. The readiness report contains runtime metadata and channel identifiers only; it does not include live loot candidates, votes, or responses.

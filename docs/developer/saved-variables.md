@@ -1,8 +1,9 @@
 # SavedVariables and compatibility
 
-The TOC declares one guild-scoped root and one per-character local root. The
-guild-scoped root is `RCLootCouncil_dibsDB`; the local root is
-`RCLootCouncil_dibsLocalDB`.
+The TOC declares two account-wide stores and one per-character local root.
+Production guild data is in `RCLootCouncil_dibsDB`; isolated developer fixtures
+are in `RCLootCouncil_dibsSandboxDB`. The local root is
+`RCLootCouncil_dibsLocalDB`. Sandbox data is never a production guild bucket.
 
 ```lua
 RCLootCouncil_dibsDB = {
@@ -59,7 +60,16 @@ new writes fail at 500 dossiers / 120 audit events. Previously removed history
 cannot be recovered by this migration. Shared replicas contain a full officer
 dossier or an explicit safe owner body and never apply accounting by themselves.
 
-Legacy flat roots are wrapped into a guild bucket during `Core.lua` initialization. Runtime code uses `Dibs.db`; `_G.DibsDB` remains a compatibility alias for the active guild bucket. The guild schema currently reports version 6, with versioned reconciliation and character-eligibility sub-stores.
+Legacy flat roots are wrapped into a guild bucket during `Core.lua` initialization.
+Runtime code uses `Dibs.db`; `_G.DibsDB` remains a compatibility alias for the
+active guild bucket. The guild schema currently reports version 7 (the root wrapper remains version 6),
+with versioned reconciliation and character-eligibility sub-stores.
+
+Guild `ledgers[ledgerId]` holds each ledger's separate accounting state.
+`activeLedgerId` selects the local active view and `ledger` remains its legacy
+compatibility pointer. Do not merge different ledgers' transactions or treat a
+view change as a balance transfer. Independent Raid uses a separate ephemeral
+session context, not an extra production guild ledger.
 
 Startup validates the root and active guild bucket before indexing persisted
 subtrees. `persistenceRecovery` is additive root metadata containing at most

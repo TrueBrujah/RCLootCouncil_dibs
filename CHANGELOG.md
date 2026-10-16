@@ -2,6 +2,16 @@
 
 ## 0.8.9 - 2026-10-16
 
+- (2026-10-16) Align current documentation with the implemented application:
+  replace obsolete setup/navigation instructions with three-stage Guided Setup
+  and grouped Officer pages, update EN/FR guide scope and pending screenshot
+  inventories, complete the TOC module inventory, correct persistence schemas
+  and the narrow RCLootCouncil award-authority contract, and distinguish legacy
+  sync from V2/private request delivery. Mark historical evidence explicitly
+  and point installation links to the published stable 0.8.9 ZIP. Written
+  after the 0.8.9 package was published; documentation only, so the packaged
+  addon is unchanged and no behavior, data, or protocol migration applies.
+
 - (2026-10-15) Make the minimap icon movable and resizable: drag it with the left button around a round or square minimap edge, and adjust its size from 50% to 200% in **Player > Preferences** or with `/dibs minimap scale <50-200>`. `/dibs minimap reset` (or the Preferences button) restores the default position and size. The icon now uses the standard round minimap-button frame (gold ring, dark background, round-masked logo) like LibDBIcon addons such as BugSack. Clicks are unchanged. The angle and scale are stored per character in local settings (`minimapButtonAngle`, `minimapButtonScale`), with invalid values ignored; no guild data, ledger, or protocol change. EN/FR strings and player guides updated; Retail validation remains pending.
 
 - (2026-10-15) Guard secret WoW system messages before parsing whisper-failure feedback, avoiding Retail secret-string errors in the Ace3 adapter. Restricted feedback is ignored without logging its contents or changing target cooldowns; readable localized failures retain the existing retry pause. No SavedVariables or protocol migration.

@@ -2,6 +2,11 @@
 
 Ce guide explique la mise en place et l'administration de RCLootCouncil_dibs.
 
+Il decrit le code actuel ; consultez les [versions publiee et locale](../../README.md#downloads).
+Les libelles sont localises et les modules desactives peuvent masquer leurs
+pages. Les chemins de captures en attente inventorient les images Retail
+manquantes ; ils ne constituent pas une validation du client actuel.
+
 ## A quoi sert Dibs ?
 
 Dibs fournit un ledger saisonnier, des demandes Pre-Dib, des controles
@@ -13,9 +18,8 @@ Dibs ne remplace pas le vote, ne choisit pas automatiquement le gagnant et ne
 reecrit pas l'historique RCLootCouncil. Une demande Pre-Dib n'est pas un debit.
 Un Drop-Dib ne produit un debit qu'apres une finalisation valide et idempotente.
 
-![Vue d'ensemble GM et Officer](../assets/guides/screenshots/fr/officer/officer-overview.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/officer/officer-overview.png`_
+_Capture Retail en attente : navigation Officer groupee et tableau de bord —
+`docs/assets/guides/screenshots/fr/officer/officer-overview.png`._
 
 ## 1. Roles et securite
 
@@ -34,19 +38,25 @@ Important :
 Ouvrez :
 
 ```text
-/dibs options
+/dibs officer
 ```
 
-Puis configurez dans cet ordre :
+Ouvrez **Overview > Guided Setup** (Configuration guidee) :
 
-1. **Settings** : choisissez `AUTO`, `STANDALONE` ou `RCLootCouncil`.
-2. **Seasons** : creez une saison et rendez-la active.
-3. **Rank Rules** : definissez les allocations par grade de guilde.
-4. **Pre-Dibs** : choisissez `WILD_OPEN` ou `ENCOUNTER`.
-5. **Announcements** : choisissez les canaux publics, Officers et raid.
-6. **Loot / Eligibility** : definissez les categories d'objets autorisees.
-7. **System > Modules** : activez uniquement les fonctions utiles a la guilde.
-8. **Overview** : verifiez la saison, les permissions et l'etat des integrations.
+1. **Choisir** : Raid de progression, Butin standard ou Personnalise/avance.
+2. **Configurer** : lisez l'apercu avant **Appliquer cette configuration**.
+   Un Officer prepare les actions permises ; les approbations GM restent
+   explicitement en attente.
+3. **Verifier** : suivez les boutons de correction des blocages rouges.
+   Le mode personnalise conserve les reglages existants.
+
+Les pages avancees restent disponibles : **Guild Rules > Seasons / Rank Rules /
+Loot Rules / Announcements / Loot Eligibility**, **System > Settings / Pre-Dibs
+Settings / Modules / Guild Configuration**, et **Integrations > RCLootCouncil**.
+Le GM adopte/publie les regles et approuve l'activation du ledger canonique ;
+un brouillon local ne suffit pas. **Automatic Dibs** gere les complements
+d'allocation positifs avec raison et confirmation, jamais une reprise apres
+retrogradation. `/dibs options` reste la surface de configuration et de lancement.
 
 L'icone Dibs a cote de la mini-carte est un raccourci vers la vue Joueur ou
 Officer appropriee. Elle n'accorde jamais de permission : les controles
@@ -69,14 +79,14 @@ Les commandes `admin add` et `admin remove` conservent l'historique de migration
 ### Installation et premier lancement
 
 1. Installez le ZIP dans `Interface/AddOns/` et activez l'addon.
-2. Faites `/reload`, puis ouvrez `/dibs options`.
-3. Configurez une saison avant de distribuer des Dibs.
-4. Verifiez avec `/dibs readiness` que les services attendus sont disponibles.
+2. Faites `/reload`, puis ouvrez `/dibs officer` > **Overview > Guided Setup**.
+3. Choisissez un profil, examinez/appliquez les actions permises, puis verifiez.
+4. Ouvrez **Overview > Raid Readiness** et `/dibs readiness` avant le raid.
+   L'absence de contexte de raid n'est pas un echec de configuration Standalone.
 5. Faites un dry-run avant le premier raid reel.
 
-![Configuration de la saison et des permissions](../assets/guides/screenshots/fr/officer/officer-setup.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/officer/officer-setup.png`_
+_Capture Retail en attente : Choisir/Configurer/Verifier, blocages et liens de
+correction — `docs/assets/guides/screenshots/fr/officer/officer-setup.png`._
 
 ## 3. Choisir le mode de fonctionnement
 
@@ -153,7 +163,7 @@ Lancez :
 /dibs readiness
 ```
 
-La page **Raid Readiness & Dry-Run** indique notamment :
+La page **Overview > Raid Readiness** indique notamment :
 
 - la saison et la politique actives ;
 - l'etat de RCLootCouncil ;
@@ -245,7 +255,8 @@ nouveau solde et la raison; l'operation originale reste intacte.
 
 1. Le joueur cree une demande pour un objet eligible.
 2. Dibs verifie la saison, la difficulte, l'objet et le mode Pre-Dibs.
-3. La demande est visible dans **Review Requests** ou **Pre-Dibs**.
+3. La demande est visible dans **Requests > Pre-Dib Requests**.
+   **System > Pre-Dibs Settings** configure la politique, pas les signalements.
 4. Le joueur peut l'annuler s'il en est le proprietaire.
 5. Apres un gain eligible finalise, la demande peut etre accomplie.
 6. Un seul debit est ajoute au ledger, meme si le callback est rejoue.
@@ -261,17 +272,18 @@ de session, Master Looter et statut final.
 Les gains normaux, test, failed, pending, incomplets ou dupliques ne doivent pas
 consommer de Dib de production. Un callback rejoue doit rester idempotent.
 
-![Historique d'un debit Drop-Dib](../assets/guides/screenshots/fr/officer/officer-ledger.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/officer/officer-ledger.png`_
+_Capture Retail en attente : debit finalise et correction append-only liee —
+`docs/assets/guides/screenshots/fr/officer/officer-ledger.png`._
 
 ## 8. Workflow RCLootCouncil
 
 Avec RCLootCouncil installe :
 
-1. Ouvrez l'assistant d'installation RCLootCouncil.
-2. Choisissez les familles d'objets utilisees par la guilde.
-3. Actualisez les boutons Dibs apres toute modification des ensembles de reponses.
+1. Utilisez **Overview > Guided Setup** pour la configuration initiale, puis
+   **Guild Rules > Loot Rules** pour le brouillon des familles d'objets.
+2. Faites adopter/publier les regles par le GM. Le brouillon ne suffit pas.
+3. Verifiez les modeles et la projection dans **Integrations > RCLootCouncil**
+   apres une modification des ensembles de reponses.
 4. Lancez une session avec le Master Looter verifie.
 5. Controlez que la reponse DIB et la colonne de solde sont visibles.
 6. Finalisez le gain dans RCLootCouncil.
@@ -283,9 +295,9 @@ Un gain normal, de test, incomplet, refuse, en attente ou duplique ne depense pa
 
 ## 9. Revoir l'historique et les litiges
 
-### Review Requests
+### Requests : signalements
 
-Dans **Review Requests** :
+Dans **Requests > Requests** (`/dibs review`, anciennement **Review Requests**) :
 
 1. Filtrez par statut, joueur ou objet.
 2. Ouvrez les preuves associees.
@@ -324,7 +336,8 @@ multi-client et changement de coordinateur encore requise.
 
 ### RC History
 
-La page **RC History** sert a examiner d'anciens gains RCLootCouncil :
+Le parcours **RC History** (`/dibs reconcile`) sert a examiner d'anciens gains
+RCLootCouncil ; ce n'est plus une entree principale de navigation :
 
 1. Choisissez la saison cible.
 2. Ajoutez si necessaire une plage de dates et des alias de reponse.
@@ -350,7 +363,7 @@ Officer et les limites de confidentialite existantes restent appliquees.
 
 ### Statistiques d'activite par joueur
 
-Ouvrez **Officer > Statistiques** et saisissez au besoin des dates `YYYY-MM-DD`.
+Ouvrez **Dibs > Statistics** et saisissez au besoin des dates `YYYY-MM-DD`.
 Les bornes sont inclusives; laissez-les vides pour toute la saison selectionnee.
 Le tableau presente des comptes descriptifs par joueur : transactions du
 registre, attributions, Dibs accordes/utilises et corrections. La vue est en
@@ -389,9 +402,8 @@ Une reconnexion peut relancer une demande manquante, sans doublon ni transfert
 partiel. Un changement de guilde ne fusionne pas l'ancien historique; un
 personnage sans guilde conserve son propre scope local.
 
-![Revue GM/Officer du Grand Coffre](../assets/guides/screenshots/fr/officer/officer-vault-review.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/officer/officer-vault-review.png`_
+_Capture Retail en attente : revue Officer du Grand Coffre —
+`docs/assets/guides/screenshots/fr/officer/officer-vault-review.png`._
 
 Elle ne partage pas :
 
@@ -412,9 +424,8 @@ et le statut final. Faites une preview, inspectez la preuve, saisissez une raiso
 et confirmez une seule fois. Les confirmations historiques restent auditees et
 idempotentes.
 
-![Etat de synchronisation et reconciliation](../assets/guides/screenshots/fr/officer/officer-sync-reconciliation.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/officer/officer-sync-reconciliation.png`_
+_Capture Retail en attente : synchronisation et reconciliation historique —
+`docs/assets/guides/screenshots/fr/officer/officer-sync-reconciliation.png`._
 
 ## 12. Modules optionnels
 
@@ -428,18 +439,7 @@ Le GM peut desactiver un module dans **System > Modules**.
 
 ## 13. Depannage, diagnostics et release checks
 
-Dans **Officer > Diagnostics**, le centre de sante liste les references de
-saison invalides, les acquisitions Great Vault incompletes ou en double, les
-acquisitions a verifier et les conflits Vault. Les apercus ne modifient pas les
-donnees; les decisions Vault passent par la revue auditee existante.
-
-**Exporter le rapport de sante** ne partage que le statut, la disponibilite des
-sources et les compteurs d'anomalies. **Exporter l'audit anonymise** est un
-rapport distinct et borne; il exclut les noms, identifiants d'acteur, raisons,
-identifiants de saison et transactions executables. Verifiez le texte avant de
-le partager.
-
-Dans **Officer > Diagnostics**, le centre de sante liste les references de
+Dans **System > Diagnostics**, le centre de sante liste les references de
 saison invalides, les acquisitions Great Vault incompletes ou en double, les
 acquisitions a verifier et les conflits Vault. Les apercus ne modifient pas les
 donnees; les decisions Vault passent par la revue auditee existante.

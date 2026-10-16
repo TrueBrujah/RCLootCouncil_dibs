@@ -1,14 +1,24 @@
 # Initial configuration
 
 1. Open the Dibs Officer control center from the addon options or `/dibs officer`.
-2. Confirm the guild and installation mode. Guild GM/officer authority is separate from RCLootCouncil Master Looter authority.
-3. Create a season, give it a clear name, and make it active.
+2. Open **Overview > Guided Setup**: choose Progression raid, Standard loot, or
+   Custom/advanced, review the preview, then apply permitted actions and verify.
+   Custom preserves settings; Officer preparation does not perform GM approvals.
+   Confirm the guild and installation mode. Guild GM/officer authority is
+   separate from RCLootCouncil Master Looter authority.
+3. Follow correction links for unresolved setup. In **Guild Rules > Seasons**,
+   create a season, give it a clear name, and make it active if still needed.
 4. Configure rank allocations for that season. Disable Dibs for ranks that should
    not receive starting allocations; members of those ranks are omitted from
    allocation-reconciliation warnings. Existing ledger allocations are preserved.
    The rank snapshot used when a transaction is recorded remains in its audit data.
 5. Choose Pre-Dibs mode and announcement channels/templates. Public requests can be disabled while officers continue to review existing records.
 6. Review loot eligibility policies for supported semantic families and difficulties.
+   The GM must explicitly adopt/publish **Guild Rules > Loot Rules**; editing
+   a draft alone does not publish it. Use **System > Guild Configuration** for
+   historical baseline review and canonical-ledger activation. Use **Automatic
+   Dibs** for confirmed positive-only allocation top-ups; never remove assigned
+   Dibs after demotion.
 7. Create a backup before importing or restoring data. Imports are preview-first and require explicit application.
 
 8. Review **System > Modules** as the Guild Master. Optional modules can be
@@ -19,3 +29,7 @@
    be disabled.
 
 Use profiles for repeatable settings. Activating a profile changes configuration projection; it does not rewrite ledger history. Keep the default backup retention unless guild policy requires another bounded value.
+
+Before a raid, use **Overview > Raid Readiness**, `/dibs readiness`, and a local
+dry-run. Missing live raid context is distinct from failed standalone setup;
+readiness and dry-run results are not Retail certification.

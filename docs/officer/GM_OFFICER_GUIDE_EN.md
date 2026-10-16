@@ -3,6 +3,11 @@
 This guide covers setup, administration, audit, recovery, and release checks for
 RCLootCouncil_dibs.
 
+This guide describes current source; see the [published/local version distinction](../../README.md#downloads).
+Navigation labels are localized, and disabled modules can hide their pages.
+Screenshot paths marked pending identify missing Retail captures, not delivered
+images or proof of current-client validation.
+
 ## Purpose and limits
 
 Dibs provides a seasonal ledger, Pre-Dib requests, eligibility checks, and
@@ -13,9 +18,8 @@ Dibs does not choose a winner automatically, replace RCLootCouncil voting, or
 rewrite RCLootCouncil history. A Pre-Dib is not a debit. A Drop-Dib creates one
 ledger debit only after a valid finalized award and remains idempotent on replay.
 
-![GM and Officer overview](../assets/guides/screenshots/en/officer/officer-overview.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-overview.png`_
+_Pending Retail capture: grouped Officer navigation and Dashboard —
+`docs/assets/guides/screenshots/en/officer/officer-overview.png`._
 
 ## Authority and security
 
@@ -33,7 +37,8 @@ GM or Officer.
 
 1. Install the `RCLootCouncil_dibs` folder under `Interface/AddOns/`.
 2. Enable it and run `/reload`.
-3. Open `/dibs options` and open **Guided Setup** under Officer > Overview.
+3. Open `/dibs officer` > **Overview > Guided Setup**. `/dibs options` also
+   provides configuration and launch controls.
 4. Complete the three primary stages:
   - **Choose**: select Progression raid, Standard loot, or Custom/advanced.
     The profile explains who it is for, why it is useful, and what it leaves
@@ -87,9 +92,8 @@ use the one that matches what you're trying to do:
 | **Raid Readiness** | Answers "is DIBS ready for this raid?" (season, rank rules, RCLootCouncil, live raid context). It can be run independently and is reused as-is by Guided Setup's final step. |
 | **Guild Configuration** | Guild-level configuration and canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and one-time ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
 
-![Season, rank, and permissions setup](../assets/guides/screenshots/en/officer/officer-setup.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-setup.png`_
+_Pending Retail capture: Guided Setup Choose/Configure/Verify, blockers and
+correction links — `docs/assets/guides/screenshots/en/officer/officer-setup.png`._
 
 ## Slash commands
 
@@ -135,8 +139,8 @@ Choose an installation mode:
 Dibs supports partitioned ledgers within the same guild to accommodate multiple raid teams, split runs, or distinct progression rosters without balance interference.
 
 - **Storage Partitioning**: Each ledger maintains independent transaction logs and player balances (`guild-primary` is the default).
-- **Proposing a Ledger**: Verified Officers can propose a new ledger (`Dibs.MultiLedger.ProposeLedger(name, description)` or via the Officer UI).
-- **Guild Master Approval**: Proposed ledgers remain inactive until explicitly approved by the Guild Master (`Dibs.MultiLedger.ApproveLedger(ledgerId)` or in Officer > Guild Configuration).
+- **Proposing a Ledger**: Verified Officers can propose a new ledger through the Officer UI.
+- **Guild Master Approval**: Proposed ledgers remain inactive until explicitly approved by the Guild Master in Officer > Guild Configuration.
 - **Active Ledger Switching**: Officers and players can switch their active view via the ledger selector dropdown in the UI (`/dibs` for players, `/dibs options` for officers).
 - **Catalog Synchronization**: The approved ledger catalog (`LEDGER_CATALOG`) replicates automatically across all guild members.
 - **Permanent deletion**: Only the Guild Master can permanently delete a non-default ledger after it is archived. The Officer UI requires a second confirmation, records a governance audit entry, and synchronizes an idempotent deletion tombstone to the guild. The default ledger and active or approved ledgers cannot be deleted.
@@ -189,9 +193,8 @@ Configure supported loot families, announcement channels, and the Pre-Dib mode:
   policy;
 - `ENCOUNTER`: requests require the matching raid and difficulty context.
 
-![Policy and Pre-Dib settings](../assets/guides/screenshots/en/officer/officer-policy.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-policy.png`_
+_Pending Retail capture: published Loot Rules and Pre-Dibs settings —
+`docs/assets/guides/screenshots/en/officer/officer-policy.png`._
 
 ## Readiness and Drop-Dib workflow
 
@@ -210,22 +213,23 @@ For a Drop-Dib:
 Normal, test, failed, pending, incomplete, or duplicate events must not consume
 production Dibs. Never fix a debit by editing SavedVariables.
 
-![Ledger entry for a finalized Drop-Dib](../assets/guides/screenshots/en/officer/officer-ledger.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-ledger.png`_
+_Pending Retail capture: finalized award and linked append-only correction —
+`docs/assets/guides/screenshots/en/officer/officer-ledger.png`._
 
 ## Pre-Dib workflow
 
 1. A player submits a supported item request.
 2. Dibs validates season, item, difficulty, and mode.
-3. Review it in **Review Requests** or **Pre-Dibs**.
+3. Review it in **Requests > Pre-Dib Requests**; **System > Pre-Dibs Settings**
+   configures request policy rather than player problem reports.
 4. Inspect owner, item, request status, and evidence.
 5. Let the finalized award fulfill the request when appropriate.
 6. Confirm that a replay creates no second debit.
 
 ## History, corrections, and audit trail
 
-Use **Review Requests** to filter by status, player, or item, inspect evidence,
+Use **Requests > Requests** (`/dibs review`, formerly **Review Requests**)
+to filter by status, player, or item, inspect evidence,
 and resolve a report. Every resolution requires a reason. Balance and target
 corrections require explicit confirmation.
 
@@ -263,7 +267,7 @@ Add and Remove require a reason and explicit confirmation; the audit record
 retains the acting Officer/GM, target, previous balance, resulting balance, and
 reason. The original history is never edited or deleted.
 
-Use **RC History** for historical RCLootCouncil evidence:
+Use `/dibs reconcile` for the **RC History** historical reconciliation workflow:
 
 1. Select the target season.
 2. Filter by date and exact response aliases where needed.
@@ -289,7 +293,7 @@ and privacy boundaries continue to apply.
 
 ### Player activity statistics
 
-Open **Officer > Statistics** and enter optional `YYYY-MM-DD` start and end
+Open **Dibs > Statistics** and enter optional `YYYY-MM-DD` start and end
 dates. Bounds are inclusive; leave both empty for the full selected season.
 The table shows descriptive per-player ledger transaction, award, Dibs granted,
 Dibs used, and correction counts. It is read-only and does not change the
@@ -337,13 +341,11 @@ private-evidence, malformed, and incomplete transfers. Reconnect retries are
 bounded and idempotent. A guild change does not merge old history, and an
 unguilded character keeps its own local ownership scope.
 
-![Officer Great Vault review](../assets/guides/screenshots/en/officer/officer-vault-review.png)
+_Pending Retail capture: Officer Vault Review —
+`docs/assets/guides/screenshots/en/officer/officer-vault-review.png`._
 
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-vault-review.png`_
-
-![Synchronization and reconciliation state](../assets/guides/screenshots/en/officer/officer-sync-reconciliation.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/officer/officer-sync-reconciliation.png`_
+_Pending Retail capture: Synchronization and historical reconciliation —
+`docs/assets/guides/screenshots/en/officer/officer-sync-reconciliation.png`._
 
 ## Backup, restore, profiles, and disputes
 
@@ -362,7 +364,7 @@ player, eligibility, and integration reports. Do not directly edit stored data.
 
 ### Data health review
 
-Open **Officer > Diagnostics** to review guild-scoped invalid season references,
+Open **System > Diagnostics** to review guild-scoped invalid season references,
 incomplete or duplicate Great Vault acquisitions, acquisitions requiring
 verification, and unresolved Vault conflicts. Previews are read-only; use the
 existing **Vault Review** workflow for decisions that require an audited reason.

@@ -13,9 +13,11 @@ The first-installation assistant is an Officer-only setup surface. Players can
 continue using the normal player guide; administrative checklist details and
 protected setup controls are not exposed to players.
 
-The guides include the 0.8.0 guild Loot Rules authority workflow. The 0.6.5
-B12 Retail evidence remains historical; current Retail behavior still requires
-the manual validation gate in the feature audit.
+The guides describe current source, including guild Loot Rules, ledger selection,
+Vault history, and private report follow-up. The [README](../../README.md#downloads)
+links the published release, including the 0.8.9 minimap move/resize
+controls. Historical B12 evidence does not certify
+current Retail behavior; manual validation remains separate.
 
 ## What is a Dib?
 
@@ -35,7 +37,10 @@ RCLootCouncil may show your request and eligibility to officers. RCLootCouncilâ€
 
 ## When is a Dib consumed?
 
-Only a qualifying finalized award, or an officer-confirmed historical award with evidence, can create a ledger use. A boss kill, merely receiving an item, or a Vault acquisition does not consume a Dib.
+A qualifying finalized award or an officer-confirmed historical award with
+evidence can create an award debit. Authorized manual uses/corrections are
+separate audited actions. A boss kill, merely receiving an item, or a Vault
+acquisition does not consume a Dib.
 
 ## What can officers see?
 
