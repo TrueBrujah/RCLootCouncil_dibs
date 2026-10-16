@@ -1,5 +1,10 @@
 # Source-Driven Documentation Phase 2 Final Validation
 
+> Historical validation report. Results and source-line references below apply
+> to the 2026-09-25 pass, not current output. The Player guide link now points
+> to its stable Synchronization heading because the original line 114 no longer
+> exists; this link repair does not revalidate or restate the historical finding.
+
 - Date: 2026-09-25
 - Mode: Read-only validation. This report is the only file created during this final-validation pass. No source, tests, generated artifacts, staging area, or commits were changed.
 
@@ -55,7 +60,7 @@ The orphan scan remains in `scripts/docs/DibsDocumentation.psm1` and emits the `
 
 ## Role Boundary Finding
 
-The role renderer correctly filters concepts by audience: Officer output includes review/admin operations, GM output includes setup/coordinator/reconciliation/rank/season/synchronization concepts, and Developer output includes technical protocol concepts. The Player guide nevertheless renders source provenance for `sync.status` as `src/modules/SyncV2.lua` and `Sync.GetStatus` ([player-guide.md](../generated/player-guide.md#L114), [SyncV2.lua](../../src/modules/SyncV2.lua#L239)). That exposes a Developer implementation name in Player output, so the requested Player role-output criterion fails even though the `sync.raid.relay` Developer-only concept itself is excluded. This final pass is read-only and did not change the renderer or generated artifact.
+The role renderer correctly filters concepts by audience: Officer output includes review/admin operations, GM output includes setup/coordinator/reconciliation/rank/season/synchronization concepts, and Developer output includes technical protocol concepts. The Player guide nevertheless renders source provenance for `sync.status` as `src/modules/SyncV2.lua` and `Sync.GetStatus` ([player-guide.md](../generated/player-guide.md#synchronization), [SyncV2.lua](../../src/modules/SyncV2.lua#L239)). That exposes a Developer implementation name in Player output, so the requested Player role-output criterion fails even though the `sync.raid.relay` Developer-only concept itself is excluded. This final pass is read-only and did not change the renderer or generated artifact.
 
 ## Lua and Editor Diagnostics
 

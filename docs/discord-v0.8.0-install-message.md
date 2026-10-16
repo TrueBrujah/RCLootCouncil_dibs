@@ -1,3 +1,6 @@
+> Historical v0.8.0 announcement template; do not reuse as the current download
+> message. See the [installation guide](INSTALLATION.md).
+
 RCLootCouncil_dibs v0.8.0 is now available. Everyone in the guild should install or update it before the next raid.
 
 Download: https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/download/v0.8.0/RCLootCouncil_dibs-v0.8.0.zip

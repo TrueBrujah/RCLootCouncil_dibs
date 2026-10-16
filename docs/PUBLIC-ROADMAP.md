@@ -1,5 +1,30 @@
 # Public Roadmap
 
+Revue documentaire : 2026-10-16. Cette page distingue le code implemente,
+les validations Retail restantes et les idees non approuvees. Un statut termine
+ne signifie pas une certification Retail ni une publication de tous les
+changements locaux ; voir les [versions et telechargements](../README.md#downloads).
+Les resultats automatises historiques ne sont pas de nouveaux tests executes
+lors de cette revue documentaire.
+
+## Fonctionnalites actuelles a retrouver dans les guides
+
+- Plusieurs ledgers de guilde, approbation GM et sessions Independent Raid
+  isolees : [guide Officer](officer/MODE_EMPLOI_GM_OFFICER.md).
+- Configuration guidee en trois etapes, publication des Loot Rules et
+  reconciliation positive des allocations : [configuration](officer/configuration.md).
+- Recherche d'historique, statistiques descriptives, revue de sante et export
+  d'audit anonymise : [guide Officer](officer/MODE_EMPLOI_GM_OFFICER.md).
+- Signalements prives avec file persistante, reception distincte de la
+  resolution, suivi et archivage conserve : [guide joueur](player/MODE_EMPLOI_JOUEUR.md)
+  et [contrat de livraison](../specs/025-request-followup-delivery/spec.md).
+- Icone de mini-carte deplacable/redimensionnable : publiee en 0.8.9.
+
+Le passage automatique des anciens dossiers partages vers un nouveau
+coordinateur/epoch n'est pas implemente : le verrouillage reste explicite.
+La livraison multi-client, les acquisitions Vault automatiques et les
+parcours UI/proteges exigent toujours leurs controles manuels Retail.
+
 ## Statuts
 
 - [x] **Terminee** : implementation et validation automatisee disponibles.
@@ -37,19 +62,19 @@ utilisable sans RCLootCouncil lorsque cela est pertinent.
 
 #### Etape 0 - Fondation Great Vault et synchronisation - [~] Partiellement terminee
 
-> Les acquisitions manuelles, les etats de verification, l'idempotence et la synchronisation sont implementes. La detection automatique depend encore des signaux exposes par l'API Retail, et la validation Retail reste a faire.
+> Les acquisitions manuelles, les etats de verification, l'idempotence et la synchronisation sont implementes. L'adaptateur de detection automatique est egalement implemente, mais depend des signaux exposes par l'API Retail ; sa validation Retail reste a faire.
 
 Cette etape est la dependance technique de l'indicateur de synchronisation.
-L'addon sait deja enregistrer une acquisition Vault manuellement avec
-`/dibs vault`; cette etape ajoutera la detection de reclamation lorsque
-l'API Retail le permet, un identifiant de reset pour l'idempotence et une
-source `GREAT_VAULT`. Si l'API ne permet pas une confirmation fiable, l'entree
-restera etiquetee comme manuelle ou a verifier par un Officer.
+L'addon enregistre les acquisitions manuelles avec `/dibs vault` et correle,
+lorsque l'API le permet, une reclamation, la reception exacte de l'objet et la
+fin des recompenses disponibles. Le reset et la source `GREAT_VAULT` servent
+a l'idempotence. Sans preuve fiable, utilisez le parcours manuel et conservez
+son statut de verification ; ouvrir le Coffre ne suffit pas.
 
-Les acquisitions Vault seront ensuite ajoutees au protocole de synchronisation
+Les acquisitions Vault sont incluses dans le protocole de synchronisation
 avec validation de la guilde, de l'identite du personnage, de la saison et de
-la revision. Les donnees ne seront pas envoyees vers GitHub ni vers un service
-central; elles resteront dans les SavedVariables et les messages addon de la
+la revision. Les donnees ne sont pas envoyees vers GitHub ni vers un service
+central; elles restent dans les SavedVariables et les messages addon de la
 guilde.
 
 Critere de sortie: une acquisition Vault confirmee apparait une seule fois
@@ -60,9 +85,9 @@ non verifiable ne peut pas bloquer silencieusement un joueur.
 
 > Assistant, dry-run, controles d'autorite et tests de contrat/integration disponibles. La verification visuelle Retail reste une validation de maintenance.
 
-L'assistant guidera le GM ou l'Officer a travers la verification de RCLootCouncil,
+L'assistant guide le GM ou l'Officer a travers la verification de RCLootCouncil,
 des permissions, de la saison, des regles de rang, des canaux et des types de
-loot. Il proposera un test local avant le premier raid et indiquera clairement
+loot. Il propose un test local avant le premier raid et indique clairement
 ce qui reste a faire.
 
 Critere de sortie: une nouvelle guilde peut atteindre un etat `Pret pour le
@@ -72,10 +97,10 @@ raid` sans modifier manuellement les SavedVariables.
 
 > Le tableau de sante, les diagnostics de synchronisation, migrations, version et etat RCLootCouncil sont exposes et couverts par les tests.
 
-Une page de diagnostic synthetisera la version, la saison active, l'etat de
+Une page de diagnostic synthetise la version, la saison active, l'etat de
 RCLootCouncil, la derniere sauvegarde, les migrations, la synchronisation et
-les avertissements de donnees. Les actions dangereuses resteront dans les
-outils existants et demanderont leurs confirmations habituelles.
+les avertissements de donnees. Les actions dangereuses restent dans les
+outils existants et demandent leurs confirmations habituelles.
 
 Critere de sortie: un GM peut identifier la cause d'un etat `Degrade`,
 `Bloque` ou `Non disponible` sans ouvrir les fichiers de donnees.
@@ -84,10 +109,10 @@ Critere de sortie: un GM peut identifier la cause d'un etat `Degrade`,
 
 > Les notifications locales sont dedoublonnees, persistantes, desactivables et protegees contre l'exposition de donnees d'un autre joueur.
 
-Les notifications couvriront les changements utiles: Pre-Dib accepte ou
+Les notifications couvrent les changements utiles: Pre-Dib accepte ou
 annule, attribution finalisee, Dib consomme, demande resolue et acquisition
-Vault enregistree. Elles seront discretes, localisees et desactivables par
-profil; elles ne devront jamais afficher l'historique prive d'un autre joueur.
+Vault enregistree. Elles sont discretes, localisees et desactivables pour le
+personnage ; elles n'affichent pas l'historique prive d'un autre joueur.
 
 Critere de sortie: chaque notification est idempotente, liee a un evenement
 auditable et n'apparait pas plusieurs fois apres une reconnexion.
@@ -96,9 +121,10 @@ auditable et n'apparait pas plusieurs fois apres une reconnexion.
 
 > La recherche et les filtres sont disponibles sur les vues d'historique Player et Officer existantes, y compris le Great Vault et l'apercu RCLootCouncil. Les resultats respectent le perimetre et les autorisations de chaque vue et ne correspondent qu'aux metadonnees enregistrees.
 
-Les vues Player et Officer pourront filtrer l'historique par joueur, objet,
-raid, boss, saison, date, statut et source. Les filtres Officer resteront
-proteges par les memes controles d'acces que les donnees affichees.
+Les vues Player et Officer filtrent l'historique selon les champs effectivement
+disponibles sur chaque page : joueur, objet, raid, boss, saison, date, statut et
+source. Les filtres Officer restent proteges par les memes controles d'acces
+que les donnees affichees.
 
 Critere de sortie: un Officer peut retrouver une attribution ou une acquisition
 Vault dans un historique volumineux sans parcourir manuellement toute la liste.
@@ -163,12 +189,13 @@ pour un support ou une revue de guilde.
   la présence ou aussi un loot, et quelle est sa portée temporelle.
 
 ## Backlog proposé - Historique et éligibilité avancée
-- Synchroniser les options communes de la guilde avec un snapshot de
+- Deja implemente pour les catalogues et politiques pris en charge : synchroniser
+  les options communes de la guilde avec un snapshot de
   configuration versionné : révision, auteur, date, autorisation GM/officier,
   détection des conflits et mise à jour automatique des clients reconnectés.
-- Exploiter l'historique local de RCLootCouncil pour importer les récompenses déjà
-  reçues, y compris celles obtenues avant Dibs ou dans une autre guilde lorsque
-  l'information est encore disponible sur le client du joueur.
+- Deja implemente : revue de l'historique local RCLootCouncil avec apercu,
+  preuve et confirmation Officer avant debit. Une reconstruction automatique
+  ou une fusion de l'historique d'une autre guilde n'est pas promise.
 - Combiner cet historique avec le scan local de l'équipement, du sac, de la
   banque, de la warband et de la banque de guilde.
 - Afficher dans la fenêtre de vote RCLootCouncil les états `Need`, `Upgrade`,

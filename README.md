@@ -1,7 +1,7 @@
 # RCLootCouncil_dibs
 
-Development compatibility baseline: **0.8.x**. Latest stable release:
-**0.8.9**.
+Development compatibility baseline: **0.8.x**. Latest published stable release:
+**0.8.9** (published 2026-10-16), matching the version declared by the source.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -19,18 +19,23 @@ guild Dibs ledger, reservations, permissions, and audit history.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.9 is
 the latest stable publication. Development builds use the 0.8.x compatibility
-family and reject 0.7.x peers until they update. Release validation, including
-the documented deferred historical-confirmation check, is recorded in the
-[release checklist](B12_Release_Candidate_Checklist.md) and
-[release evidence](docs/audits/DIBS_0.8.0_Release_Candidate_Evidence.md).
+family and reject 0.7.x peers until they update. These guides describe the
+current source, not proof that every feature has passed Retail validation.
+The [v0.8.0 checklist](B12_Release_Candidate_Checklist.md) and
+[v0.8.0 evidence](docs/audits/DIBS_0.8.0_Release_Candidate_Evidence.md) are
+historical, including their deferred historical-confirmation check; they do not
+certify 0.8.8 or 0.8.9.
 
 ## Features
 
 - Independent seasonal Dibs balances.
 - Configurable allocations by guild rank.
+- Multiple guild ledgers for separate rosters, GM-approved ledger governance,
+  and isolated Independent Raid sessions.
 - Append-only ledger and auditable transaction history.
 - Player Pre-Dib requests with optional raid and Encounter Journal flows.
 - Player and Officer interfaces with shared settings.
+- Three-stage Guided Setup: choose a profile, review/apply, and verify.
 - Explicit GM adoption and publication of guild-wide Loot Rules, consumed by
    DIBS eligibility and RCLootCouncil button projections.
 - Standalone operation when RCLootCouncil is absent.
@@ -42,6 +47,12 @@ the documented deferred historical-confirmation check, is recorded in the
 - Raid Readiness checks with clear Ready, Degraded, Blocked and Unavailable states.
 - Local Dry-Run Center for testing a finalized DIB decision without touching live loot or balances.
 - Officer Audit and Dispute Center with one-step player reports, private evidence review, and auditable corrections.
+- Private request delivery with persisted retries and receipt states, public
+  replies, follow-up reminders, and retained closed/archived dossiers. Shared
+  changes require the verified pinned coordinator; old or offline peers remain
+  pending rather than being reported as delivered.
+- History search, descriptive player activity statistics, data-health review,
+  local player notifications, and separate anonymized audit export.
 - Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
 - Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions.
 - Great Vault acquisition tracking with automatic claim evidence, `/dibs vault` manual fallback, Officer review, guild-scoped sync, recovery, and legacy migration.
@@ -77,7 +88,7 @@ delta, request reference, and canonical event/reference.
 
 See the complete illustrated guide:
 
-[Manual installation guide — v0.8.9](docs/INSTALLATION.md)
+[Manual installation guide — published v0.8.9](docs/INSTALLATION.md)
 
 For a quick reference, download the stable v0.8.9 ZIP and extract
 `RCLootCouncil_dibs` into `World of Warcraft\_retail_\Interface\AddOns\`.
@@ -89,26 +100,30 @@ includes its required libraries and declares RCLootCouncil as optional.
 
 ### First-time setup for a GM or Officer
 
-1. Run `/dibs options`.
-2. Open **Settings** and choose the installation mode: `AUTO`, `STANDALONE`, or
-   `RCLootCouncil`.
-3. Create a season under **Seasons** and make it active.
-4. Configure the guild rank allocations under **Rank Rules**.
-5. Open **RCLootCouncil > Dibs > RCLootCouncil > Installation assistant** and
-   choose **Curio + Tier Set** or **Standard loot + collections**. Use **Refresh
-   Dibs buttons** after changing RCLootCouncil's enabled button sets.
-6. Choose the Pre-Dib mode, announcement channels, and supported loot types.
-7. Review the complete Loot Rules draft and explicitly adopt it as the Guild
-   Master. Later changes remain drafts until explicitly published. Officers
-   consume the published snapshot read-only.
-8. Review **Overview** to confirm the season, permissions, Loot Rules, and integration status.
-9. Open **RCLootCouncil > Dibs > RCLootCouncil > Raid Readiness & Dry-Run** and
-   run the readiness check before a raid. Use the dry-run form to validate a
-   test item, winner, response, finalization status, and synthetic session ID.
-10. Open the **Data** tab for safety backups, named local/guild profiles, and
+1. Run `/dibs officer` and open **Overview > Guided Setup**. `/dibs options`
+   also provides configuration and launch controls.
+2. **Choose** Progression raid, Standard loot, or Custom/advanced. Custom
+   preserves existing settings.
+3. **Configure**: inspect the preview before **Apply this setup**. An Officer
+   can prepare permitted changes, but GM-only approvals remain pending.
+4. **Verify**: follow each red blocker's correction button. The specialized
+   pages remain under **Guild Rules** (Seasons, Rank Rules, Loot Rules),
+   **System** (Settings, Pre-Dibs Settings, Guild Configuration), and
+   **Integrations** (RCLootCouncil). Configuration modes remain `AUTO`,
+   `STANDALONE`, and `RCLootCouncil`.
+5. The GM explicitly adopts/publishes guild Loot Rules and approves canonical
+   ledger activation through **System > Guild Configuration**. Reviewing or
+   editing a local draft alone does not publish guild authority.
+6. Review **Automatic Dibs** for positive rank-allocation differences; top-ups
+   require a reason and confirmation. Demotion never removes assigned Dibs.
+7. Open **Overview > Raid Readiness**, then run `/dibs readiness` and a local
+   `/dibs dryrun` before relying on live accounting. Outside a raid, missing
+   live context is not proof that standalone setup failed.
+8. Open the Data window with `/dibs data` (or the **Data** group in
+   `/dibs options`) for safety backups, named local/guild profiles, and
    portable package transfer. Every restore or import shows a preview and
    requires an explicit confirmation.
-11. Open **System > Modules** to review optional features. The GM can disable
+9. Open **System > Modules** to review optional features. The GM can disable
    and later re-enable them without deleting their stored data.
 
 Only the current guild master and officers selected by the configured guild
@@ -123,7 +138,7 @@ rank policy can change Dibs settings, seasons, rank rules, modes, or balances.
    offers a Dibs action.
 4. Submit a Pre-Dib before the drop when the active season allows it.
 5. Review your transaction history after an award, refund, or adjustment.
-6. Open **My requests** (or use `/dibs requests`) to report a Dibs problem with
+6. Open **Reports** (or use `/dibs requests`) to report a Dibs problem with
    an optional transaction, follow its status, answer an Officer question, and
    read the final explanation.
 
@@ -133,25 +148,26 @@ policy or the player cancels it.
 
 ### Officer workflow
 
-Open `/dibs officer` for the separate, modeless Officer control center. Its navigation mirrors the
-RCLootCouncil layout:
+Open `/dibs officer` for the separate, modeless Officer control center:
 
-- Overview
-- Review Requests
-- RC History
-- Seasons
-- Rank Rules
-- Settings
-- Pre-Dibs
-- Announcements
-- Developer
-- RCLootCouncil
-- Debug
+| Section | Pages |
+| --- | --- |
+| Overview | Dashboard, Guided Setup, Raid Readiness |
+| Dibs | Automatic Dibs, Dibs Administration, History, Statistics |
+| Requests | Requests, Pre-Dib Requests, Pending Awards, Vault Review |
+| Guild Rules | Seasons, Rank Rules, Loot Rules, Announcements, Loot Eligibility |
+| Integrations | RCLootCouncil, Independent Raid |
+| System | Settings, Pre-Dibs Settings, Modules, Guild Configuration, Synchronization, Diagnostics |
+| Developer | Developer, Debug (only when Developer Mode is enabled) |
+
+Labels are localized and optional-module pages may be hidden. The old
+**Review Requests** and **RC History** names remain compatibility routes;
+`/dibs review` and `/dibs reconcile` open their respective workflows.
 
 Officer pages use the same protected callbacks and SavedVariables as the main
 options panel. The Officer view can inspect the complete ledger and history,
 manage seasons and allocations, configure announcements, and review diagnostics.
-Review Requests is a private GM/Officer queue. Filter by status or player/item,
+Requests is a private GM/Officer queue. Filter by status or player/item,
 inspect the attached Dibs and RCLootCouncil references, then choose a clear
 action. A reason is required for every resolution; corrections, refunds,
 revokes, historical imports, and adjustments also require explicit confirmation
@@ -162,12 +178,13 @@ from a session-cached Adventure Guide raid-loot catalogue. Item search matches
 the name, ID, raid, boss, Dibs category, and equipment metadata; when the game
 does not expose Adventure Guide data, the form explains the reason and offers a
 refresh instead of accepting arbitrary item text.
-The **Raid Readiness & Dry-Run** page is read-only: it explains missing raid
+**Overview > Raid Readiness** is read-only: it explains missing raid
 context or integration capabilities, opens a privacy-safe report in a
 selectable window with the addon version, and shows whether a qualifying live
-award could consume a Dib after final revalidation.
+award could consume a Dib after final revalidation. Its local dry-run tool
+uses a synthetic example; `/dibs dryrun` accepts explicit test inputs.
 
-The **RC History** page is the recovery tool for an existing RCLootCouncil
+The **RC History** reconciliation workflow (`/dibs reconcile`) is the recovery tool for an existing RCLootCouncil
 history. It asks for a target season, optional timestamp range and exact response
 aliases (for example `DIB`, `Reserve`, or a localized label). **Search history
 (preview)** is read-only and shows only matching DIB rows while counting hidden
@@ -184,7 +201,7 @@ the catalogue can identify them.
 
 ### Backup, profiles and transfer
 
-The **Data** tab opens a separate modeless window with three small workspaces:
+`/dibs data` (or the **Data** group in `/dibs options`) opens a separate modeless window with three small workspaces:
 
 - **Backups** creates dated local recovery points, shows scope, size and checksum,
   and keeps the configured retention count. Restore always creates a safety
@@ -247,6 +264,7 @@ SavedVariables.
 
 ```text
 /dibs help
+/dibs status
 /dibs balance
 /dibs ui
 /dibs officer
@@ -259,6 +277,15 @@ SavedVariables.
 /dibs profiles
 /dibs import
 /dibs export
+/dibs readiness
+/dibs dryrun <itemID/link> <winner> <response> <finalized|test|pending> [session]
+/dibs vault <item link|[Item Name]|itemID> <LFR|Normal|Heroic|Mythic>
+/dibs ledger list
+/dibs ledger set <id>
+/dibs sync report
+/dibs minimap show|hide
+/dibs minimap scale <50-200>
+/dibs minimap reset
 /dibs grant <player> <amount>
 /dibs use <player> <amount>
 /dibs pre <itemID> [name]
@@ -297,10 +324,11 @@ Live RCLootCouncil candidates, votes, responses, and loot-session data never
 cross raid groups. Synchronization is limited to guild Dibs state and recovery
 metadata. Protected UI work is deferred while the player is in combat.
 
-See [docs/SECURITY_DESIGN_REVIEW_2026-09-06.md](docs/SECURITY_DESIGN_REVIEW_2026-09-06.md)
-for the security and design review, [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-for module boundaries, and [docs/PROTOCOL.md](docs/PROTOCOL.md) for the sync
-protocol.
+See the maintained [architecture](docs/developer/architecture.md),
+[module inventory](docs/developer/modules.md), and
+[sync protocol](docs/developer/sync-protocol.md). The
+[2026-09-06 security/design review](docs/SECURITY_DESIGN_REVIEW_2026-09-06.md)
+is historical evidence, not a review of the current source.
 
 ## Developer testing
 
@@ -315,20 +343,40 @@ RCLootCouncil event injection, or production ledger changes:
 Run the repository test harness from PowerShell:
 
 ```powershell
-$files = Get-ChildItem tests -Recurse -File -Filter "*_spec.lua" |
-  Sort-Object FullName |
-  ForEach-Object { $_.FullName.Replace((Get-Location).Path + "\\", "").Replace("\\", "/") }
-$env:DIBS_TEST_FILES = ($files -join ";")
-npx --yes --package=fengari-node-cli fengari tests/run.lua
+$previousTestFiles = $env:DIBS_TEST_FILES
+try {
+    $files = Get-ChildItem tests -Recurse -File -Filter '*_spec.lua' |
+        Sort-Object FullName |
+        ForEach-Object { $_.FullName.Substring((Get-Location).Path.Length + 1) }
+    $env:DIBS_TEST_FILES = $files -join ';'
+    npx.cmd --yes --package=fengari-node-cli fengari tests\run.lua
+    if ($LASTEXITCODE -ne 0) { throw "Fengari failed (exit $LASTEXITCODE)." }
+} finally {
+    $env:DIBS_TEST_FILES = $previousTestFiles
+}
 ```
 
 See [docs/DEVELOPER_MODE.md](docs/DEVELOPER_MODE.md) and
 [docs/RC_OPTIONS.md](docs/RC_OPTIONS.md) for focused validation steps. The full
 [guild test plan](docs/TEST_PLAN.md) lists the manual scenarios and evidence to
-record. Character Eligibility is available on `dev` under the Officer
+record. Character Eligibility is implemented under the Officer
 **Loot Eligibility** page; its Retail validation checklist remains explicit
 because protected-loot decisions should be tested with real Curio and Tier Set
 items before production use.
+
+### Documentation maintenance
+
+- [Player guides](docs/player/README.md), [Officer guides](docs/officer/README.md),
+  and [developer references](docs/developer/README.md) describe current behavior.
+- [Generated references](docs/generated/ui-reference.md) cover annotated source
+  concepts, not every feature or end-to-end workflow. Do not edit them manually.
+  Validate freshness with `.\scripts\Generate-DibsDocs.ps1 -Check`; regenerate
+  with `-Generate` only after updating their source metadata.
+- [Roadmap](docs/PUBLIC-ROADMAP.md) separates implemented work, remaining Retail
+  checks, and unapproved ideas. Dated audits, checkpoints, and release evidence
+  remain historical records, not current installation instructions.
+- User-guide screenshot paths marked pending are an inventory of captures still
+  needed, not delivered screenshots or Retail certification.
 
 ## Repository layout
 
@@ -349,8 +397,8 @@ Spec-Kit is installed once at the repository root through `.specify/`. Select an
 active feature without changing the current Git branch:
 
 ```powershell
-pwsh scripts/select-spec.ps1 001-dibs-core
-pwsh scripts/select-spec.ps1 004-rclootcouncil-integration-robust
+pwsh scripts\select-spec.ps1 001-dibs-core
+pwsh scripts\select-spec.ps1 004-rclootcouncil-integration-robust
 ```
 
 Use the feature workflow in this order:

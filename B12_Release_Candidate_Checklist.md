@@ -1,5 +1,10 @@
 # v0.8.0 Release Checklist
 
+> Historical v0.8.0 evidence only. Checked boxes and tag availability below
+> describe that release campaign, not the current checkout. Use the
+> [installation guide](docs/INSTALLATION.md) for the published download and the
+> [release process](docs/developer/releasing.md) for a new release.
+
 Release candidate: `RCLootCouncil_Dibs 0.8.0`
 Date: `2026-09-29`
 Branch: `dev`

@@ -1,5 +1,11 @@
 # Release process
 
+Version numbers in commands below illustrate the intended next source version;
+they do not prove that tag or download exists. Check GitHub Releases and the
+TOC independently, then update published download links only after publication.
+As checked on 2026-10-16, stable v0.8.9 is published and matches the TOC version.
+See [the installation guide](../INSTALLATION.md) for the published ZIP.
+
 CurseForge's native packager/webhook publishes packages when it receives Git tags. It determines Beta versus Release from the tag name, not from the branch. GitHub Actions do not upload directly to CurseForge.
 
 For the repeatable pre-release, approval, beta, and stable release checklist, see the [Speckit release quickstart](../../specs/019-addon-release-operations/quickstart.md).

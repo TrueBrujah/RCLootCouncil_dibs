@@ -1,5 +1,11 @@
 # Governance Bootstrap (B02a)
 
+> Historical B02a scope note. The identity and bootstrap invariants below
+> describe that implementation stage; the final paragraph is not a statement
+> that current DIBS lacks V2, a coordinator, or an operational-policy writer.
+> For current behavior, see [architecture](architecture.md),
+> [module inventory](modules.md), and [sync protocol](sync-protocol.md).
+
 `Dibs.Identity` uses full Name-Realm as the canonical member key. Comparison
 normalizes only for matching; each immutable snapshot also retains the display
 Name-Realm and may carry a GUID witness. A GUID is never a routing key and never

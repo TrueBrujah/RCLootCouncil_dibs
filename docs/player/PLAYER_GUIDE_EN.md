@@ -2,6 +2,11 @@
 
 This guide covers everyday use of RCLootCouncil_dibs for guild players.
 
+It describes current source. See the [download/version status](../../README.md#downloads)
+before installing; minimap move/resize controls below were added in the
+published 0.8.9 release. Screenshot paths marked pending identify
+missing Retail captures, not available images or validation evidence.
+
 ## Purpose and limits
 
 Dibs is a guild-controlled, seasonal loot-priority ledger. It displays your
@@ -16,9 +21,8 @@ Live candidates, votes, and responses are not shared between raid groups.
 > Dibs administrator. Guild Master and verified Officer permissions control
 > policy and corrections.
 
-![Player window showing balance and active season](../assets/guides/screenshots/en/player/player-overview.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/player/player-overview.png`_
+_Pending Retail capture: Player window, balance, active season, ledger selector,
+and minimap Preferences — `docs/assets/guides/screenshots/en/player/player-overview.png`._
 
 ## Installation and first launch
 
@@ -184,9 +188,8 @@ An Officer can reject an incorrect manual entry in
 Vault Review with a reason. The record and review trail are retained; this
 is not permanent deletion or unrestricted player cancellation.
 
-![Player Great Vault acquisition status](../assets/guides/screenshots/en/player/player-vault-history.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/player/player-vault-history.png`_
+_Pending Retail capture: Great Vault history and acquisition status —
+`docs/assets/guides/screenshots/en/player/player-vault-history.png`._
 
 ## Pre-Dib workflow
 
@@ -202,9 +205,8 @@ The same active request for the same player, item, season, and difficulty is not
 duplicated. In `ENCOUNTER` mode, the matching raid context is required. In
 `WILD_OPEN` mode, requests may be allowed outside the raid according to policy.
 
-![Player Pre-Dib action](../assets/guides/screenshots/en/player/player-loot-action.png)
-
-_Screenshot placeholder: `docs/assets/guides/screenshots/en/player/player-loot-action.png`_
+_Pending Retail capture: Player Pre-Dib action —
+`docs/assets/guides/screenshots/en/player/player-loot-action.png`._
 
 ### Request statuses
 

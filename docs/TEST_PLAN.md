@@ -3,6 +3,16 @@
 This document lists the remaining product decisions, manual Retail checks, and
 automated regression checks required before a wider guild rollout.
 
+This is a scenario inventory, not a record of current passing results. B11/B12
+slices and evidence links retain their historical scope. For newer manual gates,
+also use the feature quickstarts for
+[multi-ledger / Independent Raid](../specs/020-multi-ledger-independent-raid/quickstart.md),
+[Guided Setup](../specs/021-turnkey-guided-setup/quickstart.md),
+[history search](../specs/022-unified-history-search/quickstart.md),
+[data-health review](../specs/023-data-health-review-center/quickstart.md), and
+[private request follow-up](../specs/025-request-followup-delivery/quickstart.md).
+Use [developer testing](developer/testing.md) for current harness instructions.
+
 ## Test goals
 
 The test campaign must demonstrate that:
@@ -35,7 +45,7 @@ first raid test:
 6. Which public, Officer, and Raid Dibs announcement channels are available?
 7. Are Dibs shared across Normal, Heroic, and Mythic, or tracked separately?
 8. Which exceptions require an Officer/GM decision and an audit reason?
-9. For the future character-eligibility feature, how are Curios, Tier Set groups,
+9. For the implemented character-eligibility feature, how are Curios, Tier Set groups,
    main/alt links, main changes, probation, and no-need declarations handled?
 
 ## Test environment

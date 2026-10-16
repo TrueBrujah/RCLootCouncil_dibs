@@ -10,14 +10,21 @@ configuration, la readiness, RCLootCouncil, les corrections et les sauvegardes.
 See [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md) for setup, governance,
 reconciliation, recovery, and release checks in English.
 
-For the first installation, open **Overview > Raid Readiness**. The English
+For the first installation, open `/dibs officer` > **Overview > Guided Setup**.
+Choose a profile, preview/apply permitted configuration, then verify the result.
+**Raid Readiness** checks the current raid; **System > Guild Configuration**
+handles guild-ledger activation and historical review. These are distinct
+surfaces, not three names for the same assistant. The English
 workflow is documented in [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md), and the
 French workflow is documented in [Mode d'emploi GM / Officer](MODE_EMPLOI_GM_OFFICER.md).
 The assistant derives readiness from current state, routes supported changes
 through protected actions, and keeps its dry-run local.
 
-The guides include the 0.8.0 rank allocation reconciliation and guild Loot Rules workflows. The 0.6.5
-B12 evidence is historical and does not certify the current feature; see the
+The guides describe current source, including multiple ledgers, positive-only
+allocation reconciliation, published Loot Rules, private request delivery,
+and closed/archived dossiers. The [README](../../README.md#downloads)
+distinguishes the published release from local changes. B12 evidence is
+historical and does not certify current features; see the
 [guild Loot Rules implementation audit](../audits/Guild_Wide_Loot_Rules_Implementation.md)
 for the current manual Retail gate.
 

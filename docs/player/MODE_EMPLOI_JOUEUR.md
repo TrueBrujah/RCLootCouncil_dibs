@@ -2,6 +2,11 @@
 
 Ce guide explique l'utilisation quotidienne de RCLootCouncil_dibs pour un joueur.
 
+Il decrit le code actuel. Consultez les [versions et telechargements](../../README.md#downloads)
+avant l'installation : le deplacement et la taille de l'icone ont ete ajoutes
+dans la version publiee 0.8.9. Les chemins de captures en attente
+inventorient des images Retail manquantes, pas des preuves de validation.
+
 ## A quoi sert Dibs ?
 
 Dibs est un registre saisonnier de priorite de butin gere par la guilde. Il
@@ -20,9 +25,8 @@ Dibs ne fait pas les choses suivantes :
 > droits d'administration Dibs. Le GM et les Officers verifies restent les
 > autorites pour les regles et les corrections.
 
-![Ecran Joueur et solde Dibs](../assets/guides/screenshots/fr/player/player-overview.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/player/player-overview.png`_
+_Capture Retail en attente : vue Joueur, solde, saison, selecteur de ledger et
+Preferences de mini-carte — `docs/assets/guides/screenshots/fr/player/player-overview.png`._
 
 ## 1. Ouvrir l'interface
 
@@ -225,9 +229,8 @@ Une acquisition du Grand Coffre est une preuve d'eligibilite et ne depense
 jamais de Dib. L'historique est propre a la guilde actuelle, ou au personnage
 lorsqu'il est sans guilde.
 
-![Statut d'acquisition du Grand Coffre](../assets/guides/screenshots/fr/player/player-vault-history.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/player/player-vault-history.png`_
+_Capture Retail en attente : historique et statut du Grand Coffre —
+`docs/assets/guides/screenshots/fr/player/player-vault-history.png`._
 
 ## Drop-Dib : quand l'objet tombe
 
@@ -242,9 +245,8 @@ Le Drop-Dib est le debit lie a un gain finalise, et non la demande initiale.
 Un objet gagne en mode test, un callback incomplet, un doublon ou un objet exclu
 ne doit pas reduire le solde.
 
-![Action Pre-Dib ou Drop-Dib dans le butin](../assets/guides/screenshots/fr/player/player-loot-action.png)
-
-_Placeholder de capture : `docs/assets/guides/screenshots/fr/player/player-loot-action.png`_
+_Capture Retail en attente : action Pre-Dib ou Drop-Dib —
+`docs/assets/guides/screenshots/fr/player/player-loot-action.png`._
 
 ## 4. Gerer ses demandes
 
