@@ -2956,13 +2956,12 @@ getCandidateStatus = function(playerName, itemID, responseType, options, balance
   local lockedOutByPreDib = hasPriority and preDib == nil
   local protectedLootAllowed = not eligibilityDecision
     or eligibilityDecision.outcome == "allow" or eligibilityDecision.outcome == "warn"
+  -- Public Pre-Dibs only controls whether players may submit reservations.
+  -- A confirmed reservation by another player locks the item; otherwise a
+  -- normal Dib remains available to every candidate with balance.
   local eligible = false
   if typeEnabled and protectedLootAllowed and not lockedOutByPreDib then
-    if publicPreDibsEnabled and options.ignorePublicPreDibRequirement ~= true then
-      eligible = preDib ~= nil
-    else
-      eligible = ((tonumber(availableBalance) or 0) > 0 or preDib ~= nil)
-    end
+    eligible = ((tonumber(availableBalance) or 0) > 0 or preDib ~= nil)
   end
   local state = "none"
   if not typeEnabled then
@@ -2971,8 +2970,6 @@ getCandidateStatus = function(playerName, itemID, responseType, options, balance
     state = "pre-dib-locked"
   elseif pendingDibReservations > 0 and (tonumber(availableBalance) or 0) <= 0 then
     state = "dib-pending-commit"
-  elseif publicPreDibsEnabled and preDib == nil then
-    state = "pre-dib-required"
   elseif preDib then
     state = "pre-dib"
   elseif eligible then

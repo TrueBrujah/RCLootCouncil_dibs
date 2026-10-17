@@ -12,7 +12,7 @@
    not receive starting allocations; members of those ranks are omitted from
    allocation-reconciliation warnings. Existing ledger allocations are preserved.
    The rank snapshot used when a transaction is recorded remains in its audit data.
-5. Choose Pre-Dibs mode and announcement channels/templates. Public requests can be disabled while officers continue to review existing records.
+5. Choose Pre-Dibs mode and announcement channels/templates. Public requests can be disabled while officers continue to review existing records. In **Guild Rules > Announcements**, **Enable public announcements** and **Enable officer announcements** turn each announcement kind off (channel None) or back on (previous channel restored).
 6. Review loot eligibility policies for supported semantic families and difficulties.
    The GM must explicitly adopt/publish **Guild Rules > Loot Rules**; editing
    a draft alone does not publish it. Use **System > Guild Configuration** for
@@ -30,6 +30,10 @@
 
 Use profiles for repeatable settings. Activating a profile changes configuration projection; it does not rewrite ledger history. Keep the default backup retention unless guild policy requires another bounded value.
 
+After setup, **Overview > Guild Setup Checks** verifies the one-time guild
+configuration and synchronization state without requiring a raid.
+
 Before a raid, use **Overview > Raid Readiness**, `/dibs readiness`, and a local
-dry-run. Missing live raid context is distinct from failed standalone setup;
-readiness and dry-run results are not Retail certification.
+dry-run. Missing live raid context is distinct from failed standalone setup.
+Raid Readiness warns, without blocking, when online raid members lack DIBS or
+need an update; readiness and dry-run results are not Retail certification.

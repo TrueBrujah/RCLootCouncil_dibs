@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.10 - 2026-10-17
+
+- (2026-10-17) Fix the inverted "Allow public Pre-Dibs" effect on the
+  RCLootCouncil Dib button: a candidate with an active Pre-Dib stays eligible
+  even when no available Dib remains. Balances and debits are unchanged.
+- (2026-10-17) Add **Enable public announcements** and **Enable officer
+  announcements** switches to Announcements. Disabling publishes the channel as
+  None through the existing synchronized announcement policy; enabling restores
+  the previously selected channel (default Guild/Officer). No schema change.
+- (2026-10-17) Repair SyncV2 clients stuck "behind": record every behind reason
+  instead of only the latest, fetch only Pre-Dib details the sender can serve,
+  split detail fetches into batches of 32, and clear each reason only when its
+  data is verified. The Synchronization page lists reasons and adds **Fix
+  synchronization**, **Verify again**, GM/Officer **Force clear...** (local flag
+  only, with confirmation and reason), and peer probe/report/repair tools. No
+  ledger entry is edited; no protocol change.
+- (2026-10-17) Explain why Automatic Dibs reconciliation is unavailable (for
+  example synchronization behind) instead of showing inert individual and
+  Reconcile All actions, with a direct **Fix synchronization** route.
+- (2026-10-17) Separate **Guild Setup Checks** (one-time guild configuration and
+  synchronization, used by Guided Setup's final step) from **Raid Readiness**
+  (rolled-up guild setup, raid context, RCLootCouncil, channels, synchronization
+  state). Raid Readiness warns, without blocking, about online raid members
+  without DIBS or needing an update. `/dibs readiness` is unchanged.
+- (2026-10-17) EN/FR strings, officer guides, generated documentation, and
+  focused Fengari coverage updated. Retail validation of the sync repair,
+  reconciliation actions, announcement switches, Dib button, and raid addon
+  warning remains pending.
+
 ## 0.8.9 - 2026-10-16
 
 - (2026-10-16) Align current documentation with the implemented application:

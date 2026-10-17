@@ -123,6 +123,11 @@ DO NOT EDIT MANUALLY.
 **English:** Sends the configured reminder to the current raid chat. Guild permission and raid-chat availability are required; this does not record a loot award or change Dibs.
 **Francais:** Envoie le rappel configure dans le canal du raid actuel. Une autorisation de guilde et un canal disponible sont requis; cela n'enregistre aucun gain et ne modifie pas les Dibs.
 
+## Fix synchronization / Reparer la synchronisation
+
+**English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
+**Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
+
 ## Synchronization / Synchronisation
 
 **English:** Shows whether this client can exchange current guild Dibs state. Unavailable or behind clients may be unable to apply canonical updates.

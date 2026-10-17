@@ -226,7 +226,7 @@ describe("First installation assistant UI", function()
   it("shows the unadopted guild status separately from available Loot Rules controls", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     dibs.OperationalPolicy.IsAdopted = function() return false end
-    local frame = dibs.OfficerUI.CreateWindow("setup")
+    local frame = dibs.OfficerUI.CreateWindow("guildSetup")
     local values = {}
     for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
       values[#values + 1] = tostring(widget.text or "")
@@ -239,7 +239,7 @@ describe("First installation assistant UI", function()
     assert_true(text:find("Controls available", 1, true) ~= nil)
     assert_true(text:find("Guild Loot Rules: GUILD_LOOT_RULES_NOT_CONFIGURED", 1, true) ~= nil)
     assert_true(text:find("explicitly adopt", 1, true) ~= nil)
-    assert_equal("setup", frame.activeTab)
+    assert_equal("guildSetup", frame.activeTab)
   end)
 
   it("replaces the generic policy banner with role-specific local scope on Loot Rules", function()

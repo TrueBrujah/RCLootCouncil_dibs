@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.8.9",
+  "addonVersion": "0.8.10",
   "concepts": [
     {
       "id": "guild.ledger.status",
@@ -350,7 +350,7 @@
       },
       "source": {
         "file": "src/ui/OfficerUI.lua",
-        "line": 461,
+        "line": 462,
         "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
       }
     },
@@ -654,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 657,
+        "line": 692,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },
@@ -788,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3724,
+        "line": 3721,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
@@ -874,7 +874,7 @@
       },
       "source": {
         "file": "src/ui/SetupAssistant.lua",
-        "line": 117,
+        "line": 215,
         "symbol": "SetupAssistant.Evaluate"
       }
     },
@@ -1005,7 +1005,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 423,
+        "line": 425,
         "symbol": "Sync.GetPeerStatuses"
       }
     },
@@ -1047,7 +1047,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 703,
+        "line": 779,
         "symbol": "Sync.SetProtocolState"
       }
     },
@@ -1137,6 +1137,50 @@
       }
     },
     {
+      "id": "sync.repair",
+      "module": "SyncV2",
+      "category": "synchronization",
+      "lifecycle": {
+        "since": "0.8.10",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer",
+        "player"
+      ],
+      "permission": [],
+      "scope": "character-local",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "SYNC_FIX_LABEL",
+        "shortHelp": "UI_HELP_SYNC_FIX",
+        "reference": "DOC_SYNC_FIX_REFERENCE"
+      },
+      "content": {
+        "label": {
+          "enUS": "Fix synchronization",
+          "frFR": "Reparer la synchronisation"
+        },
+        "shortHelp": {
+          "enUS": "Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.",
+          "frFR": "Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation."
+        },
+        "reference": {
+          "enUS": "Synchronization page: Fix synchronization, Verify again, Force clear (Guild Master/Officer).",
+          "frFR": "Page Synchronisation : Reparer la synchronisation, Verifier de nouveau, Forcer la remise a zero (Maitre de guilde/Officier)."
+        }
+      },
+      "source": {
+        "file": "src/modules/SyncV2.lua",
+        "line": 2645,
+        "symbol": "Sync.RequestResync"
+      }
+    },
+    {
       "id": "sync.status",
       "module": "SyncV2",
       "category": "synchronization",
@@ -1178,7 +1222,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 394,
+        "line": 395,
         "symbol": "Sync.GetStatus"
       }
     }

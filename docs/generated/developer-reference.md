@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Developer Documentation Reference
 
-Addon version: 0.8.9
+Addon version: 0.8.10
 
 ## Guild Ledger status
 
@@ -101,7 +101,7 @@ Source: [src/modules/Ledger.lua:897](../../src/modules/Ledger.lua#L897) - `Ledge
 **Francais:** Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/ui/OfficerUI.lua:461](../../src/ui/OfficerUI.lua#L461) - `Dibs.OfficerUI.GetEligibilityProjection`
+Source: [src/ui/OfficerUI.lua:462](../../src/ui/OfficerUI.lua#L462) - `Dibs.OfficerUI.GetEligibilityProjection`
 
 ## Request audit timeline
 
@@ -185,7 +185,7 @@ Source: [src/modules/PreDibs.lua:528](../../src/modules/PreDibs.lua#L528) - `Dib
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:657](../../src/modules/PreDibs.lua#L657) - `Dibs.PreDibs.CreatePublic`
+Source: [src/modules/PreDibs.lua:692](../../src/modules/PreDibs.lua#L692) - `Dibs.PreDibs.CreatePublic`
 
 ## Rank Allocation
 
@@ -223,7 +223,7 @@ Source: [src/modules/ProtectedActions.lua:182](../../src/modules/ProtectedAction
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncil.lua:3724](../../src/integrations/RCLootCouncil.lua#L3724) - `Dibs.RCLootCouncil.GetHistoryRows`
+Source: [src/integrations/RCLootCouncil.lua:3721](../../src/integrations/RCLootCouncil.lua#L3721) - `Dibs.RCLootCouncil.GetHistoryRows`
 
 ## RCLootCouncil response mapping
 
@@ -247,7 +247,7 @@ Source: [src/integrations/RCLootCouncilOptions.lua:491](../../src/integrations/R
 **Francais:** La preparation au raid indique si DIBS est pret pour ce raid et liste les controles bloquants avec leurs prochaines actions.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/ui/SetupAssistant.lua:117](../../src/ui/SetupAssistant.lua#L117) - `SetupAssistant.Evaluate`
+Source: [src/ui/SetupAssistant.lua:215](../../src/ui/SetupAssistant.lua#L215) - `SetupAssistant.Evaluate`
 
 ## Historical Reconciliation
 
@@ -283,7 +283,7 @@ Source: [src/modules/Governance.lua:438](../../src/modules/Governance.lua#L438) 
 **Francais:** L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:423](../../src/modules/SyncV2.lua#L423) - `Sync.GetPeerStatuses`
+Source: [src/modules/SyncV2.lua:425](../../src/modules/SyncV2.lua#L425) - `Sync.GetPeerStatuses`
 
 ## SyncV2 Protocol State
 
@@ -298,7 +298,7 @@ Source: [src/modules/SyncV2.lua:423](../../src/modules/SyncV2.lua#L423) - `Sync.
 **Reference technique:** SyncV2 peut indiquer LEGACY_LOCAL avant le changement, CUTOVER_PREPARED pendant la preparation de compatibilite des ecrivains, ou V2_ENFORCED apres activation approuvee. ledgerEpoch identifie la generation active du registre canonique; legacyBaselineHash identifie la base historique approuvee.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:703](../../src/modules/SyncV2.lua#L703) - `Sync.SetProtocolState`
+Source: [src/modules/SyncV2.lua:779](../../src/modules/SyncV2.lua#L779) - `Sync.SetProtocolState`
 
 ## Raid Relay service
 
@@ -324,6 +324,21 @@ Source: [src/modules/RaidRelay.lua:74](../../src/modules/RaidRelay.lua#L74) - `D
 Scope: `guild` | Audit: `false` | Reason required: `false`
 Source: [src/modules/RaidRelay.lua:105](../../src/modules/RaidRelay.lua#L105) - `Dibs.RaidRelay.SendReminder`
 
+## Fix synchronization
+
+- **ID:** `sync.repair`
+- **Category:** `synchronization`
+- **Audience:** gm, officer, player
+
+**English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
+**Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
+
+**Technical reference:** Synchronization page: Fix synchronization, Verify again, Force clear (Guild Master/Officer).
+**Reference technique:** Page Synchronisation : Reparer la synchronisation, Verifier de nouveau, Forcer la remise a zero (Maitre de guilde/Officier).
+
+Scope: `character-local` | Audit: `false` | Reason required: `false`
+Source: [src/modules/SyncV2.lua:2645](../../src/modules/SyncV2.lua#L2645) - `Sync.RequestResync`
+
 ## Synchronization
 
 - **ID:** `sync.status`
@@ -334,4 +349,4 @@ Source: [src/modules/RaidRelay.lua:105](../../src/modules/RaidRelay.lua#L105) - 
 **Francais:** Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:394](../../src/modules/SyncV2.lua#L394) - `Sync.GetStatus`
+Source: [src/modules/SyncV2.lua:395](../../src/modules/SyncV2.lua#L395) - `Sync.GetStatus`

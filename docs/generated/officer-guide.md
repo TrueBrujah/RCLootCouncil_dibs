@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Officer Documentation Reference
 
-Addon version: 0.8.9
+Addon version: 0.8.10
 
 ## Guild Ledger status
 
@@ -250,6 +250,17 @@ Scope: `guild` | Audit: `false` | Reason required: `false`
 **Francais:** Envoie le rappel configure dans le canal du raid actuel. Une autorisation de guilde et un canal disponible sont requis; cela n'enregistre aucun gain et ne modifie pas les Dibs.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
+
+## Fix synchronization
+
+- **ID:** `sync.repair`
+- **Category:** `synchronization`
+- **Audience:** gm, officer, player
+
+**English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
+**Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
+
+Scope: `character-local` | Audit: `false` | Reason required: `false`
 
 ## Synchronization
 

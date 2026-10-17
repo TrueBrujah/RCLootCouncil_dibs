@@ -62,6 +62,11 @@ L'icone Dibs a cote de la mini-carte est un raccourci vers la vue Joueur ou
 Officer appropriee. Elle n'accorde jamais de permission : les controles
 d'autorite habituels restent appliques.
 
+Dans **Announcements**, **Activer les annonces publiques** et **Activer les
+annonces d'officiers** desactivent ou reactivent chaque type d'annonce. La
+desactivation publie le canal None dans la politique ; la reactivation restaure
+le canal choisi precedemment (Guilde ou Officier par defaut).
+
 Commandes utiles :
 
 ```text
@@ -81,7 +86,9 @@ Les commandes `admin add` et `admin remove` conservent l'historique de migration
 1. Installez le ZIP dans `Interface/AddOns/` et activez l'addon.
 2. Faites `/reload`, puis ouvrez `/dibs officer` > **Overview > Guided Setup**.
 3. Choisissez un profil, examinez/appliquez les actions permises, puis verifiez.
-4. Ouvrez **Overview > Raid Readiness** et `/dibs readiness` avant le raid.
+4. Ouvrez **Overview > Guild Setup Checks** (Verifications de la guilde) pour
+   la configuration ponctuelle de la guilde et la synchronisation, puis
+   **Overview > Raid Readiness** et `/dibs readiness` avant chaque raid.
    L'absence de contexte de raid n'est pas un echec de configuration Standalone.
 5. Faites un dry-run avant le premier raid reel.
 
@@ -163,14 +170,24 @@ Lancez :
 /dibs readiness
 ```
 
-La page **Overview > Raid Readiness** indique notamment :
+La page **Overview > Guild Setup Checks** (Verifications de la guilde) verifie
+une seule fois la configuration de la guilde : saison, politique, Rank Rules,
+autorite, installation, etat local, Loot Rules, types de butin, services locaux
+et etat de synchronisation. Elle ne demande pas de contexte de raid ; l'etape
+finale de Guided Setup utilise ces verifications.
 
-- la saison et la politique actives ;
+La page **Overview > Raid Readiness** indique, pour le raid courant :
+
+- un element **Configuration de la guilde** qui resume les verifications de la
+  guilde ;
 - l'etat de RCLootCouncil ;
 - l'identite et l'autorite du Master Looter ;
 - la disponibilite de la reponse DIB ;
-- le contexte de raid ;
-- l'etat de synchronisation.
+- le contexte de raid et les canaux ;
+- l'etat de synchronisation ;
+- **Membres du raid avec DIBS** : les membres en ligne sans DIBS ou avec une
+  version a mettre a jour sont nommes. C'est un avertissement, pas un blocage :
+  ils peuvent recevoir du butin, mais ne voient ni n'envoient de Dibs.
 
 Un etat **Blocked** doit etre resolu avant de compter sur un debit automatique. Un etat **Unavailable** peut simplement signifier qu'aucun raid ou aucune integration live n'est actif.
 
@@ -231,6 +248,11 @@ explicite et une raison obligatoire. Si l'action vient d'un client non
 coordinateur, elle reste en attente jusqu'au commit canonique du coordinateur.
 **Reconcile All** traite chaque membre independamment et presente les resultats
 commis, en attente, perimes, ignores ou refuses.
+
+Si le rapprochement est indisponible, la page affiche la raison au lieu d'un
+bouton inactif (par exemple **Synchro en retard** si ce client est en retard
+sur la synchronisation de guilde). Utilisez **Reparer la synchronisation**
+depuis cette page, puis recommencez.
 
 Un ecart negatif est informatif : une retrogradation ne retire pas les Dibs
 deja attribues, meme s'ils ont ete depenses. Il n'y a ni reprise, ni ajustement
@@ -418,6 +440,24 @@ Surveillez les etats **ACTIVE**, **COORDINATOR_UNAVAILABLE**, **RECOVERY_PENDING
 et **HANDOFF_CLOSING**. Un coordinator indisponible bloque les nouveaux debits
 qui exigent une sequence ordonnee ; il ne faut pas contourner ce verrou par une
 modification directe des SavedVariables.
+
+### Reparer un client en retard
+
+La page de synchronisation liste toutes les raisons enregistrees pour lesquelles
+le client est en retard (trou dans le ledger, detail de Pre-Dib manquant, conflit
+de racine canonique, etc.). Ses outils ne modifient jamais le ledger :
+
+- **Reparer la synchronisation** reverifie les donnees locales, efface les
+  raisons resolues et redemande aux pairs en ligne ce qui manque encore, par
+  lots bornes ;
+- **Verifier de nouveau** reverifie seulement les donnees locales ;
+- **Forcer la remise a zero...** (GM ou Officer, avec confirmation et raison)
+  efface l'indicateur local ; les pairs le remettront si des donnees manquent
+  encore. A reserver aux raisons bloquees qui ne peuvent pas etre verifiees ;
+- **Sonder le pair** demande ses diagnostics a un personnage en ligne, et
+  **Afficher le rapport** montre sa reponse ;
+- **Reparer le pair** (GM seulement) envoie la base de guilde a un personnage en
+  ligne qui l'a refusee ou ne l'a jamais recue.
 
 La reconciliation compare les preuves historiques, les references de transaction
 et le statut final. Faites une preview, inspectez la preuve, saisissez une raison

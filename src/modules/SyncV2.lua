@@ -112,6 +112,7 @@ local function ensure()
   state.v2.awardReservations = state.v2.awardReservations or {}
   state.v2.awardReservationTombstones = state.v2.awardReservationTombstones or {}
   state.v2.addonVersionMismatches = state.v2.addonVersionMismatches or {}
+  state.v2.predibPending = state.v2.predibPending or {}
   Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.v2Transfers = Dibs.runtime.v2Transfers or {}
   return state.v2
 end
@@ -394,7 +395,8 @@ end
 function Sync.GetStatus()
   local state = ensure()
   if not transportReady() or Sync.transportRegistered ~= true then return { state = "SYNC_UNAVAILABLE", protocolState = state.protocolState } end
-  return { state = state.status or "SYNC_READY", protocolState = state.protocolState, syncBehind = state.syncBehind == true, reason = state.reason }
+  return { state = state.status or "SYNC_READY", protocolState = state.protocolState, syncBehind = state.syncBehind == true, reason = state.reason,
+    reasons = Sync.GetSyncBehindReasons and Sync.GetSyncBehindReasons() or {} }
 end
 function Sync.GetSynchronizationStatus()
   local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
@@ -534,6 +536,7 @@ function Sync.GetPeerStatuses(rosterScope)
       if isLocalMember then syncStatus = Sync.IsSyncBehind() and "Behind" or "Up to date" end
       rows[#rows + 1] = {
         playerName = resolved and resolved.displayName or name,
+        isLocal = isLocalMember == true,
         rankIndex = tonumber(rankIndex) or 0,
         online = effectiveOnline,
         rosterOnline = rosterOnline,
@@ -562,12 +565,85 @@ function Sync.GetPeerStatuses(rosterScope)
   end)
   return rows
 end
+local SYNC_BEHIND_REASON_TEXT = {
+  LEDGER_GAP = "Guild ledger commits are missing on this client.",
+  LEDGER_ENFORCEMENT_MISSING = "Another client uses the guild ledger, but guild rules are not active here yet.",
+  CANONICAL_ROOT_CONFLICT = "The local guild ledger does not match the coordinator ledger.",
+  LEDGER_DETAIL_FORBIDDEN = "A peer sent ledger details that are not allowed in a digest.",
+  GOVERNANCE_PARENT_MISSING = "Guild governance records are missing on this client.",
+  POLICY_PARENT_MISSING = "Guild policy history is missing on this client.",
+  POLICY_CHAIN_MISSING = "A newer guild policy revision is missing on this client.",
+  SEASON_CATALOG_PARENT_MISSING = "A newer season catalog revision is missing on this client.",
+  AUTHORITY_DETAIL_MISSING = "The current coordinator authority record is missing on this client.",
+  MISSING_DETAIL = "Pre-Dibs request details are missing on this client.",
+  VAULT_DETAIL_MISSING = "Vault acquisition details are missing on this client.",
+  SYNC_BEHIND = "This client is behind for an unrecorded reason.",
+}
+-- Reasons that a recheck may clear once the tracked target is resolved.  Other
+-- reasons cannot be verified locally and stay until resolved or force-cleared.
+local VERIFIABLE_BEHIND_REASONS = {
+  LEDGER_GAP = true, LEDGER_ENFORCEMENT_MISSING = true, GOVERNANCE_PARENT_MISSING = true,
+  POLICY_PARENT_MISSING = true, POLICY_CHAIN_MISSING = true, SEASON_CATALOG_PARENT_MISSING = true,
+  AUTHORITY_DETAIL_MISSING = true, MISSING_DETAIL = true, VAULT_DETAIL_MISSING = true,
+}
+local function behindReasons(state)
+  if type(state.behindReasons) ~= "table" then state.behindReasons = {} end
+  if state.syncBehind == true and next(state.behindReasons) == nil then
+    state.behindReasons[state.reason or "SYNC_BEHIND"] = { markedAt = time(), firstMarkedAt = time() }
+  end
+  return state.behindReasons
+end
+local function latestBehindReason(reasons)
+  local latestCode, latestAt
+  for code, entry in pairs(reasons) do
+    local at = tonumber(type(entry) == "table" and entry.markedAt) or 0
+    if not latestCode or at > latestAt or (at == latestAt and code < latestCode) then latestCode, latestAt = code, at end
+  end
+  return latestCode
+end
 function Sync.IsSyncBehind() return ensure().syncBehind == true end
 function Sync.MarkSyncBehind(reason)
-  local state = ensure(); state.syncBehind, state.reason = true, reason or "SYNC_BEHIND"; return status("SYNC_BEHIND", { reasonCode = state.reason })
+  local state = ensure(); local code = reason or "SYNC_BEHIND"
+  local reasons = behindReasons(state)
+  local existing = reasons[code]
+  reasons[code] = { markedAt = time(), firstMarkedAt = existing and existing.firstMarkedAt or time() }
+  state.syncBehind, state.reason = true, code
+  return status("SYNC_BEHIND", { reasonCode = code })
 end
 function Sync.ClearSyncBehind()
-  local state = ensure(); state.syncBehind, state.reason = false, nil; return status("SYNC_READY")
+  local state = ensure(); state.syncBehind, state.reason, state.behindReasons = false, nil, {}; return status("SYNC_READY")
+end
+local function clearSyncBehindReasons(...)
+  local state = ensure()
+  if state.syncBehind ~= true then return false end
+  local reasons, changed = behindReasons(state), false
+  for index = 1, select("#", ...) do
+    local code = select(index, ...)
+    if code and reasons[code] then reasons[code] = nil; changed = true end
+  end
+  if next(reasons) == nil then Sync.ClearSyncBehind(); return true end
+  state.reason = latestBehindReason(reasons)
+  return changed
+end
+function Sync.DescribeSyncBehindReason(code)
+  local key = tostring(code or "SYNC_BEHIND")
+  local L = Dibs.L or {}
+  return L["SYNC_BEHIND_REASON_" .. key] or SYNC_BEHIND_REASON_TEXT[key] or (SYNC_BEHIND_REASON_TEXT.SYNC_BEHIND .. " (" .. key .. ")")
+end
+function Sync.GetSyncBehindReasons()
+  local state = ensure()
+  local rows = {}
+  if state.syncBehind ~= true then return rows end
+  for code, entry in pairs(behindReasons(state)) do
+    rows[#rows + 1] = {
+      code = code, markedAt = tonumber(type(entry) == "table" and entry.markedAt) or 0,
+      firstMarkedAt = tonumber(type(entry) == "table" and entry.firstMarkedAt) or 0,
+      verifiable = VERIFIABLE_BEHIND_REASONS[code] == true,
+      description = Sync.DescribeSyncBehindReason(code),
+    }
+  end
+  table.sort(rows, function(a, b) return a.code < b.code end)
+  return rows
 end
 local function requestAwardCommitBatch(recipient, ledgerTarget, firstSequence, lastSequence)
   local requests = {}
@@ -662,7 +738,7 @@ local function clearResolvedLedgerGap(sender, ledgerId)
     for _, entry in pairs(state.ledgerSync or {}) do
       if entry.target then pending = true; break end
     end
-    if not pending and state.syncBehind and state.reason == "LEDGER_GAP" then Sync.ClearSyncBehind() end
+    if not pending then clearSyncBehindReasons("LEDGER_GAP") end
     return true
   end
   Sync.MarkSyncBehind("CANONICAL_ROOT_CONFLICT")
@@ -674,7 +750,7 @@ local function clearResolvedPolicyGap()
   local current = Dibs.OperationalPolicy.GetState()
   if tonumber(current.policyRevision) == tonumber(target.revision) and current.hash == target.contentHash then
     state.policyTarget = nil
-    if state.syncBehind and (state.reason == "POLICY_PARENT_MISSING" or state.reason == "POLICY_CHAIN_MISSING") then Sync.ClearSyncBehind() end
+    clearSyncBehindReasons("POLICY_PARENT_MISSING", "POLICY_CHAIN_MISSING")
     return true
   end
   return false
@@ -685,7 +761,7 @@ local function clearResolvedSeasonCatalogGap()
   local current = Dibs.Seasons.GetCatalogState()
   if tonumber(current.catalogRevision) == tonumber(target.revision) and current.hash == target.contentHash then
     state.seasonCatalogTarget = nil
-    if state.syncBehind and state.reason == "SEASON_CATALOG_PARENT_MISSING" then Sync.ClearSyncBehind() end
+    clearSyncBehindReasons("SEASON_CATALOG_PARENT_MISSING")
     return true
   end
   return false
@@ -1399,6 +1475,32 @@ local function requestDetail(target, requestId, ledgerId)
   local owner = member(request.playerName); if not owner then return false, "REQUEST_OWNER_UNAVAILABLE" end
   return Sync.SendDetail("PREDIB_REQUEST", requestId, tonumber(request.revision) or 1, requestHash(request), request, target)
 end
+local PREDIB_FETCH_BATCH = 32
+local function sendPredibFetches(requests, target)
+  local sentAll = true
+  for first = 1, #requests, PREDIB_FETCH_BATCH do
+    local batch = {}
+    for index = first, math.min(#requests, first + PREDIB_FETCH_BATCH - 1) do batch[#batch + 1] = requests[index] end
+    if not Sync.Send({ type = "DETAIL_FETCH", requests = batch }, "WHISPER", target) then sentAll = false end
+  end
+  return sentAll
+end
+local function rememberPredibRequest(request, target)
+  local pending = ensure().predibPending
+  pending[requestScopeKey(request.ledgerId, request.entityId)] = { requestId = request.entityId, ledgerId = request.ledgerId,
+    revision = request.revision, contentHash = request.contentHash, target = target, at = time() }
+  boundMap(pending, MAX_INDEX)
+end
+local function prunePredibPending()
+  local pending = ensure().predibPending
+  for key, entry in pairs(pending) do
+    local current = type(entry) == "table" and localRequest(entry.requestId, entry.ledgerId)
+    if type(entry) ~= "table" or (current and (tonumber(current.revision) or 1) >= (tonumber(entry.revision) or 1)) then
+      pending[key] = nil
+    end
+  end
+  return next(pending) == nil
+end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
   if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" and entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
@@ -1611,7 +1713,7 @@ local function applyVaultDetail(payload, transfer, sender)
   local applied, applyReason = Dibs.PreDibs.ApplyVaultSyncRecord(payload)
   if not applied then return false, applyReason end
   clearVaultRequest(transfer.entityId)
-  if Sync.IsSyncBehind() and ensure().reason == "VAULT_DETAIL_MISSING" then Sync.ClearSyncBehind() end
+  clearSyncBehindReasons("VAULT_DETAIL_MISSING")
   return true, applyReason
 end
 
@@ -1873,7 +1975,7 @@ function Sync.Receive(message, sender, channel)
   end
   if message.type == "LEDGER_DIGEST" then
     if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
-      if message.revision and tonumber(message.revision) > 0 then Sync.MarkSyncBehind("LEDGER_GAP") end
+      if message.revision and tonumber(message.revision) > 0 then Sync.MarkSyncBehind("LEDGER_ENFORCEMENT_MISSING") end
       return true, "LEDGER_DIGEST_ONLY"
     end
     if not finiteInteger(message.ledgerEpoch) or not finiteInteger(message.lastSeq) or type(message.rootHash) ~= "string"
@@ -1890,7 +1992,7 @@ function Sync.Receive(message, sender, channel)
     local localLast = tonumber(localState.nextSeq or 1) - 1
     if tonumber(message.lastSeq) > localLast then
       local state = ensure()
-      local target = { ledgerId = ledgerId, epoch = message.ledgerEpoch, lastSeq = message.lastSeq, rootHash = message.rootHash }
+      local target = { ledgerId = ledgerId, epoch = message.ledgerEpoch, lastSeq = message.lastSeq, rootHash = message.rootHash, source = resolved.displayName }
       ledgerSyncState(state, ledgerId).target = target
       if ledgerId == "guild-primary" then state.ledgerTarget = target end
       Sync.MarkSyncBehind("LEDGER_GAP")
@@ -1931,11 +2033,17 @@ function Sync.Receive(message, sender, channel)
     end
     local current = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or { revision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.revision) or 0) then
+      ensure().governanceTarget = { revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, source = resolved.displayName }
       Sync.MarkSyncBehind("GOVERNANCE_PARENT_MISSING")
       sendDetailFetch({ { entityType = "GOVERNANCE", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash } }, resolved.displayName)
       return true, "GOVERNANCE_DETAIL_REQUESTED"
     end
     if tonumber(message.revision) == (tonumber(current.revision) or 0) and message.contentHash ~= current.hash then return false, "GOVERNANCE_CONFLICT" end
+    local governanceTarget = ensure().governanceTarget
+    if not governanceTarget or (tonumber(current.revision) or 0) >= (tonumber(governanceTarget.revision) or 0) then
+      ensure().governanceTarget = nil
+      clearSyncBehindReasons("GOVERNANCE_PARENT_MISSING")
+    end
     local baseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline() or {}
     if message.baselineHash and baseline.legacyBaselineHash ~= message.baselineHash then
       sendDetailFetch({ {
@@ -1957,7 +2065,7 @@ function Sync.Receive(message, sender, channel)
     rememberTrustedDigest("OPERATIONAL_POLICY", message.revision, message.contentHash, resolved)
     local current = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or { policyRevision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.policyRevision) or 0) then
-      local state = ensure(); state.policyTarget = { revision = message.revision, contentHash = message.contentHash }
+      local state = ensure(); state.policyTarget = { revision = message.revision, contentHash = message.contentHash, source = resolved.displayName }
       Sync.MarkSyncBehind("POLICY_CHAIN_MISSING")
       sendDetailFetch({ { entityType = "OPERATIONAL_POLICY", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, parentRevision = message.parentRevision } }, resolved.displayName)
       return true, "POLICY_DETAIL_REQUESTED"
@@ -2028,7 +2136,7 @@ function Sync.Receive(message, sender, channel)
     rememberTrustedDigest("SEASON_CATALOG", message.revision, message.contentHash, resolved)
     local current = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or { catalogRevision = 0, hash = "GENESIS" }
     if tonumber(message.revision) > (tonumber(current.catalogRevision) or 0) then
-      local state = ensure(); state.seasonCatalogTarget = { revision = message.revision, contentHash = message.contentHash }
+      local state = ensure(); state.seasonCatalogTarget = { revision = message.revision, contentHash = message.contentHash, source = resolved.displayName }
       Sync.MarkSyncBehind("SEASON_CATALOG_PARENT_MISSING")
       sendDetailFetch({ { entityType = "SEASON_CATALOG", entityId = tostring(message.revision), revision = message.revision, contentHash = message.contentHash, parentHash = message.parentHash, parentRevision = message.parentRevision } }, resolved.displayName)
       return true, "SEASON_CATALOG_DETAIL_REQUESTED"
@@ -2040,9 +2148,15 @@ function Sync.Receive(message, sender, channel)
     if not isAdmin(resolved.displayName) or type(message.contentHash) ~= "string" then return false, "INVALID_AUTHORITY_DIGEST" end
     local localSignal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
     if not localSignal or localSignal.contentHash ~= message.contentHash then
+      ensure().authorityTarget = { entityId = message.entityId, contentHash = message.contentHash, source = resolved.displayName }
       Sync.MarkSyncBehind("AUTHORITY_DETAIL_MISSING")
       sendDetailFetch({ { entityType = "AUTHORITY_SIGNAL", entityId = message.entityId, revision = 1, contentHash = message.contentHash } }, resolved.displayName)
       return true, "AUTHORITY_DETAIL_REQUESTED"
+    end
+    local authorityTarget = ensure().authorityTarget
+    if not authorityTarget or authorityTarget.contentHash == message.contentHash then
+      ensure().authorityTarget = nil
+      clearSyncBehindReasons("AUTHORITY_DETAIL_MISSING")
     end
     return true, "AUTHORITY_CURRENT"
   end
@@ -2052,6 +2166,8 @@ function Sync.Receive(message, sender, channel)
     local ledgerId = message.ledgerId or "guild-primary"
     if not isApprovedLedger(ledgerId) then return false, "LEDGER_NOT_APPROVED" end
     local needed = {}
+    local adminExchange = (resolved.role == "gm" or resolved.role == "officer")
+      and (localRole() == "gm" or localRole() == "officer")
     for _, entry in ipairs(message.index) do
       if type(entry) ~= "table" or type(entry.requestId) ~= "string" or not finiteInteger(entry.revision)
         or type(entry.contentHash) ~= "string" or (entry.ledgerId ~= nil and entry.ledgerId ~= ledgerId)
@@ -2059,12 +2175,20 @@ function Sync.Receive(message, sender, channel)
       local current = localRequest(entry.requestId, ledgerId)
       local currentRevision = current and (tonumber(current.revision) or 1) or 0
       if tonumber(entry.revision) > currentRevision then
-        needed[#needed + 1] = { entityType = "PREDIB_REQUEST", entityId = entry.requestId,
-          ledgerId = ledgerId, revision = entry.revision, contentHash = entry.contentHash }
+        -- Only fetch details this sender will serve and this client will accept
+        -- (owner, or an officer-to-officer relay); otherwise the client would stay
+        -- behind forever waiting for a detail that is never sent. Entries without
+        -- an owner name keep the previous fetch behavior.
+        local owner = type(entry.playerName) == "string" and member(entry.playerName) or nil
+        if entry.playerName == nil or (owner and (owner.memberKey == resolved.memberKey or adminExchange)) then
+          needed[#needed + 1] = { entityType = "PREDIB_REQUEST", entityId = entry.requestId,
+            ledgerId = ledgerId, revision = entry.revision, contentHash = entry.contentHash }
+          rememberPredibRequest(needed[#needed], resolved.displayName)
+        end
       end
       if tonumber(entry.revision) == currentRevision and current and requestHash(current) ~= entry.contentHash then return false, "REQUEST_CONFLICT" end
     end
-    if #needed > 0 then Sync.MarkSyncBehind("MISSING_DETAIL"); Sync.Send({ type = "DETAIL_FETCH", requests = needed }, "WHISPER", resolved.displayName) end
+    if #needed > 0 then Sync.MarkSyncBehind("MISSING_DETAIL"); sendPredibFetches(needed, resolved.displayName) end
     return true, #needed > 0 and "DETAIL_REQUESTED" or "DIGEST_CURRENT"
   end
   if message.type == "DETAIL_FETCH" then
@@ -2217,7 +2341,14 @@ function Sync.Receive(message, sender, channel)
     local raw = table.concat(chunks); if hash(raw) ~= transfer.payloadHash then return false, "PAYLOAD_HASH_MISMATCH" end
     local payload = Dibs.Ace3.Deserialize(raw); if type(payload) ~= "table" then return false, "DESERIALIZE_FAILED" end
     if transfer.entityType == "PREDIB_REQUEST" then
-      local ok, applyReason = applyRequest(payload, transfer, resolved); if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end; return ok, applyReason
+      local ok, applyReason = applyRequest(payload, transfer, resolved)
+      if ok then
+        -- A verified detail exchange proves the peer transport recovered from a
+        -- forbidden ledger digest; real ledger gaps keep their own reasons.
+        clearSyncBehindReasons("LEDGER_DETAIL_FORBIDDEN")
+        if prunePredibPending() then clearSyncBehindReasons("MISSING_DETAIL") end
+      end
+      return ok, applyReason
     end
     if transfer.entityType == "VAULT_DETAIL" then return applyVaultDetail(payload, transfer, resolved) end
     if transfer.entityType == "LEGACY_BASELINE" and Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.ApplyApprovedBaseline then
@@ -2229,7 +2360,17 @@ function Sync.Receive(message, sender, channel)
         or transfer.entityId ~= tostring(payload.governanceRevision) then return false, "CONTENT_HASH_MISMATCH" end
       local sender = transfer.trustedRelay and payload.authorNameRealm or resolved.displayName
       local ok, applyReason = Dibs.Governance.ApplyRecord(payload, sender)
-      if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end
+      if ok then
+        local governanceState = Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+        local governanceTarget = ensure().governanceTarget
+        if not governanceTarget or (tonumber(governanceState.revision) or 0) >= (tonumber(governanceTarget.revision) or 0) then
+          ensure().governanceTarget = nil
+          clearSyncBehindReasons("GOVERNANCE_PARENT_MISSING")
+        end
+        if Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced() then
+          clearSyncBehindReasons("LEDGER_ENFORCEMENT_MISSING")
+        end
+      end
       return ok, applyReason
     end
     if transfer.entityType == "OPERATIONAL_POLICY" and Dibs.OperationalPolicy and Dibs.OperationalPolicy.ApplyRecord then
@@ -2239,7 +2380,7 @@ function Sync.Receive(message, sender, channel)
       local ok, applyReason = Dibs.OperationalPolicy.ApplyRecord(payload, sender)
       if not ok and applyReason == "POLICY_PARENT_MISSING" then
         local state = ensure()
-        state.policyTarget = state.policyTarget or { revision = transfer.revision, contentHash = transfer.contentHash }
+        state.policyTarget = state.policyTarget or { revision = transfer.revision, contentHash = transfer.contentHash, source = resolved.displayName }
         Sync.MarkSyncBehind(applyReason)
         if type(payload) == "table" and finiteInteger(payload.parentRevision) and type(payload.parentHash) == "string" then
           sendDetailFetch({ { entityType = "OPERATIONAL_POLICY", entityId = tostring(payload.parentRevision), revision = payload.parentRevision, contentHash = payload.parentHash } }, resolved.displayName)
@@ -2253,7 +2394,7 @@ function Sync.Receive(message, sender, channel)
       local ok, applyReason = Dibs.Seasons.ApplyCatalog(payload, sender)
       if not ok and applyReason == "SEASON_CATALOG_PARENT_MISSING" then
         local state = ensure()
-        state.seasonCatalogTarget = { revision = transfer.revision, contentHash = transfer.contentHash }
+        state.seasonCatalogTarget = { revision = transfer.revision, contentHash = transfer.contentHash, source = resolved.displayName }
         Sync.MarkSyncBehind(applyReason)
         sendDetailFetch({ { entityType = "SEASON_CATALOG", entityId = tostring(payload.parentRevision), revision = payload.parentRevision, contentHash = payload.parentHash } }, resolved.displayName)
       elseif ok then clearResolvedSeasonCatalogGap() end
@@ -2273,7 +2414,10 @@ function Sync.Receive(message, sender, channel)
     if transfer.entityType == "AUTHORITY_SIGNAL" and Dibs.Governance and Dibs.Governance.ApplyAuthoritySignal then
       if payload.contentHash ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
       local ok, applyReason = Dibs.Governance.ApplyAuthoritySignal(payload, resolved.displayName)
-      if ok and Sync.IsSyncBehind() then Sync.ClearSyncBehind() end
+      if ok then
+        ensure().authorityTarget = nil
+        clearSyncBehindReasons("AUTHORITY_DETAIL_MISSING")
+      end
       return ok, applyReason
     end
     if transfer.entityType == "AUTHORITY_ORPHAN" and Dibs.Governance and Dibs.Governance.ApplyOrphanedEvidence then
@@ -2428,6 +2572,136 @@ function Sync.OnLifecycle(reason)
     sendDeferredDetails()
   end
   return sent, sendReason
+end
+local function ledgerTargetResolved(target)
+  if type(target) ~= "table" or not (Dibs.Ledger and Dibs.Ledger.GetCanonicalState) then return false end
+  local current = Dibs.Ledger.GetCanonicalState(target.ledgerId)
+  if type(current) ~= "table" or tonumber(current.epoch) ~= tonumber(target.epoch) then return false end
+  local localLast = (tonumber(current.nextSeq) or 1) - 1
+  local targetLast = tonumber(target.lastSeq) or 0
+  return localLast > targetLast or (localLast == targetLast and current.rootHash == target.rootHash)
+end
+local function governanceTargetResolved(target)
+  if type(target) ~= "table" then return true end
+  local current = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+  return (tonumber(current.revision) or 0) >= (tonumber(target.revision) or 0)
+end
+local function authorityTargetResolved(target)
+  if type(target) ~= "table" then return true end
+  local signal = Dibs.Governance and Dibs.Governance.BuildAuthoritySignal and Dibs.Governance.BuildAuthoritySignal()
+  return type(signal) == "table" and signal.contentHash == target.contentHash
+end
+-- Re-evaluates every recorded behind reason against local data and clears the
+-- ones whose missing data has arrived. Never changes ledger or accounting data.
+function Sync.RecheckSyncBehind()
+  local state = ensure()
+  local before = {}
+  for _, row in ipairs(Sync.GetSyncBehindReasons()) do before[#before + 1] = row.code end
+  if state.syncBehind ~= true then return { cleared = {}, remaining = {} } end
+  clearResolvedPolicyGap()
+  clearResolvedSeasonCatalogGap()
+  local ledgerPending = false
+  for ledgerId, entry in pairs(state.ledgerSync or {}) do
+    if type(entry) == "table" and entry.target then
+      if ledgerTargetResolved(entry.target) then
+        entry.target, entry.requestedThrough, entry.requestAt = nil, nil, nil
+        if ledgerId == "guild-primary" then state.ledgerTarget, state.ledgerRequestedThrough, state.ledgerRequestAt = nil, nil, nil end
+      else
+        ledgerPending = true
+      end
+    end
+  end
+  local vaultPending = next(state.vaultPending or {}) ~= nil
+  local predibResolved = prunePredibPending()
+  if governanceTargetResolved(state.governanceTarget) then state.governanceTarget = nil end
+  if authorityTargetResolved(state.authorityTarget) then state.authorityTarget = nil end
+  local toClear = {}
+  if not ledgerPending then toClear[#toClear + 1] = "LEDGER_GAP" end
+  if not state.policyTarget then toClear[#toClear + 1] = "POLICY_PARENT_MISSING"; toClear[#toClear + 1] = "POLICY_CHAIN_MISSING" end
+  if not state.seasonCatalogTarget then toClear[#toClear + 1] = "SEASON_CATALOG_PARENT_MISSING" end
+  if not vaultPending then toClear[#toClear + 1] = "VAULT_DETAIL_MISSING" end
+  if predibResolved then toClear[#toClear + 1] = "MISSING_DETAIL" end
+  if Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced() then toClear[#toClear + 1] = "LEDGER_ENFORCEMENT_MISSING" end
+  if not state.governanceTarget then toClear[#toClear + 1] = "GOVERNANCE_PARENT_MISSING" end
+  if not state.authorityTarget then toClear[#toClear + 1] = "AUTHORITY_DETAIL_MISSING" end
+  clearSyncBehindReasons((table.unpack or unpack)(toClear))
+  local remaining, remainingSet = {}, {}
+  for _, row in ipairs(Sync.GetSyncBehindReasons()) do remaining[#remaining + 1] = row.code; remainingSet[row.code] = true end
+  local cleared = {}
+  for _, code in ipairs(before) do if not remainingSet[code] then cleared[#cleared + 1] = code end end
+  return { cleared = cleared, remaining = remaining }
+end
+-- Re-requests every tracked missing detail from the peer that announced it,
+-- then runs a normal sync lifecycle so peers answer with fresh digests.
+---@doc.id sync.repair
+---@doc.category synchronization
+---@doc.since 0.8.10
+---@doc.audience player,officer,gm
+---@doc.scope character-local
+---@doc.audit false
+---@doc.help-key UI_HELP_SYNC_FIX
+---@doc.label-key SYNC_FIX_LABEL
+---@doc.reference-key DOC_SYNC_FIX_REFERENCE
+function Sync.RequestResync()
+  local state, sent = ensure(), 0
+  for _, entry in pairs(state.ledgerSync or {}) do
+    local target = type(entry) == "table" and entry.target
+    if target and target.source and Dibs.Ledger and Dibs.Ledger.GetCanonicalState then
+      entry.requestAt = nil; entry.requestedThrough = nil
+      local current = Dibs.Ledger.GetCanonicalState(target.ledgerId)
+      if requestLedgerBatch(target.source, state, target, (tonumber(current and current.nextSeq) or 1) - 1) then sent = sent + 1 end
+    end
+  end
+  local policy = state.policyTarget
+  if policy and policy.source and sendDetailFetch({ { entityType = "OPERATIONAL_POLICY", entityId = tostring(policy.revision),
+    revision = policy.revision, contentHash = policy.contentHash } }, policy.source) then sent = sent + 1 end
+  local catalog = state.seasonCatalogTarget
+  if catalog and catalog.source and sendDetailFetch({ { entityType = "SEASON_CATALOG", entityId = tostring(catalog.revision),
+    revision = catalog.revision, contentHash = catalog.contentHash } }, catalog.source) then sent = sent + 1 end
+  local governance = state.governanceTarget
+  if governance and governance.source and sendDetailFetch({ { entityType = "GOVERNANCE", entityId = tostring(governance.revision),
+    revision = governance.revision, contentHash = governance.contentHash, parentHash = governance.parentHash } }, governance.source) then sent = sent + 1 end
+  local authority = state.authorityTarget
+  if authority and authority.source and sendDetailFetch({ { entityType = "AUTHORITY_SIGNAL", entityId = authority.entityId,
+    revision = 1, contentHash = authority.contentHash } }, authority.source) then sent = sent + 1 end
+  prunePredibPending()
+  local grouped = {}
+  for _, entry in pairs(state.predibPending or {}) do
+    if type(entry) == "table" and type(entry.target) == "string" then
+      grouped[entry.target] = grouped[entry.target] or {}
+      grouped[entry.target][#grouped[entry.target] + 1] = { entityType = "PREDIB_REQUEST", entityId = entry.requestId,
+        ledgerId = entry.ledgerId, revision = entry.revision, contentHash = entry.contentHash }
+    end
+  end
+  for target, requests in pairs(grouped) do if sendPredibFetches(requests, target) then sent = sent + 1 end end
+  for _, request in pairs(state.vaultPending or {}) do if type(request) == "table" then request.attempts = 0 end end
+  retryVaultRequests()
+  Sync.OnLifecycle("SYNC_REPAIR")
+  return sent
+end
+-- GM/Officer escape hatch for a stuck local "behind" flag. Only local tracking
+-- state is reset; ledger and accounting data are untouched, and the next peer
+-- digest marks this client behind again if data is still missing.
+function Sync.ForceClearSyncBehind(actor, reason)
+  local role = localRole()
+  if role ~= "gm" and role ~= "officer" then return false, "OFFICER_REQUIRED" end
+  local state = ensure()
+  local reasons = {}
+  for _, row in ipairs(Sync.GetSyncBehindReasons()) do reasons[#reasons + 1] = row.code end
+  for _, entry in pairs(state.ledgerSync or {}) do
+    if type(entry) == "table" then entry.target, entry.requestedThrough, entry.requestAt = nil, nil, nil end
+  end
+  state.ledgerTarget, state.ledgerRequestedThrough, state.ledgerRequestAt = nil, nil, nil
+  state.policyTarget, state.seasonCatalogTarget, state.governanceTarget, state.authorityTarget = nil, nil, nil, nil
+  state.predibPending = {}
+  Sync.ClearSyncBehind()
+  local actorName = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()) or "unknown"
+  state.lastForcedClear = { actor = actorName, at = time(), reasons = reasons, reason = reason }
+  if Dibs.DebugLogs and Dibs.DebugLogs.Add then
+    Dibs.DebugLogs.Add("sync", 1, "Sync behind state force-cleared by " .. tostring(actorName) .. " (" .. table.concat(reasons, ", ") .. ")"
+      .. (reason and (": " .. tostring(reason)) or ""))
+  end
+  return true, reasons
 end
 function Sync.AnnounceOperationalPolicy()
   if not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()) then return false, "POLICY_UNINITIALIZED" end

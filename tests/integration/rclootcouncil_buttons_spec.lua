@@ -663,8 +663,9 @@ describe("RCLootCouncil DIB response projection", function()
     end
 
     refresh(startingBalance, 0, true)
+    -- Allowing public Pre-Dibs must not disable a normal Dib without a reservation.
     publicPreDibsEnabled = true
-    refresh(startingBalance, 0, false)
+    refresh(startingBalance, 0, true)
     publicPreDibsEnabled = false
     refresh(startingBalance, 0, true)
 

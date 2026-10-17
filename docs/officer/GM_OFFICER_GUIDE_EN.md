@@ -60,7 +60,8 @@ apply.
 
 A normal Guild Master does not need to run `/run` commands or call internal
 APIs to reach a working guild ledger. Guided Setup shows what needs
-configuration, Raid Readiness checks whether DIBS is ready for this raid, and
+configuration, Guild Setup Checks verify the one-time guild configuration and
+synchronization, Raid Readiness checks whether DIBS is ready for this raid, and
 Guild Configuration handles historical review and canonical ledger activation
 through the existing authoritative modules.
 
@@ -73,6 +74,10 @@ difference can be granted only after an explicit confirmation and a required
 reason; non-coordinator actions remain pending until the coordinator commits
 the canonical ledger transaction. Reconcile All processes members independently
 and reports committed, pending, stale, skipped, and failed outcomes.
+
+When reconciliation is unavailable, the page shows the reason instead of an
+inert button (for example **Sync behind** when this client is behind on guild
+synchronization). Use **Fix synchronization** from that page, then retry.
 
 In **Rank Rules**, disable Dibs for ranks that should not receive starting
 allocations. Members of disabled ranks are omitted from allocation warnings;
@@ -89,7 +94,8 @@ use the one that matches what you're trying to do:
 | Page | Purpose |
 |---|---|
 | **Guided Setup** | Three-stage turnkey workflow. It documents and applies a reviewed recommended profile through existing authoritative services, then points every unresolved blocker to its correction page. Custom mode leaves all settings unchanged. |
-| **Raid Readiness** | Answers "is DIBS ready for this raid?" (season, rank rules, RCLootCouncil, live raid context). It can be run independently and is reused as-is by Guided Setup's final step. |
+| **Guild Setup Checks** | One-time guild configuration and synchronization: season, policy, rank rules, authority, installation, local state, Loot Rules, loot types, local services, and synchronization state. Guided Setup's final step uses these checks. Raid context is not required. |
+| **Raid Readiness** | Answers "is DIBS ready for this raid?": one rolled-up Guild setup item, raid context, RCLootCouncil, Dib response projection, channels, synchronization state, and **Raid members with DIBS**. Online raid members without DIBS, or needing an update, produce a warning, not a blocker; they can still loot but cannot see or send Dibs. |
 | **Guild Configuration** | Guild-level configuration and canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and one-time ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
 
 _Pending Retail capture: Guided Setup Choose/Configure/Verify, blockers and
@@ -187,6 +193,11 @@ recovery proceeds; `GUILD_LOOT_RULES_INCOMPATIBLE` requires updating DIBS;
 rejects 0.7.x peers from the 0.8.x compatibility family. Ask affected members
 to update rather than changing local settings to compensate.
 
+In **Announcements**, **Enable public announcements** and **Enable officer
+announcements** switch each announcement kind off or on. Disabling stores the
+channel as None in the published policy; enabling restores the previously
+selected channel (default Guild or Officer).
+
 Configure supported loot families, announcement channels, and the Pre-Dib mode:
 
 - `WILD_OPEN`: requests may be submitted outside the matching raid according to
@@ -200,7 +211,8 @@ _Pending Retail capture: published Loot Rules and Pre-Dibs settings —
 
 Run `/dibs readiness` before live loot. Review season, policy, RCLootCouncil
 status, verified Master Looter, DIB response projection, raid context, and sync
-transport.
+transport. **Overview > Raid Readiness** also lists online raid members without
+DIBS or needing an update; this is a warning, not a blocker.
 
 For a Drop-Dib:
 
@@ -326,6 +338,24 @@ Watch for these coordinator states:
 
 Do not bypass these states by editing SavedVariables. Reconciliation must use a
 preview, immutable evidence, an explicit reason, and one confirmation.
+
+### Fixing a client marked behind
+
+The Synchronization page lists every recorded reason a client is behind (for
+example a ledger gap, missing Pre-Dib detail, or a canonical root conflict).
+Its repair tools never edit ledger entries:
+
+- **Fix synchronization** rechecks local data, clears reasons that are now
+  resolved, and re-requests what is still missing from online peers in bounded
+  batches;
+- **Verify again** rechecks local data only;
+- **Force clear...** (Guild Master or Officer, with confirmation and a reason)
+  clears the local behind flag; peers mark the client behind again if data is
+  still missing. Use it only for stuck reasons that cannot be verified;
+- **Probe peer** asks one online character for its synchronization
+  diagnostics, and **Show report** displays the answer;
+- **Repair peer** (Guild Master only) sends the guild baseline to one online
+  character that rejected or never received it.
 
 ### Great Vault review and sync
 

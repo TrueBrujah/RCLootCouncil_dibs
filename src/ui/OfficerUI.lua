@@ -91,6 +91,7 @@ end
 local OFFICER_NAV_TREE = {
   { section = "OVERVIEW", text = "Dashboard", value = "overview" },
   { section = "OVERVIEW", text = "Guided Setup", labelKey = "OFFICER_NAV_GUIDED_SETUP_LABEL", value = "wizard" },
+  { section = "OVERVIEW", text = "Guild Setup Checks", labelKey = "OFFICER_NAV_GUILD_SETUP_CHECKS_LABEL", value = "guildSetup" },
   { section = "OVERVIEW", text = "Raid Readiness", labelKey = "DOC_SETUP_ASSISTANT_LABEL", value = "setup" },
   { section = "DIBS", text = "Automatic Dibs", value = "automaticDibs" },
   { section = "DIBS", text = "Dibs Administration", value = "dibsAdmin" },
@@ -1349,8 +1350,35 @@ function Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
     rows[#rows + 1] = row
     lines[#lines + 1] = row.text
   end
+  local blockedReason, blockedCount = nil, 0
+  for _, row in ipairs(rows) do
+    if (tonumber(row.difference) or 0) > 0 and not row.actionable then
+      blockedCount = blockedCount + 1
+      if row.blockedReason == "SYNC_BEHIND" or not blockedReason then blockedReason = row.blockedReason or "RECONCILIATION_UNAVAILABLE" end
+    end
+  end
   return { allocations = lines, rows = rows, hiddenTransactionCount = 0, seasonId = targetSeason,
-    seasonCatalogRevision = tonumber(catalog.catalogRevision) or 0 }
+    seasonCatalogRevision = tonumber(catalog.catalogRevision) or 0,
+    blockedReason = blockedReason, blockedCount = blockedCount }
+end
+
+local RECONCILIATION_BLOCK_TEXT = {
+  SYNC_BEHIND = { "Sync behind", "This client is behind on guild synchronization. Fix synchronization before reconciling." },
+  V2_ENFORCED_REQUIRED = { "Ledger inactive", "The guild ledger is not active on this client. Finish Guild Configuration first." },
+  COORDINATOR_UNAVAILABLE = { "No coordinator", "No active ledger coordinator is known. Confirm the coordinator in Guild Configuration." },
+  STALE_SEASON = { "Not current season", "Reconciliation is only available for the current season." },
+  SEASON_CATALOG_UNPUBLISHED = { "Catalog unpublished", "The guild season catalog is not published yet. Publish guild configuration first." },
+  RANK_UNAVAILABLE = { "Rank unknown", "The player's guild rank is not available. Refresh the guild roster." },
+  ROSTER_UNAVAILABLE = { "Not in roster", "The player is not in the current guild roster. Refresh the guild roster." },
+}
+
+function Dibs.OfficerUI.DescribeReconciliationBlock(code)
+  local key = tostring(code or "RECONCILIATION_UNAVAILABLE")
+  local strings = Dibs.L or {}
+  local fallback = RECONCILIATION_BLOCK_TEXT[key]
+  return strings["RECONCILE_BLOCKED_" .. key .. "_SHORT"] or (fallback and fallback[1]) or strings.RECONCILE_BLOCKED_SHORT or "Unavailable",
+    strings["RECONCILE_BLOCKED_" .. key] or (fallback and fallback[2])
+      or string.format(strings.RECONCILE_BLOCKED_GENERIC or "Reconciliation is unavailable (%s).", key)
 end
 
 local function automaticDibsSortTitle(title, key, sortKey, descending)
@@ -1467,7 +1495,8 @@ function Dibs.OfficerUI.BuildAutomaticDibsPresentation(details, filter, query)
   local needle = string.lower(trimText(query) or "")
   local result = {
     rows = {}, filter = selectedFilter, query = needle,
-    summary = { playersNeedingReconciliation = 0, totalMissing = 0, actionablePlayers = 0, actionableTotal = 0 },
+    summary = { playersNeedingReconciliation = 0, totalMissing = 0, actionablePlayers = 0, actionableTotal = 0,
+      blockedPlayers = tonumber(details.blockedCount) or 0, blockedReason = details.blockedReason },
   }
   for _, row in ipairs(details.rows or {}) do
     local difference = tonumber(row.difference) or 0
@@ -1489,7 +1518,8 @@ function Dibs.OfficerUI.BuildAutomaticDibsPresentation(details, filter, query)
     if matchesFilter and (needle == "" or searchable:find(needle, 1, true)) then
       result.rows[#result.rows + 1] = {
         source = row, status = status,
-        actionText = difference > 0 and (row.actionable and "RECONCILE" or "Unavailable") or "-",
+        actionText = difference > 0 and (row.actionable and "RECONCILE"
+          or (Dibs.OfficerUI.DescribeReconciliationBlock(row.blockedReason))) or "-",
       }
     end
   end
@@ -2738,6 +2768,51 @@ function Dibs.OfficerUI.BuildSynchronizationProjection(rosterScope)
   }
 end
 
+local function formatSyncReasonCodes(codes)
+  local labels = {}
+  for _, code in ipairs(codes or {}) do labels[#labels + 1] = tostring(code) end
+  return #labels > 0 and table.concat(labels, ", ") or "-"
+end
+
+-- mode: "VERIFY" rechecks local data, "AUTO" rechecks then re-requests what is
+-- still missing, "FORCE" (GM/Officer) resets the local behind flag only.
+function Dibs.OfficerUI.FixSynchronization(mode, reason)
+  local strings = Dibs.L or {}
+  local sync = Dibs.Sync
+  if not (sync and sync.RecheckSyncBehind) then
+    return { ok = false, message = strings.SYNC_FIX_UNAVAILABLE or "Synchronization repair is unavailable." }
+  end
+  if mode == "FORCE" then
+    local ok, result = sync.ForceClearSyncBehind(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, reason)
+    if not ok then
+      return { ok = false, reasonCode = result,
+        message = strings.SYNC_FIX_FORCE_DENIED or "Only a Guild Master or Officer can force-clear the synchronization state." }
+    end
+    return { ok = true, cleared = result, remaining = {},
+      message = strings.SYNC_FIX_FORCE_DONE or "Synchronization state cleared locally. Peers will mark this client behind again if data is still missing." }
+  end
+  local recheck = sync.RecheckSyncBehind()
+  if #recheck.remaining == 0 then
+    return { ok = true, cleared = recheck.cleared, remaining = {},
+      message = strings.SYNC_FIX_RESOLVED or "Synchronization is up to date." }
+  end
+  if mode == "AUTO" and sync.RequestResync then
+    local requested = sync.RequestResync()
+    local after = sync.RecheckSyncBehind()
+    local cleared = recheck.cleared
+    for _, code in ipairs(after.cleared) do cleared[#cleared + 1] = code end
+    if #after.remaining == 0 then
+      return { ok = true, cleared = cleared, remaining = {}, requested = requested,
+        message = strings.SYNC_FIX_RESOLVED or "Synchronization is up to date." }
+    end
+    return { ok = false, cleared = cleared, remaining = after.remaining, requested = requested,
+      message = string.format(strings.SYNC_FIX_REQUESTED or "Missing data requested from online peers (%d request(s)). Still waiting for: %s. Keep an up-to-date Officer online, then verify again.",
+        tonumber(requested) or 0, formatSyncReasonCodes(after.remaining)) }
+  end
+  return { ok = false, cleared = recheck.cleared, remaining = recheck.remaining,
+    message = string.format(strings.SYNC_FIX_STILL_BEHIND or "Still waiting for: %s.", formatSyncReasonCodes(recheck.remaining)) }
+end
+
 function Dibs.OfficerUI.GetPendingAwardProposals()
   if not canViewOfficerData() or not (Dibs.Governance and Dibs.Governance.GetPendingCoordinatorProposals) then return {} end
   local rows = {}
@@ -2872,7 +2947,7 @@ local function renderInstallationPage(shell, parent, frame)
   elseif status.state == "COORDINATOR_UNAVAILABLE" or status.state == "RECOVERY_REQUIRED" or status.state == "BLOCKED" then
     Dibs.AceGUI.AddLabel(shell, parent, "Open Synchronization to review coordinator recovery.", true)
   elseif status.state == "READY" then
-    local report = Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate() or { checks = {}, blockingCount = 0 }
+    local report = Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate({ scope = "guild" }) or { checks = {}, blockingCount = 0 }
     local outstanding = {}
     for _, item in ipairs(report.checks or {}) do
       if item.required and item.state ~= "ready" and item.state ~= "skipped" then outstanding[#outstanding + 1] = item end
@@ -2883,6 +2958,7 @@ local function renderInstallationPage(shell, parent, frame)
       local routeFor = {
         season = "seasons", policy = "ranks", rank_rules = "ranks", authority = "settings",
         installation = "settings", rclootcouncil = "integration", channels = "announcements", loot_types = "lootTypes",
+        guild_loot_rules = "lootTypes", local_state = "installation", sync_state = "sync", local_services = "sync",
       }
       for _, item in ipairs(outstanding) do
         local group = Dibs.AceGUI.AddInlineGroup(shell, parent)
@@ -3028,7 +3104,7 @@ local WIZARD_STEP_ROUTE = {
   installation = "installation", guild = "settings", administration = "settings",
   seasons = "seasons", rankRules = "ranks", allocationReconciliation = "automaticDibs",
   dibsRules = "lootTypes", preDibs = "preDibs",
-  ledger = "installation", rclootcouncil = "integration", sync = "sync", readiness = "setup",
+  ledger = "installation", rclootcouncil = "integration", sync = "sync", readiness = "guildSetup",
 }
 
 local WIZARD_OVERALL_LABEL = {
@@ -5082,6 +5158,95 @@ local function createAceWindow(initialRoute)
         Dibs.AceGUI.AddLabel(shell, pageHeader,
           helpText.SYNC_LOCAL_BEHIND_ACTION
             or "Keep an up-to-date Officer client online, then retry synchronization.", true)
+        local reasonLines = {}
+        for _, row in ipairs(projection.state.reasons or {}) do
+          reasonLines[#reasonLines + 1] = "- " .. tostring(row.description) .. " (" .. tostring(row.code) .. ")"
+        end
+        if #reasonLines > 0 then
+          Dibs.AceGUI.AddLabel(shell, pageHeader, (helpText.SYNC_BEHIND_REASONS_LABEL or "Why this client is behind:")
+            .. "\n" .. table.concat(reasonLines, "\n"), true)
+        end
+        local fixControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
+        local fixButton = Dibs.AceGUI.AddButton(shell, fixControls, helpText.SYNC_FIX_AUTO_BUTTON or "Fix synchronization", function()
+          local result = Dibs.OfficerUI.FixSynchronization("AUTO")
+          self.syncFixStatus = result.message
+          self:Refresh()
+        end, 170)
+        Dibs.AceGUI.AddTooltip(fixButton, helpText.SYNC_FIX_LABEL or "Fix synchronization", helpText.UI_HELP_SYNC_FIX)
+        local verifyButton = Dibs.AceGUI.AddButton(shell, fixControls, helpText.SYNC_FIX_VERIFY_BUTTON or "Verify again", function()
+          local result = Dibs.OfficerUI.FixSynchronization("VERIFY")
+          self.syncFixStatus = result.message
+          self:Refresh()
+        end, 130)
+        Dibs.AceGUI.AddTooltip(verifyButton, helpText.SYNC_FIX_VERIFY_BUTTON or "Verify again", helpText.UI_HELP_SYNC_FIX_VERIFY)
+        local localGuildRole = Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(nil) or "player"
+        if localGuildRole == "gm" or localGuildRole == "officer" then
+          local forceButton = Dibs.AceGUI.AddButton(shell, fixControls, helpText.SYNC_FIX_FORCE_BUTTON or "Force clear...", function()
+            openReasonConfirmation({
+              title = "Dibs | " .. (helpText.SYNC_FIX_FORCE_TITLE or "Force-clear synchronization state"),
+              width = 520, height = 440, positionId = "DibsSyncForceClear",
+              heading = helpText.SYNC_FIX_FORCE_TITLE or "Force-clear synchronization state",
+              help = helpText.UI_HELP_SYNC_FIX_FORCE,
+              summary = { { helpText.SYNC_FIX_REASONS_SUMMARY or "Recorded reasons", formatSyncReasonCodes((function()
+                local codes = {}
+                for _, row in ipairs(projection.state.reasons or {}) do codes[#codes + 1] = row.code end
+                return codes
+              end)()) } },
+              notice = helpText.SYNC_FIX_FORCE_NOTICE
+                or "Only the local behind flag is cleared. No ledger or Dibs data is changed. Peers will mark this client behind again if data is still missing.",
+              defaultReason = "SYNC_STATE_STUCK",
+              reasons = {
+                SYNC_STATE_STUCK = helpText.SYNC_FIX_FORCE_REASON_STUCK or "Synchronization state is stuck",
+                OTHER = "Other",
+              },
+              confirmLabel = helpText.SYNC_FIX_FORCE_CONFIRM or "Force clear",
+              onConfirm = function(reason)
+                local result = Dibs.OfficerUI.FixSynchronization("FORCE", reason)
+                if not result.ok then return false, result.message end
+                self.syncFixStatus = result.message
+                return true
+              end,
+            })
+          end, 130)
+          Dibs.AceGUI.AddTooltip(forceButton, helpText.SYNC_FIX_FORCE_BUTTON or "Force clear...", helpText.UI_HELP_SYNC_FIX_FORCE)
+        end
+      end
+      if self.syncFixStatus then
+        Dibs.AceGUI.AddLabel(shell, pageHeader, self.syncFixStatus, true)
+      end
+      local localSyncRole = Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(nil) or "player"
+      if localSyncRole == "gm" or localSyncRole == "officer" then
+        local peerControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
+        local peerTarget = Dibs.AceGUI.AddEditBox(shell, peerControls, helpText.SYNC_PEER_TARGET_LABEL or "Peer character", function(value)
+          self.syncPeerTarget = trimText(value or "")
+        end, 200)
+        setControlText(peerTarget, self.syncPeerTarget or "")
+        local probeButton = Dibs.AceGUI.AddButton(shell, peerControls, helpText.SYNC_PEER_PROBE_BUTTON or "Probe peer", function()
+          local target = self.syncPeerTarget or ""
+          local sent, reasonCode = false, "SYNC_UNAVAILABLE"
+          if Dibs.Sync and Dibs.Sync.ProbePeer then sent, reasonCode = Dibs.Sync.ProbePeer(target) end
+          self.syncFixStatus = sent and string.format(helpText.SYNC_PEER_PROBE_SENT or "Sync probe sent to %s. Use Show report after the reply.", target)
+            or ((helpText.SYNC_PEER_ACTION_FAILED or "Peer action failed: ") .. tostring(reasonCode))
+          self:Refresh()
+        end, 110)
+        Dibs.AceGUI.AddTooltip(probeButton, helpText.SYNC_PEER_PROBE_BUTTON or "Probe peer", helpText.UI_HELP_SYNC_PEER_PROBE)
+        Dibs.AceGUI.AddButton(shell, peerControls, helpText.SYNC_PEER_REPORT_BUTTON or "Show report", function()
+          local probe = Dibs.Sync and Dibs.Sync.GetPeerSyncProbe and Dibs.Sync.GetPeerSyncProbe(self.syncPeerTarget or "")
+          self.syncFixStatus = Dibs.Sync and Dibs.Sync.FormatSyncProbeReport and Dibs.Sync.FormatSyncProbeReport(probe)
+            or "Synchronization probe unavailable."
+          self:Refresh()
+        end, 110)
+        if localSyncRole == "gm" then
+          local repairButton = Dibs.AceGUI.AddButton(shell, peerControls, helpText.SYNC_PEER_REPAIR_BUTTON or "Repair peer", function()
+            local target = self.syncPeerTarget or ""
+            local sent, reasonCode = false, "SYNC_UNAVAILABLE"
+            if Dibs.Sync and Dibs.Sync.RepairPeer then sent, reasonCode = Dibs.Sync.RepairPeer(target) end
+            self.syncFixStatus = sent and string.format(helpText.SYNC_PEER_REPAIR_SENT or "Guild baseline sent to %s.", target)
+              or ((helpText.SYNC_PEER_ACTION_FAILED or "Peer action failed: ") .. tostring(reasonCode))
+            self:Refresh()
+          end, 110)
+          Dibs.AceGUI.AddTooltip(repairButton, helpText.SYNC_PEER_REPAIR_BUTTON or "Repair peer", helpText.UI_HELP_SYNC_PEER_REPAIR)
+        end
       end
       Dibs.AceGUI.AddLabel(shell, pageHeader, "Synchronized: Pre-Dibs requests, guild policy, season catalog, vault acquisition summaries, and ledger digests when V2 enforcement is active. Live loot candidates, votes, responses, and item transfers are never synchronized.", true)
       local announceLabel = projection.state.state == "SYNC_BEHIND"
@@ -5202,13 +5367,20 @@ local function createAceWindow(initialRoute)
       return
     end
 
-    if self.activeTab == "setup" then
+    if self.activeTab == "setup" or self.activeTab == "guildSetup" then
       local setupText = Dibs.L or {}
-      local report = Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate() or {
+      local guildScope = self.activeTab == "guildSetup"
+      local report = Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate
+        and Dibs.SetupAssistant.Evaluate({ scope = guildScope and "guild" or "raid" }) or {
         status = "UNAVAILABLE", checks = {}, blockingCount = 0,
       }
-      Dibs.AceGUI.AddHeader(shell, tabs, setupText.SETUP_ASSISTANT_TITLE or "Raid Readiness",
-        setupText.SETUP_ASSISTANT_INTRO or "Assess whether DIBS is ready for this raid.")
+      if guildScope then
+        Dibs.AceGUI.AddHeader(shell, tabs, setupText.GUILD_SETUP_CHECKS_TITLE or "Guild Setup Checks",
+          setupText.GUILD_SETUP_CHECKS_INTRO or "Verify the one-time guild configuration and synchronization. Use Raid Readiness before each raid.")
+      else
+        Dibs.AceGUI.AddHeader(shell, tabs, setupText.SETUP_ASSISTANT_TITLE or "Raid Readiness",
+          setupText.SETUP_ASSISTANT_INTRO or "Assess whether DIBS is ready for this raid.")
+      end
       local sections = {
         { id = "core", labelKey = "SETUP_ASSISTANT_SECTION_CORE" },
         { id = "raid", labelKey = "SETUP_ASSISTANT_SECTION_RAID" },
@@ -5231,6 +5403,9 @@ local function createAceWindow(initialRoute)
         local_services = { section = "sync", labelKey = "SETUP_ASSISTANT_CHECK_SYNC", actionKey = "SETUP_ASSISTANT_ACTION_SYNC", route = "sync" },
         guild_loot_rules = { section = "loot", labelKey = "SETUP_ASSISTANT_CHECK_LOOT", actionKey = "SETUP_ASSISTANT_ACTION_LOOT_RULES", route = "lootTypes" },
         loot_types = { section = "loot", labelKey = "SETUP_ASSISTANT_CHECK_LOOT", actionKey = "SETUP_ASSISTANT_ACTION_LOOT_RULES", route = "lootTypes" },
+        guild_setup = { section = "core", labelKey = "SETUP_ASSISTANT_CHECK_GUILD_SETUP", actionKey = "SETUP_ASSISTANT_ACTION_GUILD_SETUP_CHECKS", route = "guildSetup" },
+        sync_state = { section = "sync", labelKey = "SETUP_ASSISTANT_CHECK_SYNC_STATE", actionKey = "SETUP_ASSISTANT_ACTION_SYNC", route = "sync" },
+        raid_members = { section = "raid", labelKey = "SETUP_ASSISTANT_CHECK_RAID_MEMBERS", actionKey = "SETUP_ASSISTANT_ACTION_SYNC", route = "sync" },
       }
       local sectionChecks, sectionReadyCounts, attentionChecks = {}, {}, {}
       for _, section in ipairs(sections) do
@@ -5305,45 +5480,47 @@ local function createAceWindow(initialRoute)
           break
         end
       end
-      for _, item in ipairs(report.checks or {}) do
-        if item.id == "raid_context" and item.state == "unavailable" then
-          Dibs.AceGUI.AddLabel(shell, summary,
-            setupText.SETUP_ASSISTANT_OUTSIDE_RAID or "Outside a raid, some live checks are unavailable.", true)
-          break
+      if not guildScope then
+        for _, item in ipairs(report.checks or {}) do
+          if item.id == "raid_context" and item.state == "unavailable" then
+            Dibs.AceGUI.AddLabel(shell, summary,
+              setupText.SETUP_ASSISTANT_OUTSIDE_RAID or "Outside a raid, some live checks are unavailable.", true)
+            break
+          end
         end
+        Dibs.AceGUI.AddHeader(shell, summary,
+          setupText.READINESS_ACTIONS or "Pre-raid checks",
+          setupText.READINESS_ACTIONS_HELP or "Run the current check or open a bounded report.")
+        local readinessStatus = Dibs.Readiness and Dibs.Readiness.GetStatusText
+          and Dibs.Readiness.GetStatusText(true)
+        if readinessStatus then Dibs.AceGUI.AddLabel(shell, summary, readinessStatus, true) end
+        local readinessActions = Dibs.AceGUI.AddInlineGroup(shell, summary)
+        Dibs.AceGUI.AddButton(shell, readinessActions,
+          setupText.READINESS_RUN_CHECK or "Run readiness check", function()
+            local result, reason
+            if Dibs.Readiness and type(Dibs.Readiness.Run) == "function" then
+              result, reason = Dibs.Readiness.Run()
+            else
+              reason = "UNAVAILABLE"
+            end
+            self:SetStatus(result and ("Readiness: " .. tostring(result.status))
+              or ("Readiness unavailable: " .. tostring(reason or "unknown")))
+            self:Refresh()
+          end, 160)
+        Dibs.AceGUI.AddButton(shell, readinessActions,
+          setupText.READINESS_OPEN_SAFE_REPORT or "Open readiness report", function()
+            local reportShell, report, reason
+            if Dibs.Readiness and type(Dibs.Readiness.OpenReport) == "function" then
+              reportShell, report, reason = Dibs.Readiness.OpenReport("safe")
+            else
+              reason = "UNAVAILABLE"
+            end
+            self:SetStatus(reportShell and "Safe readiness report opened."
+              or (report and "Safe readiness report opened in chat fallback."
+                or ("Report unavailable: " .. tostring(reason or "unknown"))))
+            self:Refresh()
+          end, 180)
       end
-      Dibs.AceGUI.AddHeader(shell, summary,
-        setupText.READINESS_ACTIONS or "Pre-raid checks",
-        setupText.READINESS_ACTIONS_HELP or "Run the current check or open a bounded report.")
-      local readinessStatus = Dibs.Readiness and Dibs.Readiness.GetStatusText
-        and Dibs.Readiness.GetStatusText(true)
-      if readinessStatus then Dibs.AceGUI.AddLabel(shell, summary, readinessStatus, true) end
-      local readinessActions = Dibs.AceGUI.AddInlineGroup(shell, summary)
-      Dibs.AceGUI.AddButton(shell, readinessActions,
-        setupText.READINESS_RUN_CHECK or "Run readiness check", function()
-          local result, reason
-          if Dibs.Readiness and type(Dibs.Readiness.Run) == "function" then
-            result, reason = Dibs.Readiness.Run()
-          else
-            reason = "UNAVAILABLE"
-          end
-          self:SetStatus(result and ("Readiness: " .. tostring(result.status))
-            or ("Readiness unavailable: " .. tostring(reason or "unknown")))
-          self:Refresh()
-        end, 160)
-      Dibs.AceGUI.AddButton(shell, readinessActions,
-        setupText.READINESS_OPEN_SAFE_REPORT or "Open readiness report", function()
-          local reportShell, report, reason
-          if Dibs.Readiness and type(Dibs.Readiness.OpenReport) == "function" then
-            reportShell, report, reason = Dibs.Readiness.OpenReport("safe")
-          else
-            reason = "UNAVAILABLE"
-          end
-          self:SetStatus(reportShell and "Safe readiness report opened."
-            or (report and "Safe readiness report opened in chat fallback."
-              or ("Report unavailable: " .. tostring(reason or "unknown"))))
-          self:Refresh()
-        end, 180)
 
       if #attentionChecks > 0 then
         Dibs.AceGUI.AddHeader(shell, tabs, setupText.SETUP_ASSISTANT_NEEDS_ATTENTION_SECTION or "Needs attention")
@@ -7869,6 +8046,15 @@ local function createAceWindow(initialRoute)
       end
       local reconcileAllLabel = "Reconcile All — " .. tostring(summary.playersNeedingReconciliation)
         .. " players / +" .. tostring(summary.totalMissing) .. " Dibs"
+      if summary.blockedReason and summary.blockedPlayers > 0 then
+        local _, blockedHelp = Dibs.OfficerUI.DescribeReconciliationBlock(summary.blockedReason)
+        Dibs.Midnight.AddStatusBadge(shell, pageHeader, "warning", blockedHelp)
+        if summary.blockedReason == "SYNC_BEHIND" then
+          Dibs.AceGUI.AddButton(shell, pageHeader, (Dibs.L or {}).SYNC_FIX_OPEN_BUTTON or "Fix synchronization", function()
+            self:ActivateRoute("sync")
+          end, 170)
+        end
+      end
       if summary.actionablePlayers > 0 then
         Dibs.AceGUI.AddButton(shell, pageHeader, reconcileAllLabel, function()
           openAutomaticDibsConfirmation({

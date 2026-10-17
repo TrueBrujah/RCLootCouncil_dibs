@@ -1,7 +1,7 @@
 # RCLootCouncil_dibs
 
 Development compatibility baseline: **0.8.x**. Latest published stable release:
-**0.8.9** (published 2026-10-16), matching the version declared by the source.
+**0.8.9** (published 2026-10-16). The source declares **0.8.10** (unreleased).
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 

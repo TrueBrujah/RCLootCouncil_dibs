@@ -12,9 +12,11 @@ reconciliation, recovery, and release checks in English.
 
 For the first installation, open `/dibs officer` > **Overview > Guided Setup**.
 Choose a profile, preview/apply permitted configuration, then verify the result.
-**Raid Readiness** checks the current raid; **System > Guild Configuration**
+**Guild Setup Checks** verify the one-time guild configuration and
+synchronization; **Raid Readiness** checks the current raid, including raid
+members without DIBS; **System > Guild Configuration**
 handles guild-ledger activation and historical review. These are distinct
-surfaces, not three names for the same assistant. The English
+surfaces, not names for the same assistant. The English
 workflow is documented in [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md), and the
 French workflow is documented in [Mode d'emploi GM / Officer](MODE_EMPLOI_GM_OFFICER.md).
 The assistant derives readiness from current state, routes supported changes

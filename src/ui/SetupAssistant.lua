@@ -79,6 +79,12 @@ local function lootTypesAvailability()
   return "ready"
 end
 
+local function text(key, fallback)
+  local value = Dibs.L and Dibs.L[key]
+  if type(value) == "string" and value ~= "" then return value end
+  return fallback
+end
+
 local function addReadinessChecks(report, readiness)
   local seen = {}
   for _, probe in ipairs(readiness and readiness.probes or {}) do
@@ -104,6 +110,98 @@ local function addReadinessChecks(report, readiness)
     end
   end
   return seen
+end
+
+-- Guild Setup covers one-time guild configuration; Raid Readiness covers the
+-- live raid context. "all" keeps the historical combined report.
+local GUILD_SETUP_CHECKS = {
+  season = true, policy = true, rank_rules = true, authority = true, installation = true,
+  local_state = true, guild_loot_rules = true, loot_types = true, local_services = true, sync_state = true,
+}
+local RAID_READINESS_CHECKS = {
+  raid_context = true, rclootcouncil = true, dib_response_projection = true, channels = true, raid_members = true,
+  guild_setup = true, sync_state = true,
+}
+
+local function syncStateCheck()
+  local behind = Dibs.Sync and Dibs.Sync.IsSyncBehind and select(2, call(Dibs.Sync.IsSyncBehind)) == true
+  if not behind then
+    return check("sync_state", "ready", false, nil,
+      text("SETUP_ASSISTANT_SYNC_STATE_READY", "This client is synchronized with the guild."),
+      text("SETUP_ASSISTANT_NO_ACTION", "No action required."), "sync")
+  end
+  return check("sync_state", "degraded", false, "SYNC_BEHIND",
+    text("SETUP_ASSISTANT_SYNC_STATE_BEHIND", "This client is behind on guild synchronization."),
+    text("SETUP_ASSISTANT_SYNC_STATE_ACTION", "Open Synchronization and use Fix synchronization."), "sync")
+end
+
+local function raidMembersCheck()
+  local inRaid = type(IsInRaid) == "function" and IsInRaid() == true
+  if not inRaid then
+    return check("raid_members", "unavailable", false, "NO_RAID_CONTEXT",
+      text("SETUP_ASSISTANT_RAID_MEMBERS_NO_RAID", "Join the raid group to check which members have DIBS."),
+      text("SETUP_ASSISTANT_ACTION_REFRESH_TEXT", "Refresh after joining the raid."), "sync")
+  end
+  local peers = Dibs.Sync and Dibs.Sync.GetPeerStatuses and select(2, call(Dibs.Sync.GetPeerStatuses, "RAID"))
+  if type(peers) ~= "table" then
+    return check("raid_members", "unavailable", false, "SYNC_UNAVAILABLE",
+      text("SETUP_ASSISTANT_RAID_MEMBERS_UNAVAILABLE", "Raid member addon status is unavailable."),
+      text("SETUP_ASSISTANT_ACTION_REFRESH_TEXT", "Refresh after joining the raid."), "sync")
+  end
+  local missing, outdated, offline, total = {}, {}, 0, 0
+  for _, peer in ipairs(peers) do
+    if not peer.isLocal then
+      total = total + 1
+      if peer.addonDetected == true then
+        if peer.compatibility == "Update required" then outdated[#outdated + 1] = tostring(peer.playerName) end
+      elseif peer.rosterOnline == false then
+        offline = offline + 1
+      else
+        missing[#missing + 1] = tostring(peer.playerName)
+      end
+    end
+  end
+  if #missing == 0 and #outdated == 0 then
+    return check("raid_members", "ready", false, nil,
+      string.format(text("SETUP_ASSISTANT_RAID_MEMBERS_READY", "All %d online raid members answered with DIBS."), total - offline),
+      text("SETUP_ASSISTANT_NO_ACTION", "No action required."), "sync")
+  end
+  local parts = {}
+  if #missing > 0 then
+    parts[#parts + 1] = string.format(text("SETUP_ASSISTANT_RAID_MEMBERS_MISSING", "No DIBS response (%d): %s"),
+      #missing, table.concat(missing, ", "))
+  end
+  if #outdated > 0 then
+    parts[#parts + 1] = string.format(text("SETUP_ASSISTANT_RAID_MEMBERS_OUTDATED", "Update required (%d): %s"),
+      #outdated, table.concat(outdated, ", "))
+  end
+  local result = check("raid_members", "degraded", false, #outdated > 0 and "RAID_ADDON_OUTDATED" or "RAID_ADDON_MISSING",
+    table.concat(parts, "\n"),
+    text("SETUP_ASSISTANT_RAID_MEMBERS_ACTION", "Ask these players to install or update DIBS and reload; they can still loot, but cannot see or send Dibs."), "sync")
+  result.missing, result.outdated = missing, outdated
+  return result
+end
+
+local function guildSetupRollup(checks)
+  local blocking, attention = {}, 0
+  for _, item in ipairs(checks) do
+    if item.state ~= "ready" and item.state ~= "skipped" then
+      if item.required then blocking[#blocking + 1] = item.id else attention = attention + 1 end
+    end
+  end
+  if #blocking > 0 then
+    return check("guild_setup", "blocked", true, "GUILD_SETUP_INCOMPLETE",
+      string.format(text("SETUP_ASSISTANT_GUILD_SETUP_BLOCKED", "Guild setup is incomplete: %d required item(s) must be fixed."), #blocking),
+      text("SETUP_ASSISTANT_GUILD_SETUP_ACTION", "Open Guided Setup to finish the guild configuration."), "wizard")
+  end
+  if attention > 0 then
+    return check("guild_setup", "degraded", false, "GUILD_SETUP_ATTENTION",
+      string.format(text("SETUP_ASSISTANT_GUILD_SETUP_ATTENTION", "Guild setup is usable; %d item(s) need attention."), attention),
+      text("SETUP_ASSISTANT_GUILD_SETUP_ACTION", "Open Guided Setup to finish the guild configuration."), "wizard")
+  end
+  return check("guild_setup", "ready", true, nil,
+    text("SETUP_ASSISTANT_GUILD_SETUP_READY", "Guild setup is complete."),
+    text("SETUP_ASSISTANT_NO_ACTION", "No action required."), "wizard")
 end
 
 ---@doc.id setup.assistant.readiness
@@ -185,6 +283,24 @@ function SetupAssistant.Evaluate(options)
   end
   report.checks[#report.checks + 1] = lootCheck
 
+  local scope = (options.scope == "guild" or options.scope == "raid") and options.scope or "all"
+  report.scope = scope
+  if scope ~= "all" then
+    report.checks[#report.checks + 1] = syncStateCheck()
+    local guildChecks, raidChecks = {}, {}
+    for _, item in ipairs(report.checks) do
+      if GUILD_SETUP_CHECKS[item.id] then guildChecks[#guildChecks + 1] = item end
+      if RAID_READINESS_CHECKS[item.id] then raidChecks[#raidChecks + 1] = item end
+    end
+    if scope == "guild" then
+      report.checks = guildChecks
+    else
+      table.insert(raidChecks, 1, guildSetupRollup(guildChecks))
+      raidChecks[#raidChecks + 1] = raidMembersCheck()
+      report.checks = raidChecks
+    end
+  end
+
   for _, item in ipairs(report.checks) do
     if item.required and item.state ~= "ready" and item.state ~= "skipped" then
       report.blockingCount = report.blockingCount + 1
@@ -192,7 +308,9 @@ function SetupAssistant.Evaluate(options)
   end
   if report.blockingCount > 0 then
     report.status = "NEEDS_ATTENTION"
-  elseif readiness and readiness.status == "Unavailable" then
+  elseif scope ~= "guild" and readiness and readiness.status == "Unavailable" then
+    report.status = "UNAVAILABLE"
+  elseif scope == "guild" and not readiness then
     report.status = "UNAVAILABLE"
   else
     report.status = "READY_FOR_RAID"

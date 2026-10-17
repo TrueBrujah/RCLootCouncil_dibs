@@ -1929,7 +1929,8 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
 
   local function changed(option, kind)
     -- Sliders notify on mouse release, so rebuilding here won't interrupt a drag.
-    if context.onChanged and (kind == "select" or kind == "execute" or kind == "range") then
+    if context.onChanged and (kind == "select" or kind == "execute" or kind == "range"
+      or (option and option.refreshOnChange == true)) then
       context.onChanged(option, kind)
     end
   end
@@ -2019,6 +2020,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
       elseif kind == "toggle" then
         local control = Adapter.AddCheckBox(shell, target, label, getValue(option), function(value)
           setValue(option, nil, value)
+          changed(option, kind)
         end, controlWidth(option, nil))
         if control then
           Adapter.SetDisabled(control, isDisabled(option))

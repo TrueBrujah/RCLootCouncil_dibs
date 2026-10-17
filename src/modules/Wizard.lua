@@ -59,7 +59,7 @@ local STEPS = {
   { id = "sync", label = "Synchronization" },
   { id = "operationalPolicy", label = "Guild Policy" },
   { id = "review", label = "Review" },
-  { id = "readiness", label = "Readiness" },
+  { id = "readiness", label = "Guild Setup Checks" },
 }
 
 local function call(fn, ...)
@@ -119,7 +119,7 @@ local function installationStatus()
 end
 
 local function setupAssistantReport()
-  return Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate() or {
+  return Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate({ scope = "guild" }) or {
     status = "UNAVAILABLE", checks = {}, blockingCount = 0,
   }
 end
@@ -416,7 +416,7 @@ function Wizard.GetStatus(actor)
   local review = reviewStatus(steps)
   local readiness = readinessStatus(report)
   steps[#steps + 1] = { id = "review", label = "Review", status = review.status, summary = review.summary }
-  steps[#steps + 1] = { id = "readiness", label = "Readiness", status = readiness.status, summary = readiness.summary, detail = readiness.report }
+  steps[#steps + 1] = { id = "readiness", label = "Guild Setup Checks", status = readiness.status, summary = readiness.summary, detail = readiness.report }
 
   local installation = installationStatus()
   local overallState
@@ -609,7 +609,7 @@ local TURNKEY_ROUTE = {
   seasons = "seasons", rankRules = "ranks", allocationReconciliation = "automaticDibs",
   dibsRules = "lootTypes", preDibs = "preDibs", ledger = "installation",
   rclootcouncil = "integration", sync = "sync", operationalPolicy = "installation",
-  readiness = "setup",
+  readiness = "guildSetup",
 }
 local TURNKEY_CATEGORY = {
   installation = "WIZARD_CATEGORY_FOUNDATION", guild = "WIZARD_CATEGORY_FOUNDATION",

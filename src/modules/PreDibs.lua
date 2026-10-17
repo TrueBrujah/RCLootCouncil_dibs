@@ -583,6 +583,41 @@ function Dibs.PreDibs.SetAnnouncementChannels(publicChannel, officerChannel, act
   return Dibs.PreDibs.GetAnnouncementSettings()
 end
 
+local ANNOUNCEMENT_KINDS = {
+  public = { field = "publicChannel", memory = "preDibLastPublicAnnouncementChannel", default = "GUILD" },
+  officer = { field = "officerChannel", memory = "preDibLastOfficerAnnouncementChannel", default = "OFFICER" },
+}
+
+function Dibs.PreDibs.IsAnnouncementEnabled(kind)
+  local definition = ANNOUNCEMENT_KINDS[kind]
+  if not definition then return false end
+  return Dibs.PreDibs.GetAnnouncementSettings()[definition.field] ~= "NONE"
+end
+
+-- Disabling stores the channel as NONE, so the switch travels through the
+-- existing synchronized announcement policy. The previous channel is kept
+-- locally only to restore the same choice when the switch is enabled again.
+function Dibs.PreDibs.SetAnnouncementEnabled(kind, enabled, actor)
+  local definition = ANNOUNCEMENT_KINDS[kind]
+  if not definition then return nil, "INVALID_ANNOUNCEMENT_KIND" end
+  local settings = Dibs.PreDibs.GetAnnouncementSettings()
+  local current = settings[definition.field]
+  local target
+  if enabled == true then
+    if current ~= "NONE" then return settings end
+    target = normalizeChannel(Dibs.db.settings[definition.memory], definition.default)
+    if target == "NONE" then target = definition.default end
+  else
+    if current == "NONE" then return settings end
+    target = "NONE"
+  end
+  local publicChannel = kind == "public" and target or settings.publicChannel
+  local officerChannel = kind == "officer" and target or settings.officerChannel
+  local updated, reason = Dibs.PreDibs.SetAnnouncementChannels(publicChannel, officerChannel, actor)
+  if updated and target == "NONE" then Dibs.db.settings[definition.memory] = current end
+  return updated, reason
+end
+
 function Dibs.PreDibs.GetAnnouncementTemplates()
   ensureState()
   return {
