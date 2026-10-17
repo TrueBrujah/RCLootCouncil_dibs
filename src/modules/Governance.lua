@@ -565,11 +565,21 @@ function Governance.RecordAwardProposal(actor, details)
     if existing.contentHash == authorityHash("PROPOSAL", proposalHashContent(existing)) then return copy(existing), "IDEMPOTENT_PROPOSAL" end
     return nil, "PROPOSAL_ID_CONFLICT"
   end
+  local guildLedgerReady, guildLedgerReason = true, nil
+  if not trim(details.ledgerId) and Dibs.MultiLedger and Dibs.MultiLedger.RequireGuildActiveLedger then
+    guildLedgerReady, guildLedgerReason = Dibs.MultiLedger.RequireGuildActiveLedger()
+  end
+  if not guildLedgerReady then return nil, guildLedgerReason end
+  -- ledgerId scopes pending reservations; it stays outside the proposal hash so
+  -- peers on earlier 0.8.x builds still validate relayed proposals.
+  local proposalLedgerId = trim(details.ledgerId)
+    or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId())
+    or "guild-primary"
   local proposal = { schema = AUTHORITY_SCHEMA, recordClass = "AWARD_PROPOSAL", proposalId = proposalId, status = "PENDING_RECONCILIATION",
     guildKey = Dibs.GetGuildKey(), playerSnapshot = target, type = projection.type, itemID = projection.itemID, itemLink = projection.itemLink, awardRef = projection.awardRef,
     evidenceId = projection.evidenceId, source = projection.source, context = projection.context,
     amount = projection.amount, seasonId = projection.seasonId, rankIndex = projection.rankIndex, rankName = projection.rankName,
-    actorSnapshot = actorSnapshot, reconciliation = projection.reconciliation,
+    actorSnapshot = actorSnapshot, reconciliation = projection.reconciliation, ledgerId = proposalLedgerId,
     createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(), authorityState = authority.state }
   proposal.contentHash = authorityHash("PROPOSAL", proposalHashContent(proposal))
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
@@ -681,6 +691,7 @@ function Governance.ReceiveRelayedProposal(proposal, senderDisplayName)
   if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return false, "PROPOSAL_LIMIT_EXCEEDED" end
   local stored = copy(proposal)
   stored.status, stored.relayStatus = "PENDING_RECONCILIATION", nil
+  if type(stored.ledgerId) ~= "string" or stored.ledgerId == "" or #stored.ledgerId > 64 then stored.ledgerId = nil end
   stored.receivedFrom, stored.receivedAt = trim(senderDisplayName), (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
   authority.proposals[proposal.proposalId] = stored
   bumpAwardProposalGeneration(stored)

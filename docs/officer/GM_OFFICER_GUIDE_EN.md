@@ -147,7 +147,9 @@ Dibs supports partitioned ledgers within the same guild to accommodate multiple 
 - **Storage Partitioning**: Each ledger maintains independent transaction logs and player balances (`guild-primary` is the default).
 - **Proposing a Ledger**: Verified Officers can propose a new ledger through the Officer UI.
 - **Guild Master Approval**: Proposed ledgers remain inactive until explicitly approved by the Guild Master in Officer > Guild Configuration.
-- **Active Ledger Switching**: Officers and players can switch their active view via the ledger selector dropdown in the UI (`/dibs` for players, `/dibs options` for officers).
+- **Guild Active Ledger**: The Guild Master or an Officer selects the guild active ledger from Officer > Dashboard (or `/dibs ledger set <id>`). The choice travels in the synchronized operational policy and is imposed on every member: all Pre-Dibs, award proposals and reservations use it. Members cannot override it. Until a member has received the imposed ledger from the catalog, Pre-Dib and award creation fail closed. The imposed ledger cannot be archived.
+- **Viewing Other Ledgers**: Anyone can view another approved ledger read-only from the "View ledger" dropdown (`/dibs`, Officer > History, or `/dibs ledger view <id>`). Pre-Dib submission is disabled while viewing another ledger. Every window shows the active ledger, addon version and sync state in its status bar.
+- **Version requirement**: All members must run 0.8.10 or later once a guild active ledger is set; older clients cannot apply the new policy field and their policy chain stops updating.
 - **Catalog Synchronization**: The approved ledger catalog (`LEDGER_CATALOG`) replicates automatically across all guild members.
 - **Permanent deletion**: Only the Guild Master can permanently delete a non-default ledger after it is archived. The Officer UI requires a second confirmation, records a governance audit entry, and synchronizes an idempotent deletion tombstone to the guild. The default ledger and active or approved ledgers cannot be deleted.
 

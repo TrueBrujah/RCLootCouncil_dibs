@@ -329,6 +329,55 @@ function Adapter.IsAvailable()
   return gui ~= nil and type(gui.Create) == "function"
 end
 
+-- Shared footer status: guild active ledger, addon version and sync state.
+function Adapter.BuildShellStatusText()
+  local strings = Dibs.L or {}
+  local parts = {}
+  local status = Dibs.MultiLedger and Dibs.MultiLedger.GetGuildLedgerStatus
+    and Dibs.MultiLedger.GetGuildLedgerStatus() or nil
+  if status then
+    local ledgerText
+    if status.state == "UNAVAILABLE" then
+      ledgerText = string.format(strings.SHELL_STATUS_LEDGER_UNAVAILABLE or "Guild ledger: %s (unavailable)",
+        tostring(status.imposedLedgerName or status.imposedLedgerId or "?"))
+    elseif status.state == "IMPOSED" then
+      ledgerText = string.format(strings.SHELL_STATUS_LEDGER_GUILD or "Guild ledger: %s",
+        tostring(status.activeLedgerName or status.activeLedgerId or "?"))
+    else
+      ledgerText = string.format(strings.SHELL_STATUS_LEDGER_LOCAL or "Ledger: %s (not imposed)",
+        tostring(status.activeLedgerName or status.activeLedgerId or "?"))
+    end
+    if status.viewLedgerId and status.viewLedgerId ~= status.activeLedgerId then
+      ledgerText = ledgerText .. " | " .. string.format(strings.SHELL_STATUS_VIEWING or "Viewing: %s (read-only)",
+        tostring(status.viewLedgerName or status.viewLedgerId))
+    end
+    parts[#parts + 1] = ledgerText
+  end
+  parts[#parts + 1] = string.format(strings.SHELL_STATUS_VERSION or "Version %s", tostring(Dibs.VERSION or "?"))
+  local syncText
+  local okSync, sync = pcall(function() return Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or nil end)
+  if okSync and type(sync) == "table" then
+    if sync.syncBehind then
+      syncText = strings.SHELL_STATUS_SYNC_BEHIND or "Sync: behind"
+    elseif sync.state == "SYNC_READY" then
+      syncText = strings.SHELL_STATUS_SYNC_READY or "Sync: ready"
+    else
+      syncText = string.format(strings.SHELL_STATUS_SYNC_OTHER or "Sync: %s", tostring(sync.reason or sync.state or "?"))
+    end
+  else
+    syncText = strings.SHELL_STATUS_SYNC_UNKNOWN or "Sync: unknown"
+  end
+  parts[#parts + 1] = syncText
+  return table.concat(parts, "  -  ")
+end
+
+function Adapter.SetShellStatus(shell, text)
+  local window = shell and shell.window
+  if not window or type(window.SetStatusText) ~= "function" then return false end
+  local ok = pcall(window.SetStatusText, window, text or Adapter.BuildShellStatusText())
+  return ok
+end
+
 function Adapter.CreateWindow(title, width, height, point, positionId)
   if Adapter.windowShellEnabled ~= true then return nil end
   local gui = getLibrary()

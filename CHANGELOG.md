@@ -2,6 +2,20 @@
 
 ## 0.8.10 - 2026-10-17
 
+- (2026-10-17) Add a **guild active ledger** chosen by the GM or an Officer
+  (Officer > Dashboard or `/dibs ledger set <id>`) and imposed on every member
+  through the synchronized operational policy (new `activeLedgerId` field).
+  Pre-Dibs, award proposals and reservations always use it; creation fails
+  closed until the imposed ledger is known locally, and it cannot be archived.
+  Anyone can **view** another ledger read-only (`/dibs ledger view <id>`), with
+  Pre-Dib submission disabled meanwhile. Every window status bar shows the
+  active ledger, addon version and sync state. The legacy raid ledger broadcast
+  now requires GM/Officer authority and is ignored once a guild ledger is set.
+  **All members must update to 0.8.10**: older clients reject the new policy
+  field and stop following policy changes.
+- (2026-10-17) Scope pending award reservations to their ledger, so a pending
+  award no longer reduces the available balance shown in other ledgers. Legacy
+  reservations without a ledger count against the active ledger.
 - (2026-10-17) Fix the inverted "Allow public Pre-Dibs" effect on the
   RCLootCouncil Dib button: a candidate with an active Pre-Dib stays eligible
   even when no available Dib remains. Balances and debits are unchanged.

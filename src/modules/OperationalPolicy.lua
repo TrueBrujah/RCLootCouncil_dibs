@@ -103,6 +103,11 @@ local function normalizedValues(values)
         return nil, "MODULE_DEPENDENCY_RCLootCouncil"
       end
       result.modules = modules
+    elseif key == "activeLedgerId" then
+      if type(value) ~= "string" or #value < 1 or #value > 64 or not value:match("^[%w%-_:%.]+$") then
+        return nil, "INVALID_ACTIVE_LEDGER"
+      end
+      result.activeLedgerId = value
     else
       return nil, "POLICY_FIELD_FORBIDDEN"
     end
@@ -423,6 +428,9 @@ function Policy.ApplyRecord(record, sender)
   state.status, state.policyRevision, state.hash = "POLICY_ADOPTED", record.policyRevision, record.contentHash
   state.records[tostring(record.policyRevision)] = copy(record)
   table.insert(state.auditLog, { action = record.audit.action, revision = record.policyRevision, hash = record.contentHash, author = copy(record.authorSnapshot), timestamp = record.timestamp })
+  if record.values.activeLedgerId and Dibs.MultiLedger and Dibs.MultiLedger.EnforceGuildActiveLedger then
+    pcall(Dibs.MultiLedger.EnforceGuildActiveLedger)
+  end
   return true, "ADOPTED", copy(record)
 end
 
@@ -454,6 +462,30 @@ function Policy.SetAnnouncementChannels(publicChannel, officerChannel, actor)
   local publicValue, officerValue = string.upper(tostring(publicChannel or "")), string.upper(tostring(officerChannel or ""))
   if not VALID_ANNOUNCE_CHANNELS[publicValue] or not VALID_ANNOUNCE_CHANNELS[officerValue] then return nil, "INVALID_ANNOUNCEMENT_CHANNELS" end
   return Policy.Change(actor, { announcementChannels = { publicChannel = publicValue, officerChannel = officerValue } }, "ANNOUNCEMENT_CHANNELS")
+end
+-- Read without copying: MultiLedger consults this on every active-ledger lookup.
+function Policy.GetActiveLedgerId()
+  local state = ensureState()
+  local record = state.records[tostring(state.policyRevision)]
+  local value = record and record.values and record.values.activeLedgerId
+  return type(value) == "string" and value ~= "" and value or nil
+end
+function Policy.SetActiveLedger(ledgerId, actor)
+  local values, reason = normalizedValues({ activeLedgerId = ledgerId })
+  if not values then return false, reason end
+  if ensureState().status == "POLICY_UNINITIALIZED" then
+    -- Seed the first record with the current local settings so imposing a
+    -- ledger does not silently reset public Pre-Dibs or announcement choices.
+    local seed = Dibs.Wizard and type(Dibs.Wizard.GetInitialOperationalPolicyValues) == "function"
+      and Dibs.Wizard.GetInitialOperationalPolicyValues() or nil
+    if type(seed) == "table" then
+      seed.activeLedgerId = values.activeLedgerId
+      local seeded = normalizedValues(seed)
+      if seeded then values = seeded end
+    end
+    return Policy.AdoptInitial(actor, values, "GUILD_ACTIVE_LEDGER")
+  end
+  return Policy.Change(actor, values, "GUILD_ACTIVE_LEDGER")
 end
 
 return Policy

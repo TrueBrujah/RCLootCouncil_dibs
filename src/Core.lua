@@ -1837,15 +1837,28 @@ function Dibs.HandleSlashCommand(msg)
         Dibs.Message("Usage: /dibs ledger set <ledgerId|name>")
         return
       end
-      local ok, reason = Dibs.MultiLedger and Dibs.MultiLedger.SetActiveLedger and Dibs.MultiLedger.SetActiveLedger(targetId)
+      local ok, reason = Dibs.MultiLedger and Dibs.MultiLedger.SetGuildActiveLedger and Dibs.MultiLedger.SetGuildActiveLedger(targetId)
       if ok then
         local current = Dibs.MultiLedger.GetActiveLedgerId()
-        Dibs.Message("Active ledger set to: " .. tostring(current))
-        if Dibs.MultiLedger and Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
-          Dibs.MultiLedger.BroadcastRaidLedger(nil, current)
-        end
+        Dibs.Message("Guild active ledger set to: " .. tostring(current))
       else
-        Dibs.Message("Failed to set active ledger: " .. tostring(reason or "unknown error"))
+        Dibs.Message("Failed to set the guild active ledger (GM/Officer only): " .. tostring(reason or "unknown error"))
+      end
+      return
+    end
+
+    if mode == "view" then
+      local targetId = args[3]
+      if not targetId or targetId == "" then
+        Dibs.Message("Usage: /dibs ledger view <ledgerId|name>")
+        return
+      end
+      local ok, reason = Dibs.MultiLedger and Dibs.MultiLedger.SetViewLedger and Dibs.MultiLedger.SetViewLedger(targetId)
+      if ok then
+        Dibs.Message("Viewing ledger (read-only): " .. tostring(reason))
+        if _G.DibsPlayerFrame and _G.DibsPlayerFrame.Refresh then pcall(_G.DibsPlayerFrame.Refresh, _G.DibsPlayerFrame) end
+      else
+        Dibs.Message("Failed to view ledger: " .. tostring(reason or "unknown error"))
       end
       return
     end
@@ -1862,8 +1875,8 @@ function Dibs.HandleSlashCommand(msg)
       return
     end
 
-    local current = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
-    Dibs.Message("Current active ledger: " .. tostring(current))
+    local status = Dibs.MultiLedger and Dibs.MultiLedger.GetGuildLedgerStatus and Dibs.MultiLedger.GetGuildLedgerStatus() or {}
+    Dibs.Message("Current active ledger: " .. tostring(status.activeLedgerId or "guild-primary") .. " (" .. tostring(status.state or "NOT_IMPOSED") .. ")")
     return
   end
 
@@ -1878,9 +1891,9 @@ function Dibs.HandleSlashCommand(msg)
       local ok, reason = Dibs.MultiLedger and Dibs.MultiLedger.BroadcastRaidLedger and Dibs.MultiLedger.BroadcastRaidLedger(nil, target)
       if ok then
         local current = Dibs.MultiLedger.GetActiveLedgerId()
-        Dibs.Message("Raid active ledger synchronized to: " .. tostring(current))
+        Dibs.Message("Guild active ledger set to: " .. tostring(current))
       else
-        Dibs.Message("Failed to synchronize raid ledger: " .. tostring(reason or "unknown error"))
+        Dibs.Message("Failed to set the guild active ledger (GM/Officer only): " .. tostring(reason or "unknown error"))
       end
       return
     end

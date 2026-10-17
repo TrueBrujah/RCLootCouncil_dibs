@@ -146,6 +146,11 @@ local function activeLedgerId()
     and Dibs.MultiLedger.GetActiveLedgerId() or DEFAULT_LEDGER_ID
 end
 
+local function requireGuildActiveLedger()
+  if not (Dibs.MultiLedger and Dibs.MultiLedger.RequireGuildActiveLedger) then return true end
+  return Dibs.MultiLedger.RequireGuildActiveLedger()
+end
+
 local function isApprovedLedger(ledgerId)
   if type(ledgerId) ~= "string" or ledgerId == "" then return false end
   if ledgerId == DEFAULT_LEDGER_ID then return true end
@@ -643,6 +648,10 @@ function Dibs.PreDibs.SetAnnouncementTemplates(preDibTemplate, reminderTemplate,
 end
 
 function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId, ledgerId)
+  if ledgerId == nil then
+    local ready, readyReason = requireGuildActiveLedger()
+    if not ready then return nil, readyReason end
+  end
   local store, storeReason = ensureState(ledgerId)
   if not store then return nil, storeReason end
   local enabled, reason = requirePreDibsEnabled()
@@ -691,7 +700,12 @@ end
 ---@doc.label-key DOC_PREDIB_REQUEST_LABEL
 function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, source, context)
   local targetLedgerId = activeLedgerId()
-  if type(context) == "table" and context.ledgerId ~= nil then targetLedgerId = context.ledgerId end
+  if type(context) == "table" and context.ledgerId ~= nil then
+    targetLedgerId = context.ledgerId
+  else
+    local ready, readyReason = requireGuildActiveLedger()
+    if not ready then return nil, readyReason end
+  end
   local store, storeReason = ensureState(targetLedgerId)
   if not store then return nil, storeReason end
   local enabled, reason = requirePreDibsEnabled()
@@ -1002,10 +1016,12 @@ function Dibs.PreDibs.Fulfill(requestId)
   return Dibs.PreDibs.UpdateStatus(requestId, "fulfilled")
 end
 
-function Dibs.PreDibs.GetActiveRequests(playerName)
-  ensureState()
+function Dibs.PreDibs.GetActiveRequests(playerName, ledgerId)
+  local store = ensureState(ledgerId)
+  if ledgerId ~= nil and not store then return {} end
+  local requests = ledgerId ~= nil and store.requests or Dibs.db.preDibs.requests
   local active = {}
-  for _, request in ipairs(Dibs.db.preDibs.requests) do
+  for _, request in ipairs(requests or {}) do
     if request.playerName == (playerName or Dibs.GetPlayerName()) and isRequestActive(request) then
       table.insert(active, request)
     end

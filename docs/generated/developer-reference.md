@@ -77,7 +77,7 @@ Source: [src/modules/Ledger.lua:790](../../src/modules/Ledger.lua#L790) - `Ledge
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:963](../../src/modules/Ledger.lua#L963) - `Ledger.GetHistory`
+Source: [src/modules/Ledger.lua:967](../../src/modules/Ledger.lua#L967) - `Ledger.GetHistory`
 
 ## Dib Balance
 
@@ -161,7 +161,7 @@ Source: [src/ui/PlayerUI.lua:414](../../src/ui/PlayerUI.lua#L414) - `Dibs.Player
 **Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:550](../../src/modules/PreDibs.lua#L550) - `Dibs.PreDibs.GetAnnouncementSettings`
+Source: [src/modules/PreDibs.lua:555](../../src/modules/PreDibs.lua#L555) - `Dibs.PreDibs.GetAnnouncementSettings`
 
 ## Encounter Mode
 
@@ -173,7 +173,7 @@ Source: [src/modules/PreDibs.lua:550](../../src/modules/PreDibs.lua#L550) - `Dib
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:528](../../src/modules/PreDibs.lua#L528) - `Dibs.PreDibs.ValidatePublicRequest`
+Source: [src/modules/PreDibs.lua:533](../../src/modules/PreDibs.lua#L533) - `Dibs.PreDibs.ValidatePublicRequest`
 
 ## Pre-Dib Request
 
@@ -185,7 +185,7 @@ Source: [src/modules/PreDibs.lua:528](../../src/modules/PreDibs.lua#L528) - `Dib
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:692](../../src/modules/PreDibs.lua#L692) - `Dibs.PreDibs.CreatePublic`
+Source: [src/modules/PreDibs.lua:701](../../src/modules/PreDibs.lua#L701) - `Dibs.PreDibs.CreatePublic`
 
 ## Rank Allocation
 
@@ -337,7 +337,7 @@ Source: [src/modules/RaidRelay.lua:105](../../src/modules/RaidRelay.lua#L105) - 
 **Reference technique:** Page Synchronisation : Reparer la synchronisation, Verifier de nouveau, Forcer la remise a zero (Maitre de guilde/Officier).
 
 Scope: `character-local` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:2645](../../src/modules/SyncV2.lua#L2645) - `Sync.RequestResync`
+Source: [src/modules/SyncV2.lua:2647](../../src/modules/SyncV2.lua#L2647) - `Sync.RequestResync`
 
 ## Synchronization
 

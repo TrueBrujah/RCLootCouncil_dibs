@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 963,
+        "line": 967,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -566,7 +566,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 550,
+        "line": 555,
         "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
@@ -610,7 +610,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 528,
+        "line": 533,
         "symbol": "Dibs.PreDibs.ValidatePublicRequest"
       }
     },
@@ -654,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 692,
+        "line": 701,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },
@@ -1176,7 +1176,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 2645,
+        "line": 2647,
         "symbol": "Sync.RequestResync"
       }
     },

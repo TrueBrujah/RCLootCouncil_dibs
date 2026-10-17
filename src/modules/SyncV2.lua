@@ -1310,6 +1310,7 @@ local function reservationFromProposal(proposal, reservationState)
     actorMemberKey = actor.memberKey,
     awardRef = proposal.awardRef,
     evidenceId = proposal.evidenceId,
+    ledgerId = type(proposal.ledgerId) == "string" and proposal.ledgerId ~= "" and proposal.ledgerId or nil,
     seasonId = type(proposal.seasonId) == "string" and proposal.seasonId or Dibs.GetCurrentSeasonId(),
     amount = math.abs(tonumber(proposal.amount) or 1),
     state = reservationState,
@@ -1858,7 +1859,8 @@ function Sync.Receive(message, sender, channel)
         or entry.state ~= "PENDING" or not finiteInteger(entry.updatedAt)
         or seen[entry.proposalId] then return false, "INVALID_AWARD_RESERVATION_DIGEST" end
       if (entry.awardRef ~= nil and type(entry.awardRef) ~= "string")
-        or (entry.evidenceId ~= nil and type(entry.evidenceId) ~= "string") then
+        or (entry.evidenceId ~= nil and type(entry.evidenceId) ~= "string")
+        or (entry.ledgerId ~= nil and (type(entry.ledgerId) ~= "string" or entry.ledgerId == "" or #entry.ledgerId > 64)) then
         return false, "INVALID_AWARD_RESERVATION_DIGEST"
       end
       local player = member(entry.playerMemberKey)

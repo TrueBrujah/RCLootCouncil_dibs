@@ -234,7 +234,7 @@ local function buildFilteredHistory(playerName, seasonId, query, mode)
   return filtered
 end
 
-local function getPlayerTransactions(playerName, seasonId, mode)
+local function getPlayerTransactions(playerName, seasonId, mode, ledgerId)
   local items = {}
   if mode == "all" and Dibs.Ledger and Dibs.Ledger.GetAllTransactions then
     local playerKey = string.lower(tostring(playerName or Dibs.GetPlayerName()))
@@ -244,7 +244,7 @@ local function getPlayerTransactions(playerName, seasonId, mode)
       end
     end
   elseif Dibs.Ledger and Dibs.Ledger.GetHistory then
-    items = Dibs.Ledger.GetHistory(playerName, seasonId)
+    items = Dibs.Ledger.GetHistory(playerName, seasonId, ledgerId)
   end
   table.sort(items, function(a, b)
     return (a.createdAt or a.timestamp or 0) > (b.createdAt or b.timestamp or 0)
@@ -336,13 +336,13 @@ end
 
 ---@param playerName string|nil Player identity; defaults to local player.
 ---@return table summary Player-scoped balance and request summary.
-function Dibs.PlayerUI.GetSummary(playerName)
+function Dibs.PlayerUI.GetSummary(playerName, ledgerId)
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
   local currentPlayer = playerName or Dibs.GetPlayerName()
   local canonical = Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
-    and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, currentPlayer) or nil
-  local playerState = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(currentPlayer, season and season.id) or {}
-  local transactions = Dibs.Ledger and Dibs.Ledger.GetHistory and Dibs.Ledger.GetHistory(currentPlayer, season and season.id) or {}
+    and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, currentPlayer, ledgerId) or nil
+  local playerState = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(currentPlayer, season and season.id, ledgerId) or {}
+  local transactions = Dibs.Ledger and Dibs.Ledger.GetHistory and Dibs.Ledger.GetHistory(currentPlayer, season and season.id, ledgerId) or {}
   local used = 0
   for _, transaction in ipairs(transactions) do
     local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
@@ -352,14 +352,14 @@ function Dibs.PlayerUI.GetSummary(playerName)
       used = math.max(0, used - math.max(0, amount))
     end
   end
-  local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(currentPlayer) or {}
+  local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(currentPlayer, ledgerId) or {}
   local activePreDibs = {}
   for _, request in ipairs(requests) do
     if not season or request.seasonId == season.id then activePreDibs[#activePreDibs + 1] = request end
   end
   local wonPreDibs = {}
   local playerKey = string.lower(tostring(currentPlayer or ""))
-  for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}) do
+  for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory(ledgerId) or {}) do
     if string.lower(tostring(request.playerName or "")) == playerKey and request.status == "fulfilled"
       and (not season or request.seasonId == season.id) then
       wonPreDibs[#wonPreDibs + 1] = request
@@ -477,8 +477,8 @@ local function playerRequestHistory(playerName, activeRequests)
   return history
 end
 
-local function projectHistory(playerName, seasonId)
-  local entries = getPlayerTransactions(playerName, seasonId, "current")
+local function projectHistory(playerName, seasonId, ledgerId)
+  local entries = getPlayerTransactions(playerName, seasonId, "current", ledgerId)
   local history = {}
   for _, transaction in ipairs(entries) do
     local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
@@ -619,8 +619,8 @@ local function addHistoryFilterControls(shell, parent, frame, filterKey, prefix,
   end
 end
 
-function Dibs.PlayerUI.GetViewModel(playerName, historyFilters)
-  local summary = Dibs.PlayerUI.GetSummary(playerName)
+function Dibs.PlayerUI.GetViewModel(playerName, historyFilters, ledgerId)
+  local summary = Dibs.PlayerUI.GetSummary(playerName, ledgerId)
   local readiness = Dibs.Readiness and Dibs.Readiness.Evaluate and Dibs.Readiness.Evaluate({ allowPlayer = true }) or {}
   local active = {}
   for _, request in ipairs(summary.activePreDibs or {}) do
@@ -643,7 +643,7 @@ function Dibs.PlayerUI.GetViewModel(playerName, historyFilters)
       request = request,
     })
   end
-  local history = projectHistory(summary.player, summary.season and summary.season.id)
+  local history = projectHistory(summary.player, summary.season and summary.season.id, ledgerId)
   local historyFilterError
   if type(historyFilters) == "table" then
     local filtered, reason = filterPlayerHistory(history, historyFilters)
@@ -1151,11 +1151,12 @@ local function createLegacyAceWindow()
 
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
+    if Dibs.AceGUI.SetShellStatus then Dibs.AceGUI.SetShellStatus(shell) end
     if self.playerTab == "vault" then
       renderVaultHistory(shell, tabs, self, 480)
       return
     end
-    local summary = Dibs.PlayerUI.GetSummary()
+    local summary = Dibs.PlayerUI.GetSummary(nil, Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil)
     if self.playerTab == "requests" then
       -- Keep the report form, request list and details in one bounded page so
       -- the lower controls remain reachable on smaller screens.
@@ -1260,11 +1261,12 @@ local function createLegacyAceWindow()
         if not ledgerValues[activeLedgerId] then
           ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
         end
-        local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, "Active ledger", ledgerValues, function(value)
-          Dibs.MultiLedger.SetActiveLedger(nil, value)
+        local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
+        local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, (Dibs.L or {}).LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
+          if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end
           self:Refresh()
         end, 200)
-        Dibs.AceGUI.SetValue(ledgerDropdown, activeLedgerId)
+        Dibs.AceGUI.SetValue(ledgerDropdown, viewLedgerId)
       end
     end
     local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
@@ -1512,17 +1514,22 @@ local function createAceWindow()
     local submit = Dibs.AceGUI.AddButton(shell, parent, "Submit request", submitFromInput, 150)
     Dibs.AceGUI.AddTooltip(submit, "Pre-Dib", helpText.UI_HELP_PREDIB_SUBMIT)
     local publicEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() or false
-    Dibs.AceGUI.SetDisabled(submit, not publicEnabled)
-    Dibs.AceGUI.AddLabel(shell, parent, frame.preDibStatusText or (publicEnabled
+    local viewingOther = Dibs.MultiLedger and Dibs.MultiLedger.IsViewingOtherLedger and Dibs.MultiLedger.IsViewingOtherLedger() or false
+    Dibs.AceGUI.SetDisabled(submit, not publicEnabled or viewingOther)
+    Dibs.AceGUI.AddLabel(shell, parent, frame.preDibStatusText or (viewingOther
+      and ((Dibs.L or {}).LEDGER_VIEW_PREDIB_BLOCKED or "Return to the guild active ledger to request a Pre-Dib.")
+      or publicEnabled
       and "Public Pre-Dibs are enabled."
       or "Public Pre-Dibs are currently disabled by Officers."), true)
   end
 
   local function addActiveLedgerToolbar(parent)
     if not (Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function") then return end
+    local strings = Dibs.L or {}
     local toolbar = Dibs.AceGUI.AddInlineGroup(shell, parent)
     local ledgers = Dibs.MultiLedger.GetLedgers()
     local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
+    local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
     local ledgerValues = {}
     for _, l in ipairs(ledgers) do
       if l.status == "APPROVED" then
@@ -1532,26 +1539,17 @@ local function createAceWindow()
     if not ledgerValues[activeLedgerId] then
       ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
     end
-    local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, toolbar, "Active ledger", ledgerValues, function(value)
-      Dibs.MultiLedger.SetActiveLedger(nil, value)
-      if Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
-        Dibs.MultiLedger.BroadcastRaidLedger(nil, value)
-      end
+    -- Consultation only: the working ledger is imposed by GM/Officers.
+    local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, toolbar, strings.LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
+      if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end
       frame:Refresh()
     end, 200)
-    Dibs.AceGUI.SetValue(ledgerDropdown, activeLedgerId)
-    if Dibs.MultiLedger and Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
-      local L = Dibs.Locales and Dibs.Locales.GetStrings and Dibs.Locales.GetStrings() or {}
-      Dibs.AceGUI.AddButton(shell, toolbar, L.RAID_SYNC_BUTTON or "Sync to Raid", function()
-        local currentActive = Dibs.MultiLedger.GetActiveLedgerId()
-        local ok, reason = Dibs.MultiLedger.BroadcastRaidLedger(nil, currentActive)
-        if ok then
-          Dibs.Message("Raid active ledger synchronized to: " .. tostring(currentActive))
-        else
-          Dibs.Message("Failed to sync raid ledger: " .. tostring(reason or "unknown error"))
-        end
-        frame:Refresh()
-      end, 120, L.RAID_SYNC_TOOLTIP or "Synchronize the current active ledger to all raid members with Dibs.")
+    Dibs.AceGUI.SetValue(ledgerDropdown, viewLedgerId)
+    Dibs.AceGUI.AddTooltip(ledgerDropdown, strings.LEDGER_VIEW_LABEL or "View ledger",
+      strings.LEDGER_VIEW_TOOLTIP or "Consult another ledger in read-only mode. Pre-Dibs and awards always use the guild active ledger set by GM/Officers.")
+    if viewLedgerId ~= activeLedgerId then
+      Dibs.Midnight.AddStatusBadge(shell, toolbar, "warning", string.format(strings.LEDGER_VIEW_READONLY or "Read-only: %s",
+        tostring(ledgerValues[viewLedgerId] or viewLedgerId)))
     end
     if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
       Dibs.Midnight.AddStatusBadge(shell, toolbar, "warning", "Independent Raid Active (Session Points)")
@@ -1561,6 +1559,7 @@ local function createAceWindow()
 
   frame.Refresh = function(self)
     Dibs.AceGUI.Clear(tabs)
+    if Dibs.AceGUI.SetShellStatus then Dibs.AceGUI.SetShellStatus(shell) end
     if self.playerTab ~= "diagnostics" then stopAutoPing() end
     if self.playerTab == "vault" then
       renderVaultHistory(shell, tabs, self, playerContentWidthHint())
@@ -1616,7 +1615,8 @@ local function createAceWindow()
       page.UpdateViewportHeight()
       return
     end
-    local view = Dibs.PlayerUI.GetViewModel(nil, self.historyFilters)
+    local viewLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil
+    local view = Dibs.PlayerUI.GetViewModel(nil, self.historyFilters, viewLedgerId)
     if self.playerTab == "diagnostics" then
       local diagnosticsPage = Dibs.AceGUI.AddTablePage(shell, tabs, {
         footer = true, boundsFrame = tabs.content or tabs.frame,
@@ -2280,11 +2280,7 @@ function Dibs.PlayerUI.CreateWindow()
 
   frame.Refresh = function(self)
     local summary = Dibs.PlayerUI.GetSummary()
-    local activeLedgerName = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and (function()
-      local l = Dibs.MultiLedger.GetLedgerById(nil, Dibs.MultiLedger.GetActiveLedgerId())
-      return l and l.name or Dibs.MultiLedger.GetActiveLedgerId()
-    end)() or "Default"
-    local status = "Ledger: " .. tostring(activeLedgerName) .. "\n" ..
+    local status = (Dibs.AceGUI and Dibs.AceGUI.BuildShellStatusText and Dibs.AceGUI.BuildShellStatusText() or "") .. "\n" ..
       "Season: " .. tostring((summary.season and summary.season.name) or "None") .. "\n" ..
       "Balance: " .. tostring(summary.balance) .. "\n" ..
       "Pre-Dibs: " .. tostring(#(summary.activePreDibs or {})) .. "\n" ..

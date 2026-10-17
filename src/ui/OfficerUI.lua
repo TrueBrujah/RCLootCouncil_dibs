@@ -1192,12 +1192,12 @@ local function hasOfficerHistoryFilters(criteria)
   return false
 end
 
-function Dibs.OfficerUI.BuildLedgerDetails(seasonId, filter)
+function Dibs.OfficerUI.BuildLedgerDetails(seasonId, filter, ledgerId)
   if not canViewOfficerData() then
     return { players = {}, actions = {}, transactionCount = 0, hiddenTransactionCount = 0, hidden = true }
   end
   filter = type(filter) == "table" and filter or {}
-  local allTransactions = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(seasonId) or {}
+  local allTransactions = Dibs.Ledger and Dibs.Ledger.GetTransactions and Dibs.Ledger.GetTransactions(seasonId, nil, ledgerId) or {}
   local memberNames = getCurrentGuildMemberNames()
   local authorizedTransactions = {}
   local hiddenTransactionCount = 0
@@ -1860,7 +1860,7 @@ end
 ---@param pageSize integer|nil Bounded page size.
 ---@param query string|nil Search/filter text.
 ---@return table page Paged rows and pagination metadata.
-function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, statusFilter)
+function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, statusFilter, ledgerId)
   if not canViewOfficerData() then
     return emptyOfficerPage(view, query)
   end
@@ -1881,7 +1881,7 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
   local lines, structuredRows, hiddenCount
   local filterError
   if selectedView == "actions" or selectedView == "players" then
-    local ledger = Dibs.OfficerUI.BuildLedgerDetails(seasonId, structuredFilter)
+    local ledger = Dibs.OfficerUI.BuildLedgerDetails(seasonId, structuredFilter, ledgerId)
     lines = selectedView == "actions" and ledger.actions or ledger.players
     hiddenCount = ledger.hiddenTransactionCount
     filterError = ledger.filterError
@@ -2453,6 +2453,7 @@ local function renderDashboard(shell, parent, frame)
   local seasonLabel = Dibs.AceGUI.AddLabel(shell, controlRow, "Season: " .. tostring(dashboard.season and dashboard.season.name or "No active season"), false)
   if seasonLabel and seasonLabel.SetWidth then seasonLabel:SetWidth(180) end
   if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
+    local strings = Dibs.L or {}
     local ledgers = Dibs.MultiLedger.GetLedgers()
     local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
     local ledgerValues = {}
@@ -2464,26 +2465,24 @@ local function renderDashboard(shell, parent, frame)
     if not ledgerValues[activeLedgerId] then
       ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
     end
-    local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, controlRow, "Active ledger", ledgerValues, function(value)
-      Dibs.MultiLedger.SetActiveLedger(nil, value)
-      if Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
-        Dibs.MultiLedger.BroadcastRaidLedger(nil, value)
-      end
-      frame:Refresh()
-    end, 200)
-    Dibs.AceGUI.SetValue(ledgerDropdown, activeLedgerId)
-    if Dibs.MultiLedger and Dibs.MultiLedger.CanBroadcastRaidLedger and Dibs.MultiLedger.CanBroadcastRaidLedger() then
-      local L = Dibs.Locales and Dibs.Locales.GetStrings and Dibs.Locales.GetStrings() or {}
-      Dibs.AceGUI.AddButton(shell, controlRow, L.RAID_SYNC_BUTTON or "Sync to Raid", function()
-        local currentActive = Dibs.MultiLedger.GetActiveLedgerId()
-        local ok, reason = Dibs.MultiLedger.BroadcastRaidLedger(nil, currentActive)
+    local canSetGuildLedger = Dibs.MultiLedger.CanSetGuildActiveLedger and Dibs.MultiLedger.CanSetGuildActiveLedger() == true
+    if canSetGuildLedger then
+      -- Imposed on every member through the synchronized operational policy.
+      local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, controlRow, strings.GUILD_LEDGER_LABEL or "Guild active ledger", ledgerValues, function(value)
+        local ok, reason = Dibs.MultiLedger.SetGuildActiveLedger(value)
         if ok then
-          Dibs.Message("Raid active ledger synchronized to: " .. tostring(currentActive))
+          Dibs.Message(string.format(strings.GUILD_LEDGER_SET_OK or "Guild active ledger set to %s.", tostring(ledgerValues[value] or value)))
         else
-          Dibs.Message("Failed to sync raid ledger: " .. tostring(reason or "unknown error"))
+          Dibs.Message(string.format(strings.GUILD_LEDGER_SET_FAILED or "Unable to set the guild active ledger: %s", tostring(reason or "unknown error")))
         end
         frame:Refresh()
-      end, 120, L.RAID_SYNC_TOOLTIP or "Synchronize the current active ledger to all raid members with Dibs.")
+      end, 200)
+      Dibs.AceGUI.SetValue(ledgerDropdown, activeLedgerId)
+      Dibs.AceGUI.AddTooltip(ledgerDropdown, strings.GUILD_LEDGER_LABEL or "Guild active ledger",
+        strings.GUILD_LEDGER_TOOLTIP or "GM/Officers only. The selected ledger is imposed on every guild member through sync; Pre-Dibs and awards use it.")
+    else
+      Dibs.AceGUI.AddLabel(shell, controlRow, string.format(strings.SHELL_STATUS_LEDGER_GUILD or "Guild ledger: %s",
+        tostring(ledgerValues[activeLedgerId] or activeLedgerId)), false)
     end
   end
   if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
@@ -8301,12 +8300,15 @@ local function createAceWindow(initialRoute)
       if not ledgerValues[activeLedgerId] then
         ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
       end
-      self.activeLedgerDropdown = Dibs.AceGUI.AddDropdown(shell, searchControls, "Ledger", ledgerValues, function(value)
-        Dibs.MultiLedger.SetActiveLedger(nil, value)
+      local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
+      self.activeLedgerDropdown = Dibs.AceGUI.AddDropdown(shell, searchControls, strings.LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
+        if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end
         self.ledgerPage = 1
         self:Refresh()
       end, 180)
-      Dibs.AceGUI.SetValue(self.activeLedgerDropdown, activeLedgerId)
+      Dibs.AceGUI.SetValue(self.activeLedgerDropdown, viewLedgerId)
+      Dibs.AceGUI.AddTooltip(self.activeLedgerDropdown, strings.LEDGER_VIEW_LABEL or "View ledger",
+        strings.LEDGER_VIEW_TOOLTIP or "Consult another ledger in read-only mode. Pre-Dibs and awards always use the guild active ledger set by GM/Officers.")
     end
     local isPreDibRequestRoute = self.activeTab == "preDibRequests" or self.activeTab == "predibs"
     local requestCriteria = {}
@@ -8318,7 +8320,8 @@ local function createAceWindow(initialRoute)
     end
     local viewName = self.activeTab == "history" and "actions" or (isPreDibRequestRoute and "predibs" or self.activeTab)
     self.ledgerPageSize = tonumber(self.ledgerPageSize) or 10
-    local view = Dibs.OfficerUI.GetPagedView(viewName, currentId, self.ledgerPage, self.ledgerPageSize, historyCriteria, self.vaultStatusFilter)
+    local view = Dibs.OfficerUI.GetPagedView(viewName, currentId, self.ledgerPage, self.ledgerPageSize, historyCriteria, self.vaultStatusFilter,
+      Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil)
     view.filterError = view.filterError or preDibFilterError
     local totalCount, totalPages, pageNumber = view.totalCount, view.totalPages, view.page
     local pagedPreDibRows = preDibRows
@@ -8539,6 +8542,7 @@ local function createAceWindow(initialRoute)
     tablePage.UpdateViewportHeight()
   end
   activateRoute = function(route, syncTree)
+    if Dibs.AceGUI.SetShellStatus then Dibs.AceGUI.SetShellStatus(shell) end
     local normalized = normalizeOfficerTab(route or frame.activeTab or "overview")
     if not officerRouteVisible(normalized) then
       local routeModules = {

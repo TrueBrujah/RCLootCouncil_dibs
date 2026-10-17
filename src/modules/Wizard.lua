@@ -443,6 +443,10 @@ function Wizard.GetStatus(actor)
   return { steps = steps, overallState = overallState, mode = mode }
 end
 
+function Wizard.GetInitialOperationalPolicyValues()
+  return initialOperationalPolicyValues()
+end
+
 function Wizard.AdoptOperationalPolicy(actor)
   local policy = Dibs.OperationalPolicy
   if not policy or type(policy.AdoptInitial) ~= "function" then return false, "OPERATIONAL_POLICY_UNAVAILABLE" end

@@ -282,6 +282,7 @@ SavedVariables.
 /dibs vault <item link|[Item Name]|itemID> <LFR|Normal|Heroic|Mythic>
 /dibs ledger list
 /dibs ledger set <id>
+/dibs ledger view <id>
 /dibs sync report
 /dibs minimap show|hide
 /dibs minimap scale <50-200>

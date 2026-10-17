@@ -62,9 +62,164 @@ local function ensureLedgers()
   return db
 end
 
+local function resolveLedger(db, ledgerId)
+  local ledger = db.ledgers[ledgerId]
+  if not ledger then
+    for _, candidate in pairs(db.ledgers) do
+      if candidate.name and string.lower(candidate.name) == string.lower(ledgerId) then
+        return candidate.id, candidate
+      end
+    end
+  end
+  return ledgerId, ledger
+end
+
+local function isLocallyApproved(ledgerId, ledger)
+  if not ledger or ledger.status ~= "APPROVED" then return false end
+  if ledgerId == DEFAULT_LEDGER_ID then return true end
+  return not (Dibs.Governance and Dibs.Governance.IsLedgerApproved)
+    or Dibs.Governance.IsLedgerApproved(ledgerId) == true
+end
+
+local function activateLedger(db, ledgerId, ledger)
+  if Dibs.PreDibs and Dibs.PreDibs.SetLedgerContext then
+    local scoped, scopeReason = Dibs.PreDibs.SetLedgerContext(ledgerId)
+    if not scoped then return false, scopeReason or "LEDGER_NOT_APPROVED" end
+  end
+  db.activeLedgerId = ledgerId
+  db.ledger = ledger
+  return true
+end
+
+local enforcingGuildLedger = false
+
+local function imposedLedgerId()
+  local policy = Dibs.OperationalPolicy
+  return policy and type(policy.GetActiveLedgerId) == "function" and policy.GetActiveLedgerId() or nil
+end
+
+local function refreshOpenWindows()
+  for _, frame in ipairs({ _G.DibsPlayerFrame, _G.DibsOfficerFrame }) do
+    if type(frame) == "table" and type(frame.Refresh) == "function" then pcall(frame.Refresh, frame) end
+  end
+end
+
+-- Aligns the local working ledger with the guild-imposed one carried by the
+-- synchronized operational policy. Without an imposed ledger, the local
+-- choice remains (legacy behavior).
+function MultiLedger.EnforceGuildActiveLedger(silent)
+  if enforcingGuildLedger then return true, "ENFORCEMENT_IN_PROGRESS" end
+  local db = ensureLedgers()
+  if not db then return false, "DB_UNAVAILABLE" end
+  local imposed = imposedLedgerId()
+  if not imposed then return true, "NOT_IMPOSED" end
+  if db.activeLedgerId == imposed then return true, "IMPOSED" end
+  local ledger = db.ledgers[imposed]
+  if not isLocallyApproved(imposed, ledger) then return false, "GUILD_ACTIVE_LEDGER_UNAVAILABLE" end
+  enforcingGuildLedger = true
+  local ok, reason = activateLedger(db, imposed, ledger)
+  enforcingGuildLedger = false
+  if not ok then return false, reason end
+  if MultiLedger.viewLedgerId == imposed then MultiLedger.viewLedgerId = nil end
+  if silent ~= true then refreshOpenWindows() end
+  return true, "IMPOSED"
+end
+
 function MultiLedger.GetActiveLedgerId()
+  if not enforcingGuildLedger then MultiLedger.EnforceGuildActiveLedger(true) end
   local db = ensureLedgers()
   return db and db.activeLedgerId or DEFAULT_LEDGER_ID
+end
+
+function MultiLedger.GetGuildActiveLedgerId()
+  return imposedLedgerId()
+end
+
+-- Fails closed when the guild imposes a ledger that is not yet usable locally
+-- (catalog not synchronized, archived, or unapproved).
+function MultiLedger.RequireGuildActiveLedger()
+  local imposed = imposedLedgerId()
+  if not imposed then return true end
+  if MultiLedger.GetActiveLedgerId() ~= imposed then return false, "GUILD_ACTIVE_LEDGER_UNAVAILABLE" end
+  return true
+end
+
+function MultiLedger.GetGuildLedgerStatus()
+  local db = ensureLedgers()
+  local active = MultiLedger.GetActiveLedgerId()
+  local imposed = imposedLedgerId()
+  local function ledgerName(id)
+    local ledger = db and id and db.ledgers[id]
+    return ledger and ledger.name or (id == DEFAULT_LEDGER_ID and "Primary") or id
+  end
+  local state = not imposed and "NOT_IMPOSED" or (active == imposed and "IMPOSED" or "UNAVAILABLE")
+  return {
+    state = state,
+    activeLedgerId = active,
+    activeLedgerName = ledgerName(active),
+    imposedLedgerId = imposed,
+    imposedLedgerName = imposed and ledgerName(imposed) or nil,
+    viewLedgerId = MultiLedger.GetViewLedgerId(),
+    viewLedgerName = ledgerName(MultiLedger.GetViewLedgerId()),
+  }
+end
+
+function MultiLedger.CanSetGuildActiveLedger(actor)
+  if not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.CanWrite) then return false, "POLICY_UNAVAILABLE" end
+  local name = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName())
+  local policyState = Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or {}
+  if policyState.status ~= "POLICY_ADOPTED" then
+    local snapshot = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(name)
+    local gm = snapshot and Dibs.Identity.IsCurrentGuildMaster and Dibs.Identity.IsCurrentGuildMaster(snapshot)
+    if gm then return true end
+    return false, "POLICY_UNINITIALIZED"
+  end
+  return Dibs.OperationalPolicy.CanWrite(name)
+end
+
+-- GM/Officer only: imposes the ledger on every guild member through the
+-- synchronized operational policy (persistent, replayed to late joiners).
+function MultiLedger.SetGuildActiveLedger(ledgerId, actor)
+  local db = ensureLedgers()
+  if not db then return false, "DB_UNAVAILABLE" end
+  if type(ledgerId) ~= "string" or ledgerId == "" then return false, "INVALID_LEDGER_ID" end
+  local resolvedId, ledger = resolveLedger(db, ledgerId)
+  if not ledger then return false, "LEDGER_NOT_FOUND" end
+  if not isLocallyApproved(resolvedId, ledger) then return false, "LEDGER_UNAPPROVED" end
+  if imposedLedgerId() == resolvedId then
+    MultiLedger.EnforceGuildActiveLedger()
+    return true, "UNCHANGED"
+  end
+  if not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.SetActiveLedger) then return false, "POLICY_UNAVAILABLE" end
+  local ok, reason = Dibs.OperationalPolicy.SetActiveLedger(resolvedId, actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()))
+  if not ok then return false, reason or "POLICY_WRITER_REQUIRED" end
+  local enforced, enforceReason = MultiLedger.EnforceGuildActiveLedger()
+  if not enforced then return false, enforceReason end
+  return true, resolvedId
+end
+
+-- Read-only consultation of another approved ledger; never changes the ledger
+-- used for Pre-Dibs, awards, or debits. Session-local by design.
+function MultiLedger.GetViewLedgerId()
+  local db = ensureLedgers()
+  local view = MultiLedger.viewLedgerId
+  if view and db and isLocallyApproved(view, db.ledgers[view]) then return view end
+  MultiLedger.viewLedgerId = nil
+  return db and db.activeLedgerId or DEFAULT_LEDGER_ID
+end
+
+function MultiLedger.SetViewLedger(ledgerId)
+  local db = ensureLedgers()
+  if not db then return false, "DB_UNAVAILABLE" end
+  if type(ledgerId) ~= "string" or ledgerId == "" then return false, "INVALID_LEDGER_ID" end
+  local resolvedId, ledger = resolveLedger(db, ledgerId)
+  if not isLocallyApproved(resolvedId, ledger) then return false, "LEDGER_UNAPPROVED" end
+  MultiLedger.viewLedgerId = resolvedId ~= MultiLedger.GetActiveLedgerId() and resolvedId or nil
+  return true, resolvedId
+end
+
+function MultiLedger.IsViewingOtherLedger()
+  return MultiLedger.GetViewLedgerId() ~= MultiLedger.GetActiveLedgerId()
 end
 
 function MultiLedger.GetLedgers()
@@ -114,27 +269,15 @@ function MultiLedger.SetActiveLedger(arg1, arg2)
   if not db then return false, "DB_UNAVAILABLE" end
   if type(ledgerId) ~= "string" or ledgerId == "" then return false, "INVALID_LEDGER_ID" end
 
-  local ledger = db.ledgers[ledgerId]
-  if not ledger then
-    for _, candidate in pairs(db.ledgers) do
-      if candidate.name and string.lower(candidate.name) == string.lower(ledgerId) then
-        ledger = candidate
-        ledgerId = candidate.id
-        break
-      end
-    end
-  end
+  local ledger
+  ledgerId, ledger = resolveLedger(db, ledgerId)
   if not ledger then return false, "LEDGER_NOT_FOUND" end
   if ledger.status ~= "APPROVED" then return false, "LEDGER_UNAPPROVED" end
-  if Dibs.PreDibs and Dibs.PreDibs.SetLedgerContext then
-    local scoped, scopeReason = Dibs.PreDibs.SetLedgerContext(ledgerId)
-    if not scoped then return false, scopeReason or "LEDGER_NOT_APPROVED" end
+  local imposed = imposedLedgerId()
+  if imposed and imposed ~= ledgerId and not enforcingGuildLedger then
+    return false, "GUILD_ACTIVE_LEDGER_IMPOSED"
   end
-
-  db.activeLedgerId = ledgerId
-  db.ledger = ledger
-
-  return true
+  return activateLedger(db, ledgerId, ledger)
 end
 
 function MultiLedger.ProposeLedger(actor, name, options)
@@ -236,6 +379,9 @@ function MultiLedger.ArchiveLedger(actor, ledgerId)
   if not ledgerId or not db.ledgers[ledgerId] then
     return { ok = false, reasonCode = "LEDGER_NOT_FOUND" }
   end
+  if imposedLedgerId() == ledgerId then
+    return { ok = false, reasonCode = "GUILD_ACTIVE_LEDGER_CANNOT_ARCHIVE" }
+  end
 
   local ledger = db.ledgers[ledgerId]
   local now = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
@@ -246,7 +392,7 @@ function MultiLedger.ArchiveLedger(actor, ledgerId)
   ledger.archivedBy = actorName
 
   if db.activeLedgerId == ledgerId then
-    MultiLedger.SetActiveLedger(DEFAULT_LEDGER_ID)
+    activateLedger(db, DEFAULT_LEDGER_ID, db.ledgers[DEFAULT_LEDGER_ID])
   end
 
   return { ok = true }
@@ -276,7 +422,7 @@ function MultiLedger.ApplyLedgerDeletion(actor, ledgerId, deletion)
   end
 
   if db.activeLedgerId == ledgerId then
-    local switched, switchReason = MultiLedger.SetActiveLedger(nil, DEFAULT_LEDGER_ID)
+    local switched, switchReason = activateLedger(db, DEFAULT_LEDGER_ID, db.ledgers[DEFAULT_LEDGER_ID])
     if not switched then return { ok = false, reasonCode = switchReason or "ACTIVE_LEDGER_SWITCH_FAILED" } end
   end
   local timestamp = (deletion and deletion.timestamp) or (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
@@ -373,38 +519,17 @@ end
 local function getSenderRaidAuthority(sender)
   if not sender or sender == "" then return false end
   local cleanSender = tostring(sender):match("^([^-]+)") or sender
-
-  if type(UnitIsGroupLeader) == "function" then
-    local ok, isLeader = pcall(UnitIsGroupLeader, sender)
-    if ok and isLeader then return true end
-    local ok2, isLeader2 = pcall(UnitIsGroupLeader, cleanSender)
-    if ok2 and isLeader2 then return true end
-  end
-
-  if type(UnitIsGroupAssistant) == "function" then
-    local ok, isAssist = pcall(UnitIsGroupAssistant, sender)
-    if ok and isAssist then return true end
-    local ok2, isAssist2 = pcall(UnitIsGroupAssistant, cleanSender)
-    if ok2 and isAssist2 then return true end
-  end
-
-  if Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.GetMasterLooter) == "function" then
-    local ml = Dibs.RCLootCouncil.GetMasterLooter()
-    if ml and string.lower(tostring(ml)):find(string.lower(cleanSender), 1, true) then
-      return true
-    end
-  end
-
   if Dibs.Permissions and type(Dibs.Permissions.GetGuildRole) == "function" then
     local role = Dibs.Permissions.GetGuildRole(sender) or Dibs.Permissions.GetGuildRole(cleanSender)
     if role == "gm" or role == "officer" then
       return true
     end
   end
-
   return false
 end
 
+-- Kept for slash commands and older peers. Only GM/Officers may choose the
+-- active ledger; raid lead, assist, and Master Looter no longer qualify.
 function MultiLedger.CanBroadcastRaidLedger(actor)
   local inGroup = false
   if type(IsInRaid) == "function" and IsInRaid() then
@@ -418,15 +543,6 @@ function MultiLedger.CanBroadcastRaidLedger(actor)
   end
 
   local actorName = actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()) or "player"
-  if type(UnitIsGroupLeader) == "function" and UnitIsGroupLeader("player") then
-    return true
-  end
-  if type(UnitIsGroupAssistant) == "function" and UnitIsGroupAssistant("player") then
-    return true
-  end
-  if Dibs.RCLootCouncil and Dibs.RCLootCouncil.IsMasterLooter and Dibs.RCLootCouncil.IsMasterLooter("player") then
-    return true
-  end
   if Dibs.Permissions and Dibs.Permissions.GetGuildRole then
     local role = Dibs.Permissions.GetGuildRole(actorName)
     if role == "gm" or role == "officer" then
@@ -434,35 +550,26 @@ function MultiLedger.CanBroadcastRaidLedger(actor)
     end
   end
 
-  return false, "RAID_LEADERSHIP_REQUIRED"
+  return false, "GUILD_OFFICER_REQUIRED"
 end
 
 function MultiLedger.BroadcastRaidLedger(actor, targetLedgerId)
   local canBroadcast, reason = MultiLedger.CanBroadcastRaidLedger(actor)
   if not canBroadcast then
-    return false, reason or "RAID_LEADERSHIP_REQUIRED"
+    return false, reason or "GUILD_OFFICER_REQUIRED"
   end
 
   local db = ensureLedgers()
   if not db then return false, "DB_UNAVAILABLE" end
 
-  local ledger = nil
-  if targetLedgerId and db.ledgers[targetLedgerId] then
-    ledger = db.ledgers[targetLedgerId]
-  else
-    local target = targetLedgerId or db.activeLedgerId
-    for _, candidate in pairs(db.ledgers) do
-      if candidate.id == target or (candidate.name and string.lower(candidate.name) == string.lower(tostring(target))) then
-        ledger = candidate
-        break
-      end
-    end
-  end
+  local target = targetLedgerId or db.activeLedgerId
+  local _, ledger = resolveLedger(db, tostring(target))
 
   if not ledger then return false, "LEDGER_NOT_FOUND" end
   if ledger.status ~= "APPROVED" then return false, "LEDGER_UNAPPROVED" end
 
-  MultiLedger.SetActiveLedger(actor, ledger.id)
+  local imposed, imposeReason = MultiLedger.SetGuildActiveLedger(ledger.id, actor)
+  if not imposed then return false, imposeReason end
 
   local inRaid = type(IsInRaid) == "function" and IsInRaid()
   local channel = inRaid and "RAID" or "PARTY"
@@ -523,6 +630,7 @@ function MultiLedger.OnRaidCommReceived(prefix, payload, channel, sender)
   end
 
   if message.action == "SET_ACTIVE_LEDGER" then
+    if imposedLedgerId() then return false, "GUILD_ACTIVE_LEDGER_IMPOSED" end
     local ledgerId = message.ledgerId
     local db = ensureLedgers()
     if not db or not db.ledgers then return false, "DB_UNAVAILABLE" end
@@ -545,12 +653,7 @@ function MultiLedger.OnRaidCommReceived(prefix, payload, channel, sender)
     local currentActive = MultiLedger.GetActiveLedgerId()
     if currentActive ~= ledgerId then
       MultiLedger.SetActiveLedger(nil, ledgerId)
-      if _G.DibsPlayerFrame and _G.DibsPlayerFrame.Refresh then
-        _G.DibsPlayerFrame:Refresh()
-      end
-      if _G.DibsOfficerFrame and _G.DibsOfficerFrame.Refresh then
-        _G.DibsOfficerFrame:Refresh()
-      end
+      refreshOpenWindows()
       if Dibs.Message then
         local senderDisplay = message.sender or sender or "Raid Leader"
         local ledgerDisplay = message.ledgerName or targetLedger.name or ledgerId
