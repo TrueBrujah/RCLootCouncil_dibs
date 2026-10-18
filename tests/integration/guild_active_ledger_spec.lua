@@ -116,7 +116,74 @@ describe("Guild active ledger imposed through operational policy", function()
     assert_false(dibs.MultiLedger.IsViewingOtherLedger())
     local text = dibs.AceGUI.BuildShellStatusText()
     assert_true(string.find(text, "Imposed", 1, true) ~= nil)
+    assert_true(string.find(text, "Imposed (Active)", 1, true) ~= nil)
     assert_true(string.find(text, tostring(dibs.VERSION), 1, true) ~= nil)
+  end)
+
+  it("offers the footer ledger menu with Active and Read only states", function()
+    local dibs = load(); adoptGovernance(dibs)
+    local imposed = approvedLedger(dibs, "Imposed")
+    assert_true(dibs.MultiLedger.SetGuildActiveLedger(imposed))
+    local values = dibs.AceGUI.GetLedgerDropdownValues()
+    assert_equal("Imposed (Active)", values[imposed])
+    assert_equal("Primary", values["guild-primary"])
+
+    local function fakeRoot()
+      local root = { titles = {}, radios = {} }
+      function root:CreateTitle(text) self.titles[#self.titles + 1] = text end
+      function root:CreateDivider() end
+      function root:CreateRadio(text, isSelected, select, data)
+        self.radios[#self.radios + 1] = { text = text, isSelected = isSelected, select = select, data = data }
+      end
+      return root
+    end
+
+    local root = fakeRoot()
+    assert_true(dibs.AceGUI.PopulateLedgerMenu(root))
+    assert_equal(1, #root.titles)
+    assert_equal(2, #root.radios)
+    assert_true(root.radios[2].isSelected())
+    assert_equal("Primary (Read only)", root.radios[1].text)
+    root.radios[1].select()
+    assert_equal("guild-primary", dibs.MultiLedger.GetViewLedgerId())
+    assert_equal(imposed, dibs.MultiLedger.GetActiveLedgerId())
+    assert_equal(imposed, dibs.OperationalPolicy.GetActiveLedgerId())
+
+    dibs.MultiLedger.CanSetGuildActiveLedger = function() return false end
+    root = fakeRoot()
+    assert_true(dibs.AceGUI.PopulateLedgerMenu(root))
+    assert_equal(1, #root.titles)
+    assert_equal(2, #root.radios)
+    assert_equal("Imposed (Active)", root.radios[2].text)
+    root.radios[2].select()
+    assert_equal(imposed, dibs.MultiLedger.GetViewLedgerId())
+    assert_equal(imposed, dibs.MultiLedger.GetActiveLedgerId())
+  end)
+
+  it("reports guild sync failures and retries without creating another policy revision", function()
+    local dibs = load(); adoptGovernance(dibs)
+    local other = approvedLedger(dibs, "Other")
+    dibs.Sync.Send = function() return false, "SYNC_UNAVAILABLE" end
+    local ok, _, sent, reason = dibs.MultiLedger.SetGuildActiveLedger(other)
+    assert_true(ok)
+    assert_false(sent)
+    assert_equal("SYNC_UNAVAILABLE", reason)
+    local revision = dibs.OperationalPolicy.GetState().policyRevision
+    local calls = 0
+    dibs.Sync.Send = function(message, channel)
+      calls = calls + 1
+      assert_equal("OPERATIONAL_POLICY", message.entityType)
+      assert_equal("GUILD", channel)
+      return true, "TEST_SENT"
+    end
+    ok, _, sent = dibs.MultiLedger.SetGuildActiveLedger(other)
+    assert_true(ok)
+    assert_true(sent)
+    assert_equal(1, calls)
+    assert_equal(revision, dibs.OperationalPolicy.GetState().policyRevision)
+    local denied = dibs.MultiLedger.SetGuildActiveLedger(other, "Player-Realm")
+    assert_false(denied)
+    assert_equal(1, calls)
   end)
 
   it("scopes pending award reservations to their ledger", function()

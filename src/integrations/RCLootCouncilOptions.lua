@@ -373,6 +373,7 @@ local RCLC_BUTTON_SET_ALIASES = {
   COSMETIC = "COSMETIC_ITEMS",
   COSMETICITEMS = "COSMETIC_ITEMS",
   RARE = "RARE_ITEMS",
+  SPECIAL = "SPECIAL_EFFECTS_ITEMS",
   SPECIAL_EFFECTS = "SPECIAL_EFFECTS_ITEMS",
   SPECIALEFFECTSITEMS = "SPECIAL_EFFECTS_ITEMS",
 }
@@ -401,7 +402,7 @@ local function canonicalSemanticTypeKey(value)
   if key == "PET" or key == "PETS" then return "PETS" end
   if key == "RECIPE" or key == "RECIPES" or key == "RECIPE_PATTERN" then return "RECIPE" end
   if key == "DECORS" then return "DECOR" end
-  if key == "RARE_ITEMS" or key == "RARE" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or compact == "SPECIALEFFECTSITEMS" then return "OTHER" end
+  if key == "RARE_ITEMS" or key == "RARE" or key == "SPECIAL" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or compact == "SPECIALEFFECTSITEMS" then return "OTHER" end
   if key == "TOKEN" or key == "TOKENS" then return "TOKEN" end
   if key == "TOKEN_SET" or key == "TOKEN_SETS" or key == "TOKENSET" then return "TOKEN_SET" end
   if key == "OTHER" or key == "OTHERS" then return "OTHER" end

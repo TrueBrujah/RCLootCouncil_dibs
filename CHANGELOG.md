@@ -2,8 +2,82 @@
 
 ## 0.8.10 - 2026-10-17
 
+- (2026-10-18) Make setup warnings actionable: Guided Setup, Guild Setup Checks,
+  and Raid Readiness now provide specific EN/FR correction instructions and hover
+  help. Their destination pages identify current blockers/warnings, explain what
+  to do, and recheck on refresh so resolved issues disappear. Expected missing
+  raid context is distinguished from an in-raid Master Looter problem. Help and
+  navigation do not perform configuration changes or grant permissions.
+- (2026-10-17) Let a member stuck BEHIND catch up when no GM or writer is
+  online: once **3 different roster members** announce the same governance,
+  operational policy or season catalog revision and hash, the member fetches the
+  missing revisions from one of them. The records are kept aside until the whole
+  chain links from the local state to that hash, then applied with the original
+  author's authority (the record must name the GM or an authorized writer as its
+  author; this is not a cryptographic signature). A different hash for the same revision stays a visible
+  conflict and is never overwritten; an older majority is ignored.
+- (2026-10-17) Officer backups now survive `/dibs factoryreset CONFIRM` and
+  return to their guild on the next load. Restoring a backup no longer rolls
+  back data shared with the guild: when the local governance, policy, season
+  catalog or a ledger is newer than the backup, the newer local copy is kept
+  and listed in the restore result, and sync catches up the rest. A guild-scope
+  backup no longer rewrites a published season catalog.
+- (2026-10-17) Let GM/Officers request non-destructive recovery for one online
+  member or the guild from Synchronization, or `/dibs sync repair <player|guild>`.
+  Updated clients re-announce available data and request missing details through
+  existing authority, ownership, privacy and hash checks. Replies confirm
+  startup, not completion; conflicts remain visible and are never overwritten.
+  Season/policy recovery now advances in order to the final announced revision
+  instead of losing its target during parent recovery. A returning player can
+  recover their own missing Pre-Dibs from an Officer copy through a projection
+  excluding officer metadata, without creating ledger transactions.
+  No reset generation, ledger deletion, or revision renumbering is introduced.
+- (2026-10-17) Add a hidden local factory reset: `/dibs factoryreset`, then
+  `/dibs factoryreset CONFIRM` within 60 seconds, erases every Dibs
+  SavedVariable on this client (ledgers, history, Pre-Dibs, settings, window
+  layout, sandbox) and reloads the UI as if the addon was never installed.
+  Refused in combat; local only, no sync traffic, RCLootCouncil untouched.
+  Officer backups are kept (see above).
+  Guild sync may later restore shared guild ledgers.
+- (2026-10-17) Prevent accidental guild ledger changes from ordinary selectors.
+  Dashboard and status-bar ledger menus are consultation only, including for
+  GM/Officers. In **Guild Setup > Guild Ledgers**, choose a target, click
+  **Activate for guild...**, then explicitly **Confirm activation and guild
+  sync**. Selection and cancellation do not change the policy or send sync.
+  Confirmation rechecks authority, combat and the previous active ledger.
+  Guild sync failures are reported separately from local activation and can
+  be retried without creating a duplicate policy revision.
+- (2026-10-17) The Officer dashboard now shows the statistics and recent
+  activity of the ledger selected in **View ledger**, with a **Read-only**
+  badge when it is not the guild active ledger. Viewing never activates it.
+  The badge occupies its own line below the controls so it does not push
+  **Manage ledgers** off the selector row when switching ledgers.
+- (2026-10-17) Show the **Dib** button on RCLootCouncil "Items with special
+  effects" (`SPECIAL`, e.g. on-use trinkets) and `RARE` response sets: these
+  RCLootCouncil type codes now resolve to the Dibs **Other** loot type instead
+  of an unknown type that removed the Dib response.
+- (2026-10-17) The status bar at the bottom of every Dibs window now shows
+  `(Active)` next to the guild active ledger and is clickable: everyone,
+  including GM/Officers, can view another ledger
+  read-only (marked `(Read only)`). Ledger selectors use the same labels.
+- (2026-10-17) Block an ineligible **Dib** response in the RCLootCouncil loot
+  frame: the greyed Dib button was only visual and a click still sent the
+  response. Dibs now refuses it before RCLootCouncil sends it and explains why
+  (no available Dib and no confirmed Pre-Dib). The button tooltip now shows
+  `no-dibs-available` instead of `none`, and a recycled RCLootCouncil button
+  that is no longer a Dib slot is re-enabled. Allow public Pre-Dibs still only
+  controls Pre-Dib submission; accounting already rejected such awards.
+- (2026-10-17) Reorganize the Officer navigation: a new **Guild Setup**
+  section groups Guided Setup, Guild Setup Checks and **Guild Ledgers** (the
+  former System > Guild Configuration page); Pre-Dibs Settings moves to
+  **Guild Rules**. Routes and slash commands are unchanged. Guild Ledgers now
+  shows the guild active ledger selector, every approved ledger (including the
+  default one) with its transaction count, pending approvals, archived ledgers,
+  ledger proposals and guild activation. Proposing or approving a ledger now
+  reports its real failure reason instead of always reporting success.
 - (2026-10-17) Add a **guild active ledger** chosen by the GM or an Officer
-  (Officer > Dashboard or `/dibs ledger set <id>`) and imposed on every member
+  (confirmed in Officer > Guild Setup > Guild Ledgers, or through the advanced
+  `/dibs ledger set <id>` command) and imposed on every member
   through the synchronized operational policy (new `activeLedgerId` field).
   Pre-Dibs, award proposals and reservations always use it; creation fails
   closed until the imposed ledger is known locally, and it cannot be archived.

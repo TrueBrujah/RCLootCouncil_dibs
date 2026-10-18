@@ -223,7 +223,7 @@ Source: [src/modules/ProtectedActions.lua:182](../../src/modules/ProtectedAction
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncil.lua:3721](../../src/integrations/RCLootCouncil.lua#L3721) - `Dibs.RCLootCouncil.GetHistoryRows`
+Source: [src/integrations/RCLootCouncil.lua:3752](../../src/integrations/RCLootCouncil.lua#L3752) - `Dibs.RCLootCouncil.GetHistoryRows`
 
 ## RCLootCouncil response mapping
 
@@ -235,7 +235,7 @@ Source: [src/integrations/RCLootCouncil.lua:3721](../../src/integrations/RCLootC
 **Francais:** Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/integrations/RCLootCouncilOptions.lua:491](../../src/integrations/RCLootCouncilOptions.lua#L491) - `buildButtonSetMappingText`
+Source: [src/integrations/RCLootCouncilOptions.lua:492](../../src/integrations/RCLootCouncilOptions.lua#L492) - `buildButtonSetMappingText`
 
 ## Raid Readiness
 
@@ -247,7 +247,7 @@ Source: [src/integrations/RCLootCouncilOptions.lua:491](../../src/integrations/R
 **Francais:** La preparation au raid indique si DIBS est pret pour ce raid et liste les controles bloquants avec leurs prochaines actions.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/ui/SetupAssistant.lua:215](../../src/ui/SetupAssistant.lua#L215) - `SetupAssistant.Evaluate`
+Source: [src/ui/SetupAssistant.lua:269](../../src/ui/SetupAssistant.lua#L269) - `SetupAssistant.Evaluate`
 
 ## Historical Reconciliation
 
@@ -273,6 +273,21 @@ Source: [src/modules/Installation.lua:190](../../src/modules/Installation.lua#L1
 Scope: `guild` | Audit: `false` | Reason required: `false`
 Source: [src/modules/Governance.lua:438](../../src/modules/Governance.lua#L438) - `Governance.GetAuthorityState`
 
+## Resynchronize guild
+
+- **ID:** `sync.guild.recovery`
+- **Category:** `synchronization`
+- **Audience:** gm, officer
+
+**English:** GM/Officer only. Asks online updated guild clients to announce their available data and request missing revisions. Preserves ledgers, validates existing authority and hashes, and never resolves conflicts by overwriting data. Offline members catch up when they reconnect. Limited to once per minute; unavailable in combat, sandbox and Independent Raid.
+**Francais:** GM/Officier seulement. Demande aux clients de guilde a jour et en ligne d'annoncer leurs donnees disponibles et de demander les revisions manquantes. Preserve les ledgers et valide les droits et empreintes existants, sans ecraser les conflits. Les absents rattrapent a leur reconnexion. Une fois par minute; indisponible en combat, sandbox et raid independant.
+
+**Technical reference:** Synchronization page: Fix synchronization and Verify again locally; Repair peer or Resynchronize guild (GM/Officer). Force clear only resets a local indicator.
+**Reference technique:** Page Synchronisation : Reparer la synchronisation et Verifier de nouveau localement; Reparer le pair ou Resynchroniser la guilde (GM/Officier). Forcer la remise a zero efface seulement un indicateur local.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+Source: [src/modules/SyncV2.lua:439](../../src/modules/SyncV2.lua#L439) - `Sync.RepairGuild`
+
 ## Synchronization peer status
 
 - **ID:** `sync.peer.status`
@@ -283,7 +298,7 @@ Source: [src/modules/Governance.lua:438](../../src/modules/Governance.lua#L438) 
 **Francais:** L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:425](../../src/modules/SyncV2.lua#L425) - `Sync.GetPeerStatuses`
+Source: [src/modules/SyncV2.lua:509](../../src/modules/SyncV2.lua#L509) - `Sync.GetPeerStatuses`
 
 ## SyncV2 Protocol State
 
@@ -298,7 +313,7 @@ Source: [src/modules/SyncV2.lua:425](../../src/modules/SyncV2.lua#L425) - `Sync.
 **Reference technique:** SyncV2 peut indiquer LEGACY_LOCAL avant le changement, CUTOVER_PREPARED pendant la preparation de compatibilite des ecrivains, ou V2_ENFORCED apres activation approuvee. ledgerEpoch identifie la generation active du registre canonique; legacyBaselineHash identifie la base historique approuvee.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:779](../../src/modules/SyncV2.lua#L779) - `Sync.SetProtocolState`
+Source: [src/modules/SyncV2.lua:1049](../../src/modules/SyncV2.lua#L1049) - `Sync.SetProtocolState`
 
 ## Raid Relay service
 
@@ -333,11 +348,11 @@ Source: [src/modules/RaidRelay.lua:105](../../src/modules/RaidRelay.lua#L105) - 
 **English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
 **Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
 
-**Technical reference:** Synchronization page: Fix synchronization, Verify again, Force clear (Guild Master/Officer).
-**Reference technique:** Page Synchronisation : Reparer la synchronisation, Verifier de nouveau, Forcer la remise a zero (Maitre de guilde/Officier).
+**Technical reference:** Synchronization page: Fix synchronization and Verify again locally; Repair peer or Resynchronize guild (GM/Officer). Force clear only resets a local indicator.
+**Reference technique:** Page Synchronisation : Reparer la synchronisation et Verifier de nouveau localement; Reparer le pair ou Resynchroniser la guilde (GM/Officier). Forcer la remise a zero efface seulement un indicateur local.
 
 Scope: `character-local` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:2647](../../src/modules/SyncV2.lua#L2647) - `Sync.RequestResync`
+Source: [src/modules/SyncV2.lua:3005](../../src/modules/SyncV2.lua#L3005) - `Sync.RequestResync`
 
 ## Synchronization
 
@@ -349,4 +364,4 @@ Source: [src/modules/SyncV2.lua:2647](../../src/modules/SyncV2.lua#L2647) - `Syn
 **Francais:** Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:395](../../src/modules/SyncV2.lua#L395) - `Sync.GetStatus`
+Source: [src/modules/SyncV2.lua:479](../../src/modules/SyncV2.lua#L479) - `Sync.GetStatus`

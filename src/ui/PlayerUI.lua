@@ -1258,9 +1258,7 @@ local function createLegacyAceWindow()
         end
       end
       if approvedCount > 0 then
-        if not ledgerValues[activeLedgerId] then
-          ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
-        end
+        ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues()
         local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
         local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, (Dibs.L or {}).LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
           if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end
@@ -1530,15 +1528,7 @@ local function createAceWindow()
     local ledgers = Dibs.MultiLedger.GetLedgers()
     local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
     local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
-    local ledgerValues = {}
-    for _, l in ipairs(ledgers) do
-      if l.status == "APPROVED" then
-        ledgerValues[l.id] = l.name or l.id
-      end
-    end
-    if not ledgerValues[activeLedgerId] then
-      ledgerValues[activeLedgerId] = (activeLedgerId == "guild-primary" and "Primary") or activeLedgerId
-    end
+    local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues()
     -- Consultation only: the working ledger is imposed by GM/Officers.
     local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, toolbar, strings.LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
       if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end

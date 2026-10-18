@@ -29,6 +29,83 @@ visible in readiness; it must not trigger local fallback.
 
 ## Message types
 
+### Non-destructive guild recovery
+
+The additive `guildRepair=true` capability supports `SYNC_REPAIR_REQUEST`
+(`scope=PEER` on WHISPER, `scope=GUILD` on GUILD) and WHISPER-only
+`SYNC_REPAIR_ACK`. Only actual same-guild GM/Officer senders may initiate a
+remote recovery. Receivers revalidate sender identity, current roster role,
+guild scope, addon compatibility and transport channel; claimed roles do not
+grant authority. Requests and acknowledgements contain diagnostics, not a
+replacement database. No epoch, reset generation or revision renumbering is
+introduced.
+
+A receiver reuses `RequestResync` and lifecycle advertisements to announce
+available data and request missing details. Existing entity authority, ledger
+scope, content hash, parent chain and privacy checks still gate every write.
+An Officer may return only the recipient's own missing Pre-Dib requests to a
+normal player. That route whitelists owner-facing request fields on send and
+receipt, excluding delivery acknowledgement and arbitrary Officer metadata.
+Officer-to-Officer exchange and owner-originated delivery retain their existing
+behavior; ordinary players still cannot fetch other members' stored details.
+
+Policy and season catch-up request the next missing revision and continue on
+successful application until the advertised target hash is reached. A slower
+peer cannot lower an outstanding target. Equal-revision/hash disagreements and
+incompatible parent histories remain explicit behind reasons, not last-writer
+wins. A local recheck does not send requests. Canonical commits continue to
+require the verified coordinator; recovery does not promote replica commits.
+
+### Corroborated relay
+
+When no GM or authorized writer is online, `GOVERNANCE`, `OPERATIONAL_POLICY`
+and `SEASON_CATALOG` digests from ordinary members count as votes for their
+`(entityType, revision, contentHash)`. Below `RELAY_QUORUM = 3` distinct roster
+members (votes expire after 900 seconds, at most 64 tracked keys) the digest is
+still rejected with its historical reason (`INVALID_GOVERNANCE_DIGEST`,
+`POLICY_WRITER_REQUIRED`) and nothing is fetched. At quorum:
+
+- the same revision as local with another hash marks the existing conflict reason
+  and is never adopted;
+- an older revision is ignored (`RELAY_STALE_IGNORED`);
+- a higher target already announced by a writer is kept;
+- otherwise the member records a relay target, marks the parent reason and fetches
+  the next missing revision (governance fetches the chain from the local revision).
+
+Only members that voted for the target may serve it, and only for revisions above
+local state up to the target. Relayed records are staged in runtime memory until every
+`parentHash` links from local state to the target hash (`RELAY_CHAIN_STAGED`); a broken
+link drops the staging (`RELAY_CHAIN_MISMATCH`). The chain is then applied in order with
+the record's `authorNameRealm` as sender, so each revision must still be authored by
+the current GM (governance) or a current authorized writer (policy, catalog). Quorum
+votes never become trusted writer digests. The 31-bit content hash is an identity, not
+a signature: three colluding members (or one person with three online roster
+characters) could relay a record falsely attributed to the GM or a writer. Such a
+record still has to link to the local parent chain, and when the real author
+announces another hash for that revision the divergence becomes a visible conflict
+that is never silently overwritten; GM/Officer recovery remains the authoritative
+path.
+
+Replies say `STARTED` or `BLOCKED` with a contemporaneous probe report; neither
+a successful send nor `STARTED` attests convergence. Acknowledgements must match
+a pending request ID and, for a targeted request, its intended member. Requests
+expire after 300 seconds and are bounded to 16 pending IDs. Sender cooldown is
+60 seconds per target (64 retained cooldown entries); each receiver starts at
+most one recovery per 60 seconds, including across different Officers.
+Combat, active sandbox and Independent Raid reject recovery. Known peers
+without the capability return `PEER_UPDATE_REQUIRED` locally; a guild broadcast
+does not attest participation by old, offline or missing-addon clients.
+Offline clients keep normal lifecycle catch-up on return.
+
+Guild active ledger activation uses the existing `OPERATIONAL_POLICY` chain:
+`values.activeLedgerId` is announced with a `GUILD` digest after confirmation in
+Guild Ledgers. Dashboard and footer selectors change only the session-local
+consultation ledger; they do not publish a policy. Activation reports the local
+mutation separately from the sync send result. Retrying an unchanged active
+ledger re-announces its existing policy revision without creating another record.
+Successful sending does not attest that every guild member has received it.
+Receivers retain the existing sender-authority and parent-chain validation.
+
 `HELLO` advertises presence. `MANIFEST` lists request revisions. `FETCH` asks an officer peer for missing revisions. `REQUEST` carries one validated Pre-Dib request. `REQUEST_ACK` records delivery acknowledgement. `TRANSFER_BEGIN`, `TRANSFER_CHUNK`, and `TRANSFER_END` carry a bounded request transfer when serialization requires chunks.
 
 ## Validation and privacy

@@ -85,6 +85,60 @@ local function text(key, fallback)
   return fallback
 end
 
+local CHECK_PRESENTATION = {
+  season = { "core", "SEASON", "SEASONS", "seasons" },
+  policy = { "core", "POLICY", "RANK_RULES", "ranks" },
+  rank_rules = { "core", "RANK_RULES", "RANK_RULES", "ranks" },
+  authority = { "core", "AUTHORITY", "GUILD_CONFIGURATION", "installation" },
+  installation = { "core", "INSTALLATION", "SETTINGS", "settings" },
+  local_state = { "core", "LOCAL_STATE", "GUILD_CONFIGURATION", "installation" },
+  rclootcouncil = { "rclootcouncil", "RC", "RC", "integration" },
+  dib_response_projection = { "rclootcouncil", "DIB_RESPONSE", "RC", "integration" },
+  raid_context = { "raid", "RAID", "REFRESH" },
+  channels = { "sync", "CHANNEL", "ANNOUNCEMENTS", "announcements" },
+  sync_context = { "sync", "CHANNEL", "ANNOUNCEMENTS", "announcements" },
+  local_services = { "sync", "SYNC", "SYNC", "sync" },
+  guild_loot_rules = { "loot", "LOOT", "LOOT_RULES", "lootTypes" },
+  loot_types = { "loot", "LOOT", "LOOT_RULES", "lootTypes" },
+  guild_setup = { "core", "GUILD_SETUP", "GUILD_SETUP_CHECKS", "guildSetup" },
+  sync_state = { "sync", "SYNC_STATE", "SYNC", "sync" },
+  raid_members = { "raid", "RAID_MEMBERS", "SYNC", "sync" },
+}
+local GUIDANCE_ALIASES = {
+  seasons = "season", policy = "rank_rules", rankRules = "rank_rules",
+  administration = "authority", local_state = "ledger", sync_context = "channels",
+  guild_loot_rules = "loot_types", dibsRules = "loot_types",
+  sync = "sync_state", readiness = "guild_setup",
+  operationalPolicy = "operational_policy", allocationReconciliation = "allocation",
+  preDibs = "pre_dibs",
+}
+
+function SetupAssistant.GetCheckPresentation(id)
+  local row = CHECK_PRESENTATION[id] or { "core", "OTHER", "REFRESH" }
+  return {
+    section = row[1], labelKey = "SETUP_ASSISTANT_CHECK_" .. row[2],
+    actionKey = "SETUP_ASSISTANT_ACTION_" .. row[3], route = row[4],
+  }
+end
+
+function SetupAssistant.GetGuidance(id, reasonCode, fallback)
+  if reasonCode == "NO_RAID_CONTEXT" or reasonCode == "RC_LOADED_NO_RAID_CONTEXT" then
+    return text("SETUP_HELP_NO_RAID", fallback)
+  end
+  if reasonCode == "RC_MASTER_LOOTER_UNVERIFIABLE" then
+    if type(IsInRaid) == "function" and not IsInRaid() then
+      return text("SETUP_HELP_NO_RAID", fallback)
+    end
+    return text("SETUP_HELP_MASTER_LOOTER", fallback)
+  end
+  if reasonCode == "SYNC_BEHIND" or reasonCode == "GUILD_LOOT_RULES_SYNC_BEHIND" then
+    return text("SETUP_HELP_SYNC_STATE", fallback)
+  end
+  local key = "SETUP_HELP_" .. string.upper(GUIDANCE_ALIASES[id] or id or "unknown")
+  return text(key, fallback or text("SETUP_HELP_UNKNOWN",
+    "Refresh the checks. If this result persists, open Diagnostics and share the reason with a guild administrator."))
+end
+
 local function addReadinessChecks(report, readiness)
   local seen = {}
   for _, probe in ipairs(readiness and readiness.probes or {}) do

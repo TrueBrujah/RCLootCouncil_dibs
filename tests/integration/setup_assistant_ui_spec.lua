@@ -10,6 +10,177 @@ describe("First installation assistant UI", function()
     assert_true(frame.contentHost._dibsCurrentPageRoot ~= nil)
   end)
 
+  describe("Contextual setup guidance", function()
+    local checkRoutes = {
+      season = "seasons", policy = "ranks", rank_rules = "ranks",
+      authority = "installation", installation = "settings", local_state = "installation",
+      rclootcouncil = "integration", dib_response_projection = "integration",
+      channels = "announcements", sync_context = "announcements",
+      local_services = "sync", guild_loot_rules = "lootTypes", loot_types = "lootTypes",
+      guild_setup = "guildSetup", sync_state = "sync", raid_members = "sync",
+    }
+
+    local function latestWidget(predicate)
+      for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
+        local widget = _G.__dibsAceWidgets[index]
+        if predicate(widget) then return widget end
+      end
+    end
+
+    it("gives every setup check and wizard step specific English and French instructions", function()
+      local ids = {
+        "season", "policy", "rank_rules", "authority", "installation", "local_state",
+        "rclootcouncil", "dib_response_projection", "raid_context", "channels", "sync_context",
+        "local_services", "guild_loot_rules", "loot_types", "guild_setup", "sync_state", "raid_members",
+        "guild", "administration", "seasons", "rankRules", "allocationReconciliation", "dibsRules",
+        "preDibs", "ledger", "sync", "operationalPolicy", "readiness",
+      }
+      for _, locale in ipairs({ "enUS", "frFR" }) do
+        local _, dibs = loader.load({ wow = { guildLeader = true, locale = locale }, withAce3 = true })
+        for _, id in ipairs(ids) do
+          local guidance = dibs.SetupAssistant.GetGuidance(id)
+          assert_true(type(guidance) == "string" and #guidance > 30, id)
+          assert_true(guidance ~= dibs.L.SETUP_HELP_UNKNOWN, id)
+          assert_true(guidance ~= dibs.L.WIZARD_CORRECTION_ACTION, id)
+          assert_nil(guidance:find("SETUP_HELP_", 1, true), id)
+        end
+        for id, route in pairs(checkRoutes) do
+          local presentation = dibs.SetupAssistant.GetCheckPresentation(id)
+          assert_equal(route, presentation.route, id)
+          assert_not_nil(dibs.L[presentation.labelKey], id)
+          assert_not_nil(dibs.L[presentation.actionKey], id)
+        end
+        assert_nil(dibs.SetupAssistant.GetCheckPresentation("raid_context").route)
+        assert_equal("probe-specific instructions", dibs.SetupAssistant.GetGuidance("future_probe", nil, "probe-specific instructions"))
+      end
+    end)
+
+    it("shows current issues on every correction page, including direct navigation, without mutations", function()
+      local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+      local checks = {}
+      for id in pairs(checkRoutes) do
+        checks[#checks + 1] = { id = id, state = "blocked", required = true,
+          reasonCode = "TEST_" .. id, impact = "A synthetic issue needs attention." }
+      end
+      dibs.SetupAssistant.Evaluate = function() return { checks = checks } end
+      dibs.Wizard.GetTurnkeyStatus = function() return { verification = {} } end
+      local frame = dibs.OfficerUI.CreateWindow("seasons")
+      for _, route in pairs(checkRoutes) do
+        if route ~= "guildSetup" then frame:ActivateRoute(route) end
+      end
+      local before = loader.snapshotProductionState(dibs)
+      local visited = {}
+      for _, route in pairs(checkRoutes) do
+        if route ~= "guildSetup" and not visited[route] then
+          visited[route] = true
+          frame:ActivateRoute(route)
+          assert_not_nil(frame.setupGuidanceIssues, route)
+          assert_true(#frame.setupGuidanceIssues > 0, route)
+          for _, issue in ipairs(frame.setupGuidanceIssues) do
+            assert_equal(route, issue.route)
+            assert_equal("BLOCKING", issue.severity)
+            assert_true(#issue.nextAction > 30)
+          end
+          local section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)
+          assert_not_nil(section)
+          if route == "integration" or route == "lootTypes" or route == "settings"
+            or route == "ranks" or route == "preDibs" or route == "announcements" then
+            assert_equal("ScrollFrame", section.parent.kind, route)
+          end
+        end
+      end
+      assert_true(loader.productionStateEquals(dibs, before))
+      frame:ActivateRoute("overview")
+      assert_nil(frame.setupGuidanceIssues)
+    end)
+
+    it("explains a Master Looter warning on hover and removes the issue after it is fixed", function()
+      local _, dibs = loader.load({ wow = { guildLeader = true, inRaid = true }, withAce3 = true })
+      local check = { id = "rclootcouncil", state = "degraded", required = false,
+        reasonCode = "RC_MASTER_LOOTER_UNVERIFIABLE", impact = "The Master Looter could not be verified." }
+      dibs.SetupAssistant.Evaluate = function() return { checks = { check } } end
+      dibs.Wizard.GetTurnkeyStatus = function() return { verification = {} } end
+      local frame = dibs.OfficerUI.CreateWindow("setup")
+      local action = latestWidget(function(widget)
+        return widget.kind == "Button" and widget.text == dibs.L.SETUP_ASSISTANT_ACTION_RC
+      end)
+      assert_not_nil(action._dibsTooltipAttachment)
+      action.callbacks.OnClick(action, "OnClick")
+      assert_equal("integration", frame.activeTab)
+      assert_equal(1, #frame.setupGuidanceIssues)
+      assert_equal("WARNING", frame.setupGuidanceIssues[1].severity)
+      local badge = latestWidget(function(widget)
+        return widget.dibsMidnightStatus == "warning"
+          and tostring(widget.text):find(dibs.L.SETUP_ASSISTANT_CHECK_RC, 1, true) ~= nil
+      end)
+      assert_not_nil(badge)
+      local tooltip, previousTooltip = { lines = {} }, _G.GameTooltip
+      _G.GameTooltip = {
+        SetOwner = function() end,
+        SetText = function(_, title) tooltip.title = title end,
+        AddLine = function(_, line) tooltip.lines[#tooltip.lines + 1] = line end,
+        Show = function() tooltip.shown = true end,
+        Hide = function() tooltip.shown = false end,
+      }
+      badge.frame:GetScript("OnEnter")(badge.frame)
+      assert_true(tooltip.shown)
+      assert_equal(dibs.L.SETUP_ASSISTANT_CHECK_RC, tooltip.title)
+      assert_true(tooltip.lines[1]:find(check.impact, 1, true) ~= nil)
+      assert_true(tooltip.lines[1]:find("RC_MASTER_LOOTER_UNVERIFIABLE", 1, true) ~= nil)
+      assert_true(tooltip.lines[1]:find(frame.setupGuidanceIssues[1].nextAction, 1, true) ~= nil)
+      badge.frame:GetScript("OnLeave")(badge.frame)
+      assert_false(tooltip.shown)
+      check.state = "ready"
+      local refresh = latestWidget(function(widget)
+        return widget.kind == "Button" and widget.text == dibs.L.SETUP_HELP_REFRESH
+      end)
+      refresh.callbacks.OnClick(refresh, "OnClick")
+      assert_equal(0, #frame.setupGuidanceIssues)
+      assert_nil(badge._dibsTooltipAttachment)
+      _G.GameTooltip = previousTooltip
+    end)
+
+    it("places synchronization and allocation guidance inside the table header", function()
+      local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+      dibs.SetupAssistant.Evaluate = function()
+        return { checks = { { id = "sync_state", state = "degraded", reasonCode = "SYNC_BEHIND" } } }
+      end
+      dibs.Wizard.GetTurnkeyStatus = function()
+        return { verification = {
+          { id = "allocationReconciliation", severity = "WARNING", title = "Allocation reconciliation",
+            route = "automaticDibs", explanation = "A member needs allocation.",
+            nextAction = dibs.SetupAssistant.GetGuidance("allocationReconciliation") },
+        } }
+      end
+      local frame = dibs.OfficerUI.CreateWindow("sync")
+      local section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)
+      assert_equal(frame.syncTablePage.header, section.parent)
+      frame:ActivateRoute("automaticDibs")
+      section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)
+      assert_equal(frame.automaticDibsTablePage.header, section.parent)
+      assert_equal("allocationReconciliation", frame.setupGuidanceIssues[1].id)
+    end)
+
+    it("enables hover on labels and restores pooled mouse and script state on release", function()
+      local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+      local shell = dibs.AceGUI.CreateWindow("Help", 500, 400)
+      local label = dibs.AceGUI.AddLabel(shell, shell.window, "Warning", true)
+      local mouseEnabled, entered = false, 0
+      label.frame.IsMouseEnabled = function() return mouseEnabled end
+      label.frame.EnableMouse = function(_, value) mouseEnabled = value end
+      local previousEnter = function() entered = entered + 1 end
+      label.frame:SetScript("OnEnter", previousEnter)
+      dibs.AceGUI.AddTooltip(label, "Warning", "Steps to correct the issue")
+      assert_true(mouseEnabled)
+      label.frame:GetScript("OnEnter")(label.frame)
+      assert_equal(1, entered)
+      dibs.AceGUI.AddTooltip(label, "Updated warning", "Updated steps")
+      dibs.AceGUI.Clear(shell.window)
+      assert_false(mouseEnabled)
+      assert_equal(previousEnter, label.frame:GetScript("OnEnter"))
+    end)
+  end)
+
   it("routes channel setup to Guild Rules announcements", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     local frame = dibs.OfficerUI.CreateWindow("setup")
@@ -154,7 +325,7 @@ describe("First installation assistant UI", function()
     local routes = {
       { "Open Seasons", "seasons" },
       { "Open Rank Rules", "ranks" },
-      { "Open Guild Configuration", "installation" },
+      { "Open Guild Ledgers", "installation" },
       { "Open Settings", "settings" },
       { "Open RCLootCouncil", "integration" },
       { "Open Announcements", "announcements" },

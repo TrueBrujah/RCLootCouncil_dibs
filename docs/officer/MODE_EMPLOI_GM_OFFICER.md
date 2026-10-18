@@ -41,7 +41,7 @@ Ouvrez :
 /dibs officer
 ```
 
-Ouvrez **Overview > Guided Setup** (Configuration guidee) :
+Ouvrez **Guild Setup > Guided Setup** (Configuration guidee) :
 
 1. **Choisir** : Raid de progression, Butin standard ou Personnalise/avance.
 2. **Configurer** : lisez l'apercu avant **Appliquer cette configuration**.
@@ -50,9 +50,19 @@ Ouvrez **Overview > Guided Setup** (Configuration guidee) :
 3. **Verifier** : suivez les boutons de correction des blocages rouges.
    Le mode personnalise conserve les reglages existants.
 
+Les blocages et alertes des setups/checks indiquent les etapes de correction.
+Survolez leur statut ou bouton de correction pour afficher la cause et l'aide.
+La page d'arrivee identifie ses problemes actuels dans **Points a verifier sur
+cette page**, meme en arrivant par la navigation normale. Apres correction,
+**Verifier de nouveau** retire les problemes resolus. L'aide ne modifie aucun
+reglage et ne contourne aucune confirmation. Hors raid, le check du Master
+Looter attend le contexte du raid voulu ; changer les roles de guilde ne le
+corrigera pas.
+
 Les pages avancees restent disponibles : **Guild Rules > Seasons / Rank Rules /
-Loot Rules / Announcements / Loot Eligibility**, **System > Settings / Pre-Dibs
-Settings / Modules / Guild Configuration**, et **Integrations > RCLootCouncil**.
+Loot Rules / Loot Eligibility / Pre-Dibs Settings / Announcements**,
+**Guild Setup > Guild Ledgers** (Ledgers de guilde), **System > Settings /
+Modules**, et **Integrations > RCLootCouncil**.
 Le GM adopte/publie les regles et approuve l'activation du ledger canonique ;
 un brouillon local ne suffit pas. **Automatic Dibs** gere les complements
 d'allocation positifs avec raison et confirmation, jamais une reprise apres
@@ -84,9 +94,9 @@ Les commandes `admin add` et `admin remove` conservent l'historique de migration
 ### Installation et premier lancement
 
 1. Installez le ZIP dans `Interface/AddOns/` et activez l'addon.
-2. Faites `/reload`, puis ouvrez `/dibs officer` > **Overview > Guided Setup**.
+2. Faites `/reload`, puis ouvrez `/dibs officer` > **Guild Setup > Guided Setup**.
 3. Choisissez un profil, examinez/appliquez les actions permises, puis verifiez.
-4. Ouvrez **Overview > Guild Setup Checks** (Verifications de la guilde) pour
+4. Ouvrez **Guild Setup > Guild Setup Checks** (Verifications de la guilde) pour
    la configuration ponctuelle de la guilde et la synchronisation, puis
    **Overview > Raid Readiness** et `/dibs readiness` avant chaque raid.
    L'absence de contexte de raid n'est pas un echec de configuration Standalone.
@@ -115,9 +125,9 @@ Dibs permet de maintenir plusieurs registres indépendants au sein de la même g
 
 - **Isolation des soldes** : chaque ledger possède son propre journal de transactions et ses soldes de joueurs (`guild-primary` est le ledger par défaut).
 - **Proposition par un officier** : tout officier vérifié peut proposer un nouveau ledger (`/dibs options` ou via `MultiLedger.ProposeLedger`).
-- **Approbation obligatoire par le GM** : un ledger proposé reste inactif jusqu'à ce que le Maître de Guilde le valide (`MultiLedger.ApproveLedger` ou dans l'interface Configuration de Guilde).
-- **Ledger actif de guilde** : le GM ou un officier choisit le ledger actif de guilde dans Officier > Tableau de bord (ou `/dibs ledger set <id>`). Ce choix voyage dans la politique opérationnelle synchronisée et est imposé à tous les membres : Pre-Dibs, propositions d'attribution et réservations l'utilisent. Les membres ne peuvent pas le contourner. Tant qu'un membre n'a pas reçu le ledger imposé via le catalogue, la création de Pre-Dibs et d'attributions est bloquée. Le ledger imposé ne peut pas être archivé.
-- **Consultation des autres ledgers** : tout le monde peut consulter un autre ledger approuvé en lecture seule via le menu « Voir le ledger » (`/dibs`, Officier > Historique, ou `/dibs ledger view <id>`). L'envoi de Pre-Dib est désactivé pendant cette consultation. Chaque fenêtre affiche le ledger actif, la version de l'addon et l'état de sync dans sa barre de statut.
+- **Approbation obligatoire par le GM** : un ledger proposé reste inactif jusqu'à ce que le Maître de Guilde le valide (`MultiLedger.ApproveLedger` ou dans **Guild Setup > Guild Ledgers**).
+- **Ledger actif de guilde** : dans **Guild Setup > Guild Ledgers**, le GM ou un officier choisit le ledger, clique sur **Activer pour la guilde...**, puis sur **Confirmer activation et sync de guilde**. La selection seule ne change rien; annuler conserve le ledger actif. La confirmation publie ce choix dans la politique operationnelle synchronisee et l'impose a tous les membres : Pre-Dibs, propositions d'attribution et reservations l'utilisent. Si l'envoi de sync echoue apres l'activation locale, un avertissement explicite propose de confirmer de nouveau pour reessayer. Un envoi reussi ne signifie pas que tous les membres l'ont deja recu. Les membres ne peuvent pas contourner ce choix. Tant qu'un membre n'a pas recu le ledger impose via le catalogue, la creation de Pre-Dibs et d'attributions est bloquee. Le ledger impose ne peut pas etre archive. La commande avancee `/dibs ledger set <id>` reste disponible.
+- **Consultation des autres ledgers** : tout le monde, GM/Officiers inclus, peut consulter un autre ledger approuve en lecture seule via le menu « Voir le ledger » (`/dibs`, Officier > Tableau de bord, Officier > Historique, ou `/dibs ledger view <id>`). L'envoi de Pre-Dib est desactive pendant cette consultation. Chaque fenetre affiche le ledger actif (marque « (Actif) »), la version et l'etat de sync dans sa barre de statut. Cliquez sur cette barre pour consulter un ledger (les autres sont marques « (Lecture seule) »). Ni le dashboard ni la barre de statut ne changent le ledger actif. Le bouton **Gerer les ledgers** du dashboard ouvre l'interface de confirmation.
 - **Version requise** : tous les membres doivent utiliser la 0.8.10 ou plus récente dès qu'un ledger actif de guilde est défini ; les anciens clients ne peuvent pas appliquer ce nouveau champ et leur chaîne de politique cesse de se mettre à jour.
 - **Catalogue synchronisé** : le catalogue des ledgers approuvés (`LEDGER_CATALOG`) est répliqué automatiquement entre tous les membres de la guilde.
 - **Suppression définitive** : seul le GM peut supprimer définitivement un ledger non par défaut après son archivage. L’interface exige une seconde confirmation, conserve une trace d’audit de gouvernance et synchronise un tombstone idempotent à toute la guilde. Le ledger par défaut, actif ou approuvé ne peut pas être supprimé.
@@ -172,7 +182,7 @@ Lancez :
 /dibs readiness
 ```
 
-La page **Overview > Guild Setup Checks** (Verifications de la guilde) verifie
+La page **Guild Setup > Guild Setup Checks** (Verifications de la guilde) verifie
 une seule fois la configuration de la guilde : saison, politique, Rank Rules,
 autorite, installation, etat local, Loot Rules, types de butin, services locaux
 et etat de synchronisation. Elle ne demande pas de contexte de raid ; l'etape
@@ -280,7 +290,7 @@ nouveau solde et la raison; l'operation originale reste intacte.
 1. Le joueur cree une demande pour un objet eligible.
 2. Dibs verifie la saison, la difficulte, l'objet et le mode Pre-Dibs.
 3. La demande est visible dans **Requests > Pre-Dib Requests**.
-   **System > Pre-Dibs Settings** configure la politique, pas les signalements.
+   **Guild Rules > Pre-Dibs Settings** configure la politique, pas les signalements.
 4. Le joueur peut l'annuler s'il en est le proprietaire.
 5. Apres un gain eligible finalise, la demande peut etre accomplie.
 6. Un seul debit est ajoute au ledger, meme si le callback est rejoue.
@@ -303,7 +313,7 @@ _Capture Retail en attente : debit finalise et correction append-only liee —
 
 Avec RCLootCouncil installe :
 
-1. Utilisez **Overview > Guided Setup** pour la configuration initiale, puis
+1. Utilisez **Guild Setup > Guided Setup** pour la configuration initiale, puis
    **Guild Rules > Loot Rules** pour le brouillon des familles d'objets.
 2. Faites adopter/publier les regles par le GM. Le brouillon ne suffit pas.
 3. Verifiez les modeles et la projection dans **Integrations > RCLootCouncil**
@@ -400,7 +410,7 @@ par le filtre, la couverture des joueurs concernes est indiquee comme partielle.
 
 Dans **Data** :
 
-- **Backups** : creez une sauvegarde avant toute operation risquee ; un restore cree aussi une sauvegarde de securite.
+- **Backups** : creez une sauvegarde avant toute operation risquee ; un restore cree aussi une sauvegarde de securite. Les sauvegardes Officer survivent a `/dibs factoryreset CONFIRM`. Un restore ne fait jamais reculer les donnees partagees avec la guilde : si la gouvernance, les regles, le catalogue de saisons ou un ledger local est plus recent que la sauvegarde, la copie locale est conservee (indiquee dans le resultat) et la sync rattrape le reste.
 - **Profiles** : utilisez des profils locaux pour l'affichage et des profils guilde pour la politique partagee.
 - **Import / Export** : choisissez le scope, lisez le preview, verifiez le checksum, puis confirmez.
 
@@ -458,8 +468,44 @@ de racine canonique, etc.). Ses outils ne modifient jamais le ledger :
   encore. A reserver aux raisons bloquees qui ne peuvent pas etre verifiees ;
 - **Sonder le pair** demande ses diagnostics a un personnage en ligne, et
   **Afficher le rapport** montre sa reponse ;
-- **Reparer le pair** (GM seulement) envoie la base de guilde a un personnage en
-  ligne qui l'a refusee ou ne l'a jamais recue.
+- **Reparer le pair** (GM/Officier) demande a un client a jour et en ligne
+  d'annoncer ses donnees disponibles et de recuperer ce qui manque ;
+- **Resynchroniser la guilde** (GM/Officier) lance la meme recuperation non
+  destructive sur les clients de guilde a jour et en ligne.
+  Commandes : `/dibs sync repair Nom-Royaume` ou `/dibs sync repair guild`.
+
+Une reponse **STARTED** confirme le demarrage, pas la fin ; **BLOCKED** indique
+un blocage. Utilisez **Afficher le rapport** pour cette reponse, puis **Sonder
+le pair** de nouveau apres les transferts pour verifier son etat actuel.
+Combat, sandbox, raid independant, transport indisponible et ancien addon
+peuvent bloquer l'operation. Une demande par minute et par cible ; un demarrage
+par minute chez chaque destinataire. Les absents rattrapent a leur reconnexion ;
+un addon absent ou incompatible doit d'abord etre installe ou mis a jour.
+
+Les revisions des regles et saisons sont recuperees dans l'ordre jusqu'a la
+cible annoncee. Les transactions exigent toujours le coordinateur verifie ;
+une revision plus haute ne permet ni de sauter un parent ni d'ecraser un conflit.
+Gardez le GM et le coordinateur en ligne pour les donnees exigeant leurs droits.
+Aucune generation de reset, suppression de ledger ou remise a zero des
+revisions n'est effectuee.
+
+Si aucun GM ni redacteur autorise n'est en ligne, un membre en retard peut
+adopter la gouvernance, les regles ou le catalogue de saisons des que **3
+membres differents** annoncent la meme revision et le meme hash. Les revisions
+sont recuperees aupres de l'un d'eux et appliquees seulement quand toute la
+chaine se raccorde a l'etat local ; chaque revision doit toujours nommer le GM
+ou un redacteur autorise comme auteur. Un hash different pour la meme revision
+reste un conflit visible, et une majorite plus ancienne est ignoree. Ce n'est
+pas une signature : trois personnages complices pourraient relayer une fausse
+revision, qui deviendra un conflit visible quand le vrai auteur se reconnecte.
+Les transactions de ledger exigent toujours le coordinateur verifie.
+
+Les copies valides disponibles permettent de recuperer des donnees manquantes.
+Un Officier peut notamment renvoyer a un joueur ses **propres** Pre-Dibs perdus,
+sans les demandes des autres joueurs ni les metadonnees reservees aux Officiers.
+Cette restauration ne cree et ne consomme aucun Dib. Sans source valide, les
+donnees perdues ne peuvent pas etre recreees : examinez une sauvegarde ou un
+import disponible avec le processus existant de preview et confirmation.
 
 La reconciliation compare les preuves historiques, les references de transaction
 et le statut final. Faites une preview, inspectez la preuve, saisissez une raison

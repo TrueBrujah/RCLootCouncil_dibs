@@ -37,7 +37,7 @@ GM or Officer.
 
 1. Install the `RCLootCouncil_dibs` folder under `Interface/AddOns/`.
 2. Enable it and run `/reload`.
-3. Open `/dibs officer` > **Overview > Guided Setup**. `/dibs options` also
+3. Open `/dibs officer` > **Guild Setup > Guided Setup**. `/dibs options` also
    provides configuration and launch controls.
 4. Complete the three primary stages:
   - **Choose**: select Progression raid, Standard loot, or Custom/advanced.
@@ -62,8 +62,16 @@ A normal Guild Master does not need to run `/run` commands or call internal
 APIs to reach a working guild ledger. Guided Setup shows what needs
 configuration, Guild Setup Checks verify the one-time guild configuration and
 synchronization, Raid Readiness checks whether DIBS is ready for this raid, and
-Guild Configuration handles historical review and canonical ledger activation
+Guild Ledgers handles the guild active ledger, ledger approvals and canonical ledger activation
 through the existing authoritative modules.
+
+Setup and readiness warnings have specific next steps and hover help on their
+status and correction buttons. The destination page identifies its current
+blockers/warnings under **What needs attention on this page**. Correct the
+reported issue through the existing controls, then use **Verify again**: resolved
+issues disappear. Help does not apply changes or bypass confirmations. Outside a
+raid, a live Master Looter check waits for the intended raid context; changing
+guild roles is not a remedy.
 
 ## Rank allocation reconciliation
 
@@ -88,7 +96,7 @@ granted after demotion, including Dibs already spent; there is no clawback,
 negative balance adjustment, or debt. The legacy Assignments option remains
 available and routes through the same protected reconciliation service.
 
-**Three related but distinct pages** exist under Officer > Overview/System —
+**Related but distinct pages** exist under Officer > Overview and Guild Setup —
 use the one that matches what you're trying to do:
 
 | Page | Purpose |
@@ -96,7 +104,7 @@ use the one that matches what you're trying to do:
 | **Guided Setup** | Three-stage turnkey workflow. It documents and applies a reviewed recommended profile through existing authoritative services, then points every unresolved blocker to its correction page. Custom mode leaves all settings unchanged. |
 | **Guild Setup Checks** | One-time guild configuration and synchronization: season, policy, rank rules, authority, installation, local state, Loot Rules, loot types, local services, and synchronization state. Guided Setup's final step uses these checks. Raid context is not required. |
 | **Raid Readiness** | Answers "is DIBS ready for this raid?": one rolled-up Guild setup item, raid context, RCLootCouncil, Dib response projection, channels, synchronization state, and **Raid members with DIBS**. Online raid members without DIBS, or needing an update, produce a warning, not a blocker; they can still loot but cannot see or send Dibs. |
-| **Guild Configuration** | Guild-level configuration and canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and one-time ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
+| **Guild Ledgers** | Guild active ledger (imposed on every member), approved/pending/archived ledgers, ledger proposals, and canonical-ledger activation (the "Ledger" step in Guided Setup). Handles legacy-data reconciliation and one-time ledger activation; safe to reopen on an already-active guild (it reports `Ready` and changes nothing). |
 
 _Pending Retail capture: Guided Setup Choose/Configure/Verify, blockers and
 correction links — `docs/assets/guides/screenshots/en/officer/officer-setup.png`._
@@ -146,9 +154,9 @@ Dibs supports partitioned ledgers within the same guild to accommodate multiple 
 
 - **Storage Partitioning**: Each ledger maintains independent transaction logs and player balances (`guild-primary` is the default).
 - **Proposing a Ledger**: Verified Officers can propose a new ledger through the Officer UI.
-- **Guild Master Approval**: Proposed ledgers remain inactive until explicitly approved by the Guild Master in Officer > Guild Configuration.
-- **Guild Active Ledger**: The Guild Master or an Officer selects the guild active ledger from Officer > Dashboard (or `/dibs ledger set <id>`). The choice travels in the synchronized operational policy and is imposed on every member: all Pre-Dibs, award proposals and reservations use it. Members cannot override it. Until a member has received the imposed ledger from the catalog, Pre-Dib and award creation fail closed. The imposed ledger cannot be archived.
-- **Viewing Other Ledgers**: Anyone can view another approved ledger read-only from the "View ledger" dropdown (`/dibs`, Officer > History, or `/dibs ledger view <id>`). Pre-Dib submission is disabled while viewing another ledger. Every window shows the active ledger, addon version and sync state in its status bar.
+- **Guild Master Approval**: Proposed ledgers remain inactive until explicitly approved by the Guild Master in Officer > Guild Setup > Guild Ledgers.
+- **Guild Active Ledger**: In Officer > Guild Setup > Guild Ledgers, the Guild Master or an Officer chooses a target, clicks **Activate for guild...**, then **Confirm activation and guild sync**. Choosing a target alone changes nothing; cancellation leaves the active ledger unchanged. Confirmation publishes the choice through the synchronized operational policy and imposes it on every member: all Pre-Dibs, award proposals and reservations use it. An explicit warning distinguishes a failed sync send from a successful local activation; confirm again to retry. A sent sync is not an acknowledgement from every member. Members cannot override the choice. Until a member has received the imposed ledger from the catalog, Pre-Dib and award creation fail closed. The imposed ledger cannot be archived. The advanced `/dibs ledger set <id>` command remains available.
+- **Viewing Other Ledgers**: Anyone, including GM/Officers, can view another approved ledger read-only from the "View ledger" dropdown (`/dibs`, Officer > Dashboard, Officer > History, or `/dibs ledger view <id>`). Pre-Dib submission is disabled while viewing another ledger. Every window shows the active ledger (marked "(Active)"), addon version and sync state in its status bar. Click the status bar to consult a ledger (other ledgers are marked "(Read only)"). Neither the dashboard nor the status-bar menu activates a ledger. Use **Manage ledgers** on the dashboard to open the confirmation workflow.
 - **Version requirement**: All members must run 0.8.10 or later once a guild active ledger is set; older clients cannot apply the new policy field and their policy chain stops updating.
 - **Catalog Synchronization**: The approved ledger catalog (`LEDGER_CATALOG`) replicates automatically across all guild members.
 - **Permanent deletion**: Only the Guild Master can permanently delete a non-default ledger after it is archived. The Officer UI requires a second confirmation, records a governance audit entry, and synchronizes an idempotent deletion tombstone to the guild. The default ledger and active or approved ledgers cannot be deleted.
@@ -234,7 +242,7 @@ _Pending Retail capture: finalized award and linked append-only correction —
 
 1. A player submits a supported item request.
 2. Dibs validates season, item, difficulty, and mode.
-3. Review it in **Requests > Pre-Dib Requests**; **System > Pre-Dibs Settings**
+3. Review it in **Requests > Pre-Dib Requests**; **Guild Rules > Pre-Dibs Settings**
    configures request policy rather than player problem reports.
 4. Inspect owner, item, request status, and evidence.
 5. Let the finalized award fulfill the request when appropriate.
@@ -318,7 +326,7 @@ coverage as partial.
 
 ## Multi-raid synchronization and recovery
 
-Guild Configuration (Officer > System > Guild Configuration) is the normal way to initialize
+Guild Ledgers (Officer > Guild Setup > Guild Ledgers) is the normal way to initialize
 the canonical guild ledger; it never requires understanding ledger epochs,
 baseline hashes, or internal protocol states. Those technical values remain
 available under its "Show technical details" disclosure and on the
@@ -356,8 +364,42 @@ Its repair tools never edit ledger entries:
   still missing. Use it only for stuck reasons that cannot be verified;
 - **Probe peer** asks one online character for its synchronization
   diagnostics, and **Show report** displays the answer;
-- **Repair peer** (Guild Master only) sends the guild baseline to one online
-  character that rejected or never received it.
+- **Repair peer** (GM/Officer) asks one online updated client to re-announce
+  available data and request missing details;
+- **Resynchronize guild** (GM/Officer) starts the same non-destructive recovery
+  on online updated guild clients. Slash equivalents are
+  `/dibs sync repair Name-Realm` and `/dibs sync repair guild`.
+
+A repair reply confirms **STARTED** or **BLOCKED**, not successful completion.
+Use **Show report** for that reply, then **Probe peer** again after transfers
+to check the member's latest state. Combat, sandbox, Independent Raid, unavailable
+transport, and old peer capabilities can block recovery. Requests are limited to
+once per minute per target; recipients start at most one recovery per minute.
+Offline members use normal catch-up when they reconnect; missing or incompatible
+addons must be installed/updated first.
+
+Policy and season revisions are fetched in order to the announced target.
+Ledger commits still require the verified coordinator; recovery cannot skip a
+missing parent or accept a conflicting history just because its revision is
+higher. Keep the GM and coordinator online for data requiring their authority.
+No reset generation, ledger deletion, or revision renumbering occurs.
+
+When no GM or authorized writer is online, a member that is behind can adopt the
+governance, rules or season catalog once **3 different members** announce the
+same revision and hash. Revisions are fetched from one of them and applied only
+when the whole chain links to local state; every revision must still name the
+GM or an authorized writer as its author. A different hash for the same revision
+remains a visible conflict, and an older majority is ignored. This is not a
+signature: three colluding characters could relay a false revision, which
+becomes a visible conflict once the real author reconnects. Ledger commits still
+require the verified coordinator.
+
+Available valid copies can restore missing data. In particular, an Officer can
+return a player's **own** missing Pre-Dibs through an owner-only projection;
+other players' requests and Officer metadata are not included in that recovery.
+This restores request history without granting or consuming Dibs. If no valid
+source remains, recovery cannot reconstruct lost history: review an available
+backup/import through the existing preview and confirmation workflow instead.
 
 ### Great Vault review and sync
 
@@ -385,6 +427,10 @@ In **Data**:
 
 - **Backups** creates scoped recovery points with size, checksum, and retention;
 - **Restore** creates a safety snapshot and requires a preview plus confirmation;
+  it never rolls back data shared with the guild: when the local governance,
+  rules, season catalog or a ledger is newer than the backup, the local copy is
+  kept (listed in the result) and sync catches up the rest. Officer backups
+  survive `/dibs factoryreset CONFIRM`;
 - **Profiles** separates local presentation from guild policy;
 - **Import / Export** validates scope, schema, size, checksum, and deduplication.
 

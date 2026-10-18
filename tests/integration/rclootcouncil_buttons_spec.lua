@@ -707,6 +707,66 @@ describe("RCLootCouncil DIB response projection", function()
     dibs.Sync.GetPendingAwardReservations = originalRemoteReservations
   end)
 
+  it("refuses an ineligible Dib click and restores a recycled non-Dib button", function()
+    local playerName = "Tester-Realm"
+    local rolls = {}
+    local lootFrame = { EntryManager = { entries = {} } }
+    function lootFrame:Update() end
+    function lootFrame:OnRoll(entry, button) rolls[#rolls + 1] = button end
+    local rc = loader.makeRCLootCouncil({ enabled = true })
+    rc.modules = { RCLootFrame = lootFrame }
+    local _, dibs = loader.load({ rclootcouncil = rc, wow = {
+      playerName = playerName, guildLeader = true, guildMembers = { playerName }, guildRankIndices = { [1] = 0 },
+    } })
+    assert_true(lootFrame.__dibsOnRollGuarded)
+    local originalAvailability = dibs.RCLootCouncil.IsAvailable
+    local originalTypePolicy = dibs.RCLootCouncil.IsItemDibTypeAllowed
+    dibs.RCLootCouncil.IsAvailable = function() return true end
+    dibs.RCLootCouncil.IsItemDibTypeAllowed = function() return true end
+    local messages = {}
+    local originalMessage = dibs.Message
+    dibs.Message = function(text) messages[#messages + 1] = text end
+
+    local dibButton = _G.CreateFrame("Button")
+    dibButton:SetText("Dib")
+    dibButton:Enable()
+    local startingBalance = dibs.Ledger.GetBalance(playerName, dibs.GetCurrentSeasonId()) or 0
+    if startingBalance > 0 then
+      assert_not_nil(dibs.Ledger.Use(playerName, startingBalance, "RCLC click guard", "test", dibs.GetCurrentSeasonId()))
+    end
+    assert_equal(0, dibs.Ledger.GetBalance(playerName, dibs.GetCurrentSeasonId()))
+    local entry = {
+      frame = _G.CreateFrame("Frame"),
+      item = { link = "|cffffffff|Hitem:275658::::::::::::|h[Bench item]|h|r", typeCode = "INVTYPE_HEAD" },
+      buttons = { dibButton },
+    }
+    lootFrame.EntryManager.entries[1] = entry
+    for _, callback in ipairs(lootFrame.__secureHooks.Update or {}) do callback(lootFrame) end
+    assert_false(dibButton:IsEnabled())
+    assert_equal("no-dibs-available", dibs.RCLootCouncil.GetStatusForCandidate(playerName, 275658, "INVTYPE_HEAD").status)
+
+    lootFrame:OnRoll(entry, 1)
+    assert_equal(0, #rolls)
+    assert_equal(1, #messages)
+    lootFrame:OnRoll(entry, "PASS")
+    assert_equal("PASS", rolls[1])
+
+    dibs.Ledger.Grant(playerName, 1, "RCLC click guard", "test", dibs.GetCurrentSeasonId())
+    lootFrame:OnRoll(entry, 1)
+    assert_equal(1, rolls[2])
+
+    dibs.Ledger.Use(playerName, 1, "RCLC click guard", "test", dibs.GetCurrentSeasonId())
+    for _, callback in ipairs(lootFrame.__secureHooks.Update or {}) do callback(lootFrame) end
+    assert_false(dibButton:IsEnabled())
+    dibButton:SetText("#Need")
+    for _, callback in ipairs(lootFrame.__secureHooks.Update or {}) do callback(lootFrame) end
+    assert_true(dibButton:IsEnabled())
+
+    dibs.RCLootCouncil.IsAvailable = originalAvailability
+    dibs.RCLootCouncil.IsItemDibTypeAllowed = originalTypePolicy
+    dibs.Message = originalMessage
+  end)
+
   it("shows confirmed Pre-Dib names in wrapped loot rows from one cached scan", function()
     local playerName = "Tester-Realm"
     local lootFrame = { EntryManager = { entries = {} } }

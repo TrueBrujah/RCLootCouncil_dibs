@@ -10,11 +10,11 @@ configuration, la readiness, RCLootCouncil, les corrections et les sauvegardes.
 See [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md) for setup, governance,
 reconciliation, recovery, and release checks in English.
 
-For the first installation, open `/dibs officer` > **Overview > Guided Setup**.
+For the first installation, open `/dibs officer` > **Guild Setup > Guided Setup**.
 Choose a profile, preview/apply permitted configuration, then verify the result.
 **Guild Setup Checks** verify the one-time guild configuration and
 synchronization; **Raid Readiness** checks the current raid, including raid
-members without DIBS; **System > Guild Configuration**
+members without DIBS; **Guild Setup > Guild Ledgers**
 handles guild-ledger activation and historical review. These are distinct
 surfaces, not names for the same assistant. The English
 workflow is documented in [GM / Officer Guide](GM_OFFICER_GUIDE_EN.md), and the

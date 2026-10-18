@@ -371,7 +371,7 @@ canonicalPolicyKey = function(value)
   if key == "RECIPE_PATTERN" or key == "RECIPEPATTERN" then
     return "RECIPE"
   end
-  if key == "RARE_ITEMS" or key == "RAREITEMS" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or key == "SPECIALEFFECTSITEMS" then
+  if key == "RARE" or key == "SPECIAL" or key == "RARE_ITEMS" or key == "RAREITEMS" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or key == "SPECIALEFFECTSITEMS" then
     return "OTHER"
   end
   return key
@@ -2124,6 +2124,10 @@ local function applyDibsButtonState(lootFrame)
           }, balanceProjection)
           applyDibEligibilityToNativeButton(responseButton, status.canUseDib)
           installDibsTooltip(responseButton, entry)
+        elseif nativeDibButtonStates[responseButton] ~= nil then
+          -- RCLC recycles entry buttons; a former Dib slot must not stay disabled.
+          applyDibEligibilityToNativeButton(responseButton, true)
+          nativeDibButtonStates[responseButton] = nil
         end
       end
     end
@@ -2146,6 +2150,31 @@ local function installLootFrameHook()
   hooksecurefunc(lootFrame, "Update", function(self)
     applyDibsButtonState(self)
   end)
+  if type(lootFrame.OnRoll) == "function" and not lootFrame.__dibsOnRollGuarded then
+    -- A disabled button is only a visual cue; refuse an ineligible Dib response
+    -- before RCLootCouncil sends it so the candidate cannot bypass the gate.
+    local originalOnRoll = lootFrame.OnRoll
+    lootFrame.OnRoll = function(self, entry, button, ...)
+      local responseButton = type(entry) == "table" and type(entry.buttons) == "table"
+        and type(button) == "number" and entry.buttons[button] or nil
+      if responseButton and isNativeDibResponseButton(responseButton) then
+        local itemID = parseItemID(entry.item and entry.item.link)
+        local responseType = entry.item and (entry.item.typeCode or entry.item.equipLoc) or "default"
+        local playerName = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
+        local status = Dibs.RCLootCouncil.GetStatusForCandidate(playerName, itemID, responseType) or {}
+        if status.canUseDib ~= true then
+          applyDibEligibilityToNativeButton(responseButton, false)
+          if Dibs.Message then
+            Dibs.Message(Dibs.L and Dibs.L.RC_DIB_RESPONSE_BLOCKED
+              or "Dib unavailable for this item: no available Dib and no confirmed Pre-Dib. Choose another response.")
+          end
+          return
+        end
+      end
+      return originalOnRoll(self, entry, button, ...)
+    end
+    lootFrame.__dibsOnRollGuarded = true
+  end
   lootFrame.__dibsButtonHooked = true
   applyDibsButtonState(lootFrame)
   return true
@@ -2976,6 +3005,8 @@ getCandidateStatus = function(playerName, itemID, responseType, options, balance
     state = "dib-available"
   elseif (tonumber(availableBalance) or 0) > 0 then
     state = "ineligible"
+  elseif typeEnabled and protectedLootAllowed then
+    state = "no-dibs-available"
   end
   if eligibilityDecision and not protectedLootAllowed then
     state = "eligibility-" .. tostring(eligibilityDecision.outcome or "review")

@@ -722,6 +722,29 @@ local function isReadyRoot(root, guildKey)
   return true
 end
 
+local function adoptPreservedBackups(root, db, guildKey, changes)
+  local preserved = type(root.preservedBackups) == "table" and root.preservedBackups[guildKey]
+  if type(preserved) ~= "table" then return end
+  root.preservedBackups[guildKey] = nil
+  if next(root.preservedBackups) == nil then root.preservedBackups = nil end
+  changes.changed = true
+  if type(db.backups) ~= "table" then db.backups = {} end
+  local known = {}
+  for _, snapshot in ipairs(db.backups) do
+    if type(snapshot) == "table" and snapshot.snapshotId then known[snapshot.snapshotId] = true end
+  end
+  for _, snapshot in ipairs(type(preserved.backups) == "table" and preserved.backups or {}) do
+    if type(snapshot) == "table" and snapshot.snapshotId and not known[snapshot.snapshotId] then
+      db.backups[#db.backups + 1] = deepcopy(snapshot)
+      known[snapshot.snapshotId] = true
+    end
+  end
+  if isWholeNumber(preserved.backupRetention) and preserved.backupRetention >= 1 then
+    db.backupRetention = preserved.backupRetention
+  end
+  table.sort(db.backups, function(a, b) return (tonumber(a.createdAt) or 0) > (tonumber(b.createdAt) or 0) end)
+end
+
 local function ensureDB()
   local dbName = Dibs.SAVED_VARIABLE_NAME or "RCLootCouncil_dibsDB"
   local guildKey = Dibs.GetGuildKey()
@@ -836,6 +859,7 @@ local function ensureDB()
     end
   end
   mergeDefaults(db, defaultDB)
+  adoptPreservedBackups(staged, db, guildKey, changes)
 
   if changes.needsBackup and source ~= nil then addStartupBackup(staged, source, changes.recovery and "recovery" or "migration") end
   if changes.migration or changes.recovery then
@@ -1273,6 +1297,86 @@ function Dibs.ApplyDefaultRules()
   end
 end
 
+local FACTORY_RESET_WINDOW_SECONDS = 60
+local FACTORY_RESET_SAVED_VARIABLES = {
+  "RCLootCouncil_dibsDB",
+  "RCLootCouncil_dibsSandboxDB",
+  "RCLootCouncil_dibsLocalDB",
+  "DibsDB",
+}
+
+local function clearFactoryResetSavedVariables()
+  for _, name in ipairs(FACTORY_RESET_SAVED_VARIABLES) do _G[name] = nil end
+end
+
+-- Officer recovery snapshots (db.backups) outlive a factory reset so the guild can
+-- be restored afterwards; ensureDB moves them back into each guild on next load.
+local function collectFactoryResetBackups()
+  local root = _G[Dibs.SAVED_VARIABLE_NAME or "RCLootCouncil_dibsDB"]
+  if type(root) ~= "table" or type(root.guilds) ~= "table" then return nil end
+  local preserved = type(root.preservedBackups) == "table" and deepcopy(root.preservedBackups) or {}
+  for guildKey, db in pairs(root.guilds) do
+    if type(db) == "table" and type(db.backups) == "table" and #db.backups > 0 then
+      preserved[guildKey] = { backups = deepcopy(db.backups), backupRetention = db.backupRetention }
+    end
+  end
+  return next(preserved) and preserved or nil
+end
+
+local function writeFactoryResetRoot(preserved)
+  clearFactoryResetSavedVariables()
+  if preserved then
+    local root = newRoot()
+    root.preservedBackups = deepcopy(preserved)
+    _G[Dibs.SAVED_VARIABLE_NAME or "RCLootCouncil_dibsDB"] = root
+  end
+end
+
+-- Hidden local-only reset: wipes this client's Dibs SavedVariables as if the
+-- addon had never been installed. It never sends sync traffic and does not
+-- touch other guild members or RCLootCouncil data.
+function Dibs.FactoryReset(token)
+  local labels = Dibs.L or {}
+  local now = type(time) == "function" and time() or 0
+  if string.upper(tostring(token or "")) ~= "CONFIRM" then
+    Dibs.factoryResetArmedAt = now
+    Dibs.Message(labels.FACTORY_RESET_WARNING
+      or "WARNING: this erases ALL local Dibs data on this client (ledgers, history, Pre-Dibs, settings, window layout, sandbox) as if the addon was never installed. Only Officer backups are kept so they can be restored afterwards. Other guild members are not affected; guild sync may restore shared ledgers later.")
+    Dibs.Message(string.format(labels.FACTORY_RESET_CONFIRM_HINT
+      or "Type /dibs factoryreset CONFIRM within %d seconds to proceed.", FACTORY_RESET_WINDOW_SECONDS))
+    return false, "CONFIRMATION_REQUIRED"
+  end
+  local armedAt = Dibs.factoryResetArmedAt
+  Dibs.factoryResetArmedAt = nil
+  if not armedAt or now - armedAt > FACTORY_RESET_WINDOW_SECONDS then
+    Dibs.Message(labels.FACTORY_RESET_EXPIRED or "Factory reset not armed or expired. Type /dibs factoryreset first.")
+    return false, "NOT_ARMED"
+  end
+  if type(InCombatLockdown) == "function" and InCombatLockdown() then
+    Dibs.Message(labels.FACTORY_RESET_COMBAT or "Factory reset is unavailable in combat.")
+    return false, "IN_COMBAT"
+  end
+  if type(ReloadUI) ~= "function" then
+    Dibs.Message(labels.FACTORY_RESET_UNAVAILABLE or "Factory reset is unavailable: the UI cannot be reloaded.")
+    return false, "RELOAD_UNAVAILABLE"
+  end
+  local preserved = collectFactoryResetBackups()
+  writeFactoryResetRoot(preserved)
+  Dibs.db = nil
+  Dibs._persistenceSource = nil
+  -- Rewrite again at logout so no late writer recreates data before the save.
+  if type(CreateFrame) == "function" then
+    local guard = CreateFrame("Frame")
+    if guard and guard.RegisterEvent and guard.SetScript then
+      guard:RegisterEvent("PLAYER_LOGOUT")
+      guard:SetScript("OnEvent", function() writeFactoryResetRoot(preserved) end)
+    end
+  end
+  Dibs.Message(labels.FACTORY_RESET_DONE or "All local Dibs data erased. Reloading the UI...")
+  ReloadUI()
+  return true
+end
+
 function Dibs.HandleSlashCommand(msg)
   local command = (msg or ""):match("^%s*(.-)%s*$")
   local action = command:match("^(%S+)") or ""
@@ -1280,6 +1384,11 @@ function Dibs.HandleSlashCommand(msg)
   local args = {}
   for token in string.gmatch(command, "%S+") do
     table.insert(args, token)
+  end
+
+  if string.lower(action) == "factoryreset" then
+    Dibs.FactoryReset(args[2])
+    return
   end
 
   if action == "debug" then
@@ -1325,7 +1434,7 @@ function Dibs.HandleSlashCommand(msg)
   if action == "sync" then
     local mode, target = string.lower(args[2] or ""), args[3]
     if (mode ~= "probe" and mode ~= "report" and mode ~= "repair") or not target then
-      Dibs.Message("Usage: /dibs sync probe|report|repair <player>")
+      Dibs.Message("Usage: /dibs sync probe|report <player> | /dibs sync repair <player|guild>")
       return
     end
     if mode == "probe" then
@@ -1334,8 +1443,14 @@ function Dibs.HandleSlashCommand(msg)
       Dibs.Message(sent and ("Sync probe sent to " .. tostring(target) .. ".") or ("Sync probe failed: " .. tostring(reason)))
     elseif mode == "repair" then
       local sent, reason = false, "SYNC_UNAVAILABLE"
-      if Dibs.Sync and Dibs.Sync.RepairPeer then sent, reason = Dibs.Sync.RepairPeer(target) end
-      Dibs.Message(sent and ("Sync baseline repair sent to " .. tostring(target) .. ".") or ("Sync repair failed: " .. tostring(reason)))
+      local guildRepair = string.lower(target) == "guild"
+      if guildRepair then
+        if Dibs.Sync and Dibs.Sync.RepairGuild then sent, reason = Dibs.Sync.RepairGuild() end
+      elseif Dibs.Sync and Dibs.Sync.RepairPeer then sent, reason = Dibs.Sync.RepairPeer(target) end
+      local strings = Dibs.L or {}
+      local message = guildRepair and (strings.SYNC_GUILD_REPAIR_SENT or "Guild recovery requested; completion is not yet verified.")
+        or string.format(strings.SYNC_PEER_REPAIR_SENT or "Recovery requested for %s; completion is not yet verified.", target)
+      Dibs.Message(sent and message or ((strings.SYNC_PEER_ACTION_FAILED or "Peer action failed: ") .. tostring(reason)))
     else
       local probe = Dibs.Sync and Dibs.Sync.GetPeerSyncProbe and Dibs.Sync.GetPeerSyncProbe(target)
       local report = Dibs.Sync and Dibs.Sync.FormatSyncProbeReport and Dibs.Sync.FormatSyncProbeReport(probe) or "Synchronization probe unavailable."
@@ -1384,7 +1499,7 @@ function Dibs.HandleSlashCommand(msg)
     Dibs.Message(help.SLASH_HELP_OFFICER or "Officer: officer | options | review | reconcile | data")
     Dibs.Message(help.SLASH_HELP_GUILD or "Guild setup: season create|list|set <id> | rank list|set <index> <amount> [name] | ledger list|set <id>")
     Dibs.Message(help.SLASH_HELP_RAID or "Raid: raid [status|sync|start|stop|ledger <id>] | remind <message>")
-    Dibs.Message(help.SLASH_HELP_STATUS or "Checks: status | readiness | dryrun <item> <winner> <response> <status> [session] | sync probe|report|repair <player>")
+    Dibs.Message(help.SLASH_HELP_STATUS or "Checks: status | readiness | dryrun <item> <winner> <response> <status> [session] | sync probe|report <player> | sync repair <player|guild>")
     Dibs.Message(help.SLASH_HELP_ADMIN or "Administration (GM/Officer): grant/use <player> <amount> | admin list|add|remove <Name-Realm> | mode <AUTO|STANDALONE|RCLootCouncil> | predibmode <mode>")
     Dibs.Message(help.SLASH_HELP_DATA or "Data: data | backup | profiles | import | export")
     Dibs.Message(help.SLASH_HELP_DEBUG or "Diagnostics: debug <module|all> 0-5 | debug report|rc|logs | ejdebug | ejsub ... | announce debug on|off|scan | rcopts")

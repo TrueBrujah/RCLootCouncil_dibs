@@ -240,6 +240,17 @@ Scope: `guild` | Audit: `false` | Reason required: `false`
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
 
+## Resynchronize guild
+
+- **ID:** `sync.guild.recovery`
+- **Category:** `synchronization`
+- **Audience:** gm, officer
+
+**English:** GM/Officer only. Asks online updated guild clients to announce their available data and request missing revisions. Preserves ledgers, validates existing authority and hashes, and never resolves conflicts by overwriting data. Offline members catch up when they reconnect. Limited to once per minute; unavailable in combat, sandbox and Independent Raid.
+**Francais:** GM/Officier seulement. Demande aux clients de guilde a jour et en ligne d'annoncer leurs donnees disponibles et de demander les revisions manquantes. Preserve les ledgers et valide les droits et empreintes existants, sans ecraser les conflits. Les absents rattrapent a leur reconnexion. Une fois par minute; indisponible en combat, sandbox et raid independant.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+
 ## Synchronization peer status
 
 - **ID:** `sync.peer.status`

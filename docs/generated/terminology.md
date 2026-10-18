@@ -113,6 +113,11 @@ DO NOT EDIT MANUALLY.
 **English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Configuration.
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
 
+## Resynchronize guild / Resynchroniser la guilde
+
+**English:** GM/Officer only. Asks online updated guild clients to announce their available data and request missing revisions. Preserves ledgers, validates existing authority and hashes, and never resolves conflicts by overwriting data. Offline members catch up when they reconnect. Limited to once per minute; unavailable in combat, sandbox and Independent Raid.
+**Francais:** GM/Officier seulement. Demande aux clients de guilde a jour et en ligne d'annoncer leurs donnees disponibles et de demander les revisions manquantes. Preserve les ledgers et valide les droits et empreintes existants, sans ecraser les conflits. Les absents rattrapent a leur reconnexion. Une fois par minute; indisponible en combat, sandbox et raid independant.
+
 ## Synchronization peer status / Etat de synchronisation des membres
 
 **English:** Peer status is based on the latest response observed by this client; an offline or unresponsive member may show stale synchronization details.

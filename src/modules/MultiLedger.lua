@@ -187,15 +187,20 @@ function MultiLedger.SetGuildActiveLedger(ledgerId, actor)
   if not ledger then return false, "LEDGER_NOT_FOUND" end
   if not isLocallyApproved(resolvedId, ledger) then return false, "LEDGER_UNAPPROVED" end
   if imposedLedgerId() == resolvedId then
-    MultiLedger.EnforceGuildActiveLedger()
-    return true, "UNCHANGED"
+    local allowed, authReason = MultiLedger.CanSetGuildActiveLedger(actor)
+    if not allowed then return false, authReason end
+    local enforced, enforceReason = MultiLedger.EnforceGuildActiveLedger()
+    if not enforced then return false, enforceReason end
+    local sent, syncReason = false, "SYNC_UNAVAILABLE"
+    if Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then sent, syncReason = Dibs.Sync.AnnounceOperationalPolicy() end
+    return true, "UNCHANGED", sent, syncReason
   end
   if not (Dibs.OperationalPolicy and Dibs.OperationalPolicy.SetActiveLedger) then return false, "POLICY_UNAVAILABLE" end
-  local ok, reason = Dibs.OperationalPolicy.SetActiveLedger(resolvedId, actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()))
+  local ok, reason, _, sent, syncReason = Dibs.OperationalPolicy.SetActiveLedger(resolvedId, actor or (Dibs.GetPlayerName and Dibs.GetPlayerName()))
   if not ok then return false, reason or "POLICY_WRITER_REQUIRED" end
   local enforced, enforceReason = MultiLedger.EnforceGuildActiveLedger()
   if not enforced then return false, enforceReason end
-  return true, resolvedId
+  return true, resolvedId, sent, syncReason
 end
 
 -- Read-only consultation of another approved ledger; never changes the ledger

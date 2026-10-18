@@ -58,6 +58,9 @@ local function clearTooltipAttachment(widget)
     if currentLeave == attachment.onLeave or type(frame.GetScript) ~= "function" then
       frame:SetScript("OnLeave", attachment.previousLeave)
     end
+    if attachment.mouseEnabled ~= nil and type(frame.EnableMouse) == "function" then
+      frame:EnableMouse(attachment.mouseEnabled)
+    end
   end
   if GameTooltip and type(GameTooltip.Hide) == "function" then pcall(GameTooltip.Hide, GameTooltip) end
   widget._dibsTooltipAttachment = nil
@@ -342,7 +345,7 @@ function Adapter.BuildShellStatusText()
         tostring(status.imposedLedgerName or status.imposedLedgerId or "?"))
     elseif status.state == "IMPOSED" then
       ledgerText = string.format(strings.SHELL_STATUS_LEDGER_GUILD or "Guild ledger: %s",
-        tostring(status.activeLedgerName or status.activeLedgerId or "?"))
+        tostring(status.activeLedgerName or status.activeLedgerId or "?") .. " " .. (strings.LEDGER_STATE_ACTIVE or "(Active)"))
     else
       ledgerText = string.format(strings.SHELL_STATUS_LEDGER_LOCAL or "Ledger: %s (not imposed)",
         tostring(status.activeLedgerName or status.activeLedgerId or "?"))
@@ -376,6 +379,107 @@ function Adapter.SetShellStatus(shell, text)
   if not window or type(window.SetStatusText) ~= "function" then return false end
   local ok = pcall(window.SetStatusText, window, text or Adapter.BuildShellStatusText())
   return ok
+end
+
+local function ledgerChoiceName(ledger)
+  if ledger.name and ledger.name ~= "" then return tostring(ledger.name) end
+  return ledger.id == "guild-primary" and "Primary" or tostring(ledger.id)
+end
+
+-- Approved ledgers in catalog order; the working (guild active) ledger is
+-- labelled "(Active)" so every ledger selector reads the same way.
+function Adapter.GetLedgerChoices()
+  local multiLedger = Dibs.MultiLedger
+  if not (multiLedger and type(multiLedger.GetLedgers) == "function") then return {} end
+  local strings = Dibs.L or {}
+  local activeId = multiLedger.GetActiveLedgerId and multiLedger.GetActiveLedgerId() or nil
+  local viewId = multiLedger.GetViewLedgerId and multiLedger.GetViewLedgerId() or activeId
+  local choices, seen = {}, {}
+  for _, ledger in ipairs(multiLedger.GetLedgers() or {}) do
+    if ledger.status == "APPROVED" and not seen[ledger.id] then
+      seen[ledger.id] = true
+      choices[#choices + 1] = { id = ledger.id, name = ledgerChoiceName(ledger) }
+    end
+  end
+  if activeId and not seen[activeId] then
+    table.insert(choices, 1, { id = activeId, name = ledgerChoiceName({ id = activeId }) })
+  end
+  for _, choice in ipairs(choices) do
+    choice.active = choice.id == activeId
+    choice.viewing = choice.id == viewId
+    choice.label = choice.active and (choice.name .. " " .. (strings.LEDGER_STATE_ACTIVE or "(Active)")) or choice.name
+  end
+  return choices
+end
+
+function Adapter.GetLedgerDropdownValues()
+  local values = {}
+  for _, choice in ipairs(Adapter.GetLedgerChoices()) do values[choice.id] = choice.label end
+  return values
+end
+
+local function refreshDibsWindows()
+  for _, frame in ipairs({ _G.DibsPlayerFrame, _G.DibsOfficerFrame }) do
+    if type(frame) == "table" and type(frame.Refresh) == "function" then pcall(frame.Refresh, frame) end
+  end
+end
+
+function Adapter.SelectViewLedger(ledgerId)
+  local multiLedger = Dibs.MultiLedger
+  if not (multiLedger and type(multiLedger.SetViewLedger) == "function") then return false, "LEDGER_UNAVAILABLE" end
+  local ok, reason = multiLedger.SetViewLedger(ledgerId)
+  refreshDibsWindows()
+  return ok, reason
+end
+
+-- Footer selection is consultation only, including for GM/Officers.
+function Adapter.PopulateLedgerMenu(root)
+  if type(root) ~= "table" then return false end
+  local strings = Dibs.L or {}
+  local choices = Adapter.GetLedgerChoices()
+  if #choices == 0 then return false end
+  root:CreateTitle(strings.SHELL_LEDGER_MENU_VIEW or "View ledger")
+  for _, choice in ipairs(choices) do
+    local label = choice.active and choice.label
+      or (choice.name .. " " .. (strings.LEDGER_STATE_READ_ONLY or "(Read only)"))
+    root:CreateRadio(label, function() return choice.viewing end,
+      function() Adapter.SelectViewLedger(choice.id) end, choice.id)
+  end
+  return true
+end
+
+local function installStatusLedgerMenu(window)
+  local statusText = window and window.statustext
+  local statusBar = statusText and type(statusText.GetParent) == "function" and statusText:GetParent() or nil
+  if not statusBar or type(statusBar.SetScript) ~= "function" then return false end
+  if not statusBar._dibsLedgerMenuInstalled then
+    statusBar._dibsLedgerMenuInstalled = true
+    if type(statusBar.RegisterForClicks) == "function" then statusBar:RegisterForClicks("LeftButtonUp", "RightButtonUp") end
+    -- AceGUI frames are pooled and shared with other addons: only act while a
+    -- Dibs shell owns this window.
+    statusBar:SetScript("OnClick", function(self)
+      local owner = self.obj and self.obj.frame
+      local shell = owner and owner._dibsWindowShell
+      if not (shell and shell._dibsActive) then return end
+      local menuUtil = _G.MenuUtil
+      if menuUtil and type(menuUtil.CreateContextMenu) == "function" then
+        menuUtil.CreateContextMenu(self, function(_, root) Adapter.PopulateLedgerMenu(root) end)
+      end
+    end)
+  end
+  call(window, "SetCallback", "OnEnterStatusBar", function()
+    local tooltip = _G.GameTooltip
+    if not tooltip or type(tooltip.SetOwner) ~= "function" then return end
+    local strings = Dibs.L or {}
+    tooltip:SetOwner(statusBar, "ANCHOR_TOP")
+    tooltip:SetText(strings.SHELL_LEDGER_MENU_TITLE or "Ledger")
+    tooltip:AddLine(strings.SHELL_LEDGER_MENU_HINT or "Click to view a ledger. Activation requires confirmation in Officer > Guild Setup > Guild Ledgers.", 1, 1, 1, true)
+    tooltip:Show()
+  end)
+  call(window, "SetCallback", "OnLeaveStatusBar", function()
+    if _G.GameTooltip and type(_G.GameTooltip.Hide) == "function" then _G.GameTooltip:Hide() end
+  end)
+  return true
 end
 
 function Adapter.CreateWindow(title, width, height, point, positionId)
@@ -514,6 +618,7 @@ function Adapter.CreateWindow(title, width, height, point, positionId)
     if widget.frame and widget.frame.dibsAceGUIShell == shell then widget.frame.dibsAceGUIShell = nil end
     shell.gui, shell.window, shell.frame = nil, nil, nil
   end)
+  installStatusLedgerMenu(window)
 
   return shell
 end
@@ -799,6 +904,9 @@ function Adapter.AttachHelp(widget, title, description)
     return widget
   end
   clearTooltipAttachment(widget)
+  local mouseEnabled
+  if type(frame.IsMouseEnabled) == "function" then mouseEnabled = frame:IsMouseEnabled() end
+  if type(frame.EnableMouse) == "function" then frame:EnableMouse(true) end
   local previousEnter = type(frame.GetScript) == "function" and frame:GetScript("OnEnter") or nil
   local previousLeave = type(frame.GetScript) == "function" and frame:GetScript("OnLeave") or nil
   local onEnter = function(self, ...)
@@ -820,6 +928,7 @@ function Adapter.AttachHelp(widget, title, description)
   widget._dibsTooltipAttachment = {
     frame = frame, onEnter = onEnter, onLeave = onLeave,
     previousEnter = previousEnter, previousLeave = previousLeave,
+    mouseEnabled = mouseEnabled,
   }
   return widget
 end
@@ -2131,6 +2240,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   if context.scroll ~= false then
     target = Adapter.AddScrollableList(shell, page, context.pageHeight or 680) or page
   end
+  if context.onBeforeRender then context.onBeforeRender(target) end
   render(group.args, target)
   if context.onRendered then context.onRendered(target) end
   return true

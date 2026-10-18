@@ -134,7 +134,7 @@ not having Officer access is expected.
 
 Next, follow the [Player Guide](player/PLAYER_GUIDE_EN.md) or
 [Mode d'emploi joueur](player/MODE_EMPLOI_JOUEUR.md). Administrators should open
-`/dibs officer` > **Overview > Guided Setup** and use the
+`/dibs officer` > **Guild Setup > Guided Setup** and use the
 [GM / Officer Guide](officer/GM_OFFICER_GUIDE_EN.md) or
 [guide GM / Officer en francais](officer/MODE_EMPLOI_GM_OFFICER.md).
 

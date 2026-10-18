@@ -206,7 +206,7 @@ describe("Guild Configuration next steps after activation", function()
     end
     assert_equal("wizard", navigationByLabel["Guided Setup"])
     assert_equal("setup", navigationByLabel["Raid Readiness"])
-    assert_equal("installation", navigationByLabel["Guild Configuration"])
+    assert_equal("installation", navigationByLabel["Guild Ledgers"])
     assert_nil(navigationByLabel["Setup Assistant"])
     assert_nil(navigationByLabel["Guild Setup"])
     assert_not_nil(findLatestWidget(function(widget) return widget.kind == "Button" and widget.text == "Open Raid Readiness" end))
@@ -221,7 +221,7 @@ describe("Guild Configuration next steps after activation", function()
     local dibs = load("Tester-Realm", true)
     local frame = dibs.OfficerUI.CreateWindow("sync")
     frame:ActivateRoute("sync")
-    clickLatestButton("Open Guild Configuration")
+    clickLatestButton("Open Guild Ledgers")
     assert_equal("installation", frame.activeTab)
   end)
 
@@ -243,5 +243,180 @@ describe("Guild Configuration next steps after activation", function()
     dibs.SyncV2.Send = originalSend
     assert_nil(dibs.GetDB().ledgers[proposed.ledgerId])
     assert_not_nil(dibs.GetDB().ledgerDeletionTombstones[proposed.ledgerId])
+  end)
+
+  it("lists the default ledger and proposes a ledger from Guild Ledgers", function()
+    local dibs = load("Tester-Realm", true)
+    local frame = dibs.OfficerUI.CreateWindow("installation")
+    frame:ActivateRoute("installation")
+    assert_not_nil(findLatestWidget(function(widget)
+      return widget.kind == "Label" and type(widget.text) == "string" and widget.text:find("Default]", 1, true) ~= nil
+    end), "Default ledger not listed")
+
+    frame.newLedgerProposedName = "Split Run"
+    clickLatestButton("Propose Ledger")
+    local proposedId
+    for id, ledger in pairs(dibs.GetDB().ledgers) do
+      if ledger.name == "Split Run" then proposedId = id end
+    end
+    assert_not_nil(proposedId, "Proposed ledger not stored")
+    assert_equal("PROPOSED", dibs.GetDB().ledgers[proposedId].status)
+    clickLatestButton("Approve")
+    assert_equal("APPROVED", dibs.GetDB().ledgers[proposedId].status)
+  end)
+
+  local function selectDropdown(label, value)
+    local widget = findLatestWidget(function(candidate)
+      return candidate.kind == "Dropdown" and candidate.label == label
+    end)
+    assert_not_nil(widget, "Dropdown not found: " .. label)
+    widget.callbacks.OnValueChanged(widget, "OnValueChanged", value)
+  end
+
+  local function prepareActivation()
+    local dibs = load("Tester-Realm", true)
+    assert_true(dibs.Governance.AdoptInitial(nil, { reason = "activation test" }))
+    local proposal = dibs.MultiLedger.ProposeLedger(nil, "Raid Two")
+    assert_true(proposal.ok)
+    assert_true(dibs.MultiLedger.ApproveLedger(nil, proposal.ledgerId).ok)
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    local sends = {}
+    dibs.Sync.Send = function(message, channel)
+      sends[#sends + 1] = { message = message, channel = channel }
+      return true, "TEST_SENT"
+    end
+    return dibs, frame, proposal.ledgerId, sends
+  end
+
+  it("keeps dashboard selection read-only and activates only after management confirmation", function()
+    local dibs, frame, target, sends = prepareActivation()
+    selectDropdown("View ledger", target)
+    assert_equal(target, dibs.MultiLedger.GetViewLedgerId())
+    assert_equal("guild-primary", dibs.MultiLedger.GetActiveLedgerId())
+    assert_nil(dibs.OperationalPolicy.GetActiveLedgerId())
+    assert_equal(0, #sends)
+
+    clickLatestButton("Manage ledgers")
+    assert_equal("installation", frame.activeTab)
+    selectDropdown("Ledger to activate", target)
+    assert_equal("guild-primary", dibs.MultiLedger.GetActiveLedgerId())
+    assert_equal(0, #sends)
+    clickLatestButton("Activate for guild...")
+    assert_equal("guild-primary", dibs.MultiLedger.GetActiveLedgerId())
+    assert_equal(0, #sends)
+    clickLatestButton("Cancel activation")
+    assert_nil(frame.ledgerActivationConfirmId)
+    assert_nil(dibs.OperationalPolicy.GetActiveLedgerId())
+
+    clickLatestButton("Activate for guild...")
+    clickLatestButton("Confirm activation and guild sync")
+    assert_equal(target, dibs.MultiLedger.GetActiveLedgerId())
+    assert_equal(target, dibs.OperationalPolicy.GetActiveLedgerId())
+    assert_equal(1, #sends)
+    assert_equal("GUILD", sends[1].channel)
+    assert_equal("OPERATIONAL_POLICY", sends[1].message.entityType)
+    assert_nil(frame.ledgerActivationConfirmId)
+  end)
+
+  it("shows the viewed ledger contents on the dashboard without activating it", function()
+    local dibs, _, target, sends = prepareActivation()
+    local requestedLedgers = {}
+    local originalGetTransactions = dibs.Ledger.GetTransactions
+    dibs.Ledger.GetTransactions = function(seasonId, player, ledgerId)
+      requestedLedgers[#requestedLedgers + 1] = ledgerId or "active"
+      return originalGetTransactions(seasonId, player, ledgerId)
+    end
+    selectDropdown("View ledger", target)
+    local projection = dibs.OfficerUI.GetDashboardProjection()
+    dibs.Ledger.GetTransactions = originalGetTransactions
+    assert_equal(target, projection.viewLedger.id)
+    assert_true(projection.viewLedger.readOnly)
+    assert_equal(target, requestedLedgers[#requestedLedgers])
+    assert_not_nil(findLatestWidget(function(widget)
+      return type(widget.text) == "string" and widget.text:find("Read-only:", 1, true) ~= nil
+    end), "Read-only badge not shown")
+    assert_equal("guild-primary", dibs.MultiLedger.GetActiveLedgerId())
+    assert_equal(0, #sends)
+  end)
+
+  it("keeps the dashboard controls together and the read-only warning on a separate row", function()
+    local dibs, _, target, sends = prepareActivation()
+    local function assertControlRow()
+      local dropdown = findLatestWidget(function(widget)
+        return widget.kind == "Dropdown" and widget.label == "View ledger"
+      end)
+      local manage = findLatestWidget(function(widget)
+        return widget.kind == "Button" and widget.text == "Manage ledgers"
+      end)
+      assert_not_nil(dropdown)
+      assert_not_nil(manage)
+      assert_equal(dropdown.parent, manage.parent)
+      assert_equal(3, #dropdown.parent.children, "Only season, selector and management belong in the control row")
+      assert_equal(dropdown, dropdown.parent.children[2])
+      assert_equal(manage, dropdown.parent.children[3])
+      return dropdown.parent
+    end
+    assertControlRow()
+    selectDropdown("View ledger", target)
+    local controlRow = assertControlRow()
+    local warning = findLatestWidget(function(widget)
+      return type(widget.text) == "string" and widget.text:find("Read-only:", 1, true) ~= nil
+    end)
+    assert_not_nil(warning)
+    assert_equal(controlRow.parent, warning.parent, "Warning must be outside the controls' Flow layout")
+    selectDropdown("View ledger", "guild-primary")
+    assertControlRow()
+    assert_equal("guild-primary", dibs.MultiLedger.GetActiveLedgerId())
+    assert_equal(0, #sends)
+  end)
+
+  it("invalidates activation confirmation when the selection or page changes", function()
+    local dibs, frame, target, sends = prepareActivation()
+    frame:ActivateRoute("installation")
+    selectDropdown("Ledger to activate", target)
+    clickLatestButton("Activate for guild...")
+    selectDropdown("Ledger to activate", "guild-primary")
+    assert_nil(frame.ledgerActivationConfirmId)
+    clickLatestButton("Activate for guild...")
+    frame:ActivateRoute("overview")
+    assert_nil(frame.ledgerActivationConfirmId)
+    assert_equal("guild-primary", dibs.MultiLedger.GetActiveLedgerId())
+    assert_equal(0, #sends)
+  end)
+
+  it("rechecks authority, combat and the current ledger at confirmation", function()
+    for _, blockedBy in ipairs({ "authority", "combat", "stale" }) do
+      local dibs, frame, target, sends = prepareActivation()
+      frame:ActivateRoute("installation")
+      selectDropdown("Ledger to activate", target)
+      clickLatestButton("Activate for guild...")
+      local originalCombat = _G.InCombatLockdown
+      if blockedBy == "authority" then
+        dibs.MultiLedger.CanSetGuildActiveLedger = function() return false end
+      elseif blockedBy == "combat" then
+        _G.InCombatLockdown = function() return true end
+      else
+        frame.ledgerActivationPreviousId = "outdated-ledger"
+      end
+      clickLatestButton("Confirm activation and guild sync")
+      _G.InCombatLockdown = originalCombat
+      assert_nil(dibs.OperationalPolicy.GetActiveLedgerId(), blockedBy)
+      assert_equal("guild-primary", dibs.MultiLedger.GetActiveLedgerId(), blockedBy)
+      assert_equal(0, #sends, blockedBy)
+      assert_nil(frame.ledgerActivationConfirmId)
+    end
+  end)
+
+  it("shows failed guild sync instead of claiming all members are synchronized", function()
+    local dibs, frame, target = prepareActivation()
+    frame:ActivateRoute("installation")
+    selectDropdown("Ledger to activate", target)
+    dibs.Sync.Send = function() return false, "SYNC_UNAVAILABLE" end
+    local statusText
+    frame.SetStatus = function(_, text) statusText = text end
+    clickLatestButton("Activate for guild...")
+    clickLatestButton("Confirm activation and guild sync")
+    assert_equal(target, dibs.MultiLedger.GetActiveLedgerId())
+    assert_not_nil(statusText:find("guild sync could not be sent: SYNC_UNAVAILABLE", 1, true))
   end)
 end)

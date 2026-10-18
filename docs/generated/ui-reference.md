@@ -145,7 +145,7 @@ Category: `ledger` | Module: `RCLootCouncil` | Audience: developer, gm, officer
 
 **English:** Previews recorded awards without changing RCLootCouncil history. Confirm only supported evidence; ambiguous or incomplete rows require review and a reason.
 **Francais:** Affiche les gains enregistres sans modifier l'historique RCLootCouncil. Confirmez seulement les preuves suffisantes; les lignes ambigues ou incompletes exigent une revue et une raison.
-Source: `src/integrations/RCLootCouncil.lua:3721` (`Dibs.RCLootCouncil.GetHistoryRows`)
+Source: `src/integrations/RCLootCouncil.lua:3752` (`Dibs.RCLootCouncil.GetHistoryRows`)
 
 ## RCLootCouncil response mapping (`rclootcouncil.response.mapping`)
 
@@ -153,7 +153,7 @@ Category: `ledger` | Module: `RCLootCouncilOptions` | Audience: gm, officer
 
 **English:** Maps a RCLootCouncil response to Dibs meaning. Review the mapping with your guild before live loot; this does not change RCLootCouncil history.
 **Francais:** Associe une reponse RCLootCouncil a une action Dibs. Verifiez la correspondance avant le butin en direct; l'historique RCLootCouncil reste inchange.
-Source: `src/integrations/RCLootCouncilOptions.lua:491` (`buildButtonSetMappingText`)
+Source: `src/integrations/RCLootCouncilOptions.lua:492` (`buildButtonSetMappingText`)
 
 ## Raid Readiness (`setup.assistant.readiness`)
 
@@ -161,7 +161,7 @@ Category: `setup` | Module: `SetupAssistant` | Audience: gm, officer
 
 **English:** Raid Readiness answers whether DIBS is ready for this raid and lists blocking checks with their next actions.
 **Francais:** La preparation au raid indique si DIBS est pret pour ce raid et liste les controles bloquants avec leurs prochaines actions.
-Source: `src/ui/SetupAssistant.lua:215` (`SetupAssistant.Evaluate`)
+Source: `src/ui/SetupAssistant.lua:269` (`SetupAssistant.Evaluate`)
 
 ## Historical Reconciliation (`setup.reconciliation`)
 
@@ -179,13 +179,22 @@ Category: `governance` | Module: `Governance` | Audience: developer, gm, officer
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
 Source: `src/modules/Governance.lua:438` (`Governance.GetAuthorityState`)
 
+## Resynchronize guild (`sync.guild.recovery`)
+
+Category: `synchronization` | Module: `SyncV2` | Audience: gm, officer
+
+**English:** GM/Officer only. Asks online updated guild clients to announce their available data and request missing revisions. Preserves ledgers, validates existing authority and hashes, and never resolves conflicts by overwriting data. Offline members catch up when they reconnect. Limited to once per minute; unavailable in combat, sandbox and Independent Raid.
+**Francais:** GM/Officier seulement. Demande aux clients de guilde a jour et en ligne d'annoncer leurs donnees disponibles et de demander les revisions manquantes. Preserve les ledgers et valide les droits et empreintes existants, sans ecraser les conflits. Les absents rattrapent a leur reconnexion. Une fois par minute; indisponible en combat, sandbox et raid independant.
+**Technical reference:** Synchronization page: Fix synchronization and Verify again locally; Repair peer or Resynchronize guild (GM/Officer). Force clear only resets a local indicator.
+Source: `src/modules/SyncV2.lua:439` (`Sync.RepairGuild`)
+
 ## Synchronization peer status (`sync.peer.status`)
 
 Category: `synchronization` | Module: `SyncV2` | Audience: gm, officer
 
 **English:** Peer status is based on the latest response observed by this client; an offline or unresponsive member may show stale synchronization details.
 **Francais:** L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes.
-Source: `src/modules/SyncV2.lua:425` (`Sync.GetPeerStatuses`)
+Source: `src/modules/SyncV2.lua:509` (`Sync.GetPeerStatuses`)
 
 ## SyncV2 Protocol State (`sync.protocol.state`)
 
@@ -194,7 +203,7 @@ Category: `protocol` | Module: `SyncV2` | Audience: developer
 **English:** Diagnostics may show protocol state such as V2_ENFORCED, ledgerEpoch, and hashes. These identifiers help troubleshooting; ordinary setup uses the status and next action.
 **Francais:** Les diagnostics peuvent afficher des etats de protocole comme V2_ENFORCED, ledgerEpoch et les empreintes. Ils servent au depannage; la configuration normale utilise les statuts et actions indiquees.
 **Technical reference:** SyncV2 may report LEGACY_LOCAL before cutover, CUTOVER_PREPARED while writer compatibility is prepared, or V2_ENFORCED after approved enforcement. ledgerEpoch identifies the active canonical ledger generation; legacyBaselineHash identifies the approved historical baseline.
-Source: `src/modules/SyncV2.lua:779` (`Sync.SetProtocolState`)
+Source: `src/modules/SyncV2.lua:1049` (`Sync.SetProtocolState`)
 
 ## Raid Relay service (`sync.raid.relay`)
 
@@ -218,8 +227,8 @@ Category: `synchronization` | Module: `SyncV2` | Audience: gm, officer, player
 
 **English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
 **Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
-**Technical reference:** Synchronization page: Fix synchronization, Verify again, Force clear (Guild Master/Officer).
-Source: `src/modules/SyncV2.lua:2647` (`Sync.RequestResync`)
+**Technical reference:** Synchronization page: Fix synchronization and Verify again locally; Repair peer or Resynchronize guild (GM/Officer). Force clear only resets a local indicator.
+Source: `src/modules/SyncV2.lua:3005` (`Sync.RequestResync`)
 
 ## Synchronization (`sync.status`)
 
@@ -227,4 +236,4 @@ Category: `synchronization` | Module: `SyncV2` | Audience: gm, officer, player
 
 **English:** Shows whether this client can exchange current guild Dibs state. Unavailable or behind clients may be unable to apply canonical updates.
 **Francais:** Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques.
-Source: `src/modules/SyncV2.lua:395` (`Sync.GetStatus`)
+Source: `src/modules/SyncV2.lua:479` (`Sync.GetStatus`)

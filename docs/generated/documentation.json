@@ -788,7 +788,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncil.lua",
-        "line": 3721,
+        "line": 3752,
         "symbol": "Dibs.RCLootCouncil.GetHistoryRows"
       }
     },
@@ -831,7 +831,7 @@
       },
       "source": {
         "file": "src/integrations/RCLootCouncilOptions.lua",
-        "line": 491,
+        "line": 492,
         "symbol": "buildButtonSetMappingText"
       }
     },
@@ -874,7 +874,7 @@
       },
       "source": {
         "file": "src/ui/SetupAssistant.lua",
-        "line": 215,
+        "line": 269,
         "symbol": "SetupAssistant.Evaluate"
       }
     },
@@ -967,6 +967,49 @@
       }
     },
     {
+      "id": "sync.guild.recovery",
+      "module": "SyncV2",
+      "category": "synchronization",
+      "lifecycle": {
+        "since": "0.8.10",
+        "changed": [],
+        "deprecated": null,
+        "removed": null
+      },
+      "audience": [
+        "gm",
+        "officer"
+      ],
+      "permission": [],
+      "scope": "guild",
+      "audit": false,
+      "reasonRequired": false,
+      "helpKeys": {
+        "label": "SYNC_GUILD_REPAIR_BUTTON",
+        "shortHelp": "UI_HELP_SYNC_GUILD_REPAIR",
+        "reference": "DOC_SYNC_FIX_REFERENCE"
+      },
+      "content": {
+        "label": {
+          "enUS": "Resynchronize guild",
+          "frFR": "Resynchroniser la guilde"
+        },
+        "shortHelp": {
+          "enUS": "GM/Officer only. Asks online updated guild clients to announce their available data and request missing revisions. Preserves ledgers, validates existing authority and hashes, and never resolves conflicts by overwriting data. Offline members catch up when they reconnect. Limited to once per minute; unavailable in combat, sandbox and Independent Raid.",
+          "frFR": "GM/Officier seulement. Demande aux clients de guilde a jour et en ligne d'annoncer leurs donnees disponibles et de demander les revisions manquantes. Preserve les ledgers et valide les droits et empreintes existants, sans ecraser les conflits. Les absents rattrapent a leur reconnexion. Une fois par minute; indisponible en combat, sandbox et raid independant."
+        },
+        "reference": {
+          "enUS": "Synchronization page: Fix synchronization and Verify again locally; Repair peer or Resynchronize guild (GM/Officer). Force clear only resets a local indicator.",
+          "frFR": "Page Synchronisation : Reparer la synchronisation et Verifier de nouveau localement; Reparer le pair ou Resynchroniser la guilde (GM/Officier). Forcer la remise a zero efface seulement un indicateur local."
+        }
+      },
+      "source": {
+        "file": "src/modules/SyncV2.lua",
+        "line": 439,
+        "symbol": "Sync.RepairGuild"
+      }
+    },
+    {
       "id": "sync.peer.status",
       "module": "SyncV2",
       "category": "synchronization",
@@ -1005,7 +1048,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 425,
+        "line": 509,
         "symbol": "Sync.GetPeerStatuses"
       }
     },
@@ -1047,7 +1090,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 779,
+        "line": 1049,
         "symbol": "Sync.SetProtocolState"
       }
     },
@@ -1170,13 +1213,13 @@
           "frFR": "Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation."
         },
         "reference": {
-          "enUS": "Synchronization page: Fix synchronization, Verify again, Force clear (Guild Master/Officer).",
-          "frFR": "Page Synchronisation : Reparer la synchronisation, Verifier de nouveau, Forcer la remise a zero (Maitre de guilde/Officier)."
+          "enUS": "Synchronization page: Fix synchronization and Verify again locally; Repair peer or Resynchronize guild (GM/Officer). Force clear only resets a local indicator.",
+          "frFR": "Page Synchronisation : Reparer la synchronisation et Verifier de nouveau localement; Reparer le pair ou Resynchroniser la guilde (GM/Officier). Forcer la remise a zero efface seulement un indicateur local."
         }
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 2647,
+        "line": 3005,
         "symbol": "Sync.RequestResync"
       }
     },
@@ -1222,7 +1265,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 395,
+        "line": 479,
         "symbol": "Sync.GetStatus"
       }
     }

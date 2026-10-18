@@ -438,14 +438,22 @@ function Policy.AdoptInitial(actor, values, reason)
   local record, recordReason = Policy.CreateInitialRecord(actor, values, reason)
   if not record then return false, recordReason end
   local ok, applyReason, applied = Policy.ApplyRecord(record, actor)
-  if ok and Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then Dibs.Sync.AnnounceOperationalPolicy() end
+  if ok then
+    local sent, syncReason = false, "SYNC_UNAVAILABLE"
+    if Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then sent, syncReason = Dibs.Sync.AnnounceOperationalPolicy() end
+    return ok, applyReason, applied, sent, syncReason
+  end
   return ok, applyReason, applied
 end
 function Policy.Change(actor, patch, reason)
   local record, recordReason = Policy.CreateChangeRecord(actor, patch, reason)
   if not record then return false, recordReason end
   local ok, applyReason, applied = Policy.ApplyRecord(record, actor)
-  if ok and Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then Dibs.Sync.AnnounceOperationalPolicy() end
+  if ok then
+    local sent, syncReason = false, "SYNC_UNAVAILABLE"
+    if Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then sent, syncReason = Dibs.Sync.AnnounceOperationalPolicy() end
+    return ok, applyReason, applied, sent, syncReason
+  end
   return ok, applyReason, applied
 end
 function Policy.SetPreDibMode(seasonId, mode, actor, ledgerId)

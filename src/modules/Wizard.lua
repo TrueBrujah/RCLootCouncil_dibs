@@ -659,7 +659,9 @@ function Wizard.GetTurnkeyStatus(actor)
           or severity == "WARNING" and text("WIZARD_WARNING_IMPACT")
           or severity == "READY" and text("WIZARD_READY_IMPACT")
           or text("WIZARD_OPTIONAL_IMPACT"),
-        nextAction = TURNKEY_ROUTE[step.id] and text("WIZARD_CORRECTION_ACTION") or nil,
+        nextAction = severity ~= "READY" and severity ~= "OPTIONAL"
+          and Dibs.SetupAssistant.GetGuidance(step.id == "installation" and "ledger" or step.id,
+            type(step.detail) == "table" and step.detail.reasonCode or nil) or nil,
         route = TURNKEY_ROUTE[step.id],
         sourceStatus = step.status,
       }
@@ -674,12 +676,12 @@ function Wizard.GetTurnkeyStatus(actor)
         result.impact = text("WIZARD_SYNC_BLOCKING_IMPACT")
         result.nextAction = text("WIZARD_SYNC_BLOCKING_ACTION")
       end
-      if step.id == "readiness" and type(step.detail) == "table" then
+      if step.id == "readiness" and severity ~= "READY" and type(step.detail) == "table" then
         for _, finding in ipairs(step.detail.checks or {}) do
           if finding.state ~= "ready" and finding.state ~= "skipped" then
             result.explanation = tostring(finding.impact or finding.reasonCode or result.explanation)
             result.impact = tostring(finding.impact or result.impact)
-            result.nextAction = tostring(finding.remediation or result.nextAction or "")
+            result.nextAction = Dibs.SetupAssistant.GetGuidance(finding.id, finding.reasonCode, finding.remediation)
             break
           end
         end

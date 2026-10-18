@@ -931,7 +931,8 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName, targetLedger
     local recipientRole = Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(nil)
     local senderIsOfficer = senderRole == "gm" or senderRole == "officer"
     local recipientIsOfficer = recipientRole == "gm" or recipientRole == "officer"
-    if not senderIsOfficer or not recipientIsOfficer then return nil, "OWNER_MISMATCH" end
+    local recipientIsOwner = samePlayer(Dibs.GetPlayerName(), incoming.playerName)
+    if not senderIsOfficer or (not recipientIsOfficer and not recipientIsOwner) then return nil, "OWNER_MISMATCH" end
   end
   for _, existing in ipairs(store.requests) do
     if existing.requestId == incoming.requestId then
