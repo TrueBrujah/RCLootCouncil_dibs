@@ -9,6 +9,7 @@ local TOC_FILES = {
   "modules/Identity.lua",
   "modules/Governance.lua",
   "modules/OperationalPolicy.lua",
+  "modules/FeatureRegistry.lua",
   "modules/Seasons.lua",
   "modules/LootRules.lua",
   "modules/RankRules.lua",

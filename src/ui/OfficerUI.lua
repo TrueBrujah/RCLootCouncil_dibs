@@ -4943,9 +4943,8 @@ local function createAceWindow(initialRoute)
     end, 100)
   end
 
-  local function renderRoute(self)
-    self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
-    self.selectedRoute = self.activeTab
+  -- Common page setup boilerplate extracted from renderRoute to reduce upvalues
+  local function setupRoutePage(self, shell, frame, contentHost)
     local previousLootRulesScroll = frame.lootRulesScroll
     if previousLootRulesScroll and shell._dibsResponsiveScrolls then
       for index = #shell._dibsResponsiveScrolls, 1, -1 do
@@ -4982,10 +4981,22 @@ local function createAceWindow(initialRoute)
       self.selectedSeasonId = current.id
     end
     local currentId = current and current.id or nil
-    if self.activeTab == "statistics" then
-      renderStatisticsPage(self, currentId, tabs)
-      return
-    end
+    return tabs, seasons, current, currentId
+  end
+
+  -- Simple delegate route handlers
+  local simpleRouteHandlers = {
+    overview = function(tabs, shell, self) renderDashboard(shell, tabs, self) end,
+    independentRaid = function(tabs, shell, self) renderIndependentRaidPage(shell, tabs, self) end,
+    wizard = function(tabs, shell, self) renderWizardPage(shell, tabs, self) end,
+    seasons = function(tabs, shell, self) renderSeasonsPage(shell, tabs) end,
+  }
+
+  local function renderRoute(self)
+    self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
+    self.selectedRoute = self.activeTab
+    local tabs, seasons, current, currentId = setupRoutePage(self, shell, frame, contentHost)
+    if not tabs then return end
     local routeModules = {
       disputes = "requests", preDibs = "preDibs", preDibRequests = "preDibs", announcements = "announcements",
       integration = "rclootcouncil", eligibility = "lootEligibility",
@@ -5008,11 +5019,20 @@ local function createAceWindow(initialRoute)
       eligibility = "Loot Eligibility", modules = "Modules", developer = "Developer", debug = "Debug",
     }
     routeTitles.setup = (Dibs.L and Dibs.L.DOC_SETUP_ASSISTANT_LABEL) or "Raid Readiness"
+    if self.activeTab == "statistics" then
+      renderStatisticsPage(self, currentId, tabs)
+      return
+    end
     if self.activeTab == "ranks" then
       Dibs.AceGUI.AddLabel(shell, tabs, Dibs.OfficerUI.BuildRankCatalogStatus(), true)
     elseif self.activeTab == "preDibs" or self.activeTab == "modules" or self.activeTab == "seasons" or self.activeTab == "announcements" then
       local syncStatus = Dibs.OfficerUI.BuildSynchronizationStatus()
       if syncStatus ~= "" then Dibs.AceGUI.AddLabel(shell, tabs, syncStatus, true) end
+    end
+    local simpleHandler = simpleRouteHandlers[self.activeTab]
+    if simpleHandler then
+      simpleHandler(tabs, shell, self)
+      return
     end
     if self.activeTab == "developer" then
       if Dibs.DeveloperUI and Dibs.DeveloperUI.GetProjection then
@@ -5555,20 +5575,6 @@ local function createAceWindow(initialRoute)
       tablePage.UpdateViewportHeight()
       return
     end
-    if self.activeTab == "overview" then
-      renderDashboard(shell, tabs, self)
-      return
-    end
-
-    if self.activeTab == "independentRaid" then
-      renderIndependentRaidPage(shell, tabs, self)
-      return
-    end
-
-    if self.activeTab == "wizard" then
-      renderWizardPage(shell, tabs, self)
-      return
-    end
 
     if self.activeTab == "setup" or self.activeTab == "guildSetup" then
       local setupText = Dibs.L or {}
@@ -5852,42 +5858,38 @@ local function createAceWindow(initialRoute)
       end
       return
     end
-    if self.activeTab == "seasons" then
-      renderSeasonsPage(shell, tabs)
-      return
-    end
 
     if self.activeTab == "modules" then
       local policy = Dibs.OperationalPolicy
-      local coreDefinitions = policy and policy.GetCoreModuleDefinitions and policy.GetCoreModuleDefinitions() or {}
-      local definitions = policy and policy.GetModuleDefinitions and policy.GetModuleDefinitions() or {}
-      local canonicalModules = policy and policy.GetModuleValues and policy.GetModuleValues() or {}
-      local copyModules = function(value)
-        return Dibs.DeepCopy and Dibs.DeepCopy(value or {}) or value or {}
-      end
-      if not self.moduleAuthoritativeModules then self.moduleAuthoritativeModules = copyModules(canonicalModules) end
-      if not self.moduleDraft then self.moduleDraft = copyModules(self.moduleAuthoritativeModules) end
-      local draft = self.moduleDraft
-      local authoritativeModules = self.moduleAuthoritativeModules
-      for _, definition in ipairs(definitions) do
-        if draft[definition.key] == nil then draft[definition.key] = canonicalModules[definition.key] == true end
-      end
-      local dirty = false
-      for _, definition in ipairs(definitions) do
-        if draft[definition.key] ~= authoritativeModules[definition.key] then dirty = true; break end
-      end
-      local moduleDiagnostics = policy and policy.GetModuleManagementDiagnostics and policy.GetModuleManagementDiagnostics(nil) or {
-        canManageModules = false, blockingReason = "POLICY_UNAVAILABLE", blockingMessage = "Module management unavailable.",
-      }
-      local canWrite = moduleDiagnostics.canManageModules == true
-      if dirty then
-        moduleUiDebug("MODULE_UI_DIRTY dirty=true")
-      end
-      local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
-      local governanceReady = governanceState.status == "GOVERNANCE_ADOPTED"
-      Dibs.AceGUI.AddHeader(shell, tabs, "Module Policy", "GM authority: " .. (canWrite and "Ready" or "Read-only")
-        .. " | Governance: " .. (governanceReady and "Active" or "Not initialized")
-        .. " | Revision: " .. tostring(policy and policy.GetState and policy.GetState().policyRevision or 0))
+          local registry = Dibs.FeatureRegistry
+          local coreDefinitions = policy and policy.GetCoreModuleDefinitions and policy.GetCoreModuleDefinitions() or {}
+          local definitions = policy and policy.GetModuleDefinitions and policy.GetModuleDefinitions() or {}
+          local canonicalModules = policy and policy.GetModuleValues and policy.GetModuleValues() or {}
+          local copyModules = function(value)
+            return Dibs.DeepCopy and Dibs.DeepCopy(value or {}) or value or {}
+          end
+          if not self.moduleAuthoritativeModules then self.moduleAuthoritativeModules = copyModules(canonicalModules) end
+          if not self.moduleDraft then self.moduleDraft = copyModules(self.moduleAuthoritativeModules) end
+          local draft = self.moduleDraft
+          local authoritativeModules = self.moduleAuthoritativeModules
+          for _, definition in ipairs(definitions) do
+            if draft[definition.key] == nil then draft[definition.key] = canonicalModules[definition.key] == true end
+          end
+          local dirty = false
+          for _, definition in ipairs(definitions) do
+            if draft[definition.key] ~= authoritativeModules[definition.key] then dirty = true; break end
+          end
+          local moduleDiagnostics = policy and policy.GetModuleManagementDiagnostics and policy.GetModuleManagementDiagnostics(nil) or {
+            canManageModules = false, blockingReason = "POLICY_UNAVAILABLE", blockingMessage = "Module management unavailable.",
+          }
+          local canWrite = moduleDiagnostics.canManageModules == true
+          if dirty then
+            moduleUiDebug("MODULE_UI_DIRTY dirty=true")
+          end
+          local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+          local governanceReady = governanceState.status == "GOVERNANCE_ADOPTED"
+          Dibs.AceGUI.AddHeader(shell, tabs, "Module Policy", "GM authority: " .. (canWrite and "Ready" or "Read-only")
+            .. " | Governance: " .. (governanceReady and "Adopted" or "Not adopted"))
       if not governanceReady then
         Dibs.AceGUI.AddLabel(shell, tabs, "Module management unavailable", true)
         Dibs.AceGUI.AddLabel(shell, tabs, "Guild governance must be initialized first.", true)
@@ -5942,61 +5944,104 @@ local function createAceWindow(initialRoute)
         Dibs.AceGUI.AddLabel(shell, tabs, "Module management unavailable", true)
         Dibs.AceGUI.AddLabel(shell, tabs, moduleDiagnostics.blockingMessage or tostring(moduleDiagnostics.blockingReason or "Authorization could not be verified."), true)
       end
-      Dibs.AceGUI.AddHeader(shell, tabs, "Core Services", "These services are always enabled and cannot be changed.")
-      for _, definition in ipairs(coreDefinitions) do
-        Dibs.AceGUI.AddLabel(shell, tabs, definition.label .. " - Always enabled", true)
-      end
-      Dibs.AceGUI.AddHeader(shell, tabs, "Optional Features", "Guild-wide activation is stored in the operational policy.")
-      for _, definition in ipairs(definitions) do
-        local dependencyBlocked = definition.requires and draft[definition.requires] ~= true
-        local control = Dibs.AceGUI.AddCheckBox(shell, tabs, definition.label, draft[definition.key], function(value)
-          local oldDraft = self.moduleDraft[definition.key]
-          self.moduleDraft[definition.key] = value == true
-          if definition.key == "rclootcouncil" and value ~= true and self.moduleDraft.historicalReconciliation ~= false then
-            self.moduleDraft.historicalReconciliation = false
+          -- Build complete feature list from FeatureRegistry for richer metadata
+          local allFeatures = registry and registry.ListFeatures and registry.ListFeatures() or {}
+          local featureByKey = {}
+          for _, f in ipairs(allFeatures) do featureByKey[f.key] = f end
+          -- Core Services section
+          Dibs.AceGUI.AddHeader(shell, tabs, "Core Services", "These services are always enabled and cannot be changed.")
+          for _, definition in ipairs(coreDefinitions) do
+            local f = featureByKey[definition.key]
+            local desc = f and f.description and f.description ~= "" and (" - " .. f.description) or ""
+            local dep = f and f.requires and (" [Requires: " .. f.requires .. "]") or ""
+            Dibs.AceGUI.AddLabel(shell, tabs, definition.label .. " - LOCKED (Always enabled)" .. desc .. dep, true)
           end
-          moduleUiDebug("MODULE_UI_CLICK module=" .. tostring(definition.key)
-            .. " oldDraft=" .. tostring(oldDraft)
-            .. " newDraft=" .. tostring(self.moduleDraft[definition.key])
-            .. " canManageModules=" .. tostring(canWrite))
-          local refresh = function()
-            if self.activeTab == "modules" then self:Refresh() end
+          -- Optional Features section with full metadata and working controls
+          Dibs.AceGUI.AddHeader(shell, tabs, "Optional Features", "Guild-wide activation is stored in the operational policy. Changes require GM authority and adopted governance.")
+          for _, definition in ipairs(definitions) do
+            local f = featureByKey[definition.key]
+            local effectiveState = registry and registry.GetEffectiveState and registry.GetEffectiveState(definition.key)
+            local isEnabled = draft[definition.key] == true
+            local depBlocked = definition.requires and draft[definition.requires] ~= true
+            local label = f and f.label or definition.label
+            local desc = f and f.description and f.description ~= "" and f.description or ""
+            local category = f and f.category or "optional"
+            local defaultEnabled = f and f.defaultEnabled ~= false
+            local scope = f and f.scope or "guild"
+            local canDisable = f and f.canDisable == true
+            local depText = definition.requires and ("Requires: " .. definition.requires) or ""
+            local statusText = ""
+            if effectiveState then
+              if effectiveState.enabled then
+                statusText = " | Effective: ENABLED"
+              else
+                statusText = " | Effective: DISABLED"
+                if effectiveState.reasonCode then
+                  statusText = statusText .. " (" .. tostring(effectiveState.reasonCode) .. ")"
+                end
+              end
+            end
+            local fullLabel = label .. " [" .. category .. "]" .. statusText .. (depText ~= "" and (" | " .. depText) or "") .. (desc ~= "" and (" - " .. desc) or "")
+            local control = Dibs.AceGUI.AddCheckBox(shell, tabs, fullLabel, isEnabled, function(value)
+              if value == isEnabled then return end
+              -- Validate dependency: if enabling and dependency is disabled, auto-enable dependency
+              if value and definition.requires and draft[definition.requires] ~= true then
+                draft[definition.requires] = true
+              end
+              -- If disabling, check if any dependents are still enabled
+              if not value and registry and registry.GetDependents then
+                local dependents = registry.GetDependents(definition.key)
+                local blockedDependents = {}
+                for _, depId in ipairs(dependents) do
+                  if draft[depId] == true then
+                    table.insert(blockedDependents, depId)
+                  end
+                end
+                if #blockedDependents > 0 then
+                  self:SetStatus("Cannot disable " .. label .. ": dependent features active - " .. table.concat(blockedDependents, ", "))
+                  return
+                end
+              end
+              -- Special case: disabling rclootcouncil also disables historicalReconciliation
+              if definition.key == "rclootcouncil" and value ~= true and self.moduleDraft.historicalReconciliation ~= false then
+                self.moduleDraft.historicalReconciliation = false
+              end
+              draft[definition.key] = value
+              moduleUiDebug("MODULE_UI_CLICK module=" .. tostring(definition.key)
+                .. " oldDraft=" .. tostring(isEnabled)
+                .. " newDraft=" .. tostring(value)
+                .. " canManageModules=" .. tostring(canWrite))
+              self:Refresh()
+            end)
+            -- Disable control if: no write permission, dependency blocked
+            Dibs.AceGUI.SetDisabled(control, not canWrite or depBlocked)
+            if depBlocked then
+              Dibs.AceGUI.AddLabel(shell, tabs, "  Blocked: requires " .. tostring(definition.requires) .. " to be enabled first.", true)
+            end
           end
-          if Dibs.AceGUI.RequestRefresh then
-            Dibs.AceGUI.RequestRefresh("MODULE_UI_CLICK", refresh)
-          else
-            refresh()
+          if dirty then
+            Dibs.AceGUI.AddLabel(shell, tabs, "Modules - Unsaved changes", true)
+            Dibs.AceGUI.AddButton(shell, tabs, "Reset", function()
+              self.moduleDraft = copyModules(self.moduleAuthoritativeModules)
+              self:Refresh()
+            end, 80)
           end
-        end, 260)
-        Dibs.AceGUI.SetValue(control, draft[definition.key])
-        Dibs.AceGUI.SetDisabled(control, not canWrite or dependencyBlocked)
-        if definition.requires then
-          Dibs.AceGUI.AddLabel(shell, tabs, dependencyBlocked and ("Requires " .. tostring(definition.requires) .. ".") or "", true)
+          if dirty then
+            local save = Dibs.AceGUI.AddButton(shell, tabs, "Save changes", function()
+              local authorized, authorizationReason = policy.CanChangeModules(nil)
+              if not authorized then self:SetStatus("Unable to save module settings: " .. tostring(authorizationReason or "authorization required")); return end
+              local ok, reason = policy.ChangeModules(self.moduleDraft, nil, "MODULE_ENABLEMENT")
+              self:SetStatus(ok and "Module settings saved." or (reason == "MODULE_DEPENDENCY_RCLootCouncil" and "Historical Reconciliation requires RCLootCouncil." or "Unable to save module settings: " .. tostring(reason or "unknown error")))
+              if ok then
+                self.moduleAuthoritativeModules = copyModules(policy.GetModuleValues and policy.GetModuleValues() or self.moduleDraft)
+                self.moduleDraft = copyModules(self.moduleAuthoritativeModules)
+              end
+              self:Refresh()
+            end, 140)
+            Dibs.AceGUI.SetDisabled(save, not canWrite)
+          end
+          return
         end
-      end
-      if dirty then
-        Dibs.AceGUI.AddLabel(shell, tabs, "Modules - Unsaved changes", true)
-        Dibs.AceGUI.AddButton(shell, tabs, "Reset", function()
-          self.moduleDraft = copyModules(self.moduleAuthoritativeModules)
-          self:Refresh()
-        end, 80)
-      end
-      if dirty then
-        local save = Dibs.AceGUI.AddButton(shell, tabs, "Save changes", function()
-        local authorized, authorizationReason = policy.CanChangeModules(nil)
-        if not authorized then self:SetStatus("Unable to save module settings: " .. tostring(authorizationReason or "authorization required")); return end
-        local ok, reason = policy.ChangeModules(self.moduleDraft, nil, "MODULE_ENABLEMENT")
-        self:SetStatus(ok and "Module settings saved." or (reason == "MODULE_DEPENDENCY_RCLootCouncil" and "Historical Reconciliation requires RCLootCouncil." or "Unable to save module settings: " .. tostring(reason or "unknown error")))
-        if ok then
-          self.moduleAuthoritativeModules = copyModules(policy.GetModuleValues and policy.GetModuleValues() or self.moduleDraft)
-          self.moduleDraft = copyModules(self.moduleAuthoritativeModules)
-        end
-        self:Refresh()
-        end, 140)
-        Dibs.AceGUI.SetDisabled(save, not canWrite)
-      end
-      return
-    end
 
     -- Render the canonical Officer options directly from the shared
     -- AceConfig table.  This keeps Seasons, Rank Rules, Settings, Pre-Dibs,

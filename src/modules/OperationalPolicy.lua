@@ -15,21 +15,35 @@ local SCHEMA, GENESIS_HASH = 1, "GENESIS"
 local VALID_MODES = { WILD_OPEN = true, ENCOUNTER = true }
 local VALID_ANNOUNCE_CHANNELS = { NONE = true, GUILD = true, OFFICER = true, RAID = true, RAID_WARNING = true, RAID_DIBS = true, PARTY = true, INSTANCE_CHAT = true, SAY = true, YELL = true }
 local CORE_MODULE_DEFINITIONS = {
-  { key = "ledger", label = "Ledger", core = true, alwaysEnabled = true },
-  { key = "identity", label = "Canonical Identity / Name-Realm", core = true, alwaysEnabled = true },
-  { key = "governance", label = "Governance", core = true, alwaysEnabled = true },
-  { key = "protectedActions", label = "ProtectedActions", core = true, alwaysEnabled = true },
-  { key = "syncV2", label = "SyncV2", core = true, alwaysEnabled = true },
-  { key = "coordinatorRecovery", label = "Coordinator / Recovery", core = true, alwaysEnabled = true },
-  { key = "persistenceValidation", label = "Persistence validation", core = true, alwaysEnabled = true },
+  { key = "ledger", label = "Ledger", core = true, alwaysEnabled = true, description = "Core ledger accounting and entry persistence", category = "core" },
+  { key = "identity", label = "Canonical Identity / Name-Realm", core = true, alwaysEnabled = true, description = "Canonical character identity resolution", category = "core" },
+  { key = "governance", label = "Governance", core = true, alwaysEnabled = true, description = "Guild governance and policy adoption", category = "core" },
+  { key = "protectedActions", label = "ProtectedActions", core = true, alwaysEnabled = true, description = "Protected action execution framework", category = "core" },
+  { key = "syncV2", label = "SyncV2", core = true, alwaysEnabled = true, description = "State synchronization protocol", category = "core" },
+  { key = "coordinatorRecovery", label = "Coordinator / Recovery", core = true, alwaysEnabled = true, description = "Coordinator election and disaster recovery", category = "core" },
+  { key = "persistenceValidation", label = "Persistence validation", core = true, alwaysEnabled = true, description = "SavedVariables integrity validation", category = "core" },
+  { key = "rankRules", label = "Rank Rules", core = true, alwaysEnabled = true, description = "Rank-based allocation rules and expected allocation resolution", category = "core" },
 }
 local MODULE_DEFINITIONS = {
-  { key = "preDibs", label = "Pre-Dibs" },
-  { key = "requests", label = "Requests" },
-  { key = "rclootcouncil", label = "RCLootCouncil" },
-  { key = "announcements", label = "Announcements" },
-  { key = "lootEligibility", label = "Loot Eligibility" },
-  { key = "historicalReconciliation", label = "Historical Reconciliation", requires = "rclootcouncil" },
+  { key = "preDibs", label = "Pre-Dibs", description = "Early expression of interest before loot drops", category = "loot" },
+  { key = "requests", label = "Requests", description = "Formal loot request workflow with officer review", category = "loot" },
+  { key = "rclootcouncil", label = "RCLootCouncil", description = "Integration with RCLootCouncil for council voting", category = "integration" },
+  { key = "announcements", label = "Announcements", description = "Automated loot and award announcements", category = "communication" },
+  { key = "lootEligibility", label = "Loot Eligibility", description = "Eligibility rules for loot distribution", category = "loot" },
+  { key = "historicalReconciliation", label = "Historical Reconciliation", description = "Import and reconcile historical loot data", category = "admin", requires = "rclootcouncil" },
+  { key = "greatVault", label = "Great Vault", description = "Record and track Great Vault reward claims as Pre-Dibs evidence", category = "integration" },
+  { key = "encounterJournal", label = "Encounter Journal", description = "Pre-Dib directly from the Adventure Guide encounter journal", category = "integration" },
+  { key = "raidPrompts", label = "Raid Prompts", description = "Encounter-based Pre-Dib prompts during raid encounters", category = "loot" },
+  { key = "notifications", label = "Notifications", description = "Per-character idempotent notification delivery for loot events", category = "communication" },
+  { key = "independentRaid", label = "Independent Raid", description = "Local-only raid sessions for ad-hoc and community raids", category = "loot" },
+  { key = "lootRules", label = "Loot Rules", description = "Guild-authoritative loot rule configuration and publication", category = "rules" },
+  { key = "readiness", label = "Readiness", description = "Runtime safety guard for live award processing context freshness", category = "admin" },
+  { key = "dryRun", label = "Dry Run", description = "Simulated award validation without committing mutations", category = "admin" },
+  { key = "auditExport", label = "Audit Export", description = "Bounded anonymous audit report generation for support and review", category = "data" },
+  { key = "historyFilters", label = "History Filters", description = "Client-side history filtering and projection preferences", category = "data" },
+  { key = "profiles", label = "Profiles", description = "Named configuration profiles for guild and local settings", category = "data" },
+  { key = "backup", label = "Backup", description = "Bounded recovery snapshots before restore and import operations", category = "data" },
+  { key = "importExport", label = "Import / Export", description = "Portable package encoding, validation, preview, and application", category = "data" },
 }
 local MODULE_KEYS = {}
 for _, definition in ipairs(MODULE_DEFINITIONS) do MODULE_KEYS[definition.key] = true end
@@ -38,6 +52,11 @@ local function defaultModules()
   local modules = {}
   for _, definition in ipairs(MODULE_DEFINITIONS) do modules[definition.key] = true end
   return modules
+end
+
+local function getStoredModules()
+  local values = Policy.GetValues()
+  return values and values.modules or {}
 end
 
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
@@ -94,15 +113,22 @@ local function normalizedValues(values)
       result.announcementChannels = { publicChannel = publicChannel, officerChannel = officerChannel }
     elseif key == "modules" then
       if type(value) ~= "table" then return nil, "INVALID_MODULE_POLICY" end
-      local modules = defaultModules()
-      for moduleKey, enabled in pairs(value) do
-        if not MODULE_KEYS[moduleKey] or type(enabled) ~= "boolean" then return nil, "INVALID_MODULE_POLICY" end
-        modules[moduleKey] = enabled
-      end
-      if modules.historicalReconciliation and not modules.rclootcouncil then
-        return nil, "MODULE_DEPENDENCY_RCLootCouncil"
-      end
-      result.modules = modules
+          local modules = {}
+          -- Validate each module key and type; allow unknown future features for forward compatibility
+          for moduleKey, enabled in pairs(value) do
+            if type(enabled) ~= "boolean" then return nil, "INVALID_MODULE_POLICY" end
+            modules[moduleKey] = enabled
+          end
+          -- Check dependencies using effective state (merge with defaults for validation only)
+          local effectiveModules = defaultModules()
+          for moduleKey, enabled in pairs(modules) do
+            effectiveModules[moduleKey] = enabled
+          end
+          if effectiveModules.historicalReconciliation and not effectiveModules.rclootcouncil then
+            return nil, "MODULE_DEPENDENCY_RCLootCouncil"
+          end
+          -- Return the sparse input (explicit decisions only), not the merged effective state
+          result.modules = copy(modules)
     elseif key == "activeLedgerId" then
       if type(value) ~= "string" or #value < 1 or #value > 64 or not value:match("^[%w%-_:%.]+$") then
         return nil, "INVALID_ACTIVE_LEDGER"
@@ -216,6 +242,11 @@ function Policy.IsAdopted() return ensureState().status == "POLICY_ADOPTED" end
 function Policy.GetValues()
   local record = Policy.GetCurrentRecord(); return record and copy(record.values) or nil
 end
+function Policy.GetStoredModuleValues()
+  local values = Policy.GetValues()
+  if not values or not values.modules then return {} end
+  return copy(values.modules)
+end
 local function preDibModeKey(seasonId, ledgerId)
   local selectedLedger = ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
     and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
@@ -250,7 +281,11 @@ function Policy.GetModuleDefinition(moduleKey)
 end
 function Policy.GetModuleValues()
   local values = Policy.GetValues() or {}
-  local modules = values.modules or defaultModules()
+  local storedModules = values.modules or {}
+  local modules = defaultModules()
+  for moduleKey, enabled in pairs(storedModules) do
+    modules[moduleKey] = enabled
+  end
   return copy(modules)
 end
 function Policy.IsModuleEnabled(moduleKey)
@@ -343,30 +378,30 @@ function Policy.CanChangeModules(actor)
 end
 function Policy.ChangeModules(patch, actor, reason)
   if type(patch) ~= "table" then return false, "INVALID_MODULE_POLICY" end
-  local modules = Policy.GetModuleValues()
+  local storedModules = getStoredModules()
   for moduleKey, enabled in pairs(patch) do
     if not MODULE_KEYS[moduleKey] or type(enabled) ~= "boolean" then return false, "INVALID_MODULE_POLICY" end
-    modules[moduleKey] = enabled
+    storedModules[moduleKey] = enabled
   end
-  local values, valuesReason = normalizedValues({ modules = modules })
+  local values, valuesReason = normalizedValues({ modules = storedModules })
   if not values then return false, valuesReason end
   local state = ensureState()
   if state.status == "POLICY_UNINITIALIZED" then
-    local record, recordReason = createRecord(actor, { modules = modules }, 1, 0, GENESIS_HASH, "MODULE_ENABLEMENT", reason, false)
+    local record, recordReason = createRecord(actor, { modules = storedModules }, 1, 0, GENESIS_HASH, "MODULE_ENABLEMENT", reason, false)
     if not record then return false, recordReason end
     local oldModules, changes = defaultModules(), {}
     for _, definition in ipairs(MODULE_DEFINITIONS) do
-      if oldModules[definition.key] ~= modules[definition.key] then
-        table.insert(changes, { moduleId = definition.key, oldState = oldModules[definition.key] == true, newState = modules[definition.key] == true })
+      if oldModules[definition.key] ~= storedModules[definition.key] then
+        table.insert(changes, { moduleId = definition.key, oldState = oldModules[definition.key] == true, newState = storedModules[definition.key] == true })
       end
     end
-    record.audit.moduleChanges = { old = oldModules, new = copy(modules), changes = changes }
+    record.audit.moduleChanges = { old = oldModules, new = copy(storedModules), changes = changes }
     record.contentHash = canonicalHash(record)
     local applied, applyReason = Policy.ApplyRecord(record, actor)
     if applied and Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then Dibs.Sync.AnnounceOperationalPolicy() end
     return applied, applyReason, applied and record or nil
   end
-  return Policy.Change(actor, { modules = modules }, reason or "MODULE_ENABLEMENT")
+  return Policy.Change(actor, { modules = storedModules }, reason or "MODULE_ENABLEMENT")
 end
 function Policy.CanWrite(actor)
   local snapshot, reason = writerAuthorized(actor); return snapshot ~= nil, reason
