@@ -52,17 +52,36 @@ describe("B05b fenced authority and recovery", function()
   end)
 
   it("fails closed during coordinator loss and records a zero-effect proposal", function()
-    local dibs = load(); activate(dibs)
-    assert_not_nil(dibs.Seasons.Create("B05b")); local season = dibs.GetCurrentSeasonId()
-    assert_not_nil(dibs.Ledger.Grant("Player-Realm", 2, "setup", "test", season))
-    local before = dibs.Ledger.GetBalance("Player-Realm", season)
-    assert_not_nil(dibs.Governance.MarkCoordinatorUnavailable(nil, "disconnect"))
-    local tx, reason = dibs.Ledger.Use("Player-Realm", 1, "award", "test", season)
-    assert_nil(tx); assert_equal("COORDINATOR_UNAVAILABLE", reason)
-    assert_equal(before, dibs.Ledger.GetBalance("Player-Realm", season))
-    local proposals = dibs.Governance.GetAwardProposals()
-    assert_equal(1, #proposals); assert_equal("PENDING_RECONCILIATION", proposals[1].status)
-  end)
+        local dibs = load(); activate(dibs)
+        assert_not_nil(dibs.Seasons.Create("B05b")); local season = dibs.GetCurrentSeasonId()
+      
+        -- Use ProtectedActions for the grant as well
+        local grantResult = dibs.ProtectedActions.Execute("ledger.grant", "Tester-Realm", {
+          playerName = "Player-Realm",
+          amount = 2,
+          reason = "setup",
+          source = "test",
+          seasonId = season
+        })
+        assert_true(grantResult.ok, "Grant should succeed")
+      
+        local before = dibs.Ledger.GetBalance("Player-Realm", season)
+        assert_not_nil(dibs.Governance.MarkCoordinatorUnavailable(nil, "disconnect"))
+      
+        -- Use ProtectedActions with the GM (Tester-Realm is the GM in this test)
+        local result = dibs.ProtectedActions.Execute("ledger.use", "Tester-Realm", {
+          playerName = "Player-Realm",
+          amount = 1,
+          reason = "award",
+          source = "test",
+          seasonId = season
+        })
+        assert_false(result.ok, "Operation should fail when coordinator unavailable")
+        assert_equal("COORDINATOR_UNAVAILABLE", result.diagnostic)
+        assert_equal(before, dibs.Ledger.GetBalance("Player-Realm", season))
+        local proposals = dibs.Governance.GetAwardProposals()
+        assert_equal(1, #proposals); assert_equal("PENDING_RECONCILIATION", proposals[1].status)
+      end)
 
   it("requires the current GM and B05a baseline for forced recovery", function()
     local dibs = load(); local approved = activate(dibs)

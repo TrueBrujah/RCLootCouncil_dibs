@@ -1,0 +1,237 @@
+local loader = require("helpers.load_addon")
+
+describe("opt-in UI render timing", function()
+  it("does no timing work while disabled and keeps bounded per-page counters when enabled", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local timer = _G.debugprofilestop
+    register_reset(function() _G.debugprofilestop = timer end)
+    local clock = 0
+    _G.debugprofilestop = function()
+      clock = clock + 2
+      return clock
+    end
+
+    assert_false(dibs.UIRenderStats.IsEnabled())
+    assert_nil(dibs.UIRenderStats.Begin())
+    assert_false(dibs.UIRenderStats.Record("Officer", "overview", 0))
+    assert_equal(0, #dibs.UIRenderStats.GetReport().pages)
+
+    dibs.UIRenderStats.SetEnabled(true)
+    local startedAt = dibs.UIRenderStats.Begin()
+    assert_true(dibs.UIRenderStats.Record("Officer", "overview", startedAt))
+    startedAt = dibs.UIRenderStats.Begin()
+    assert_true(dibs.UIRenderStats.Record("Officer", "overview", startedAt))
+    local report = dibs.UIRenderStats.GetReport()
+    assert_equal(1, #report.pages)
+    assert_equal("Officer", report.pages[1].kind)
+    assert_equal("overview", report.pages[1].page)
+    assert_equal(2, report.pages[1].count)
+    assert_equal(2, report.pages[1].lastMs)
+    assert_equal(2, report.pages[1].averageMs)
+    assert_equal(2, report.pages[1].maxMs)
+
+    dibs.UIRenderStats.Reset()
+    assert_equal(0, #dibs.UIRenderStats.GetReport().pages)
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = timer
+  end)
+
+  it("keeps collecting later Player page timings and reports when the session counter limit is reached", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local timer = _G.debugprofilestop
+    register_reset(function() _G.debugprofilestop = timer end)
+    local clock = 0
+    _G.debugprofilestop = function() clock = clock + 1; return clock end
+    dibs.UIRenderStats.SetEnabled(true)
+
+    for index = 1, 128 do
+      local startedAt = dibs.UIRenderStats.Begin()
+      assert_true(dibs.UIRenderStats.Record("Nested", "counter-" .. tostring(index), startedAt))
+    end
+    local startedAt = dibs.UIRenderStats.Begin()
+    assert_true(dibs.UIRenderStats.Record("Player", "requests", startedAt))
+    local report = dibs.UIRenderStats.GetReport()
+    assert_equal(129, #report.pages)
+    assert_equal(512, report.maxPages)
+
+    for index = 130, 512 do
+      startedAt = dibs.UIRenderStats.Begin()
+      assert_true(dibs.UIRenderStats.Record("Nested", "counter-" .. tostring(index), startedAt))
+    end
+    startedAt = dibs.UIRenderStats.Begin()
+    assert_false(dibs.UIRenderStats.Record("Overflow", "counter", startedAt),
+      "the counter collection must stay bounded")
+    report = dibs.UIRenderStats.GetReport()
+    assert_equal(512, #report.pages)
+    assert_equal(1, report.droppedPageCount)
+    local requestsRecorded = false
+    for _, row in ipairs(report.pages) do
+      if row.kind == "Player" and row.page == "requests" then requestsRecorded = true end
+    end
+    assert_true(requestsRecorded)
+    assert_true(dibs.UIRenderStats.FormatReport():find("1 new timing counters were omitted", 1, true) ~= nil,
+      "the report should disclose counters rejected by the session limit")
+    dibs.UIRenderStats.SetEnabled(false)
+  end)
+
+  it("reports sampled global Lua heap deltas for each timing counter", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local timer, collect = _G.debugprofilestop, _G.collectgarbage
+    register_reset(function()
+      _G.debugprofilestop = timer
+      _G.collectgarbage = collect
+    end)
+    local clock, heap = 0, 128
+    _G.debugprofilestop = function() clock = clock + 5; return clock end
+    _G.collectgarbage = function(option)
+      assert_equal("count", option)
+      return heap
+    end
+
+    dibs.UIRenderStats.SetEnabled(true)
+    local startedAt = dibs.UIRenderStats.Begin()
+    heap = 160
+    assert_true(dibs.UIRenderStats.Record("Officer", "overview", startedAt))
+    local row = dibs.UIRenderStats.GetReport().pages[1]
+    assert_equal(1, row.heapSampleCount)
+    assert_equal(32, row.heapDeltaLastKB)
+    assert_equal(32, row.heapDeltaAverageKB)
+    assert_equal(32, row.heapDeltaMaxKB)
+    assert_equal(32, row.heapDeltaTotalKB)
+    assert_true(dibs.UIRenderStats.FormatReport():find("Lua heap ΔKB", 1, true) ~= nil)
+    assert_true(dibs.UIRenderStats.FormatReport():find("last=32.00", 1, true) ~= nil)
+    dibs.UIRenderStats.SetEnabled(false)
+  end)
+
+  it("builds a complete copyable report for a selected category and opens from the slash command", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local timer = _G.debugprofilestop
+    register_reset(function() _G.debugprofilestop = timer end)
+    local clock = 0
+    _G.debugprofilestop = function()
+      clock = clock + 1
+      return clock
+    end
+    dibs.UIRenderStats.SetEnabled(true)
+    for index = 1, 25 do
+      local startedAt = dibs.UIRenderStats.Begin()
+      dibs.UIRenderStats.Record("Officer data", "page-" .. index, startedAt)
+    end
+
+    local selected = dibs.PerfUI.BuildReportText("Officer data")
+    assert_true(selected:find("Officer data / page-25", 1, true) ~= nil)
+    assert_equal(28, select(2, selected:gsub("\n", "")) + 1)
+
+    local shell = dibs.PerfUI.Open()
+    assert_not_nil(shell)
+    assert_not_nil(shell.window)
+    assert_equal(shell, dibs.PerfUI.Open())
+    dibs.HandleSlashCommand("perf window")
+    assert_true(dibs.UIRenderStats.IsEnabled())
+    dibs.UIRenderStats.SetEnabled(false)
+  end)
+
+  it("counts actual Officer and Player page renders separately", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local timer = _G.debugprofilestop
+    register_reset(function() _G.debugprofilestop = timer end)
+    local previousChat = _G.DEFAULT_CHAT_FRAME
+    register_reset(function() _G.DEFAULT_CHAT_FRAME = previousChat end)
+    local clock = 0
+    _G.debugprofilestop = function()
+      clock = clock + 1
+      return clock
+    end
+    local messages = {}
+    _G.DEFAULT_CHAT_FRAME = { AddMessage = function(_, value) messages[#messages + 1] = value end }
+    dibs.HandleSlashCommand("perf reset")
+    dibs.HandleSlashCommand("perf on")
+
+    local originalPagedView = dibs.OfficerUI.GetPagedView
+    local rankRouteUsedLedgerView = false
+    dibs.OfficerUI.GetPagedView = function(view, ...)
+      if view == "ranks" then rankRouteUsedLedgerView = true end
+      return originalPagedView(view, ...)
+    end
+    local officer = dibs.OfficerUI.CreateWindow("overview")
+    officer:ActivateRoute("ranks")
+    officer:ActivateRoute("integration")
+    dibs.OfficerUI.GetPagedView = originalPagedView
+    assert_false(rankRouteUsedLedgerView,
+      "Rank Rules route should render rank configuration instead of the generic player ledger")
+    local player = dibs.PlayerUI.Show()
+    assert_not_nil(player)
+    dibs.PlayerUI.GetSummary(nil, nil, {
+      includeAcquisitions = false, includeEligibility = false, includeModePolicy = false,
+    })
+    dibs.PlayerUI.GetViewModel(nil, nil, nil, { includeHistory = false })
+    dibs.PlayerUI.GetViewModel(nil, nil, nil, {
+      includeHistory = false, pagePreDibHistory = 1,
+    })
+    dibs.PlayerUI.GetViewModel(nil, nil, nil, {
+      includeHistory = false, pagePreDibHistory = 1,
+    })
+    dibs.PlayerUI.GetHistoryViewModel(nil, nil, nil, 1, 20)
+    player.playerTab = "requests"
+    player:Refresh()
+
+    local byKey = {}
+    for _, row in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      byKey[row.kind .. ":" .. row.page] = row
+    end
+    assert_equal(1, byKey["Officer:overview"].count)
+    assert_equal(1, byKey["Officer:ranks"].count)
+    assert_true(byKey["AceConfig:RCLootCouncil"] ~= nil,
+      "AceConfig page rendering should be measured separately from the Officer route")
+    assert_true(byKey["Player:my-dibs"] ~= nil,
+      "PlayerUI.Show should record the active Player page render")
+    assert_equal(1, byKey["Player:my-dibs"].count)
+    assert_true(byKey["Player data:summary"] ~= nil,
+      "Player summary computation should be timed separately")
+    assert_true(byKey["Player data:view-model"] ~= nil,
+      "Player view-model computation should be timed separately")
+    assert_true(byKey["Player data:history-view-model"] ~= nil,
+      "Player history computation should be timed separately")
+    assert_true(byKey["Player data:predib-history"] ~= nil,
+      "Pre-Dibs history projection should be timed separately")
+    assert_true(byKey["Player data:predib-page-hit"] ~= nil,
+      "repeated Player page renders should report a bounded page-cache hit")
+    assert_true(byKey["Player data:predib-ui-summary-hit"] ~= nil,
+      "repeated Player page renders should report a UI request-summary cache hit")
+    assert_true(byKey["Pre-Dibs data:history-index-hit"] ~= nil,
+      "Pre-Dibs lookup should report whether its revisioned history index was reused")
+    assert_true(byKey["Player data:report-transactions"] ~= nil,
+      "Report transaction choices should be timed separately")
+    assert_true(byKey["Player data:report-history-choices"] ~= nil,
+      "Report history choices should be timed separately")
+    assert_true(byKey["Player data:report-transaction-labels"] ~= nil,
+      "Report transaction labels should be timed separately")
+    assert_true(byKey["Player data:request-list"] ~= nil,
+      "Request projection should be timed separately")
+    assert_true(byKey["Player UI:clear"] ~= nil,
+      "Player page widget release should be timed separately")
+    assert_true(byKey["Player UI:layout-flush"] ~= nil,
+      "Player page layout flush should be timed separately")
+    assert_true(byKey["UI table:add-table"] ~= nil,
+      "table widget construction should be timed separately")
+    assert_true(byKey["UI widget:create"] ~= nil,
+      "individual AceGUI widget construction should be timed separately")
+    assert_true(byKey["Officer data:dashboard"] ~= nil,
+      "Officer dashboard projection should be timed separately")
+    assert_true(byKey["Officer data:season-statistics"] ~= nil,
+      "Officer season statistics should be timed separately")
+
+    dibs.HandleSlashCommand("perf report")
+    local printed = table.concat(messages, "\n")
+    assert_true(printed:find("Officer / overview: count=1", 1, true) ~= nil)
+    assert_true(printed:find("total=", 1, true) ~= nil)
+    assert_true(printed:find("Player / my-dibs: count=1", 1, true) ~= nil)
+    messages = {}
+    dibs.HandleSlashCommand("perf report rank")
+    printed = table.concat(messages, "\n")
+    assert_true(printed:find("Officer / ranks: count=1", 1, true) ~= nil)
+    assert_true(printed:find("Player / my-dibs", 1, true) == nil)
+    dibs.HandleSlashCommand("perf off")
+    assert_false(dibs.UIRenderStats.IsEnabled())
+  end)
+end)

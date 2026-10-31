@@ -160,6 +160,29 @@ describe("Guild active ledger imposed through operational policy", function()
     assert_equal(imposed, dibs.MultiLedger.GetActiveLedgerId())
   end)
 
+  it("builds toolbar ledger values from an existing snapshot without resolving it again", function()
+    local dibs = load(); adoptGovernance(dibs)
+    local originalGetLedgers = dibs.MultiLedger.GetLedgers
+    local originalGetActiveLedgerId = dibs.MultiLedger.GetActiveLedgerId
+    local originalGetViewLedgerId = dibs.MultiLedger.GetViewLedgerId
+    dibs.MultiLedger.GetLedgers = function() error("ledger snapshot should be reused") end
+    dibs.MultiLedger.GetActiveLedgerId = function() error("active ledger should be reused") end
+    dibs.MultiLedger.GetViewLedgerId = function() error("view ledger should be reused") end
+
+    local values = dibs.AceGUI.GetLedgerDropdownValues({
+      { id = "guild-primary", name = "Primary", status = "APPROVED", isDefault = true },
+      { id = "season-2", name = "Season 2", status = "APPROVED" },
+      { id = "pending", name = "Pending", status = "PENDING" },
+    }, "season-2", "guild-primary")
+
+    assert_equal("Primary", values["guild-primary"])
+    assert_equal("Season 2 (Active)", values["season-2"])
+    assert_equal(nil, values.pending)
+    dibs.MultiLedger.GetLedgers = originalGetLedgers
+    dibs.MultiLedger.GetActiveLedgerId = originalGetActiveLedgerId
+    dibs.MultiLedger.GetViewLedgerId = originalGetViewLedgerId
+  end)
+
   it("reports guild sync failures and retries without creating another policy revision", function()
     local dibs = load(); adoptGovernance(dibs)
     local other = approvedLedger(dibs, "Other")

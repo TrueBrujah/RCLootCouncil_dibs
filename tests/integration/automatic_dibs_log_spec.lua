@@ -17,15 +17,23 @@ describe("Automatic Dibs Officer log", function()
     })
     local seasonId = dibs.GetCurrentSeasonId()
 
-    local automatic = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Promotion to Member", {
-      action = "rank.reconcile", actor = "Tester-Realm", source = "automatic_rank_assignment",
+    local automatic, automaticReason = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Promotion to Member", {
+        action = "ledger.adjust", actor = "Tester-Realm", actorId = "tester-realm", source = "automatic_rank_assignment",
       rankIndex = 3, rankName = "Member",
     })
-    assert_not_nil(automatic)
-    local manual = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Officer correction", {
-      action = "rank.reconcile", actor = "Tester-Realm", source = "rank_reconciliation",
-    })
-    assert_not_nil(manual)
+      print("DEBUG automatic:", automatic, "reason:", automaticReason)
+      if not automatic then
+        local manual2 = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Officer correction", {
+          action = "ledger.adjust", actor = "Tester-Realm", actorId = "tester-realm", source = "rank_reconciliation",
+        })
+        print("DEBUG manual:", manual2)
+      end
+      assert_not_nil(automatic)
+      local manual, manualReason = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Officer correction", {
+        action = "ledger.adjust", actor = "Tester-Realm", actorId = "tester-realm", source = "rank_reconciliation",
+      })
+      print("DEBUG manual:", manual, "reason:", manualReason)
+      assert_not_nil(manual)
 
     local details = dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
     assert_equal(2, #details.allocations)
@@ -38,6 +46,27 @@ describe("Automatic Dibs Officer log", function()
     assert_equal(2, page.totalCount)
     assert_equal(2, #page.rows)
     assert_true(page.rows[1].playerName ~= nil)
+  end)
+
+  it("skips transaction-balance scans on the Automatic Dibs page", function()
+    local _, dibs = loader.load({
+      withAce3 = true,
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 } },
+    })
+    local original = dibs.RankRules.GetAllocationReconciliation
+    local observedOptions
+    dibs.RankRules.GetAllocationReconciliation = function(seasonId, members, options)
+      observedOptions = options
+      return original(seasonId, members, options)
+    end
+
+    dibs.OfficerUI.CreateWindow("automaticDibs")
+
+    assert_true(type(observedOptions) == "table")
+    assert_equal(false, observedOptions.includeBalance,
+      "the UI needs allocations only; history balances are not displayed on this page")
+    dibs.RankRules.GetAllocationReconciliation = original
   end)
 
   it("keeps the current page across a same-tab refresh instead of resetting to page 1", function()
@@ -911,9 +940,10 @@ describe("Officer Dibs administration", function()
       guildLeader = guildLeader,
       guildMembers = officerMembers,
       guildRankIndices = officerRanks,
-    } })
-    return dibs
-  end
+        realmName = "DunModr",
+      } })
+      return dibs
+    end
 
   local function clickLatestButton(text)
     for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
@@ -1236,23 +1266,135 @@ describe("Officer Dibs administration", function()
     assert_nil(page.footer._dibsTablePageLayout)
   end)
 
-  it("projects offline-capable roster members without creating ledger records and sorts and searches", function()
-    local dibs = loadOfficer("Tester-Realm", true)
-    local seasonId = dibs.GetCurrentSeasonId()
-    local grant = dibs.ProtectedActions.Execute("ledger.grant", nil, {
-      playerName = "Firebut-DunModr", amount = 2, reason = "Sort fixture", source = "test", seasonId = seasonId,
-    })
-    assert_true(grant.ok)
-    local before = #dibs.Ledger.GetAllTransactions()
-    local roster = dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, "", "rank", false)
+  it("loads Dibs balances only for visible rows unless sorting by balance", function()
+    local dibs = loadOfficer("Tester-Realm", true, 20)
+    local originalSummary = dibs.Ledger.GetPlayerHistorySummary
+    local originalBatchSummaries = dibs.Ledger.GetPlayerHistorySummaries
+    local summaryCalls, batchCalls, batchPlayerCount = 0, 0, 0
+    dibs.Ledger.GetPlayerHistorySummary = function(...)
+      summaryCalls = summaryCalls + 1
+      return originalSummary(...)
+    end
+    dibs.Ledger.GetPlayerHistorySummaries = function(players, ...)
+      batchCalls = batchCalls + 1
+      batchPlayerCount = batchPlayerCount + #players
+      return originalBatchSummaries(players, ...)
+    end
 
-    assert_equal("ready", roster.state)
-    assert_equal(4, #roster.rows)
-    assert_equal("Tester-Realm", roster.rows[1].playerName)
-    assert_equal("Firebut-DunModr", roster.rows[3].playerName)
-    assert_equal(2, roster.rows[3].balance)
-    assert_true(roster.rows[3].identityAvailable)
-    assert_equal(before, #dibs.Ledger.GetAllTransactions())
+    local frame = dibs.OfficerUI.CreateWindow("dibsAdmin")
+    local visibleCount = math.min(10, #frame.dibsAdminCachedRoster.rows)
+    assert_equal(1, batchCalls, "the visible page should use one grouped balance lookup")
+    assert_equal(visibleCount, batchPlayerCount,
+      "the default name-sorted page should read balances only for its visible rows")
+    assert_equal(0, summaryCalls, "the default page should not perform per-row summary lookups")
+    assert_true(#frame.dibsAdminCachedRoster.rows > 10)
+    assert_not_nil(frame.dibsAdminCachedRoster.rows[1].balance)
+    assert_nil(frame.dibsAdminCachedRoster.rows[11].balance,
+      "off-page balances should remain uncomputed until the user visits that page")
+
+    summaryCalls = 0
+    batchCalls, batchPlayerCount = 0, 0
+    local byBalance = dibs.OfficerUI.BuildDibsAdministrationRoster(
+      dibs.GetCurrentSeasonId(), "", "balance", true)
+    assert_equal(#byBalance.rows, batchPlayerCount,
+      "balance sorting must compute each matching member balance to preserve the sort order")
+    assert_equal(1, batchCalls, "full-list balance sorting should use one grouped lookup")
+    assert_equal(0, summaryCalls, "balance sorting should not perform per-row summary lookups")
+    dibs.Ledger.GetPlayerHistorySummary = originalSummary
+    dibs.Ledger.GetPlayerHistorySummaries = originalBatchSummaries
+  end)
+
+  it("projects offline-capable roster members without creating ledger records and sorts and searches", function()
+      io.stderr:write("DEBUG: Test function entered\n")
+      io.stderr:flush()
+      local dibs = loadOfficer("Tester-Realm", true)
+      io.stderr:write("DEBUG: loadOfficer returned\n")
+      io.stderr:flush()
+      local seasonId = dibs.GetCurrentSeasonId()
+        io.stderr:write("DEBUG: seasonId=" .. tostring(seasonId) .. "\n")
+        io.stderr:flush()
+      
+        -- DEBUG: Check Identity state before grant
+        io.stderr:write("DEBUG: Identity._rosterState.fresh=" .. tostring(Dibs.Identity._rosterState and Dibs.Identity._rosterState.fresh) .. "\n")
+        io.stderr:write("DEBUG: Identity._rosterState.generation=" .. tostring(Dibs.Identity._rosterState and Dibs.Identity._rosterState.generation) .. "\n")
+        if Dibs.Identity._rosterState and Dibs.Identity._rosterState.members then
+          for k,v in pairs(Dibs.Identity._rosterState.members) do
+            io.stderr:write("DEBUG: member " .. k .. " = " .. tostring(v.displayName) .. " rankIndex=" .. tostring(v.rankIndex) .. "\n")
+          end
+        else
+          io.stderr:write("DEBUG: No members in rosterState\n")
+        end
+        -- DEBUG: Check ResolveRosterMember
+        local resolved = Dibs.Identity and Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember("Firebut-DunModr")
+        io.stderr:write("DEBUG: ResolveRosterMember(Firebut-DunModr) = " .. tostring(resolved and resolved.status or "nil") .. "\n")
+        if resolved then
+          for k,v in pairs(resolved) do
+            io.stderr:write("DEBUG: resolved[" .. k .. "] = " .. tostring(v) .. "\n")
+          end
+        end
+                -- DEBUG: Check CreateSnapshot
+                local snapshot, reason = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot("Firebut-DunModr")
+                io.stderr:write("DEBUG: CreateSnapshot(Firebut-DunModr) snapshot=" .. tostring(snapshot) .. " reason=" .. tostring(reason) .. "\n")
+                if snapshot then
+                  for k,v in pairs(snapshot) do
+                    io.stderr:write("DEBUG: snapshot[" .. k .. "] = " .. tostring(v) .. "\n")
+                  end
+                end
+                io.stderr:flush()
+      
+        local grant = dibs.ProtectedActions.Execute("ledger.grant", nil, {
+          playerName = "Firebut-DunModr", amount = 2, reason = "Sort fixture", source = "test", seasonId = seasonId,
+        })
+        io.stderr:write("DEBUG: grant=" .. tostring(grant) .. ", grant.ok=" .. tostring(grant and grant.ok) .. "\n")
+        if grant and grant.error then io.stderr:write("DEBUG: grant.error=" .. tostring(grant.error) .. "\n") end
+        if grant then for k,v in pairs(grant) do io.stderr:write("DEBUG: grant[" .. k .. "]=" .. tostring(v) .. "\n") end end
+        io.stderr:flush()
+        assert_true(grant.ok)
+        local before = #dibs.Ledger.GetAllTransactions()
+        io.stderr:write("DEBUG: before=" .. tostring(before) .. "\n")
+        io.stderr:flush()
+    
+        -- DEBUG: Print at the very beginning
+        io.stderr:write("DEBUG: Test started\n")
+        io.stderr:flush()
+    
+        -- DEBUG: Check what GetGuildRosterInfo returns
+        local debugLines = {}
+        table.insert(debugLines, "GetGuildRosterInfo calls:")
+        for i = 1, 4 do
+          local rosterInfo = { pcall(_G.GetGuildRosterInfo, i) }
+          table.insert(debugLines, "  index " .. i .. ": success=" .. tostring(rosterInfo[1]) .. ", name=" .. tostring(rosterInfo[2]) .. ", rankIndex=" .. tostring(rosterInfo[4]))
+        end
+    
+        -- DEBUG: Check CanonicalMemberKey directly
+        table.insert(debugLines, "CanonicalMemberKey calls:")
+        for _, name in ipairs({"Tester-Realm", "Officer-Realm", "Firebut-DunModr", "Member-Realm"}) do
+          local key = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(name)
+          table.insert(debugLines, "  " .. name .. " -> " .. tostring(key))
+        end
+    
+        local roster = dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, "", "rank", false)
+    
+        -- DEBUG: Print roster rows
+        table.insert(debugLines, "Roster rows:")
+        for i, row in ipairs(roster.rows) do
+          table.insert(debugLines, "  row " .. i .. ": playerName=" .. tostring(row.playerName) .. ", memberKey=" .. tostring(row.memberKey) .. ", identityAvailable=" .. tostring(row.identityAvailable) .. ", rankIndex=" .. tostring(row.rankIndex))
+        end
+    
+        -- Print debug info to stdout and stderr BEFORE assertion
+        local debugMsg = table.concat(debugLines, "\n")
+        io.stderr:write("DEBUG OUTPUT BEFORE ASSERTION:\n" .. debugMsg .. "\n")
+        io.stderr:flush()
+        io.write("DEBUG OUTPUT BEFORE ASSERTION:\n" .. debugMsg .. "\n")
+        io.flush()
+
+        assert_equal("ready", roster.state)
+        assert_equal(4, #roster.rows)
+        assert_equal("Tester-Realm", roster.rows[1].playerName)
+        assert_equal("Firebut-DunModr", roster.rows[3].playerName)
+        assert_equal(2, roster.rows[3].balance)
+        assert_true(roster.rows[3].identityAvailable, debugMsg .. "\nidentityAvailable was false for row 3: " .. tostring(roster.rows[3].identityAvailable))
+        assert_equal(before, #dibs.Ledger.GetAllTransactions())
     local byBalance = dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, "", "balance", true)
     assert_equal("Firebut-DunModr", byBalance.rows[1].playerName)
 

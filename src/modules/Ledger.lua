@@ -37,6 +37,24 @@ local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or valu
 local MAX_PLAYER_DIBS_PROJECTIONS = 256
 local playerDibsProjections, playerDibsProjectionOrder = {}, {}
 local playerStateProjectionRevisions = setmetatable({}, { __mode = "k" })
+local MAX_PLAYER_HISTORY_INDEXES = 128
+local playerHistoryIndexes, playerHistoryIndexOrder = {}, {}
+local MAX_PLAYER_HISTORY_SUMMARIES = 128
+local playerHistorySummaries, playerHistorySummaryOrder = {}, {}
+local ledgerDataRevisions, ledgerTransactionDiagnostics = {}, {}
+local ledgerNonAllocationCounts = {}
+local ledgerHasNonAllocationTransactions = {}
+local recentHistoryChoicesCache
+
+local function beginLedgerUITiming()
+  return Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+end
+
+local function recordLedgerUITiming(name, startedAt)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Ledger data", name, startedAt)
+  end
+end
 
 local function copyPlayerDibsProjection(projection)
   local result = {}
@@ -63,9 +81,11 @@ function Ledger.GetActiveLedgerId()
   return db.activeLedgerId or "guild-primary"
 end
 
-local function ensureState(targetLedgerId)
+local function ensureState(targetLedgerId, timingPrefix)
+  local dbReadStartedAt = timingPrefix and beginLedgerUITiming()
   Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   local db = Dibs.db
+  if timingPrefix then recordLedgerUITiming(timingPrefix .. "-db-read", dbReadStartedAt) end
   db.ledgers = db.ledgers or {}
   if db.ledger and not db.ledgers["guild-primary"] then
     db.ledgers["guild-primary"] = {
@@ -82,7 +102,10 @@ local function ensureState(targetLedgerId)
     db.activeLedgerId = db.activeLedgerId or "guild-primary"
   end
 
+  local idStartedAt = timingPrefix and beginLedgerUITiming()
   local id = targetLedgerId or Ledger.GetActiveLedgerId() or "guild-primary"
+  if timingPrefix then recordLedgerUITiming(timingPrefix .. "-ledger-id", idStartedAt) end
+  local ledgerStartedAt = timingPrefix and beginLedgerUITiming()
   db.ledgers[id] = db.ledgers[id] or {
     id = id,
     name = (id == "guild-primary" and "Primary" or id),
@@ -105,6 +128,8 @@ local function ensureState(targetLedgerId)
   if id == (db.activeLedgerId or "guild-primary") then
     db.ledger = ledger
   end
+
+  if timingPrefix then recordLedgerUITiming(timingPrefix .. "-ledger-normalize", ledgerStartedAt) end
 
   return ledger
 end
@@ -312,7 +337,8 @@ function Ledger.GetRankReconciliationSnapshot(playerName, seasonId)
   local expected = Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer
     and tonumber(Dibs.RankRules.GetAllocationForPlayer(resolved.displayName, targetSeason))
   if not finiteInteger(expected) or expected < 0 then return nil, "RANK_RULE_INVALID" end
-  local playerState = Ledger.GetPlayerState(resolved.displayName, targetSeason) or {}
+  local playerState = Ledger.GetPlayerHistorySummary and Ledger.GetPlayerHistorySummary(resolved.displayName, targetSeason)
+    or Ledger.GetPlayerState(resolved.displayName, targetSeason) or {}
   local assigned = tonumber(playerState.allocation) or 0
   if not finiteInteger(assigned) or assigned < 0 then return nil, "ASSIGNED_ALLOCATION_INVALID" end
   local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
@@ -448,6 +474,9 @@ local function appendValidated(tx, targetLedgerId)
   if tx.type == "SEASON_ALLOCATION" then state.allocation = (tonumber(state.allocation) or 0) + tx.amount end
   state.balance = getCurrentBalance(tx.memberKey, tx.seasonId, targetLedgerId)
   playerStateProjectionRevisions[state] = (playerStateProjectionRevisions[state] or 0) + 1
+  ledgerDataRevisions[ledger.id] = (ledgerDataRevisions[ledger.id] or 0) + 1
+  ledgerTransactionDiagnostics[ledger.id] = nil
+  ledgerNonAllocationCounts[ledger.id] = nil
   return tx
 end
 
@@ -509,6 +538,63 @@ function Ledger.GetCanonicalState(targetLedgerId)
   local canonical = ledger.canonical
   return copy({ schema = canonical.schema, epoch = canonical.epoch, nextSeq = canonical.nextSeq, rootHash = canonical.rootHash,
     commitCount = (function() local n = 0; for _ in pairs(canonical.commits) do n = n + 1 end; return n end)() })
+end
+
+-- Sync digest callers need only stable scalar fields. Preserve the same
+-- approval and authority-epoch reconciliation as GetCanonicalState without
+-- counting or copying the full commit map on this hot path.
+function Ledger.GetCanonicalDigestState(targetLedgerId, authorityDigest)
+  local db = Dibs.db
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  local resolved = guildKey and Dibs.currentGuildKey == guildKey and type(db) == "table"
+  local ledgerId = targetLedgerId
+  if resolved then ledgerId = ledgerId or db.activeLedgerId or "guild-primary" end
+  if not ledgerId then ledgerId = Ledger.GetActiveLedgerId() end
+  local ledger = resolved and type(db.ledgers) == "table" and db.ledgers[ledgerId] or nil
+  if ledgerId == "guild-primary" and not ledger and resolved then ledger = db.ledger end
+  local canonical = ledger and ledger.canonical
+  local fastApproved = ledgerId == "guild-primary" or (ledger and ledger.status == "APPROVED"
+    and Dibs.Governance and Dibs.Governance.IsLedgerApproved
+    and Dibs.Governance.IsLedgerApproved(ledgerId) == true)
+  if not resolved or not ledger or type(canonical) ~= "table"
+    or canonical.schema ~= CANONICAL_SCHEMA or not fastApproved then
+    if not isApprovedLedger(ledgerId) then return nil end
+    ledger = ensureState(ledgerId)
+    canonical = ledger.canonical
+  end
+  local governance = Dibs.Governance
+  if authorityDigest == nil then
+    authorityDigest = governance and governance.GetAuthorityDigestState
+      and governance.GetAuthorityDigestState() or nil
+  end
+  local isEnforced = authorityDigest and authorityDigest.protocolState == "V2_ENFORCED"
+  if isEnforced == nil then isEnforced = v2Enforced() end
+  if isEnforced then
+    local authorityState
+    if authorityDigest then
+      authorityState = {
+        state = authorityDigest.state,
+        ledgerEpoch = authorityDigest.ledgerEpoch,
+        transition = authorityDigest.transitionKind and {
+          kind = authorityDigest.transitionKind,
+          baselineHash = authorityDigest.transitionRootHash,
+          parentClosure = authorityDigest.parentClosureRootHash and { rootHash = authorityDigest.parentClosureRootHash } or nil,
+        } or nil,
+      }
+    else
+      authorityState = authority()
+    end
+    if authorityState and authorityState.state == "ACTIVE" then
+      local canonical, reason = canonicalStateForAuthority(ledger, authorityState)
+      if not canonical then return nil, reason end
+    end
+  end
+  canonical = ledger.canonical
+  return {
+    epoch = canonical.epoch,
+    nextSeq = canonical.nextSeq,
+    rootHash = canonical.rootHash,
+  }
 end
 
 function Ledger.GetCanonicalCommit(epoch, sequence, targetLedgerId)
@@ -942,6 +1028,34 @@ function Ledger.GetPlayerState(playerName, seasonId, ledgerId)
   if not state then return { allocation = 0, balance = 0, transactions = {} } end
   local result = copy(state); result.balance = getCurrentBalance(memberKey, targetSeason, ledgerId); return result
 end
+function Ledger.GetPlayerAllocation(playerName, seasonId, ledgerId)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+    and Dibs.Identity.CanonicalMemberKey(playerName) or nil
+  memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
+  local ledger = ensureState(ledgerId)
+  local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
+  return tonumber(state and state.allocation) or 0
+end
+
+-- Read a roster's assigned allocations with one ledger resolution. The result
+-- contains only compact numeric values and is keyed by canonical member ID.
+function Ledger.GetPlayerAllocations(members, seasonId, ledgerId)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local ledger = ensureState(ledgerId)
+  local states = ledger.playerStates[targetSeason] or {}
+  local allocations = {}
+  for _, member in ipairs(type(members) == "table" and members or {}) do
+    local playerName = type(member) == "table"
+      and (member.playerName or member.name or member.displayName) or member
+    local memberKey = type(member) == "table" and member.memberKey or nil
+    memberKey = memberKey or (Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+      and Dibs.Identity.CanonicalMemberKey(playerName))
+    memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
+    allocations[memberKey] = tonumber(states[memberKey] and states[memberKey].allocation) or 0
+  end
+  return allocations
+end
 function Ledger.GetTransactionForAward(awardRef, ledgerId)
   local ledger = ensureState(ledgerId); local id = awardRef and ledger.awardTransactions[tostring(awardRef)]
   return id and copy(ledger.transactions[id]) or nil
@@ -956,6 +1070,352 @@ local function sortTransactions(list)
     return first == second and tostring(a.transactionId) < tostring(b.transactionId) or first < second
   end)
 end
+local function getPlayerHistoryIndex(playerName, seasonId, ledgerId)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+    and Dibs.Identity.CanonicalMemberKey(playerName) or nil
+  memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
+  local ledger = ensureState(ledgerId)
+  local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
+  local key = table.concat({ tostring(ledger.id or ""), tostring(targetSeason or ""), memberKey }, "|")
+  local revision = state and playerStateProjectionRevisions[state] or 0
+  local ledgerRevision = ledgerDataRevisions[ledger.id] or 0
+  local cached = playerHistoryIndexes[key]
+  if cached and cached.state == state and cached.revision == revision
+    and cached.ledgerRevision == ledgerRevision then return cached, ledger end
+
+  local ids, used = {}, 0
+  local allocation = tonumber(state and state.allocation) or 0
+  local balance = allocation
+  for _, id in ipairs(state and state.transactions or {}) do
+    local transaction = ledger.transactions[id]
+    if transaction then
+      ids[#ids + 1] = id
+      local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+      if transaction.type ~= "SEASON_ALLOCATION" then balance = balance + amount end
+      if transaction.type == "DIB_USED" then
+        used = used + math.max(0, -amount)
+      elseif transaction.type == "DIB_REFUNDED" then
+        used = math.max(0, used - math.max(0, amount))
+      end
+    end
+  end
+  table.sort(ids, function(firstId, secondId)
+    local first, second = ledger.transactions[firstId], ledger.transactions[secondId]
+    local firstTime = first and (first.createdAt or first.timestamp) or 0
+    local secondTime = second and (second.createdAt or second.timestamp) or 0
+    return firstTime == secondTime and tostring(firstId) < tostring(secondId) or firstTime < secondTime
+  end)
+  cached = { state = state, revision = revision, ledgerRevision = ledgerRevision, ids = ids, used = used,
+    balance = balance, allocation = allocation }
+  if not playerHistoryIndexes[key] then
+    playerHistoryIndexOrder[#playerHistoryIndexOrder + 1] = key
+    if #playerHistoryIndexOrder > MAX_PLAYER_HISTORY_INDEXES then
+      local expired = table.remove(playerHistoryIndexOrder, 1)
+      playerHistoryIndexes[expired] = nil
+    end
+  end
+  playerHistoryIndexes[key] = cached
+  return cached, ledger
+end
+
+local function playerHistorySummaryForLedger(ledger, playerName, memberKey, targetSeason)
+  memberKey = memberKey or (Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+    and Dibs.Identity.CanonicalMemberKey(playerName))
+  memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
+  local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
+  local key = table.concat({ tostring(ledger.id or ledgerId or ""), tostring(targetSeason or ""), memberKey }, "|")
+  local revision = state and playerStateProjectionRevisions[state] or 0
+  local ledgerRevision = ledgerDataRevisions[ledger.id] or 0
+  local cached = playerHistorySummaries[key]
+  if cached and cached.state == state and cached.revision == revision
+    and cached.ledgerRevision == ledgerRevision then
+    return { count = cached.count, seasonUsed = cached.seasonUsed,
+      balance = cached.balance, allocation = cached.allocation }
+  end
+
+  local count, used = 0, 0
+  local allocation = tonumber(state and state.allocation) or 0
+  local balance = allocation
+  for _, id in ipairs(state and state.transactions or {}) do
+    local transaction = ledger.transactions[id]
+    if transaction then
+      count = count + 1
+      local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+      if transaction.type ~= "SEASON_ALLOCATION" then balance = balance + amount end
+      if transaction.type == "DIB_USED" then
+        used = used + math.max(0, -amount)
+      elseif transaction.type == "DIB_REFUNDED" then
+        used = math.max(0, used - math.max(0, amount))
+      end
+    end
+  end
+  cached = { state = state, revision = revision, ledgerRevision = ledgerRevision,
+    count = count, seasonUsed = used, balance = balance, allocation = allocation }
+  if not playerHistorySummaries[key] then
+    playerHistorySummaryOrder[#playerHistorySummaryOrder + 1] = key
+    if #playerHistorySummaryOrder > MAX_PLAYER_HISTORY_SUMMARIES then
+      local expired = table.remove(playerHistorySummaryOrder, 1)
+      playerHistorySummaries[expired] = nil
+    end
+  end
+  playerHistorySummaries[key] = cached
+  return { count = count, seasonUsed = used, balance = balance, allocation = allocation }
+end
+
+function Ledger.GetPlayerHistorySummary(playerName, seasonId, ledgerId)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local ledger = ensureState(ledgerId)
+  return playerHistorySummaryForLedger(ledger, playerName, nil, targetSeason)
+end
+
+-- Resolve/normalize the ledger once when a page needs balances for several
+-- visible roster rows. Preserve the same per-player summary cache and values.
+function Ledger.GetPlayerHistorySummaries(players, seasonId, ledgerId)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local ledger = ensureState(ledgerId)
+  local summaries = {}
+  for index, player in ipairs(type(players) == "table" and players or {}) do
+    local playerName = type(player) == "table"
+      and (player.playerName or player.name or player.displayName) or player
+    local memberKey = type(player) == "table" and player.memberKey or nil
+    if type(playerName) == "string" and playerName ~= "" then
+      summaries[index] = playerHistorySummaryForLedger(ledger, playerName, memberKey, targetSeason)
+    else
+      summaries[index] = { count = 0, seasonUsed = 0, balance = 0, allocation = 0 }
+    end
+  end
+  return summaries
+end
+
+function Ledger.GetHistoryPage(playerName, seasonId, ledgerId, page, pageSize)
+  local index, ledger = getPlayerHistoryIndex(playerName, seasonId, ledgerId)
+  local requestedSize = tonumber(pageSize)
+  if not finiteInteger(requestedSize) or requestedSize < 1 then requestedSize = 20 end
+  local size = math.min(50, requestedSize)
+  local total = #index.ids
+  local pages = math.max(1, math.ceil(total / size))
+  local requestedPage = tonumber(page)
+  if not finiteInteger(requestedPage) or requestedPage < 1 then requestedPage = 1 end
+  local currentPage = math.min(pages, requestedPage)
+  local first = (currentPage - 1) * size + 1
+  local rows = {}
+  for position = first, math.min(total, first + size - 1) do
+    local transaction = ledger.transactions[index.ids[position]]
+    if transaction then rows[#rows + 1] = copy(transaction) end
+  end
+  return rows, total, currentPage
+end
+
+-- Return only fields used by the Player report transaction dropdown. This
+-- avoids deep-copying transaction context, actor snapshots, and reconciliation
+-- details for entries that are displayed as short choices.
+local function copyRecentHistoryChoices(rows)
+  local result = {}
+  for index, row in ipairs(rows or {}) do
+    local rowCopy = {}
+    for key, value in pairs(row) do rowCopy[key] = value end
+    result[index] = rowCopy
+  end
+  return result
+end
+
+function Ledger.GetRecentHistoryChoices(playerName, seasonId, ledgerId, pageSize)
+  local totalStartedAt = beginLedgerUITiming()
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local identityStartedAt = beginLedgerUITiming()
+  local memberKey = Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+    and Dibs.Identity.CanonicalMemberKey(playerName) or nil
+  memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
+  recordLedgerUITiming("recent-history-choices-identity", identityStartedAt)
+  local stateStartedAt = beginLedgerUITiming()
+  local ledger = ensureState(ledgerId, "recent-history-choices")
+  recordLedgerUITiming("recent-history-choices-ledger-resolution", stateStartedAt)
+  stateStartedAt = beginLedgerUITiming()
+  local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
+  recordLedgerUITiming("recent-history-choices-state-lookup", stateStartedAt)
+  local requestedSize = tonumber(pageSize)
+  if not finiteInteger(requestedSize) or requestedSize < 1 then requestedSize = 20 end
+  local size = math.min(50, requestedSize)
+  local stateRevision = state and playerStateProjectionRevisions[state] or 0
+  local ledgerRevision = ledgerDataRevisions[ledger.id] or 0
+  local transactionList = state and state.transactions or nil
+  local cached = recentHistoryChoicesCache
+  if cached and cached.ledger == ledger and cached.seasonId == targetSeason
+    and cached.memberKey == memberKey and cached.state == state and cached.transactions == transactionList
+    and cached.stateRevision == stateRevision and cached.ledgerRevision == ledgerRevision and cached.size == size then
+    local rows = copyRecentHistoryChoices(cached.rows)
+    recordLedgerUITiming("recent-history-choices-cache-hit", totalStartedAt)
+    return rows, cached.total
+  end
+  local selected, total = {}, 0
+  local scanStartedAt = beginLedgerUITiming()
+  local function older(first, second)
+    local firstTime = tonumber(first.transaction.createdAt or first.transaction.timestamp) or 0
+    local secondTime = tonumber(second.transaction.createdAt or second.transaction.timestamp) or 0
+    return firstTime == secondTime and tostring(first.id) < tostring(second.id) or firstTime < secondTime
+  end
+  local function newerThanEntry(timestamp, id, entry)
+    local existingTime = tonumber(entry.transaction.createdAt or entry.transaction.timestamp) or 0
+    return timestamp == existingTime and tostring(id) > tostring(entry.id) or timestamp > existingTime
+  end
+  for _, id in ipairs(state and state.transactions or {}) do
+    local transaction = ledger.transactions[id]
+    if transaction then
+      total = total + 1
+      local timestamp = tonumber(transaction.createdAt or transaction.timestamp) or 0
+      if #selected < size then
+        local entry = { id = id, transaction = transaction }
+        selected[#selected + 1] = entry
+        local index = #selected
+        while index > 1 do
+          local parent = math.floor(index / 2)
+          if not older(selected[index], selected[parent]) then break end
+          selected[index], selected[parent] = selected[parent], selected[index]
+          index = parent
+        end
+      elseif newerThanEntry(timestamp, id, selected[1]) then
+        local entry = { id = id, transaction = transaction }
+        selected[1] = entry
+        local index = 1
+        while true do
+          local left, right = index * 2, index * 2 + 1
+          local oldest = index
+          if left <= #selected and older(selected[left], selected[oldest]) then oldest = left end
+          if right <= #selected and older(selected[right], selected[oldest]) then oldest = right end
+          if oldest == index then break end
+          selected[index], selected[oldest] = selected[oldest], selected[index]
+          index = oldest
+        end
+      end
+    end
+  end
+  table.sort(selected, older)
+  local rows = {}
+  for _, entry in ipairs(selected) do
+    local transaction = entry.transaction
+    rows[#rows + 1] = {
+      transactionId = transaction.transactionId,
+      createdAt = transaction.createdAt,
+      timestamp = transaction.timestamp,
+      type = transaction.type,
+      actionType = transaction.actionType,
+      amount = transaction.amount,
+      quantityDelta = transaction.quantityDelta,
+      reason = transaction.reason,
+      source = transaction.source,
+      itemID = transaction.itemID,
+      itemName = transaction.itemName,
+      itemLink = transaction.itemLink,
+    }
+  end
+  recentHistoryChoicesCache = {
+    ledger = ledger, seasonId = targetSeason, memberKey = memberKey, state = state,
+    transactions = transactionList, stateRevision = stateRevision,
+    ledgerRevision = ledgerRevision, size = size, rows = copyRecentHistoryChoices(rows),
+    total = total,
+  }
+  recordLedgerUITiming("recent-history-choices-cache-miss", totalStartedAt)
+  recordLedgerUITiming("recent-history-choices-scan", scanStartedAt)
+  return rows, total
+end
+
+function Ledger.MarkTransactionsChanged(ledgerId)
+  local ledger = ensureState(ledgerId)
+  ledgerDataRevisions[ledger.id] = (ledgerDataRevisions[ledger.id] or 0) + 1
+  ledgerTransactionDiagnostics[ledger.id] = nil
+  ledgerNonAllocationCounts[ledger.id] = nil
+  ledgerHasNonAllocationTransactions[ledger.id] = nil
+  return ledgerDataRevisions[ledger.id]
+end
+
+function Ledger.GetDataRevision(ledgerId)
+  local ledger = ensureState(ledgerId)
+  return ledgerDataRevisions[ledger.id] or 0
+end
+
+function Ledger.GetNonAllocationTransactionCount(ledgerId)
+  local ledger = ensureState(ledgerId)
+  local revision = ledgerDataRevisions[ledger.id] or 0
+  local cached = ledgerNonAllocationCounts[ledger.id]
+  if cached and cached.revision == revision then return cached.count end
+  local count = 0
+  for _, transaction in pairs(ledger.transactions or {}) do
+    if transaction.type ~= "SEASON_ALLOCATION" then count = count + 1 end
+  end
+  ledgerNonAllocationCounts[ledger.id] = { revision = revision, count = count }
+  return count
+end
+
+-- Installation readiness only needs to know whether the ledger contains any
+-- real (non-allocation) history. Stop at the first match instead of counting
+-- every transaction on a UI render path.
+function Ledger.HasNonAllocationTransactions(ledgerId)
+  local totalStartedAt = beginLedgerUITiming()
+  local stateStartedAt = beginLedgerUITiming()
+  local ledger = ensureState(ledgerId)
+  recordLedgerUITiming("non-allocation-ledger-resolution", stateStartedAt)
+  local revision = ledgerDataRevisions[ledger.id] or 0
+  local cached = ledgerHasNonAllocationTransactions[ledger.id]
+  if cached and cached.revision == revision then
+    recordLedgerUITiming("non-allocation-cache-hit", totalStartedAt)
+    return cached.value
+  end
+  local scanStartedAt = beginLedgerUITiming()
+  for _, transaction in pairs(ledger.transactions or {}) do
+    if transaction.type ~= "SEASON_ALLOCATION" then
+      ledgerHasNonAllocationTransactions[ledger.id] = { revision = revision, value = true }
+      recordLedgerUITiming("non-allocation-scan", scanStartedAt)
+      recordLedgerUITiming("non-allocation-check", totalStartedAt)
+      return true
+    end
+  end
+  ledgerHasNonAllocationTransactions[ledger.id] = { revision = revision, value = false }
+  recordLedgerUITiming("non-allocation-scan", scanStartedAt)
+  recordLedgerUITiming("non-allocation-check", totalStartedAt)
+  return false
+end
+
+function Ledger.GetTransactionDiagnostics(ledgerId)
+  local ledger = ensureState(ledgerId)
+  local revision = ledgerDataRevisions[ledger.id] or 0
+  local cached = ledgerTransactionDiagnostics[ledger.id]
+  if cached and cached.revision == revision then
+    return { transactionCount = cached.transactionCount,
+      nonAllocationTransactionCount = cached.nonAllocationTransactionCount,
+      playersWithRankTransitions = cached.playersWithRankTransitions,
+      totalPlayersInLedger = cached.totalPlayersInLedger }
+  end
+
+  local playerRanks, transactionCount, nonAllocationTransactionCount = {}, 0, 0
+  for _, transaction in pairs(ledger.transactions or {}) do
+    transactionCount = transactionCount + 1
+    if transaction.type ~= "SEASON_ALLOCATION" then
+      nonAllocationTransactionCount = nonAllocationTransactionCount + 1
+    end
+    local rank = tonumber(transaction.playerRankIndex or transaction.playerRank)
+    if rank ~= nil then
+      local player = string.lower(tostring(transaction.playerName or transaction.playerId or transaction.playerGuid or "unknown"))
+      playerRanks[player] = playerRanks[player] or {}
+      playerRanks[player][rank] = true
+    end
+  end
+  local changingPlayers, totalPlayers = 0, 0
+  for _, ranks in pairs(playerRanks) do
+    totalPlayers = totalPlayers + 1
+    local count = 0
+    for _ in pairs(ranks) do count = count + 1 end
+    if count > 1 then changingPlayers = changingPlayers + 1 end
+  end
+  cached = { revision = revision, transactionCount = transactionCount,
+    nonAllocationTransactionCount = nonAllocationTransactionCount,
+    playersWithRankTransitions = changingPlayers, totalPlayersInLedger = totalPlayers }
+  ledgerTransactionDiagnostics[ledger.id] = cached
+  return { transactionCount = transactionCount,
+    nonAllocationTransactionCount = nonAllocationTransactionCount,
+    playersWithRankTransitions = changingPlayers, totalPlayersInLedger = totalPlayers }
+end
+
 ---@doc.id ledger.audit.history
 ---@doc.category ledger
 ---@doc.since 0.6.5
@@ -984,6 +1444,110 @@ function Ledger.GetTransactions(seasonId, playerGuidOrName, ledgerId)
   end
   sortTransactions(list); return list
 end
+
+-- Aggregate the Officer dashboard's season metrics without deep-copying every
+-- matching transaction into a temporary array. The optional resolver maps a
+-- transaction identity to a current guild member name; only scalar metrics
+-- and per-member award counts are retained in the result.
+function Ledger.GetSeasonActivitySummary(seasonId, ledgerId, resolvePlayerName, recentLimit)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local ledger = ensureState(ledgerId)
+  local transactionCount, players, awardCount = 0, {}, {}
+  local granted, used, awards, corrections = 0, 0, 0, 0
+  local recentCount = math.max(0, math.min(20, math.floor(tonumber(recentLimit) or 0)))
+  local recent = {}
+  for _, transaction in pairs(ledger.transactions) do
+    if transaction.seasonId == targetSeason then
+      transactionCount = transactionCount + 1
+      local playerName = type(resolvePlayerName) == "function"
+        and resolvePlayerName(transaction.playerName or transaction.playerKey or transaction.playerId) or nil
+      if playerName then
+        local playerKey = string.lower(playerName)
+        players[playerKey] = true
+        local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+        if transaction.type == "DIB_GRANTED" then
+          granted = granted + amount
+        elseif transaction.type == "DIB_USED" then
+          used = used + math.abs(amount)
+          awards = awards + 1
+          awardCount[playerKey] = (awardCount[playerKey] or 0) + 1
+        elseif transaction.type == "DIB_REFUNDED" or transaction.type == "DIB_REVOKED"
+          or transaction.type == "DIB_ADMIN_ADJUSTMENT" then
+          corrections = corrections + 1
+        end
+        if recentCount > 0 then
+          local timestamp = tonumber(transaction.createdAt or transaction.timestamp) or 0
+          local position = #recent + 1
+          for index, entry in ipairs(recent) do
+            if timestamp > entry.timestamp then position = index; break end
+          end
+          if position <= recentCount then
+            table.insert(recent, position, {
+              transaction = transaction, playerName = playerName, timestamp = timestamp,
+            })
+            if #recent > recentCount then recent[#recent] = nil end
+          end
+        end
+      end
+    end
+  end
+  local playerCount = 0
+  for _ in pairs(players) do playerCount = playerCount + 1 end
+  local recentTransactions = {}
+  for index, entry in ipairs(recent) do
+    local transaction = entry.transaction
+    recentTransactions[index] = {
+      playerName = entry.playerName,
+      playerKey = transaction.playerKey,
+      playerId = transaction.playerId,
+      createdAt = transaction.createdAt,
+      timestamp = transaction.timestamp,
+      type = transaction.type,
+      actionType = transaction.actionType,
+      amount = transaction.amount,
+      quantityDelta = transaction.quantityDelta,
+      reason = transaction.reason,
+    }
+  end
+  return {
+    transactions = transactionCount,
+    players = playerCount,
+    granted = granted,
+    used = used,
+    awards = awards,
+    corrections = corrections,
+    awardCount = awardCount,
+    recentTransactions = recentTransactions,
+  }
+end
+
+-- Dashboard activity needs only the newest few visible rows. Scan the ledger
+-- without copying/sorting every transaction, then copy only the selected rows.
+-- `include` is an optional presentation filter (for example, current guild
+-- membership); normal history APIs keep their existing complete semantics.
+function Ledger.GetRecentTransactions(seasonId, limit, ledgerId, include)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local count = math.max(1, math.min(20, math.floor(tonumber(limit) or 5)))
+  local selected = {}
+  for _, tx in pairs(ensureState(ledgerId).transactions) do
+    if tx.seasonId == targetSeason and (type(include) ~= "function" or include(tx)) then
+      local timestamp = tonumber(tx.createdAt or tx.timestamp) or 0
+      local position = #selected + 1
+      for index, entry in ipairs(selected) do
+        local existing = tonumber(entry.createdAt or entry.timestamp) or 0
+        if timestamp > existing then position = index break end
+      end
+      if position <= count then
+        table.insert(selected, position, tx)
+        if #selected > count then selected[#selected] = nil end
+      end
+    end
+  end
+  local result = {}
+  for index, tx in ipairs(selected) do result[index] = copy(tx) end
+  return result
+end
+
 function Ledger.GetPlayerSeasonState(seasonId, playerGuidOrName)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId(); local playerName = playerGuidOrName or Dibs.GetPlayerName(); local transactions = Ledger.GetTransactions(targetSeason, playerName)
   if type(playerName) == "string" and playerName:match("^Player%-%d+%-") and transactions[1] and transactions[1].playerName then

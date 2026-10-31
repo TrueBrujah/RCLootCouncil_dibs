@@ -15,6 +15,29 @@ describe("Permissions", function()
     assert_true(dibs.Permissions.Can("predib.mode.set"))
   end)
 
+  it("loads officer-rank settings once when enumerating a large roster", function()
+    local members, ranks = {}, {}
+    for index = 1, 80 do
+      members[index] = "Member" .. index .. "-Realm"
+      ranks[index] = index == 1 and 0 or (index == 2 and 1 or 4)
+    end
+    local _, dibs = loader.load({ wow = {
+      guildLeader = false, guildMembers = members, guildRankIndices = ranks,
+    } })
+    dibs.Identity.GetRosterSnapshot()
+
+    local originalGetDB, getDBCalls = dibs.GetDB, 0
+    dibs.GetDB = function(...)
+      getDBCalls = getDBCalls + 1
+      return originalGetDB(...)
+    end
+    local officers = dibs.Permissions.GetAuthorizedOfficers()
+    dibs.GetDB = originalGetDB
+
+    assert_equal(2, #officers)
+    assert_equal(1, getDBCalls)
+  end)
+
   it("does not let Developer Mode grant guild or raid authority", function()
     local _, dibs = loader.load({
       localVariables = { settings = { developerModeEnabled = true } },

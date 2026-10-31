@@ -10,6 +10,78 @@ local function load(player, guildLeader, saved)
 end
 
 describe("Installation readiness projection", function()
+  it("resolves the active ledger once for the legacy ledger and Pre-Dibs status checks", function()
+    local dibs = load("Tester-Realm", true)
+    local originalActiveLedger = dibs.Ledger.GetActiveLedgerId
+    local originalHasHistory = dibs.Ledger.HasNonAllocationTransactions
+    local originalHistoryCount = dibs.PreDibs.GetHistoryCount
+    local activeReads, ledgerTarget, predibsTarget = 0, nil, nil
+    dibs.Ledger.GetActiveLedgerId = function()
+      activeReads = activeReads + 1
+      return "guild-primary"
+    end
+    dibs.Ledger.HasNonAllocationTransactions = function(targetLedgerId)
+      ledgerTarget = targetLedgerId
+      return false
+    end
+    dibs.PreDibs.GetHistoryCount = function(targetLedgerId)
+      predibsTarget = targetLedgerId
+      return 0
+    end
+
+    local status = dibs.Installation.GetStatus()
+
+    dibs.Ledger.GetActiveLedgerId = originalActiveLedger
+    dibs.Ledger.HasNonAllocationTransactions = originalHasHistory
+    dibs.PreDibs.GetHistoryCount = originalHistoryCount
+    assert_equal(1, activeReads)
+    assert_equal("guild-primary", ledgerTarget)
+    assert_equal(ledgerTarget, predibsTarget)
+    assert_equal("NOT_INITIALIZED", status.state)
+  end)
+
+  it("builds installation status without copying governance or authority history", function()
+    local dibs = load("Tester-Realm", true)
+    assert_true(dibs.Governance.AdoptInitial(nil, { reason = "test" }))
+    local getState = dibs.Governance.GetState
+    local getAuthorityState = dibs.Governance.GetAuthorityState
+    local isV2Enforced = dibs.Governance.IsV2Enforced
+    dibs.Governance.GetState = function() error("full governance state copy should not be needed") end
+    dibs.Governance.GetAuthorityState = function() error("full authority state copy should not be needed") end
+    dibs.Governance.IsV2Enforced = function() error("compact status should provide protocol state") end
+
+    local ok, status = pcall(dibs.Installation.GetStatus)
+    dibs.Governance.GetState = getState
+    dibs.Governance.GetAuthorityState = getAuthorityState
+    dibs.Governance.IsV2Enforced = isV2Enforced
+    assert_true(ok, tostring(status))
+    assert_equal("READY_TO_INITIALIZE", status.state)
+    assert_false(status.protocol.active)
+  end)
+
+  it("counts Pre-Dibs history without migrating the legacy SavedVariables store", function()
+    local dibs = load("Tester-Realm", true)
+    local root = dibs.GetDB().preDibs
+    root.ledgerStorageVersion = nil
+    root.ledgers = {}
+    root.requests = { { requestId = "legacy-predib" } }
+
+    assert_equal(1, dibs.PreDibs.GetHistoryCount())
+    assert_nil(root.ledgerStorageVersion)
+    assert_equal(1, #dibs.PreDibs.GetHistory())
+    assert_equal(1, dibs.PreDibs.GetHistoryCount())
+  end)
+
+  it("reads history count from the resolved guild DB without re-running DB resolution", function()
+    local dibs = load("Tester-Realm", true)
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("read-only history count should use the resolved guild DB") end
+    local ok, count = pcall(dibs.PreDibs.GetHistoryCount, "guild-primary")
+    dibs.GetDB = getDB
+    assert_true(ok, tostring(count))
+    assert_equal(0, count)
+  end)
+
   it("reports NOT_INITIALIZED before governance adoption and hides the actor from initializing", function()
     local dibs = load("Tester-Realm", true)
     local status = dibs.Installation.GetStatus()

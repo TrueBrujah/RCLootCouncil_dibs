@@ -103,6 +103,22 @@ describe("Dispute center", function()
     assert_equal("GUILD_ADMIN_REQUIRED", select(2, dibs.Disputes.ListForOfficer("Other-Realm")))
   end)
 
+  it("reuses the resolved database for the request module gate and owner list", function()
+    local dibs = setup({ guildLeader = true })
+    local originalGetDB, databaseReads = dibs.GetDB, 0
+    dibs.GetDB = function()
+      databaseReads = databaseReads + 1
+      return originalGetDB()
+    end
+
+    local requests, reason = dibs.Disputes.ListForPlayer(nil)
+
+    dibs.GetDB = originalGetDB
+    assert_nil(reason)
+    assert_equal(0, #requests)
+    assert_equal(1, databaseReads, "policy and request lookup should share one database resolution")
+  end)
+
   it("renders the player request page and Officer review queue", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     local request = dibs.Disputes.CreateReport(fixtures.report("other"))

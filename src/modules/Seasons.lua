@@ -347,6 +347,13 @@ function Dibs.Seasons.GetCatalogState()
   return copy(catalogState())
 end
 
+-- Compact synchronization view; avoids copying all catalog records merely to
+-- show the active catalog revision and hash.
+function Dibs.Seasons.GetCatalogSummary()
+  local state = catalogState()
+  return { catalogRevision = state.catalogRevision, hash = state.hash }
+end
+
 function Dibs.Seasons.GetCatalogRevision()
   ensureState()
   local catalog = Dibs.db.seasonCatalog

@@ -44,6 +44,45 @@ describe("Ace3 options integration", function()
     assert_not_nil(dibs.Ace3.libs.comm)
   end)
 
+  it("reads announcement options without walking or binding Pre-Dibs ledger state", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local original = dibs.MultiLedger.GetActiveLedgerId
+    dibs.MultiLedger.GetActiveLedgerId = function()
+      error("announcement option reads must not resolve the active ledger")
+    end
+
+    local settings = dibs.PreDibs.GetAnnouncementSettings()
+    local templates = dibs.PreDibs.GetAnnouncementTemplates()
+    dibs.MultiLedger.GetActiveLedgerId = original
+
+    assert_equal("GUILD", settings.publicChannel)
+    assert_equal("OFFICER", settings.officerChannel)
+    assert_true(templates.preDib:find("%player", 1, true) ~= nil)
+    assert_true(templates.reminder:find("%date", 1, true) ~= nil)
+  end)
+
+  it("reuses Raid Dibs stream discovery briefly and supports explicit refresh", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local clubs = _G.C_Club
+    local getSubscribedClubs = clubs.GetSubscribedClubs
+    local calls = 0
+    clubs.GetSubscribedClubs = function(...)
+      calls = calls + 1
+      return getSubscribedClubs(...)
+    end
+
+    dibs.PreDibs.InvalidateRaidDibsChannelCache()
+    local firstClub, firstStream = dibs.PreDibs.GetRaidDibsChannel()
+    local secondClub, secondStream = dibs.PreDibs.GetRaidDibsChannel()
+    assert_equal(firstClub, secondClub)
+    assert_equal(firstStream, secondStream)
+    assert_equal(1, calls)
+
+    dibs.PreDibs.InvalidateRaidDibsChannelCache()
+    dibs.PreDibs.GetRaidDibsChannel()
+    assert_equal(2, calls)
+  end)
+
   it("leaves the legacy category list untouched on Retail Settings", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
@@ -428,6 +467,8 @@ describe("Dibs options compatibility", function()
     assert_equal("Transmog", template.buttons[2].response)
     assert_equal(0.6, template.buttons[2].color[3])
     assert_true(template.buttons[2].requireNotes)
+    template.buttons[2].text = "caller mutation"
+    assert_equal("Collection", dibs.RCOptions.GetButtonTemplate(templateId).buttons[2].text)
     assert_equal(templateId, dibs.RCOptions.GetButtonTemplateAssignment("COSMETIC"))
 
     assert_true(dibs.RCOptions.DeleteButtonTemplate(templateId))

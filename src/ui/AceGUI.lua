@@ -19,6 +19,8 @@ Dibs.AceGUI = Dibs.AceGUI or {}
 local Adapter = Dibs.AceGUI
 local unpackValues = table.unpack or unpack
 local LOGO_TEXTURE = Dibs.ICON_TEXTURE or "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
+local activeLayoutBatch
+local PAGE_SCROLL_BOTTOM_RESERVE = 100
 
 Adapter.windowShellEnabled = true
 
@@ -358,7 +360,10 @@ function Adapter.BuildShellStatusText()
   end
   parts[#parts + 1] = string.format(strings.SHELL_STATUS_VERSION or "Version %s", tostring(Dibs.VERSION or "?"))
   local syncText
-  local okSync, sync = pcall(function() return Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or nil end)
+  local okSync, sync = pcall(function()
+    local getStatus = Dibs.Sync and (Dibs.Sync.GetStatusSummary or Dibs.Sync.GetStatus)
+    return getStatus and getStatus() or nil
+  end)
   if okSync and type(sync) == "table" then
     if sync.syncBehind then
       syncText = strings.SHELL_STATUS_SYNC_BEHIND or "Sync: behind"
@@ -388,14 +393,15 @@ end
 
 -- Approved ledgers in catalog order; the working (guild active) ledger is
 -- labelled "(Active)" so every ledger selector reads the same way.
-function Adapter.GetLedgerChoices()
+function Adapter.GetLedgerChoices(ledgers, activeId, viewId)
   local multiLedger = Dibs.MultiLedger
   if not (multiLedger and type(multiLedger.GetLedgers) == "function") then return {} end
   local strings = Dibs.L or {}
-  local activeId = multiLedger.GetActiveLedgerId and multiLedger.GetActiveLedgerId() or nil
-  local viewId = multiLedger.GetViewLedgerId and multiLedger.GetViewLedgerId() or activeId
+  if type(ledgers) ~= "table" then ledgers = multiLedger.GetLedgers() or {} end
+  if activeId == nil then activeId = multiLedger.GetActiveLedgerId and multiLedger.GetActiveLedgerId() or nil end
+  if viewId == nil then viewId = multiLedger.GetViewLedgerId and multiLedger.GetViewLedgerId() or activeId end
   local choices, seen = {}, {}
-  for _, ledger in ipairs(multiLedger.GetLedgers() or {}) do
+  for _, ledger in ipairs(ledgers) do
     if ledger.status == "APPROVED" and not seen[ledger.id] then
       seen[ledger.id] = true
       choices[#choices + 1] = { id = ledger.id, name = ledgerChoiceName(ledger) }
@@ -412,9 +418,9 @@ function Adapter.GetLedgerChoices()
   return choices
 end
 
-function Adapter.GetLedgerDropdownValues()
+function Adapter.GetLedgerDropdownValues(ledgers, activeId, viewId)
   local values = {}
-  for _, choice in ipairs(Adapter.GetLedgerChoices()) do values[choice.id] = choice.label end
+  for _, choice in ipairs(Adapter.GetLedgerChoices(ledgers, activeId, viewId)) do values[choice.id] = choice.label end
   return values
 end
 
@@ -639,6 +645,41 @@ local function isAceGUIContainer(value)
     and value.frame ~= nil
 end
 
+local function pauseLayoutContainer(batch, container)
+  if not batch or not isAceGUIContainer(container) or batch.seen[container]
+    or type(container.PauseLayout) ~= "function" or type(container.ResumeLayout) ~= "function"
+  then return end
+  local ok = pcall(container.PauseLayout, container)
+  if not ok then return end
+  batch.seen[container] = true
+  batch.containers[#batch.containers + 1] = container
+end
+
+function Adapter.BeginLayoutBatch(root)
+  local batch = { containers = {}, seen = {}, previous = activeLayoutBatch }
+  activeLayoutBatch = batch
+  pauseLayoutContainer(batch, root)
+  return batch
+end
+
+function Adapter.EndLayoutBatch(batch)
+  if type(batch) ~= "table" then return end
+  for index = #batch.containers, 1, -1 do
+    pcall(batch.containers[index].ResumeLayout, batch.containers[index])
+  end
+  if activeLayoutBatch == batch then activeLayoutBatch = batch.previous end
+  batch.containers, batch.seen = {}, {}
+end
+
+local function layoutBatchOwns(container)
+  local batch = activeLayoutBatch
+  while batch do
+    if batch.seen[container] then return true end
+    batch = batch.previous
+  end
+  return false
+end
+
 local function frameContains(frame, target)
   local current = frame
   local visited = {}
@@ -675,6 +716,7 @@ local function normalizeChildren(container)
 end
 
 function Adapter.Create(shell, kind, parent)
+  local widgetStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   if not shell or not shell.gui then return nil end
   local ok, widget = pcall(shell.gui.Create, shell.gui, kind)
   if not ok or not widget then return nil end
@@ -686,8 +728,12 @@ function Adapter.Create(shell, kind, parent)
   end
   normalizeChildren(owner)
   owner:AddChild(widget)
+  pauseLayoutContainer(activeLayoutBatch, widget)
   if Dibs.Midnight and type(Dibs.Midnight.ApplyToWidget) == "function" then
     Dibs.Midnight.ApplyToWidget(widget, Adapter.GetPresentationTokens())
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("UI widget", "create", widgetStartedAt)
   end
   return widget
 end
@@ -702,6 +748,7 @@ function Adapter.CreateInFrame(shell, kind, parentFrame)
   end
   widget.frame:SetParent(parentFrame)
   widget._dibsRawOwner = parentFrame
+  pauseLayoutContainer(activeLayoutBatch, widget)
   return widget
 end
 
@@ -1082,8 +1129,12 @@ function Adapter.ShowContextMenu(entries)
 end
 
 function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, options)
+  local tableStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   options = options or {}
-  local scroll = options.noScrolling and parent or (parent and parent.type == "ScrollFrame" and parent or Adapter.AddScrollableList(shell, parent, height))
+  local rowSelectionEnabled = options.enableRowSelection == true or type(options.onRowClick) == "function"
+  local rowContextEnabled = options.disableContextMenu ~= true
+    and (type(options.contextMenu) == "function" or rowActions ~= nil or options.allowTableSort == true)
+  local scroll = options.noScrolling and parent or (parent and (parent.type == "ScrollFrame" or parent.kind == "ScrollFrame") and parent or Adapter.AddScrollableList(shell, parent, height))
   if not scroll then return nil end
   local definitions = columns or {}
   local actionLabelsByColumn = {}
@@ -1219,6 +1270,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
   end
 
   local function updateGridSelection()
+    if not rowSelectionEnabled then return end
     for _, record in ipairs(gridRows) do
       local selected = record.source == gridState.selectedRow
       record.widget._dibsGridSelected = selected
@@ -1243,7 +1295,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
       rowGroup._dibsDataGridRow = true
       gridRows[#gridRows + 1] = record
       local frame = rowGroup.frame
-      if frame and type(frame.CreateTexture) == "function" then
+      if rowSelectionEnabled and frame and type(frame.CreateTexture) == "function" then
         local texture = frame:CreateTexture(nil, "BACKGROUND")
         local tokens = Adapter.GetPresentationTokens()
         local primary = tokens and tokens.colors and tokens.colors.PRIMARY or { 0.20, 0.55, 0.82, 1 }
@@ -1298,16 +1350,17 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         if not cellAction then
           local tooltip = header and column.tooltip or (options.cellTooltip and options.cellTooltip(values, index) or column.tooltip)
           if options.disableCellTooltips ~= true then Adapter.AddTooltip(cell, value, tooltip) end
-          if not header and record then
+          if not header and record and (rowSelectionEnabled or rowContextEnabled) then
             attachGridScript(cell, "OnMouseUp", function(_, mouseButton)
               if mouseButton == "RightButton" then
                 if options.disableContextMenu then return true end
                 return showDataGridContextMenu(record)
               end
+              if not rowSelectionEnabled then return false end
               if mouseButton and mouseButton ~= "LeftButton" then return false end
               gridState.selectedRow = gridState.selectedRow == record.source and nil or record.source
               updateGridSelection()
-              if type(options.onRowClick) == "function" then options.onRowClick(record.source, index) end
+              if options.onRowClick then options.onRowClick(record.source, index) end
               return true
             end)
             if cell.frame and cell.frame.EnableMouse then cell.frame:EnableMouse(true) end
@@ -1440,6 +1493,9 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     if not alreadyRegistered then shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll end
   end
   applyFluidWidth(frameWidth)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("UI table", "add-table", tableStartedAt)
+  end
   return scroll
 end
 
@@ -2026,6 +2082,7 @@ end
 -- standalone Officer window without maintaining a second copy of the rules.
 function Adapter.RenderOptionsGroup(shell, parent, group, context)
   if not shell or not parent or type(group) ~= "table" then return false end
+  local groupRenderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   context = context or {}
 
   -- TreeGroup's content frame is also responsible for the navigation layout.
@@ -2085,6 +2142,21 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
     if context.onControl then context.onControl(key, control) end
   end
 
+  local function withPausedLayout(container, callback)
+    local paused = container and type(container.PauseLayout) == "function"
+      and type(container.ResumeLayout) == "function"
+    if paused and not layoutBatchOwns(container) then
+      local ok = pcall(container.PauseLayout, container)
+      paused = ok
+    else
+      paused = false
+    end
+    local ok, first, second = pcall(callback)
+    if paused then pcall(container.ResumeLayout, container) end
+    if not ok then error(first, 0) end
+    return first, second
+  end
+
   local function changed(option, kind)
     -- Sliders notify on mouse release, so rebuilding here won't interrupt a drag.
     if context.onChanged and (kind == "select" or kind == "execute" or kind == "range"
@@ -2114,7 +2186,8 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
     return keys
   end
 
-  local function render(args, target)
+  local render
+  local function renderChildren(args, target)
     for _, key in ipairs(sortedKeys(args)) do
       local option = args[key]
       local kind = tostring(option.type or "description")
@@ -2212,20 +2285,26 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
         table.sort(keys, function(left, right) return tostring(values[left]) < tostring(values[right]) end)
         local list = Adapter.AddScrollableList(shell, target, math.min(360, math.max(100, #keys * 28 + 20)))
         if list then
-          Adapter.AddHeader(shell, list, label, description)
-          for _, valueKey in ipairs(keys) do
-            local checkbox = Adapter.AddCheckBox(shell, list, values[valueKey], getValue(option, valueKey), function(value)
-              setValue(option, valueKey, value)
-            end)
-            if checkbox then
-              Adapter.SetDisabled(checkbox, isDisabled(option))
-              register(valueKey, checkbox)
+          withPausedLayout(list, function()
+            Adapter.AddHeader(shell, list, label, description)
+            for _, valueKey in ipairs(keys) do
+              local checkbox = Adapter.AddCheckBox(shell, list, values[valueKey], getValue(option, valueKey), function(value)
+                setValue(option, valueKey, value)
+              end)
+              if checkbox then
+                Adapter.SetDisabled(checkbox, isDisabled(option))
+                register(valueKey, checkbox)
+              end
             end
-          end
+          end)
           register(key, list)
         end
       end
     end
+  end
+
+  render = function(args, target)
+    return withPausedLayout(target, function() renderChildren(args, target) end)
   end
 
   local groupTitle = evaluate(group.name)
@@ -2243,11 +2322,14 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   if context.onBeforeRender then context.onBeforeRender(target) end
   render(group.args, target)
   if context.onRendered then context.onRendered(target) end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("AceConfig", tostring(groupTitle or "unnamed"), groupRenderStartedAt)
+  end
   return true
 end
 
 function Adapter.AddScrollableList(shell, parent, height, resizeOffset)
-  local scroll = parent and parent.type == "ScrollFrame" and parent or nil
+  local scroll = parent and (parent.type == "ScrollFrame" or parent.kind == "ScrollFrame") and parent or nil
   if scroll and not tonumber(resizeOffset) then return scroll end
   if not scroll then
     scroll = Adapter.Create(shell, "ScrollFrame", parent)
@@ -2263,7 +2345,7 @@ function Adapter.AddScrollableList(shell, parent, height, resizeOffset)
   if fixedOffset and frameHeight and frameHeight > 0 then
     requestedHeight = math.max(120, math.min(requestedHeight, frameHeight - fixedOffset))
   elseif frameHeight and frameHeight > 0 then
-    requestedHeight = math.min(requestedHeight, math.max(240, frameHeight - 180))
+    requestedHeight = math.min(requestedHeight, math.max(120, frameHeight - PAGE_SCROLL_BOTTOM_RESERVE))
   end
   call(scroll, "SetHeight", requestedHeight)
   call(scroll, "SetFullWidth", true)
@@ -2277,7 +2359,7 @@ function Adapter.AddScrollableList(shell, parent, height, resizeOffset)
     shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll
   elseif shell and requestedHeight >= 380 and frameHeight and frameHeight > requestedHeight then
     scroll._dibsShell = shell
-    scroll._dibsResizeOffset = frameHeight - requestedHeight
+    scroll._dibsResizeOffset = PAGE_SCROLL_BOTTOM_RESERVE
     shell._dibsResponsiveScrolls = shell._dibsResponsiveScrolls or {}
     shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll
   end

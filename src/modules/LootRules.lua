@@ -158,11 +158,10 @@ function Dibs.LootRules.SetDraftValue(typeKey, field, value)
 end
 
 function Dibs.LootRules.GetAuthoritySnapshot()
-  if not (Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogRecord) then
+  if not (Dibs.Seasons and Dibs.Seasons.GetCatalogRevision and Dibs.Seasons.GetCatalogRecord) then
     return nil, "GUILD_LOOT_RULES_UNAVAILABLE"
   end
-  local state = Dibs.Seasons.GetCatalogState()
-  local revision = tonumber(state and state.catalogRevision) or 0
+  local revision = tonumber(Dibs.Seasons.GetCatalogRevision()) or 0
   if revision < 1 then return nil, "GUILD_LOOT_RULES_NOT_CONFIGURED" end
   local record = Dibs.Seasons.GetCatalogRecord(revision)
   local raw = record and record.guildConfiguration and record.guildConfiguration.guildLootRules
@@ -180,6 +179,19 @@ end
 
 local function synchronizationIssue()
   if type(Dibs.Sync) ~= "table" then return nil end
+  if type(Dibs.Sync.GetStatusSummary) == "function" then
+    local summary = Dibs.Sync.GetStatusSummary()
+    if type(summary) ~= "table" then return nil end
+    if summary.lastAddonVersionMismatchReasonCode == "ADDON_UPDATE_REQUIRED" then
+      return "GUILD_LOOT_RULES_INCOMPATIBLE", summary.lastAddonVersionMismatchReasonCode
+    end
+    local reason = summary.reason
+    if (summary.syncBehind == true or summary.state == "SYNC_BEHIND")
+      and type(reason) == "string" and reason:find("SEASON_CATALOG", 1, true) then
+      return "GUILD_LOOT_RULES_SYNC_BEHIND", reason
+    end
+    return nil
+  end
   local synchronization = type(Dibs.Sync.GetSynchronizationStatus) == "function"
     and Dibs.Sync.GetSynchronizationStatus() or {}
   local mismatch = type(synchronization) == "table" and synchronization.lastAddonVersionMismatch
@@ -197,13 +209,25 @@ local function synchronizationIssue()
 end
 
 function Dibs.LootRules.GetStatus()
+  local supportedStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local keys, reason = supportedTypes()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Loot Rules data", "supported-types", supportedStartedAt)
+  end
   if not keys then return { status = "UNAVAILABLE", reasonCode = reason } end
+  local synchronizationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local synchronizationStatus, synchronizationReason = synchronizationIssue()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Loot Rules data", "synchronization", synchronizationStartedAt)
+  end
   if synchronizationStatus == "GUILD_LOOT_RULES_INCOMPATIBLE" then
     return { status = synchronizationStatus, reasonCode = synchronizationReason }
   end
+  local authorityStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local authority, authorityStatus, detail = Dibs.LootRules.GetAuthoritySnapshot()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Loot Rules data", "authority-snapshot", authorityStartedAt)
+  end
   if authority then
     if synchronizationStatus then
       return { status = synchronizationStatus, reasonCode = synchronizationReason }

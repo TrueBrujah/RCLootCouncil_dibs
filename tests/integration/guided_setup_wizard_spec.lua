@@ -41,6 +41,80 @@ local function rankByIndex(rows, rankIndex)
 end
 
 describe("Dibs.Wizard status derivation", function()
+  it("caches Pre-Dibs Wizard counts until request history changes", function()
+    local dibs = load("Tester-Realm", true)
+    local timer, clock = _G.debugprofilestop, 0
+    register_reset(function() _G.debugprofilestop = timer end)
+    _G.debugprofilestop = function() clock = clock + 1; return clock end
+    local requests = dibs.PreDibs.GetHistory()
+    for index = #requests, 1, -1 do requests[index] = nil end
+    requests[1] = { requestId = "pending", status = "pending" }
+    requests[2] = { requestId = "done", status = "fulfilled" }
+    dibs.PreDibs.MarkHistoryChanged()
+    dibs.UIRenderStats.SetEnabled(true)
+
+    local first = dibs.PreDibs.GetStatusSummary(dibs.GetCurrentSeasonId())
+    local second = dibs.PreDibs.GetStatusSummary(dibs.GetCurrentSeasonId())
+    assert_equal(1, first.activeRequestCount)
+    assert_equal(2, first.historyCount)
+    assert_equal(first.activeRequestCount, second.activeRequestCount)
+    local report = dibs.UIRenderStats.GetReport()
+    local buildCount, hitCount = 0, 0
+    for _, page in ipairs(report.pages) do
+      if page.kind == "Pre-Dibs data" and page.page == "status-count-build" then buildCount = page.count end
+      if page.kind == "Pre-Dibs data" and page.page == "status-count-hit" then hitCount = page.count end
+    end
+    assert_equal(1, buildCount)
+    assert_equal(1, hitCount)
+
+    requests[3] = { requestId = "confirmed", status = "confirmed" }
+    dibs.PreDibs.MarkHistoryChanged()
+    local updated = dibs.PreDibs.GetStatusSummary(dibs.GetCurrentSeasonId())
+    assert_equal(2, updated.activeRequestCount)
+    assert_equal(3, updated.historyCount)
+    report = dibs.UIRenderStats.GetReport()
+    buildCount = 0
+    for _, page in ipairs(report.pages) do
+      if page.kind == "Pre-Dibs data" and page.page == "status-count-build" then buildCount = page.count end
+    end
+    assert_equal(2, buildCount)
+    dibs.UIRenderStats.SetEnabled(false)
+  end)
+
+  it("computes one installation snapshot without copying the full ledger", function()
+    local dibs = load("Tester-Realm", true)
+    local originalInstallationStatus = dibs.Installation.GetStatus
+    local originalGetAllTransactions = dibs.Ledger.GetAllTransactions
+    local originalTransactionDiagnostics = dibs.Ledger.GetTransactionDiagnostics
+    local originalHistorySummary = dibs.Ledger.GetPlayerHistorySummary
+    local installationCalls, historySummaryCalls = 0, 0
+    dibs.Installation.GetStatus = function(...)
+      installationCalls = installationCalls + 1
+      return originalInstallationStatus(...)
+    end
+    dibs.Ledger.GetAllTransactions = function()
+      error("Guided Setup should use cached ledger diagnostics")
+    end
+    dibs.Ledger.GetTransactionDiagnostics = function()
+      error("Guided Setup should use the lightweight legacy transaction count")
+    end
+    dibs.Ledger.GetPlayerHistorySummary = function(...)
+      historySummaryCalls = historySummaryCalls + 1
+      return originalHistorySummary(...)
+    end
+
+    local ok, status = pcall(dibs.Wizard.GetTurnkeyStatus)
+    dibs.Installation.GetStatus = originalInstallationStatus
+    dibs.Ledger.GetAllTransactions = originalGetAllTransactions
+    dibs.Ledger.GetTransactionDiagnostics = originalTransactionDiagnostics
+    dibs.Ledger.GetPlayerHistorySummary = originalHistorySummary
+
+    assert_true(ok, tostring(status))
+    assert_equal(1, installationCalls)
+    assert_equal(0, historySummaryCalls)
+    assert_not_nil(status.overallState)
+  end)
+
   it("adds an explicit GM policy adoption step and preserves the local policy inputs", function()
     local dibs = load("Tester-Realm", true)
     assert_true(dibs.Installation.Initialize(nil).ok)
@@ -388,6 +462,34 @@ describe("Guided Setup Wizard UI", function()
     return widget
   end
 
+  it("defers the full Guided Setup checks until Verify", function()
+    local dibs = load("Tester-Realm", true)
+    local originalGetStatus, statusCalls = dibs.Wizard.GetTurnkeyStatus, 0
+    local originalEvaluate, evaluationCalls = dibs.SetupAssistant.Evaluate, 0
+    dibs.Wizard.GetTurnkeyStatus = function(...)
+      statusCalls = statusCalls + 1
+      return originalGetStatus(...)
+    end
+    dibs.SetupAssistant.Evaluate = function(...)
+      evaluationCalls = evaluationCalls + 1
+      return originalEvaluate(...)
+    end
+    local frame = dibs.OfficerUI.Show()
+    statusCalls, evaluationCalls = 0, 0
+    frame:ActivateRoute("wizard")
+
+    assert_equal(0, statusCalls)
+    assert_equal(0, evaluationCalls)
+    clickLatestButton("Selected: Progression raid")
+    assert_equal(0, statusCalls)
+    assert_equal(0, evaluationCalls)
+    clickLatestButton("3 Verify")
+    assert_equal(1, statusCalls)
+    assert_equal(1, evaluationCalls)
+    dibs.Wizard.GetTurnkeyStatus = originalGetStatus
+    dibs.SetupAssistant.Evaluate = originalEvaluate
+  end)
+
   it("opens with Choose selected and moves through the three primary stages", function()
     local dibs = load("Tester-Realm", true)
     local frame = dibs.OfficerUI.CreateWindow("wizard")
@@ -476,6 +578,8 @@ describe("Guided Setup Wizard UI", function()
     dibs.Wizard.SetCurrentStage("configure")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
+    -- Prime the existing lazy SavedVariables defaults before the mutation check.
+    dibs.Wizard.GetTurnkeyStatus()
     local before = loader.snapshotProductionState(dibs)
     clickLatestButton("Open advanced settings")
     assert_equal("settings", frame.activeTab)

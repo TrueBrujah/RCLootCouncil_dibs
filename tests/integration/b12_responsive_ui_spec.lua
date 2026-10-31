@@ -56,6 +56,43 @@ describe("B12b responsive page contract", function()
     assert_true(overflow == true or widths[1] + widths[2] + widths[3] <= 300)
   end)
 
+  it("avoids row click scripts and selection textures for static tables", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 static table", 640, 360)
+    local parent = shell.window
+    dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Name", width = 180 }, { title = "Value", width = 180 },
+    }, { { "Member", "Ready" } }, 120, nil, {
+      noScrolling = true, allowTableSort = false, disableCellTooltips = true,
+    })
+    local row
+    for _, child in ipairs(parent.children) do
+      if child._dibsDataGridRow then row = child break end
+    end
+    assert_not_nil(row)
+    assert_nil(row._dibsGridSelectionTexture)
+    assert_nil(row.children[1].frame._scripts.OnMouseUp)
+  end)
+
+  it("keeps selectable rows interactive when a row callback is provided", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 selectable table", 640, 360)
+    local parent = shell.window
+    dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Name", width = 180 }, { title = "Value", width = 180 },
+    }, { { "Member", "Ready" } }, 120, nil, {
+      noScrolling = true, allowTableSort = false, disableCellTooltips = true,
+      onRowClick = function() end,
+    })
+    local row
+    for _, child in ipairs(parent.children) do
+      if child._dibsDataGridRow then row = child break end
+    end
+    assert_not_nil(row)
+    assert_not_nil(row._dibsGridSelectionTexture)
+    assert_not_nil(row.children[1].frame._scripts.OnMouseUp)
+  end)
+
   it("keeps long labels inspectable and status meaning independent of color", function()
     local _, dibs = loader.load({ withAce3 = true })
     local visible, truncated, full = dibs.Midnight.Truncate("Historical award recipient mismatch", 18)

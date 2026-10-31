@@ -32,7 +32,7 @@ if ($preview) {
 } else {
     Write-Output "  (none - destination is already synchronized)"
 }
-robocopy $sourcePath $TargetPath /MIR /FP /NDL /NJH /NJS /NP
+$null = robocopy $sourcePath $TargetPath /MIR /FP /NDL /NJH /NJS /NP
 $exitCode = $LASTEXITCODE
 
 # Robocopy exit codes 0-7 indicate success (bit flags for copied/extra/mismatched files)

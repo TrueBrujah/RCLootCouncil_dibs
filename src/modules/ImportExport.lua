@@ -460,6 +460,9 @@ function M.Apply(previewId, confirm, reason, actor)
       for _, existingId in ipairs(state.transactions or {}) do if existingId == id then found = true; break end end
       if not found then table.insert(state.transactions, id) end
     end
+    if next(staged) and Dibs.Ledger and Dibs.Ledger.MarkTransactionsChanged then
+      Dibs.Ledger.MarkTransactionsChanged(targetLedger.id or db.activeLedgerId)
+    end
     for k, v in pairs(ledger.awardTransactions or {}) do targetLedger.awardTransactions[k] = targetLedger.awardTransactions[k] or v end
     for k, v in pairs(ledger.evidenceTransactions or {}) do targetLedger.evidenceTransactions[k] = targetLedger.evidenceTransactions[k] or v end
     for key, value in pairs(package.payload) do if key ~= "ledger" and key ~= "preDibs" then db[key] = clone(value) end end
@@ -468,6 +471,9 @@ function M.Apply(previewId, confirm, reason, actor)
       for key, value in pairs(package.payload.preDibs) do if key ~= "acquisitions" then db.preDibs[key] = clone(value) end end
       db.preDibs.acquisitions = db.preDibs.acquisitions or {}
       for _, record in ipairs(vaultAdds) do table.insert(db.preDibs.acquisitions, clone(record)) end
+      if #vaultAdds > 0 and Dibs.PreDibs and Dibs.PreDibs.MarkAcquisitionsChanged then
+        Dibs.PreDibs.MarkAcquisitionsChanged()
+      end
     end
   elseif preview.targetScope == "local" then db.settings = db.settings or {}; mergeInto(db.settings, package.payload.presentation or {}, preview.strategy == "replace")
   else

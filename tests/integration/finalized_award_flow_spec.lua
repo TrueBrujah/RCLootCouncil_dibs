@@ -28,18 +28,41 @@ describe("Finalize award flow", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local request = dibs.PreDibs.Create("Tester-Realm", 19019, "Item", dibs.GetCurrentSeasonId())
     dibs.PreDibs.Confirm(request.requestId)
-    local originalProjection = dibs.Ledger.GetPlayerDibsProjection
-    dibs.Ledger.GetPlayerDibsProjection = function() error("award finalization must not use the display cache") end
+        -- Manually refresh the identity roster since tests don't fire GUILD_ROSTER_UPDATE
+        dibs.Identity.RefreshRoster()
+        local originalProjection = dibs.Ledger.GetPlayerDibsProjection
+        dibs.Ledger.GetPlayerDibsProjection = function() error("award finalization must not use the display cache") end
 
-    local first = dibs.ProtectedActions.FinalizeAward(nil, {
-      awardRef = "award-1",
-      playerName = "Tester-Realm",
-      itemID = 19019,
-      sourceStatus = "awarded",
-      finalized = true,
-    })
-    dibs.Ledger.GetPlayerDibsProjection = originalProjection
-    assert_true(first.ok)
+        local first = dibs.ProtectedActions.FinalizeAward(nil, {
+          awardRef = "award-1",
+          playerName = "Tester-Realm",
+          itemID = 19019,
+          sourceStatus = "awarded",
+          finalized = true,
+        })
+        print("DEBUG: first =", first)
+        print("DEBUG: first.ok =", first.ok)
+        print("DEBUG: first.diagnostic =", first.diagnostic)
+        print("DEBUG: first.reasonCode =", first.reasonCode)
+        print("DEBUG: first.value =", first.value)
+        if first.value then
+          print("DEBUG: first.value.transactionId =", first.value.transactionId)
+        end
+        -- Check identity state
+        print("DEBUG: Identity state =", dibs.Identity._rosterState)
+        if dibs.Identity._rosterState then
+          print("DEBUG: Identity members =", dibs.Identity._rosterState.members)
+          for k, v in pairs(dibs.Identity._rosterState.members) do
+            print("DEBUG:   Member:", k, "=>", v)
+          end
+          print("DEBUG: Identity generation =", dibs.Identity._rosterState.generation)
+          print("DEBUG: Identity displayNames =", dibs.Identity._rosterState.displayNames)
+          for k, v in pairs(dibs.Identity._rosterState.displayNames) do
+            print("DEBUG:   displayNames:", k, "=>", v)
+          end
+        end
+        dibs.Ledger.GetPlayerDibsProjection = originalProjection
+        assert_true(first.ok)
 
     local second = dibs.ProtectedActions.FinalizeAward(nil, {
       awardRef = "award-1",

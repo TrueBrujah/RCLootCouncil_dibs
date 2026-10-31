@@ -234,16 +234,15 @@ describe("Guild-authoritative Loot Rules", function()
     assert_equal("GUILD_LOOT_RULES_READY", status.status)
     assertReadinessStatus(status.status)
 
-    gm.Sync.GetStatus = function()
-      return { state = "SYNC_BEHIND", reason = "SEASON_CATALOG_PARENT_MISSING" }
+    gm.Sync.GetStatusSummary = function()
+      return { state = "SYNC_BEHIND", syncBehind = true, reason = "SEASON_CATALOG_PARENT_MISSING" }
     end
     status = gm.LootRules.GetStatus()
     assert_equal("GUILD_LOOT_RULES_SYNC_BEHIND", status.status)
     assertReadinessStatus(status.status)
 
-    gm.Sync.GetStatus = function() return { state = "SYNC_READY" } end
-    gm.Sync.GetSynchronizationStatus = function()
-      return { lastAddonVersionMismatch = { reasonCode = "ADDON_UPDATE_REQUIRED" } }
+    gm.Sync.GetStatusSummary = function()
+      return { state = "SYNC_READY", lastAddonVersionMismatchReasonCode = "ADDON_UPDATE_REQUIRED" }
     end
     status = gm.LootRules.GetStatus()
     assert_equal("GUILD_LOOT_RULES_INCOMPATIBLE", status.status)
@@ -254,6 +253,7 @@ describe("Guild-authoritative Loot Rules", function()
 
     local legacyClient = load("Player-Realm")
     legacyClient.db.settings.dibAllowedTypes = { TOKEN = false }
+    legacyClient.Sync.GetStatusSummary = nil
     legacyClient.Sync.GetSynchronizationStatus = function()
       return { lastAddonVersionMismatch = { reasonCode = "ADDON_UPDATE_REQUIRED" } }
     end

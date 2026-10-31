@@ -1276,6 +1276,142 @@ function Dibs.GetFrameworkStatus()
     " | Timer=" .. enabled("timer")
 end
 
+-- Opt-in, session-only UI render timing. This stays idle unless explicitly
+-- enabled with `/dibs perf on`; it never copies addon data or writes SavedVariables.
+-- Leave room for counters from Player and Officer routes in the same session.
+-- A single profiling session can visit many pages with nested measurements.
+-- Keep the session bounded, but leave enough room that later routes are not
+-- silently omitted after a few large pages have been opened.
+local UI_RENDER_STATS_MAX_PAGES = 512
+local uiRenderStats = { enabled = false, pages = {}, pageCount = 0, droppedPageCount = 0 }
+Dibs.UIRenderStats = Dibs.UIRenderStats or {}
+function Dibs.UIRenderStats.SetEnabled(enabled)
+  uiRenderStats.enabled = enabled == true
+  return uiRenderStats.enabled
+end
+function Dibs.UIRenderStats.IsEnabled()
+  return uiRenderStats.enabled == true
+end
+local function getLuaHeapKB()
+  local collect = _G.collectgarbage
+  if type(collect) ~= "function" then return nil end
+  local ok, value = pcall(collect, "count")
+  return ok and type(value) == "number" and value or nil
+end
+function Dibs.UIRenderStats.Begin()
+  if not uiRenderStats.enabled then return nil end
+  local timer = _G.debugprofilestop
+  if type(timer) ~= "function" then return nil end
+  local heapKB = getLuaHeapKB()
+  return { startedAt = timer(), heapKB = heapKB }
+end
+function Dibs.UIRenderStats.Record(kind, page, startedAt)
+  if not uiRenderStats.enabled then return false end
+  local startTime = type(startedAt) == "table" and startedAt.startedAt or startedAt
+  if type(startTime) ~= "number" then return false end
+  local timer = _G.debugprofilestop
+  if type(timer) ~= "function" then return false end
+  local elapsed = math.max(0, timer() - startTime)
+  local heapDeltaKB
+  if type(startedAt) == "table" and type(startedAt.heapKB) == "number" then
+    local endHeapKB = getLuaHeapKB()
+    if type(endHeapKB) == "number" then heapDeltaKB = endHeapKB - startedAt.heapKB end
+  end
+  local key = tostring(kind or "UI") .. ":" .. tostring(page or "unknown")
+  local entry = uiRenderStats.pages[key]
+  if not entry then
+    if uiRenderStats.pageCount >= UI_RENDER_STATS_MAX_PAGES then
+      uiRenderStats.droppedPageCount = uiRenderStats.droppedPageCount + 1
+      return false
+    end
+    entry = {
+      kind = tostring(kind or "UI"), page = tostring(page or "unknown"),
+      count = 0, totalMs = 0, maxMs = 0,
+    }
+    uiRenderStats.pages[key] = entry
+    uiRenderStats.pageCount = uiRenderStats.pageCount + 1
+  end
+  entry.count = entry.count + 1
+  entry.totalMs = entry.totalMs + elapsed
+  entry.lastMs = elapsed
+  if elapsed > entry.maxMs then entry.maxMs = elapsed end
+  if type(heapDeltaKB) == "number" then
+    entry.heapSampleCount = (entry.heapSampleCount or 0) + 1
+    entry.heapDeltaTotalKB = (entry.heapDeltaTotalKB or 0) + heapDeltaKB
+    entry.heapDeltaLastKB = heapDeltaKB
+    if entry.heapDeltaMaxKB == nil or heapDeltaKB > entry.heapDeltaMaxKB then
+      entry.heapDeltaMaxKB = heapDeltaKB
+    end
+  end
+  return true
+end
+function Dibs.UIRenderStats.GetReport()
+  local entries = {}
+  for _, entry in pairs(uiRenderStats.pages) do
+    entries[#entries + 1] = {
+      kind = entry.kind, page = entry.page, count = entry.count,
+      lastMs = entry.lastMs or 0, maxMs = entry.maxMs, totalMs = entry.totalMs,
+      averageMs = entry.count > 0 and entry.totalMs / entry.count or 0,
+      heapSampleCount = entry.heapSampleCount or 0,
+      heapDeltaLastKB = entry.heapDeltaLastKB,
+      heapDeltaMaxKB = entry.heapDeltaMaxKB,
+      heapDeltaTotalKB = entry.heapDeltaTotalKB or 0,
+      heapDeltaAverageKB = (entry.heapSampleCount or 0) > 0
+        and entry.heapDeltaTotalKB / entry.heapSampleCount or 0,
+    }
+  end
+  table.sort(entries, function(a, b)
+    if a.maxMs == b.maxMs then return a.kind .. a.page < b.kind .. b.page end
+    return a.maxMs > b.maxMs
+  end)
+  return {
+    enabled = uiRenderStats.enabled == true,
+    pages = entries,
+    droppedPageCount = uiRenderStats.droppedPageCount,
+    maxPages = UI_RENDER_STATS_MAX_PAGES,
+  }
+end
+function Dibs.UIRenderStats.Reset()
+  uiRenderStats.pages, uiRenderStats.pageCount, uiRenderStats.droppedPageCount = {}, 0, 0
+end
+function Dibs.UIRenderStats.FormatReport(filter)
+  local report = Dibs.UIRenderStats.GetReport()
+  local needle = type(filter) == "string" and string.lower(filter) or ""
+  local pages = {}
+  for _, row in ipairs(report.pages) do
+    local label = string.lower(row.kind .. " " .. row.page)
+    if needle == "" or label:find(needle, 1, true) then pages[#pages + 1] = row end
+  end
+  if #pages == 0 then
+    if needle ~= "" and #report.pages > 0 then
+      return "No UI render timings match '" .. tostring(filter) .. "'."
+    end
+    return report.enabled and "UI render timing is on; no pages recorded yet."
+      or "No UI render timings recorded. Use /dibs perf on, then open or refresh pages."
+  end
+  local lines = {
+    "Dibs UI render time (ms; current session):",
+    "Lua heap ΔKB is global net change during each sample; GC noise applies, not addon attribution or allocation volume.",
+  }
+  if report.droppedPageCount > 0 then
+    lines[#lines + 1] = string.format(
+      "Warning: %d new timing counters were omitted after the %d-counter session limit.",
+      report.droppedPageCount, report.maxPages)
+  end
+  for index = 1, math.min(20, #pages) do
+    local row = pages[index]
+    local line = string.format("%s / %s: count=%d last=%.2f avg=%.2f max=%.2f total=%.2f",
+      row.kind, row.page, row.count, row.lastMs, row.averageMs, row.maxMs, row.totalMs)
+    if row.heapSampleCount > 0 then
+      line = line .. string.format(" | Lua heap ΔKB last=%.2f avg=%.2f max=%.2f net=%.2f",
+        row.heapDeltaLastKB, row.heapDeltaAverageKB, row.heapDeltaMaxKB, row.heapDeltaTotalKB)
+    end
+    lines[#lines + 1] = line
+  end
+  lines[#lines + 1] = "Timing uses debugprofilestop; it excludes later asynchronous work."
+  return table.concat(lines, "\n")
+end
+
 function Dibs.ApplyDefaultRules()
   ensureDB()
   local season = Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault()
@@ -1426,6 +1562,32 @@ function Dibs.HandleSlashCommand(msg)
     return
   end
 
+  if string.lower(action) == "perf" then
+    local mode = string.lower(args[2] or "report")
+    if mode == "on" then
+      if type(_G.debugprofilestop) ~= "function" then
+        Dibs.Message("UI render timing is unavailable: WoW did not expose debugprofilestop().")
+        return
+      end
+      Dibs.UIRenderStats.SetEnabled(true)
+      Dibs.Message("UI render timing enabled for this session. Open or refresh the pages, then use /dibs perf report.")
+    elseif mode == "off" then
+      Dibs.UIRenderStats.SetEnabled(false)
+      Dibs.Message("UI render timing disabled. Use /dibs perf report to view the measurements collected so far.")
+    elseif mode == "reset" or mode == "clear" then
+      Dibs.UIRenderStats.Reset()
+      Dibs.Message("UI render timings cleared.")
+    elseif mode == "window" or mode == "ui" or mode == "open" then
+      local shell = Dibs.PerfUI and Dibs.PerfUI.Open and Dibs.PerfUI.Open()
+      if not shell then Dibs.Message("Performance report window is unavailable.") end
+    elseif mode == "report" then
+      for line in Dibs.UIRenderStats.FormatReport(args[3]):gmatch("[^\n]+") do Dibs.Message(line) end
+    else
+      Dibs.Message("Usage: /dibs perf window|on|off|report [filter]|reset")
+    end
+    return
+  end
+
   if action == "overview" then
     Dibs.Message(Dibs.OfficerUI and Dibs.OfficerUI.BuildStatusText and Dibs.OfficerUI.BuildStatusText() or "Dibs overview unavailable.")
     return
@@ -1502,7 +1664,7 @@ function Dibs.HandleSlashCommand(msg)
     Dibs.Message(help.SLASH_HELP_STATUS or "Checks: status | readiness | dryrun <item> <winner> <response> <status> [session] | sync probe|report <player> | sync repair <player|guild>")
     Dibs.Message(help.SLASH_HELP_ADMIN or "Administration (GM/Officer): grant/use <player> <amount> | admin list|add|remove <Name-Realm> | mode <AUTO|STANDALONE|RCLootCouncil> | predibmode <mode>")
     Dibs.Message(help.SLASH_HELP_DATA or "Data: data | backup | profiles | import | export")
-    Dibs.Message(help.SLASH_HELP_DEBUG or "Diagnostics: debug <module|all> 0-5 | debug report|rc|logs | ejdebug | ejsub ... | announce debug on|off|scan | rcopts")
+    Dibs.Message(help.SLASH_HELP_DEBUG or "Diagnostics: debug <module|all> 0-5 | debug report|rc|logs | perf window|on|off|report|reset | ejdebug | ejsub ... | announce debug on|off|scan | rcopts")
     Dibs.Message(help.SLASH_HELP_DEVELOPER or "Developer Mode only: dev on|off|status | testitem <itemID>")
     return
   end
@@ -2165,7 +2327,7 @@ local function registerOptionalCapabilities()
     return Dibs.PlayerUI and Dibs.PlayerUI.CreateWindow and Dibs.PlayerUI.CreateWindow() or false
   end })
   capabilities.Register("officer_ui", { dependency = "Dibs UI", initialize = function()
-    return Dibs.OfficerUI and Dibs.OfficerUI.CreateWindow and Dibs.OfficerUI.CreateWindow() or false
+    return Dibs.OfficerUI and Dibs.OfficerUI.CreateWindow and Dibs.OfficerUI.CreateWindow(nil, true) or false
   end })
   capabilities.Register("rclootcouncil", { dependency = "RCLootCouncil", retryEvents = { "RCLootCouncil_LOADED", "PLAYER_ENTERING_WORLD" }, initialize = function()
     local ok = Dibs.RCLootCouncil and Dibs.RCLootCouncil.Initialize and Dibs.RCLootCouncil.Initialize()

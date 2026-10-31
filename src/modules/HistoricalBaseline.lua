@@ -352,6 +352,30 @@ function M.GetState() return copy(ensure()) end
 function M.GetEvidence() return sortedValues(ensure().evidence) end
 function M.GetFindings() return sortedValues(ensure().findings) end
 function M.GetBaseline() return copy(ensure().baseline) end
+function M.GetBaselineHash()
+  local baseline = ensure().baseline
+  return baseline and baseline.legacyBaselineHash or nil
+end
+-- Compact read for Installation.GetStatus. Status needs counts and baseline
+-- identity; copying full evidence, decisions, recoveries and audit rows here
+-- made repeated readiness checks scale with the historical record.
+function M.GetInstallationSummary()
+  local state = ensure()
+  local openFindings, incompleteSources = 0, false
+  for _, finding in pairs(state.findings) do
+    if finding.status == "OPEN" then openFindings = openFindings + 1 end
+  end
+  for _, source in pairs(state.sources) do
+    if source.complete == false then incompleteSources = true; break end
+  end
+  return {
+    evidenceCount = count(state.evidence),
+    openFindings = openFindings,
+    incompleteSources = incompleteSources,
+    baselinePresent = state.baseline ~= nil,
+    baselineHash = state.baseline and state.baseline.legacyBaselineHash or nil,
+  }
+end
 function M.CalculateHistoricalBaselineHash(content) return hash(content) end
 
 function M.ApplyApprovedBaseline(baseline)

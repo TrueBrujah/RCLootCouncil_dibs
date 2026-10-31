@@ -19,6 +19,7 @@ Related docs: docs/player/README.md.
 local Dibs = _G.Dibs
 Dibs.PlayerUI = Dibs.PlayerUI or {}
 local helpText = Dibs.L or {}
+local playerPreDibSummaryCache
 
 local function setControlText(control, text)
   if not control then
@@ -73,6 +74,41 @@ end
 
 local function playerListHeight(rowCount, maximum)
   return math.min(maximum, math.max(72, 44 + (tonumber(rowCount) or 0) * 32))
+end
+
+local function playerPageSlice(frame, key, rows, pageSize)
+  local visible, page, total = Dibs.AceGUI.GetPageSlice(rows, frame[key] or 1, pageSize)
+  frame[key] = page
+  return visible, page, total
+end
+
+local function projectPlayerRequestPage(source, requestedPage, pageSize, project)
+  local total = #source
+  local pages = math.max(1, math.ceil(total / pageSize))
+  local page = math.max(1, math.min(pages, math.floor(tonumber(requestedPage) or 1)))
+  local first = (page - 1) * pageSize + 1
+  local rows = {}
+  for index = first, math.min(total, first + pageSize - 1) do
+    rows[#rows + 1] = project(source[index])
+  end
+  return rows, { page = page, pages = pages, count = total }
+end
+
+local function addPlayerPager(shell, parent, frame, key, page, total, pageLabel)
+  if total <= 1 then return end
+  local controls = Dibs.AceGUI.AddInlineGroup(shell, parent)
+  local previous = Dibs.AceGUI.AddButton(shell, controls, "Previous", function()
+    frame[key] = math.max(1, (frame[key] or page) - 1)
+    frame:Refresh()
+  end, 90)
+  Dibs.AceGUI.SetDisabled(previous, page <= 1)
+  Dibs.AceGUI.AddLabel(shell, controls,
+    string.format(pageLabel or "Page %d / %d", page, total), false)
+  local nextPage = Dibs.AceGUI.AddButton(shell, controls, "Next", function()
+    frame[key] = math.min(total, (frame[key] or page) + 1)
+    frame:Refresh()
+  end, 70)
+  Dibs.AceGUI.SetDisabled(nextPage, page >= total)
 end
 
 local function parseItemInput(raw)
@@ -313,7 +349,9 @@ function Dibs.PlayerUI.BuildRequestView(filter)
     local status = playerRequestStatus(nil, filter.unavailable)
     return { { status = status, nextAction = status.nextAction, explanation = status.explanation, details = {} } }
   end
-  local source = Dibs.Disputes and Dibs.Disputes.ListForPlayer and Dibs.Disputes.ListForPlayer(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, filter) or {}
+  local source = type(filter.requests) == "table" and filter.requests
+    or (Dibs.Disputes and Dibs.Disputes.ListForPlayer
+      and Dibs.Disputes.ListForPlayer(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, filter) or {})
   local rows, limit = {}, math.max(1, math.min(50, tonumber(filter.limit) or 25))
   for _, request in ipairs(source or {}) do
     if #rows >= limit then break end
@@ -336,65 +374,125 @@ end
 
 ---@param playerName string|nil Player identity; defaults to local player.
 ---@return table summary Player-scoped balance and request summary.
-function Dibs.PlayerUI.GetSummary(playerName, ledgerId)
+function Dibs.PlayerUI.GetSummary(playerName, ledgerId, options)
+  local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  options = type(options) == "table" and options or {}
   local season = Dibs.Seasons and Dibs.Seasons.GetCurrent() or nil
   local currentPlayer = playerName or Dibs.GetPlayerName()
-  local canonical = Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
+  local historySummary = Dibs.Ledger and Dibs.Ledger.GetPlayerHistorySummary
+    and Dibs.Ledger.GetPlayerHistorySummary(currentPlayer, season and season.id, ledgerId) or nil
+  local canonical = not historySummary and Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
     and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, currentPlayer, ledgerId) or nil
-  local playerState = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(currentPlayer, season and season.id, ledgerId) or {}
-  local transactions = Dibs.Ledger and Dibs.Ledger.GetHistory and Dibs.Ledger.GetHistory(currentPlayer, season and season.id, ledgerId) or {}
-  local used = 0
-  for _, transaction in ipairs(transactions) do
-    local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
-    if transaction.type == "DIB_USED" then
-      used = used + math.max(0, -amount)
-    elseif transaction.type == "DIB_REFUNDED" then
-      used = math.max(0, used - math.max(0, amount))
+  local playerState = not historySummary and Dibs.Ledger and Dibs.Ledger.GetPlayerState
+    and Dibs.Ledger.GetPlayerState(currentPlayer, season and season.id, ledgerId) or {}
+  local used = historySummary and historySummary.seasonUsed or 0
+  if not historySummary then
+    local transactions = Dibs.Ledger and Dibs.Ledger.GetHistory
+      and Dibs.Ledger.GetHistory(currentPlayer, season and season.id, ledgerId) or {}
+    for _, transaction in ipairs(transactions) do
+      local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+      if transaction.type == "DIB_USED" then
+        used = used + math.max(0, -amount)
+      elseif transaction.type == "DIB_REFUNDED" then
+        used = math.max(0, used - math.max(0, amount))
+      end
     end
   end
-  local requests = Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(currentPlayer, ledgerId) or {}
-  local activePreDibs = {}
-  for _, request in ipairs(requests) do
-    if not season or request.seasonId == season.id then activePreDibs[#activePreDibs + 1] = request end
-  end
-  local wonPreDibs = {}
-  local playerKey = string.lower(tostring(currentPlayer or ""))
-  for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory(ledgerId) or {}) do
-    if string.lower(tostring(request.playerName or "")) == playerKey and request.status == "fulfilled"
-      and (not season or request.seasonId == season.id) then
-      wonPreDibs[#wonPreDibs + 1] = request
+  local requestSummary
+  local preDibs = Dibs.PreDibs
+  if options.includeRequests ~= false and preDibs and type(preDibs.GetPlayerSeasonRequestSummary) == "function" then
+    local requestSummaryCacheStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    local revision = preDibs.GetHistoryRevisionFast and preDibs.GetHistoryRevisionFast(ledgerId) or nil
+    local playerKey = string.lower(tostring(currentPlayer or ""))
+    local seasonKey = tostring(season and season.id or "*")
+    local ledgerKey = tostring(ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+      and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary")
+    if revision ~= nil and playerPreDibSummaryCache
+      and playerPreDibSummaryCache.player == playerKey
+      and playerPreDibSummaryCache.season == seasonKey
+      and playerPreDibSummaryCache.ledger == ledgerKey
+      and playerPreDibSummaryCache.revision == revision then
+      requestSummary = playerPreDibSummaryCache.summary
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Player data", "predib-ui-summary-hit", requestSummaryCacheStartedAt)
+      end
+    else
+      requestSummary = preDibs.GetPlayerSeasonRequestSummary(currentPlayer, season and season.id, ledgerKey)
+      if revision ~= nil and requestSummary then
+        playerPreDibSummaryCache = {
+          player = playerKey, season = seasonKey, ledger = ledgerKey,
+          revision = revision, summary = requestSummary,
+        }
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Player data", "predib-ui-summary-miss", requestSummaryCacheStartedAt)
+      end
     end
   end
-  table.sort(wonPreDibs, function(first, second)
-    return (first.fulfilledAt or first.updatedAt or first.createdAt or 0)
-      > (second.fulfilledAt or second.updatedAt or second.createdAt or 0)
-  end)
-  local acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsForPlayer and Dibs.PreDibs.GetAcquisitionsForPlayer(currentPlayer) or {}
-  if Dibs.PreDibs and Dibs.PreDibs.ProjectVaultAcquisition then
-    local projected = {}
-    for _, acquisition in ipairs(acquisitions) do
-      local entry = Dibs.PreDibs.ProjectVaultAcquisition(acquisition, "player")
-      entry.status = Dibs.PlayerUI.GetVaultAcquisitionPresentation(entry)
-      projected[#projected + 1] = entry
+  local requests = options.includeRequests == false and {}
+    or requestSummary and requestSummary.active
+    or (Dibs.PreDibs and Dibs.PreDibs.GetActiveRequests(currentPlayer, ledgerId) or {})
+  local activePreDibs = requestSummary and requests or {}
+  if not requestSummary then
+    for _, request in ipairs(requests) do
+      if not season or request.seasonId == season.id then activePreDibs[#activePreDibs + 1] = request end
     end
-    acquisitions = projected
   end
-  local eligibility = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
+  local wonPreDibs = options.includeRequests == false and {}
+    or requestSummary and requestSummary.fulfilled or {}
+  if options.includeRequests ~= false and not requestSummary then
+    wonPreDibs = {}
+    local playerKey = string.lower(tostring(currentPlayer or ""))
+    local requestHistory = Dibs.PreDibs and Dibs.PreDibs.GetRequestsForPlayer
+      and Dibs.PreDibs.GetRequestsForPlayer(currentPlayer, ledgerId)
+      or (Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory(ledgerId) or {})
+    for _, request in ipairs(requestHistory) do
+      if string.lower(tostring(request.playerName or "")) == playerKey and request.status == "fulfilled"
+        and (not season or request.seasonId == season.id) then
+        wonPreDibs[#wonPreDibs + 1] = request
+      end
+    end
+    table.sort(wonPreDibs, function(first, second)
+      return (first.fulfilledAt or first.updatedAt or first.createdAt or 0)
+        > (second.fulfilledAt or second.updatedAt or second.createdAt or 0)
+    end)
+  end
+  local acquisitions = {}
+  if options.includeAcquisitions ~= false then
+    acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsForPlayer
+      and Dibs.PreDibs.GetAcquisitionsForPlayer(currentPlayer) or {}
+    if Dibs.PreDibs and Dibs.PreDibs.ProjectVaultAcquisition then
+      local projected = {}
+      for _, acquisition in ipairs(acquisitions) do
+        local entry = Dibs.PreDibs.ProjectVaultAcquisition(acquisition, "player")
+        entry.status = Dibs.PlayerUI.GetVaultAcquisitionPresentation(entry)
+        projected[#projected + 1] = entry
+      end
+      acquisitions = projected
+    end
+  end
+  local eligibility = options.includeEligibility ~= false and Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
     and Dibs.CharacterEligibility.GetSummary(currentPlayer, season and season.id) or nil
 
-  return {
+  local summary = {
     season = season,
     player = currentPlayer,
-    balance = canonical and canonical.balance or 0,
+    balance = historySummary and historySummary.balance or (canonical and canonical.balance or 0),
     balanceState = canonical,
-    seasonAllocation = tonumber(playerState.allocation) or 0,
+    seasonAllocation = historySummary and historySummary.allocation or (tonumber(playerState.allocation) or 0),
     seasonUsed = used,
     activePreDibs = activePreDibs,
     wonPreDibs = wonPreDibs,
+    predibsRequestSummary = requestSummary,
     acquisitions = acquisitions,
     eligibility = eligibility,
-    modePolicy = Dibs.PreDibs and Dibs.PreDibs.GetModePolicy and Dibs.PreDibs.GetModePolicy(season and season.id) or nil,
+    modePolicy = options.includeModePolicy ~= false and Dibs.PreDibs and Dibs.PreDibs.GetModePolicy
+      and Dibs.PreDibs.GetModePolicy(season and season.id) or nil,
   }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "summary", renderStartedAt)
+  end
+  return summary
 end
 
 local function hasReason(result, code)
@@ -452,13 +550,18 @@ function Dibs.PlayerUI.GetStatusPresentation(result)
   }
 end
 
-local function playerRequestHistory(playerName, activeRequests)
+local function playerRequestHistory(playerName, activeRequests, ledgerId)
+  local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local history = {}
   local active = {}
   for _, request in ipairs(activeRequests or {}) do
     active[request.requestId] = true
   end
-  local source = Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}
+  local sortedSource = Dibs.PreDibs and Dibs.PreDibs.GetRecentRequestsForPlayer
+  local source = sortedSource and sortedSource(playerName, ledgerId)
+    or (Dibs.PreDibs and Dibs.PreDibs.GetRequestsForPlayer
+      and Dibs.PreDibs.GetRequestsForPlayer(playerName, ledgerId))
+    or (Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory(ledgerId) or {})
   local playerKey = string.lower(tostring(playerName or ""))
   for _, request in ipairs(source) do
     if string.lower(tostring(request.playerName or "")) == playerKey then
@@ -471,14 +574,128 @@ local function playerRequestHistory(playerName, activeRequests)
       })
     end
   end
-  table.sort(history, function(first, second)
-    return (first.createdAt or 0) > (second.createdAt or 0)
-  end)
+  if not sortedSource then
+    table.sort(history, function(first, second)
+      return (first.createdAt or 0) > (second.createdAt or 0)
+    end)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "predib-history", renderStartedAt)
+  end
   return history
 end
 
-local function projectHistory(playerName, seasonId, ledgerId)
-  local entries = getPlayerTransactions(playerName, seasonId, "current", ledgerId)
+local playerPastRequestPageCache
+local function playerPastRequestPage(playerName, activeRequests, wonRequests, requestSummary, ledgerId, requestedPage, pageSize)
+  local cacheCheckStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local predibs = Dibs.PreDibs
+  local source, sortedSource, prefilteredPast
+  if type(requestSummary) == "table" and type(requestSummary.pastRequests) == "table" then
+    source, sortedSource, prefilteredPast = requestSummary.pastRequests, true, true
+  elseif type(requestSummary) == "table" and type(requestSummary.recentRequests) == "table" then
+    source, sortedSource = requestSummary.recentRequests, true
+  elseif predibs and type(predibs.GetRecentRequestsForPlayer) == "function" then
+    source, sortedSource = predibs.GetRecentRequestsForPlayer(playerName, ledgerId), true
+  elseif predibs and type(predibs.GetRequestsForPlayer) == "function" then
+    source = predibs.GetRequestsForPlayer(playerName, ledgerId)
+  else
+    source = predibs and predibs.GetHistory and predibs.GetHistory(ledgerId) or {}
+  end
+  source = type(source) == "table" and source or {}
+
+  local playerKey = string.lower(tostring(playerName or ""))
+  local size = math.max(1, math.min(50, math.floor(tonumber(pageSize) or 10)))
+  local page = math.max(1, math.floor(tonumber(requestedPage) or 1))
+  if sortedSource and playerPastRequestPageCache
+    and playerPastRequestPageCache.source == source
+    and playerPastRequestPageCache.summary == requestSummary
+    and playerPastRequestPageCache.active == activeRequests
+    and playerPastRequestPageCache.won == wonRequests
+    and playerPastRequestPageCache.player == playerKey
+    and playerPastRequestPageCache.page == page
+    and playerPastRequestPageCache.size == size then
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player data", "predib-page-hit", cacheCheckStartedAt)
+    end
+    return playerPastRequestPageCache.value
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "predib-page-miss", cacheCheckStartedAt)
+  end
+  local pageBuildStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local active, won = {}, {}
+  if not prefilteredPast then
+    for _, request in ipairs(activeRequests or {}) do active[request.requestId] = true end
+    for _, request in ipairs(wonRequests or {}) do won[request.requestId] = true end
+  end
+
+  local function collect(startIndex, endIndex)
+    local rows, count = {}, 0
+    if prefilteredPast then
+      count = #source
+      for index = startIndex, math.min(endIndex, count) do
+        local request = source[index]
+        rows[#rows + 1] = {
+          createdAt = request.createdAt or request.updatedAt,
+          item = request.itemName or request.itemLink or ("Item " .. tostring(request.itemID or "?")),
+          status = tostring(request.status or "Pending"),
+        }
+      end
+      return rows, count
+    end
+    for _, request in ipairs(source) do
+      if string.lower(tostring(request.playerName or "")) == playerKey
+        and not active[request.requestId or false] and not won[request.requestId or false] then
+        count = count + 1
+        if count >= startIndex and count <= endIndex then
+          rows[#rows + 1] = {
+            createdAt = request.createdAt or request.updatedAt,
+            item = request.itemName or request.itemLink or ("Item " .. tostring(request.itemID or "?")),
+            status = tostring(request.status or "Pending"),
+          }
+        end
+      end
+    end
+    return rows, count
+  end
+
+  if not sortedSource then
+    local sorted = {}
+    for _, request in ipairs(source) do
+      if string.lower(tostring(request.playerName or "")) == playerKey then sorted[#sorted + 1] = request end
+    end
+    table.sort(sorted, function(first, second)
+      return (tonumber(first.createdAt or first.updatedAt) or 0)
+        > (tonumber(second.createdAt or second.updatedAt) or 0)
+    end)
+    source = sorted
+  end
+
+  local count = prefilteredPast and #source or nil
+  if count then page = math.min(page, math.max(1, math.ceil(count / size))) end
+  local first = (page - 1) * size + 1
+  local rows
+  rows, count = collect(first, first + size - 1)
+  local pages = math.max(1, math.ceil(count / size))
+  local currentPage = math.min(page, pages)
+  if currentPage ~= page then
+    first = (currentPage - 1) * size + 1
+    rows = collect(first, first + size - 1)
+  end
+  local result = { rows = rows, count = count, page = currentPage, pages = pages, pageSize = size }
+  if sortedSource then
+    playerPastRequestPageCache = {
+      source = source, active = activeRequests, won = wonRequests, player = playerKey,
+      summary = requestSummary, page = page, size = size, value = result,
+    }
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "predib-page-build", pageBuildStartedAt)
+  end
+  return result
+end
+
+local function projectHistoryTransactions(entries)
   local history = {}
   for _, transaction in ipairs(entries) do
     local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
@@ -503,6 +720,10 @@ local function projectHistory(playerName, seasonId, ledgerId)
     })
   end
   return history
+end
+
+local function projectHistory(playerName, seasonId, ledgerId)
+  return projectHistoryTransactions(getPlayerTransactions(playerName, seasonId, "current", ledgerId))
 end
 
 local PLAYER_HISTORY_FILTER_OPTIONS = {
@@ -619,31 +840,53 @@ local function addHistoryFilterControls(shell, parent, frame, filterKey, prefix,
   end
 end
 
-function Dibs.PlayerUI.GetViewModel(playerName, historyFilters, ledgerId)
-  local summary = Dibs.PlayerUI.GetSummary(playerName, ledgerId)
+function Dibs.PlayerUI.GetViewModel(playerName, historyFilters, ledgerId, options)
+  local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  options = type(options) == "table" and options or {}
+  local summary = Dibs.PlayerUI.GetSummary(playerName, ledgerId, {
+    includeAcquisitions = false,
+    includeEligibility = false,
+    includeModePolicy = false,
+  })
   local readiness = Dibs.Readiness and Dibs.Readiness.Evaluate and Dibs.Readiness.Evaluate({ allowPlayer = true }) or {}
-  local active = {}
-  for _, request in ipairs(summary.activePreDibs or {}) do
-    table.insert(active, {
+  local activeSource = summary.activePreDibs or {}
+  local active, activePage
+  local function projectActiveRequest(request)
+    return {
       requestId = request.requestId,
       date = formatDate(request.createdAt or request.updatedAt),
       item = request.itemName or request.itemLink or ("Item " .. tostring(request.itemID or "?")),
       status = tostring(request.status or "Pending"),
       difficulty = request.difficulty and tostring(request.difficulty) or nil,
-    })
+      request = request,
+    }
   end
-  local won = {}
-  for _, request in ipairs(summary.wonPreDibs or {}) do
-    table.insert(won, {
+  if options.pageActivePreDibs then
+    active, activePage = projectPlayerRequestPage(activeSource, options.pageActivePreDibs, 10, projectActiveRequest)
+  else
+    active = {}
+    for _, request in ipairs(activeSource) do active[#active + 1] = projectActiveRequest(request) end
+  end
+  local wonSource = summary.wonPreDibs or {}
+  local won, wonPage
+  local function projectWonRequest(request)
+    return {
       requestId = request.requestId,
       date = formatDate(request.fulfilledAt or request.updatedAt or request.createdAt),
       item = request.itemName or request.itemLink or ("Item " .. tostring(request.itemID or "?")),
       difficulty = request.difficulty and tostring(request.difficulty) or nil,
       status = (Dibs.L or {}).PLAYER_PREDIB_WON_STATUS or "Won",
       request = request,
-    })
+    }
   end
-  local history = projectHistory(summary.player, summary.season and summary.season.id, ledgerId)
+  if options.pageWonPreDibs then
+    won, wonPage = projectPlayerRequestPage(wonSource, options.pageWonPreDibs, 10, projectWonRequest)
+  else
+    won = {}
+    for _, request in ipairs(wonSource) do won[#won + 1] = projectWonRequest(request) end
+  end
+  local history = options.includeHistory == false and {}
+    or projectHistory(summary.player, summary.season and summary.season.id, ledgerId)
   local historyFilterError
   if type(historyFilters) == "table" then
     local filtered, reason = filterPlayerHistory(history, historyFilters)
@@ -654,8 +897,20 @@ function Dibs.PlayerUI.GetViewModel(playerName, historyFilters, ledgerId)
       historyFilterError = historyFilterErrorText(reason)
     end
   end
-  local requests = playerRequestHistory(summary.player, summary.activePreDibs)
-  return {
+  local pastPreDibPage
+  local requests
+  if options.pagePreDibHistory then
+    local pastHistoryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    pastPreDibPage = playerPastRequestPage(summary.player, summary.activePreDibs, summary.wonPreDibs,
+      summary.predibsRequestSummary, ledgerId, options.pagePreDibHistory, 10)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player data", "predib-history", pastHistoryStartedAt)
+    end
+    requests = {}
+  else
+    requests = playerRequestHistory(summary.player, summary.activePreDibs, ledgerId)
+  end
+  local view = {
     navigation = Dibs.PlayerUI.GetNavigation(),
     player = summary.player,
     balance = summary.balance,
@@ -663,19 +918,68 @@ function Dibs.PlayerUI.GetViewModel(playerName, historyFilters, ledgerId)
     seasonUsed = summary.seasonUsed or 0,
     seasonName = summary.season and summary.season.name or "No active season",
     activePreDibs = active,
+    activePreDibPage = activePage,
     wonPreDibs = won,
+    wonPreDibPage = wonPage,
     requests = requests,
-    pendingRequests = #active,
+    pastPreDibPage = pastPreDibPage,
+    pendingRequests = activePage and activePage.count or #active,
     history = history,
     historyFilterError = historyFilterError,
     status = Dibs.PlayerUI.GetStatusPresentation(readiness),
     empty = {
       activePreDibs = #active == 0 and ((Dibs.L or {}).PLAYER_NO_ACTIVE_PREDIBS or "No active Pre-Dibs this season.") or nil,
       wonPreDibs = #won == 0 and ((Dibs.L or {}).PLAYER_NO_FULFILLED_PREDIBS or "No won Pre-Dibs this season.") or nil,
-      requests = #requests == 0 and "No requests yet." or nil,
+      requests = (pastPreDibPage and pastPreDibPage.count == 0
+        or not pastPreDibPage and #requests == 0) and "No requests yet." or nil,
       history = #history == 0 and "No history yet." or nil,
     },
   }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "view-model", renderStartedAt)
+  end
+  return view
+end
+
+function Dibs.PlayerUI.GetHistoryViewModel(playerName, historyFilters, ledgerId, page, pageSize)
+  local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local season = Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent() or nil
+  local player = playerName or (Dibs.GetPlayerName and Dibs.GetPlayerName())
+  local paged = not hasActiveHistoryFilters(historyFilters)
+    and Dibs.Ledger and type(Dibs.Ledger.GetHistoryPage) == "function"
+  local history, total, currentPage
+  if paged then
+    local transactions
+    transactions, total, currentPage = Dibs.Ledger.GetHistoryPage(player, season and season.id, ledgerId, page, pageSize)
+    history = projectHistoryTransactions(transactions)
+  else
+    history = projectHistory(player, season and season.id, ledgerId)
+  end
+  local historyFilterError
+  if type(historyFilters) == "table" then
+    local filtered, reason = filterPlayerHistory(history, historyFilters)
+    if filtered then
+      history = filtered
+    else
+      history = {}
+      historyFilterError = historyFilterErrorText(reason)
+    end
+  end
+  local view = {
+    player = player,
+    season = season,
+    history = history,
+    paged = paged,
+    total = total,
+    page = currentPage,
+    pageSize = paged and math.max(1, math.min(50, math.floor(tonumber(pageSize) or 20))) or nil,
+    historyFilterError = historyFilterError,
+    empty = { history = #history == 0 and "No history yet." or nil },
+  }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "history-view-model", renderStartedAt)
+  end
+  return view
 end
 
 ---@param itemID integer Item identifier.
@@ -748,7 +1052,8 @@ local function resolveVaultItem(record, frame, ownedLinks)
     local synchronous = true
     Dibs.LootPipeline.ResolveItem(record.itemID, function(item, reason)
       cached.loading = false
-      cached.item = item
+      -- The page only needs the name; do not retain LootPipeline's full item object.
+      cached.itemName = item and item.itemName or nil
       cached.reason = reason
       if not item and Dibs.Message then
         Dibs.Message("[GreatVault] " .. key .. ": " .. tostring(reason or "ITEM_LOAD_FAILED"), { chat = false })
@@ -758,8 +1063,8 @@ local function resolveVaultItem(record, frame, ownedLinks)
     end)
     synchronous = false
   end
-  if cached and cached.item then
-    record.itemName = cached.item.itemName
+  if cached and cached.itemName then
+    record.itemName = cached.itemName
   end
   return record
 end
@@ -913,17 +1218,77 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
     allowTableSort = false, flatBackground = true, fluidColumns = true, widthHint = widthHint,
     shrinkToFit = true, hideScrollbarWhenFits = true, scrollbarReserve = 26,
   }
-  if Dibs.RequestDelivery and Dibs.RequestDelivery.Pump then Dibs.RequestDelivery.Pump() end
+  -- Keep reminder scans on the lifecycle timer; page redraws should not walk
+  -- the full request order just to update delivery state.
   local disputes = Dibs.Disputes
 
   Dibs.AceGUI.AddHeader(shell, parent, strings.PLAYER_REPORT_TITLE or "Report a problem",
     strings.PLAYER_REPORT_HELP or "Report a wrong Dib debit, a Dib recorded on the wrong item or player, or another Dibs problem. An Officer reviews it; submitting does not change your balance.")
+  local transactionDataStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local categories = sortedLabels(disputes and disputes.GetCategories and disputes.GetCategories() or { other = "Other" })
-  local transactions = getPlayerTransactions(summary.player, summary.season and summary.season.id, options.historyMode)
+  local transactionQuery = string.lower(trimText(frame.reportTransactionQuery))
+  local transactions, transactionCount
+  local ledger = Dibs.Ledger
+  if transactionQuery == "" and ledger and type(ledger.GetRecentHistoryChoices) == "function" then
+    local historyChoicesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    transactions, transactionCount = ledger.GetRecentHistoryChoices(summary.player, summary.season and summary.season.id,
+      summary.ledgerId, 50)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player data", "report-history-choices", historyChoicesStartedAt)
+    end
+  elseif transactionQuery == "" and ledger and type(ledger.GetHistoryPage) == "function"
+    and type(ledger.GetPlayerHistorySummary) == "function" then
+    local historySummaryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    local historySummary = ledger.GetPlayerHistorySummary(summary.player, summary.season and summary.season.id)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player data", "report-history-summary", historySummaryStartedAt)
+    end
+    transactionCount = tonumber(historySummary.count) or 0
+    local pageSize = 50
+    local page = math.max(1, math.ceil(transactionCount / pageSize))
+    local historyPageStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    transactions = ledger.GetHistoryPage(summary.player, summary.season and summary.season.id,
+      nil, page, pageSize)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player data", "report-history-page", historyPageStartedAt)
+    end
+  else
+    transactions = getPlayerTransactions(summary.player, summary.season and summary.season.id, options.historyMode)
+  end
   local transactionChoices = { [""] = strings.PLAYER_REPORT_GENERAL or "General request (no ledger entry)" }
+  local transactionLabelsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local matchingTransactions, visibleTransactions = 0, 0
   for _, tx in ipairs(transactions) do
     local id = tostring(tx.transactionId or "")
-    if id ~= "" then transactionChoices[id] = reportTransactionLabel(tx) end
+    local label = id ~= "" and reportTransactionLabel(tx) or ""
+    if id ~= "" and (transactionQuery == "" or string.find(string.lower(label), transactionQuery, 1, true)) then
+      matchingTransactions = matchingTransactions + 1
+      if visibleTransactions < 50 then
+        transactionChoices[id] = label
+        visibleTransactions = visibleTransactions + 1
+      end
+    end
+  end
+  if transactionCount ~= nil then matchingTransactions = transactionCount end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "report-transaction-labels", transactionLabelsStartedAt)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "report-transactions", transactionDataStartedAt)
+  end
+  local reportFormStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local transactionSearch = Dibs.AceGUI.AddEditBox(shell, parent,
+    strings.PLAYER_REPORT_TRANSACTION_SEARCH or "Search ledger entries", function(value)
+      frame.reportTransactionQuery = value or ""
+      frame.disputeTransactionId = ""
+      frame:Refresh()
+    end, fieldWidth)
+  setControlText(transactionSearch, frame.reportTransactionQuery or "")
+  if matchingTransactions > visibleTransactions then
+    local explanation = transactionQuery == "" and "Showing the most recent %d of %d entries. Search to find older entries."
+      or "Showing %d of %d matching entries. Refine the search to find older entries."
+    Dibs.AceGUI.AddLabel(shell, parent, string.format(explanation,
+      visibleTransactions, matchingTransactions), true)
   end
   frame.disputeCategory = categories[frame.disputeCategory] and frame.disputeCategory or "other"
   frame.disputeTransactionId = transactionChoices[frame.disputeTransactionId or ""] and frame.disputeTransactionId or ""
@@ -952,6 +1317,7 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
     local request, reason
     if disputes and disputes.CreateReport then request, reason = disputes.CreateReport(payload) end
     if request then
+      if Dibs.RequestDelivery and Dibs.RequestDelivery.Pump then Dibs.RequestDelivery.Pump(true) end
       frame.disputeStatusText = (strings.REQUEST_SAVED or "Request saved. Delivery is tracked separately; receipt is not a resolution.")
         .. " " .. tostring(request.requestId)
       frame.disputeNote = ""
@@ -965,17 +1331,29 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
   Dibs.AceGUI.SetDisabled(frame.disputeSubmitButton, not (disputes and disputes.CreateReport))
   frame.disputeStatusLabel = Dibs.AceGUI.AddLabel(shell, parent, frame.disputeStatusText
     or strings.PLAYER_REPORT_PRIVACY or "Requests are visible only to you and guild Officers.", true)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player UI", "report-form-build", reportFormStartedAt)
+  end
 
   Dibs.AceGUI.AddHeader(shell, parent, strings.PLAYER_REVIEW_REQUESTS or "My review requests",
     strings.PLAYER_REVIEW_REQUESTS_HELP or "Follow delivery, Officer replies and the decision for each report.")
+  local requestDataStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local requests, requestReason = {}, nil
+  local requestFetchStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   if disputes and disputes.ListForPlayer then
     requests, requestReason = disputes.ListForPlayer(summary.player)
   end
-  local requestProjection = Dibs.PlayerUI.BuildRequestView({ limit = 50 })
-  if requestReason then
-    requestProjection = Dibs.PlayerUI.BuildRequestView({ unavailable = requestReason })
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "request-list-fetch", requestFetchStartedAt)
   end
+  local requestProjectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local requestProjection = requestReason
+    and Dibs.PlayerUI.BuildRequestView({ unavailable = requestReason })
+    or Dibs.PlayerUI.BuildRequestView({ limit = 50, requests = requests })
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "request-list-projection", requestProjectionStartedAt)
+  end
+  local requestRowsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local projectedById = {}
   for _, projected in ipairs(requestProjection) do
     if projected.requestId then projectedById[projected.requestId] = projected end
@@ -999,16 +1377,22 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
       }
     end
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "request-list-rows", requestRowsStartedAt)
+    Dibs.UIRenderStats.Record("Player data", "request-list", requestDataStartedAt)
+  end
   local requestTableOptions = {}
   for key, value in pairs(tableOptions) do requestTableOptions[key] = value end
   requestTableOptions.emptyText = strings.PLAYER_REVIEW_REQUESTS_EMPTY or "No review requests yet."
+  local visibleRequestRows, requestPage, requestPages = playerPageSlice(frame, "requestsPage", requestRows, 15)
+  local requestTableStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   Dibs.AceGUI.AddTable(shell, parent, {
     { title = "Date", width = 120, minWidth = 90, weight = 1, tooltip = helpText.UI_HELP_DATE },
     { title = strings.PLAYER_REPORT_TYPE or "Problem type", width = 170, minWidth = 110, weight = 2 },
     { title = "Status", width = 120, minWidth = 88, weight = 1, tooltip = helpText.UI_HELP_REQUEST_STATUS },
     { title = "Next step", width = 170, minWidth = 110, weight = 2, tooltip = helpText.UI_HELP_NEXT_STEP },
     { title = "Action", width = 80, minWidth = 70, action = true, tooltip = helpText.UI_HELP_ACTION },
-  }, requestRows, playerListHeight(#requestRows, 230), function(row)
+  }, visibleRequestRows, playerListHeight(#visibleRequestRows, 230), function(row)
     if not row.request then return nil end
     return {
       text = strings.PLAYER_REPORT_VIEW or "View",
@@ -1018,6 +1402,10 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
       end,
     }
   end, requestTableOptions)
+  addPlayerPager(shell, parent, frame, "requestsPage", requestPage, requestPages, "Requests %d / %d")
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player UI", "request-list-table", requestTableStartedAt)
+  end
 
   if not (frame.selectedDisputeRequestId and disputes and disputes.GetRequest) then return end
   local selected = disputes.GetRequest(frame.selectedDisputeRequestId, summary.player)
@@ -1071,6 +1459,7 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
     setControlText(reply, frame.disputeReply)
     Dibs.AceGUI.AddButton(shell, parent, "Send reply", function()
       local result, reason = disputes.AddReply(frame.selectedDisputeRequestId, frame.disputeReply, summary.player)
+      if result and Dibs.RequestDelivery and Dibs.RequestDelivery.Pump then Dibs.RequestDelivery.Pump(true) end
       frame.disputeStatusText = result and (strings.REQUEST_REPLY_SAVED or "Reply saved; check delivery status.")
         or ("Unable to reply: " .. tostring(reason or "unknown error"))
       if result then frame.disputeReply = "" end
@@ -1156,7 +1545,16 @@ local function createLegacyAceWindow()
       renderVaultHistory(shell, tabs, self, 480)
       return
     end
-    local summary = Dibs.PlayerUI.GetSummary(nil, Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil)
+    local summaryOptions
+    if self.playerTab == "requests" or self.playerTab == "history" then
+      summaryOptions = {
+        includeRequests = false, includeAcquisitions = false,
+        includeEligibility = false, includeModePolicy = false,
+      }
+    end
+    local summary = Dibs.PlayerUI.GetSummary(nil,
+      Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil,
+      summaryOptions)
     if self.playerTab == "requests" then
       -- Keep the report form, request list and details in one bounded page so
       -- the lower controls remain reachable on smaller screens.
@@ -1432,9 +1830,16 @@ local function createAceWindow()
 
   local tabs = Dibs.AceGUI.AddTree(shell, Dibs.PlayerUI.GetNavigation(), function(value)
     frame.playerTab = value
-    frame:Refresh()
+    if not frame._dibsInitialTreeSelection then frame:Refresh() end
   end, 170)
   frame.aceTabs = tabs
+  local contentHost = tabs and Dibs.AceGUI.Create(shell, "SimpleGroup", tabs) or nil
+  if contentHost then
+    if contentHost.SetFullWidth then contentHost:SetFullWidth(true) end
+    if contentHost.SetFullHeight then contentHost:SetFullHeight(true) end
+    if contentHost.SetLayout then contentHost:SetLayout("List") end
+  end
+  frame.contentHost = contentHost
   frame.SelectTab = function(tab)
     frame.playerTab = tab
     if not Dibs.AceGUI.SelectTree(tabs, tab) then frame:Refresh() end
@@ -1525,10 +1930,22 @@ local function createAceWindow()
     if not (Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function") then return end
     local strings = Dibs.L or {}
     local toolbar = Dibs.AceGUI.AddInlineGroup(shell, parent)
-    local ledgers = Dibs.MultiLedger.GetLedgers()
+    local ledgersStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    local ledgers = Dibs.MultiLedger.GetLedgers({ includeTransactionCount = false })
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player UI", "ledger-toolbar-ledgers", ledgersStartedAt)
+    end
+    local activeLedgerStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
     local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player UI", "ledger-toolbar-active-id", activeLedgerStartedAt)
+    end
     local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
-    local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues()
+    local dropdownValuesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues(ledgers, activeLedgerId, viewLedgerId)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player UI", "ledger-toolbar-dropdown-values", dropdownValuesStartedAt)
+    end
     -- Consultation only: the working ledger is imposed by GM/Officers.
     local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, toolbar, strings.LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
       if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end
@@ -1544,22 +1961,57 @@ local function createAceWindow()
     if Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive() then
       Dibs.Midnight.AddStatusBadge(shell, toolbar, "warning", "Independent Raid Active (Session Points)")
     end
-    return toolbar
+    return toolbar, activeLedgerId
   end
 
   frame.Refresh = function(self)
-    Dibs.AceGUI.Clear(tabs)
+    if not contentHost then return end
+    local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    local clearStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    Dibs.AceGUI.Clear(contentHost)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player UI", "clear", clearStartedAt)
+    end
+    -- Views that create and size their own table-page root should be mounted
+    -- directly in the host so an extra full-height group cannot distort their
+    -- custom viewport anchors.
+    local ownsTablePage = self.playerTab == "vault" or self.playerTab == "preferences"
+      or self.playerTab == "diagnostics"
+    local pageRoot = contentHost
+    if not ownsTablePage then
+      pageRoot = Dibs.AceGUI.Create(shell, "SimpleGroup", contentHost) or contentHost
+    end
+    if pageRoot ~= contentHost then
+      if pageRoot.SetFullWidth then pageRoot:SetFullWidth(true) end
+      if pageRoot.SetFullHeight then pageRoot:SetFullHeight(true) end
+      if pageRoot.SetLayout then pageRoot:SetLayout("List") end
+    end
+    self.playerPageHost = pageRoot
+    local tabs = pageRoot
+    local layoutBatch = Dibs.AceGUI.BeginLayoutBatch and Dibs.AceGUI.BeginLayoutBatch(pageRoot) or nil
+    local function finishLayoutBatch()
+      if layoutBatch and Dibs.AceGUI.EndLayoutBatch then
+        local layoutStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+        Dibs.AceGUI.EndLayoutBatch(layoutBatch)
+        layoutBatch = nil
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Player UI", "layout-flush", layoutStartedAt)
+        end
+      end
+    end
+    local ok, refreshError = pcall(function()
     if Dibs.AceGUI.SetShellStatus then Dibs.AceGUI.SetShellStatus(shell) end
     if self.playerTab ~= "diagnostics" then stopAutoPing() end
     if self.playerTab == "vault" then
       renderVaultHistory(shell, tabs, self, playerContentWidthHint())
+      finishLayoutBatch()
       return
     end
     if self.playerTab == "preferences" then
       local page = Dibs.AceGUI.AddTablePage(shell, tabs, {
         footer = true, boundsFrame = tabs.content or tabs.frame,
       })
-      if not page then return end
+      if not page then finishLayoutBatch(); return end
       Dibs.AceGUI.AddHeading(shell, page.header,
         helpText.MINIMAP_SETTINGS_TITLE or "Player preferences",
         helpText.MINIMAP_SETTINGS_DESCRIPTION or "Personal display preferences for this character.")
@@ -1603,10 +2055,9 @@ local function createAceWindow()
         helpText.MINIMAP_SETTINGS_COMMAND or "Drag the icon to move it around the minimap. You can also use /dibs minimap show|hide|scale <50-200>|reset. These preferences are saved for this character.",
         true)
       page.UpdateViewportHeight()
+      finishLayoutBatch()
       return
     end
-    local viewLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil
-    local view = Dibs.PlayerUI.GetViewModel(nil, self.historyFilters, viewLedgerId)
     if self.playerTab == "diagnostics" then
       local diagnosticsPage = Dibs.AceGUI.AddTablePage(shell, tabs, {
         footer = true, boundsFrame = tabs.content or tabs.frame,
@@ -1662,6 +2113,7 @@ local function createAceWindow()
       if not devEnabled then
         Dibs.AceGUI.AddLabel(shell, syncSection, "Enable Developer Mode on both the sender and any client expected to reply. This setting is also controlled by /dibs dev on and /dibs dev off.", true)
         diagnosticsPage.UpdateViewportHeight()
+        finishLayoutBatch()
         return
       end
 
@@ -1903,19 +2355,47 @@ local function createAceWindow()
       self.channelTestSummary = Dibs.AceGUI.AddLabel(shell, diagnosticsPage.footer, table.concat(summaries, "\n"), true)
       diagnosticsPage.UpdateViewportHeight()
       scheduleAutoPing()
+      finishLayoutBatch()
       return
     end
     if self.playerTab == "requests" then
       -- This page belongs to the review-request module; Pre-Dib reservations
       -- live on My Dibs so disabling reports never hides them.
+      local requestsShellStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+      local pageStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
       local page = Dibs.AceGUI.AddScrollableList(shell, tabs, 535) or tabs
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Player UI", "requests-page-container", pageStartedAt)
+      end
       local pageWidth = math.max(320, playerContentWidthHint() - 26)
+      local headingStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
       Dibs.AceGUI.AddHeading(shell, page, helpText.PLAYER_NAV_REPORTS or "Reports",
         helpText.PLAYER_REQUESTS_HELP or "Report a wrong Dib or a Dib removed without loot, then follow the Officer review.")
-      addActiveLedgerToolbar(page)
-      renderReviewRequests(shell, page, self, Dibs.PlayerUI.GetSummary(), { widthHint = pageWidth })
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Player UI", "requests-heading", headingStartedAt)
+      end
+      local _, activeLedgerId = addActiveLedgerToolbar(page)
+      local reportContext = {
+        player = Dibs.GetPlayerName and Dibs.GetPlayerName() or nil,
+        season = Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent() or nil,
+        ledgerId = activeLedgerId,
+      }
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Player UI", "requests-shell", requestsShellStartedAt)
+      end
+      renderReviewRequests(shell, page, self, reportContext, { widthHint = pageWidth })
+      finishLayoutBatch()
       return
     end
+    local viewLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil
+    local historyPageSize = 20
+    local view = self.playerTab == "history"
+      and Dibs.PlayerUI.GetHistoryViewModel(nil, self.historyFilters, viewLedgerId, self.historyPage, historyPageSize)
+      or Dibs.PlayerUI.GetViewModel(nil, self.historyFilters, viewLedgerId, {
+        includeHistory = false, pagePreDibHistory = self.myDibsPastPage or 1,
+        pageActivePreDibs = self.myDibsActivePage or 1,
+        pageWonPreDibs = self.myDibsWonPage or 1,
+      })
     if self.playerTab == "history" then
       Dibs.AceGUI.AddHeading(shell, tabs, "History", "Your Dibs activity for the current season.")
       addActiveLedgerToolbar(tabs)
@@ -1925,13 +2405,22 @@ local function createAceWindow()
       for _, entry in ipairs(view.history or {}) do
         historyRows[#historyRows + 1] = { entry.date, entry.item, entry.action, entry.result, entry.balanceImpact, entry = entry }
       end
+      local visibleHistoryRows, historyPage, historyPages
+      if view.paged then
+        visibleHistoryRows = historyRows
+        historyPage = view.page or 1
+        historyPages = math.max(1, math.ceil((tonumber(view.total) or 0) / historyPageSize))
+        self.historyPage = historyPage
+      else
+        visibleHistoryRows, historyPage, historyPages = playerPageSlice(self, "historyPage", historyRows, historyPageSize)
+      end
       Dibs.AceGUI.AddTable(shell, tabs, {
         { title = "Date", width = 145, minWidth = 100, weight = 1 },
         { title = "Item", width = 220, minWidth = 140, weight = 2 },
         { title = "Action", width = 130, minWidth = 95, weight = 1 },
         { title = "Result", width = 190, minWidth = 120, weight = 2 },
         { title = "Balance", width = 90, minWidth = 70, weight = 1 },
-      }, historyRows, 300, nil, {
+      }, visibleHistoryRows, 300, nil, {
         allowTableSort = false,
         flatBackground = true,
         fluidColumns = true,
@@ -1954,6 +2443,7 @@ local function createAceWindow()
           }
         end,
       })
+      addPlayerPager(shell, tabs, self, "historyPage", historyPage, historyPages, "History %d / %d")
       if self.historyDetail then
         local detail = self.historyDetail
         self.historyDetailTitle = Dibs.AceGUI.AddHeading(shell, tabs, "History details", detail.item)
@@ -1981,6 +2471,7 @@ local function createAceWindow()
           self:Refresh()
         end, 130)
       end
+      finishLayoutBatch()
       return
     end
 
@@ -2009,13 +2500,26 @@ local function createAceWindow()
         end,
       })
     Dibs.AceGUI.AddHeader(shell, tabs, view.status.label, view.status.explanation)
-    local activeRows = {}
-    for _, request in ipairs(view.activePreDibs or {}) do
-      activeRows[#activeRows + 1] = {
-        request.date, request.item, request.status, request.difficulty or "Any", "Cancel",
-        request = request,
-      }
+    local activeRows, activePage, activePages = {}, 1, 1
+    if view.activePreDibPage then
+      activePage, activePages = view.activePreDibPage.page, view.activePreDibPage.pages
+      for _, request in ipairs(view.activePreDibs or {}) do
+        activeRows[#activeRows + 1] = {
+          request.date, request.item, request.status, request.difficulty or "Any", "Cancel",
+          request = request.request,
+        }
+      end
+      self.myDibsActivePage = activePage
+    else
+      for _, request in ipairs(view.activePreDibs or {}) do
+        activeRows[#activeRows + 1] = {
+          request.date, request.item, request.status, request.difficulty or "Any", "Cancel",
+          request = request,
+        }
+      end
+      activeRows, activePage, activePages = playerPageSlice(self, "myDibsActivePage", activeRows, 10)
     end
+    local visibleActiveRows = activeRows
     Dibs.AceGUI.AddHeader(shell, tabs, helpText.PLAYER_ACTIVE_PREDIBS or "Active Pre-Dibs", helpText.UI_HELP_PREDIB)
     Dibs.AceGUI.AddTable(shell, tabs, {
       { title = "Date", width = 145, minWidth = 100, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DATE },
@@ -2023,7 +2527,7 @@ local function createAceWindow()
       { title = "Status", width = 120, minWidth = 88, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_REQUEST_STATUS },
       { title = "Difficulty", width = 100, minWidth = 75, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIFFICULTY },
       { title = "Action", width = 90, minWidth = 80, action = true, tooltip = helpText.UI_HELP_ACTION },
-    }, activeRows, playerListHeight(#activeRows, 170), function(row)
+    }, visibleActiveRows, playerListHeight(#visibleActiveRows, 170), function(row)
       if not row.request then return nil end
       return {
         text = "Cancel",
@@ -2036,10 +2540,20 @@ local function createAceWindow()
     end, { allowTableSort = false, flatBackground = true, fluidColumns = true,
       widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true,
       scrollbarReserve = 26, emptyText = view.empty.activePreDibs })
-    local wonRows = {}
+    addPlayerPager(shell, tabs, self, "myDibsActivePage", activePage, activePages, "Active Pre-Dibs %d / %d")
+    local wonRows, wonPage, wonPages = {}, 1, 1
     for _, request in ipairs(view.wonPreDibs or {}) do
-      wonRows[#wonRows + 1] = { request.date, request.item, request.difficulty or "Any", request.status }
+      wonRows[#wonRows + 1] = {
+        request.date, request.item, request.difficulty or "Any", request.status,
+      }
     end
+    if view.wonPreDibPage then
+      wonPage, wonPages = view.wonPreDibPage.page, view.wonPreDibPage.pages
+      self.myDibsWonPage = wonPage
+    else
+      wonRows, wonPage, wonPages = playerPageSlice(self, "myDibsWonPage", wonRows, 10)
+    end
+    local visibleWonRows = wonRows
     Dibs.AceGUI.AddHeader(shell, tabs, helpText.PLAYER_FULFILLED_PREDIBS or "Won Pre-Dibs",
       "Pre-Dibs fulfilled by a finalized loot award.")
     Dibs.AceGUI.AddTable(shell, tabs, {
@@ -2047,17 +2561,30 @@ local function createAceWindow()
       { title = "Item", width = 300, minWidth = 160, weight = 3, tooltip = helpText.UI_HELP_ITEM },
       { title = "Difficulty", width = 120, minWidth = 80, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIFFICULTY },
       { title = "Status", width = 110, minWidth = 80, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_REQUEST_STATUS },
-    }, wonRows, playerListHeight(#wonRows, 145), nil, { allowTableSort = false, flatBackground = true, fluidColumns = true,
+    }, visibleWonRows, playerListHeight(#visibleWonRows, 145), nil, { allowTableSort = false, flatBackground = true, fluidColumns = true,
       widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true,
       scrollbarReserve = 26, emptyText = view.empty.wonPreDibs })
-    local listedPreDibs = {}
-    for _, request in ipairs(view.activePreDibs or {}) do listedPreDibs[request.requestId or false] = true end
-    for _, request in ipairs(view.wonPreDibs or {}) do listedPreDibs[request.requestId or false] = true end
-    local pastRows = {}
-    for _, request in ipairs(view.requests or {}) do
-      if not listedPreDibs[request.requestId or false] then
-        pastRows[#pastRows + 1] = { formatDate(request.createdAt), request.item, request.status }
+    addPlayerPager(shell, tabs, self, "myDibsWonPage", wonPage, wonPages, "Won Pre-Dibs %d / %d")
+    local visiblePastRows, pastPage, pastPages
+    if view.pastPreDibPage then
+      visiblePastRows, pastPage, pastPages = {}, view.pastPreDibPage.page, view.pastPreDibPage.pages
+      for _, request in ipairs(view.pastPreDibPage.rows) do
+        visiblePastRows[#visiblePastRows + 1] = {
+          formatDate(request.createdAt), request.item, request.status,
+        }
       end
+      self.myDibsPastPage = pastPage
+    else
+      local listedPreDibs = {}
+      for _, request in ipairs(view.activePreDibs or {}) do listedPreDibs[request.requestId or false] = true end
+      for _, request in ipairs(view.wonPreDibs or {}) do listedPreDibs[request.requestId or false] = true end
+      local pastRows = {}
+      for _, request in ipairs(view.requests or {}) do
+        if not listedPreDibs[request.requestId or false] then
+          pastRows[#pastRows + 1] = { formatDate(request.createdAt), request.item, request.status }
+        end
+      end
+      visiblePastRows, pastPage, pastPages = playerPageSlice(self, "myDibsPastPage", pastRows, 10)
     end
     Dibs.AceGUI.AddHeader(shell, tabs, helpText.PLAYER_PREDIB_HISTORY or "Past Pre-Dibs",
       helpText.PLAYER_PREDIB_HISTORY_HELP or "Cancelled, expired or otherwise closed Pre-Dibs.")
@@ -2065,16 +2592,24 @@ local function createAceWindow()
       { title = "Date", width = 145, minWidth = 100, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DATE },
       { title = "Item", width = 300, minWidth = 160, weight = 3, tooltip = helpText.UI_HELP_ITEM },
       { title = "Status", width = 120, minWidth = 88, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_REQUEST_STATUS },
-    }, pastRows, playerListHeight(#pastRows, 120), nil, { allowTableSort = false, flatBackground = true, fluidColumns = true,
+    }, visiblePastRows, playerListHeight(#visiblePastRows, 120), nil, { allowTableSort = false, flatBackground = true, fluidColumns = true,
       widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true,
       scrollbarReserve = 26, emptyText = helpText.PLAYER_PREDIB_HISTORY_EMPTY or "No past Pre-Dibs." })
+    addPlayerPager(shell, tabs, self, "myDibsPastPage", pastPage, pastPages, "Past Pre-Dibs %d / %d")
     addRequestAction(tabs, view)
+    finishLayoutBatch()
+    end)
+    finishLayoutBatch()
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player", self.playerTab or "unknown", renderStartedAt)
+    end
+    if not ok then error(refreshError, 0) end
   end
 
   shell.onRelease = function()
     stopAutoPing()
     for _, key in ipairs({
-      "aceTabs", "preDibInput", "preDibButton", "preDibStatus", "preDibStatusText", "preDibValue", "devItemText",
+      "aceTabs", "contentHost", "playerPageHost", "preDibInput", "preDibButton", "preDibStatus", "preDibStatusText", "preDibValue", "devItemText",
       "devRequestButton", "devStatusText", "devStatus", "playerTab", "historyDetail", "historyMode", "historyPage",
       "guildDiagnosticsSection", "guildSyncStatusLabel", "historyDetailSection", "historyDetailCloseButton",
       "historyQuery", "eligibilityCharacter", "eligibilityStatus", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
@@ -2094,12 +2629,18 @@ local function createAceWindow()
     frame._dibsOnShowHookInstalled = true
     frame:HookScript("OnShow", function(self)
       local activeShell = self._dibsUiShell
-      if activeShell and activeShell._dibsActive then self:Refresh() end
+      if self._dibsOpeningExplicitly then
+        self._dibsOpeningExplicitly = nil
+      elseif activeShell and activeShell._dibsActive then
+        self:Refresh()
+      end
     end)
   end
   _G.DibsPlayerFrame = frame
-  frame:Refresh()
+  frame._dibsInitialTreeSelection = true
   Dibs.AceGUI.SelectTree(tabs, frame.playerTab)
+  frame._dibsInitialTreeSelection = nil
+  frame:Refresh()
   return frame
 end
 
@@ -2435,18 +2976,23 @@ end
 ---@return table|nil frame Player window when UI is available.
 -- Side effects: Creates/shows a player-scoped window; protected frame work may be deferred.
 function Dibs.PlayerUI.Show()
+  local createdNow = _G.DibsPlayerFrame == nil
   local frame = Dibs.PlayerUI.CreateWindow()
   local wasShown = frame:IsShown()
+  if not wasShown then
+    frame._dibsOpeningExplicitly = true
+    if not createdNow and frame.Refresh then frame:Refresh() end
+  end
   frame:Show()
+  frame._dibsOpeningExplicitly = nil
   frame:Raise()
-  -- OnShow already refreshes a hidden AceGUI window.  Only refresh an
-  -- already-visible window here; doing both can clear a TreeGroup while AceGUI
-  -- is still laying out the first refresh.
+  -- The newly created AceGUI window was rendered while hidden. Suppress the
+  -- duplicate OnShow render; later explicit opens refresh through OnShow.
   if wasShown and frame.Refresh then
     frame:Refresh()
   end
 
-  return Dibs.PlayerUI.GetSummary()
+  return frame
 end
 
 function Dibs.PlayerUI.Toggle(forceShow)

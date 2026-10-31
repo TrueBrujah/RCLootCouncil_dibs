@@ -163,8 +163,18 @@ local function currentScope()
   return tostring(Dibs.currentGuildKey or (Dibs.GetGuildKey and Dibs.GetGuildKey()) or "unknown-scope")
 end
 
-local function ensureState()
-  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+local function beginDisputesUITiming()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Begin then return Dibs.UIRenderStats.Begin() end
+end
+
+local function recordDisputesUITiming(name, startedAt)
+  if startedAt and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Requests data", name, startedAt)
+  end
+end
+
+local function ensureState(dbOverride)
+  local db = dbOverride or (Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {}))
   db.disputes = db.disputes or {}
   db.disputes.version = math.max(tonumber(db.disputes.version) or 1, 2)
   db.disputes.requests = db.disputes.requests or {}
@@ -589,25 +599,51 @@ end
 
 function Disputes.ListForPlayer(actor, options)
   options = type(options) == "table" and options or {}
+  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  local startedAt = beginDisputesUITiming()
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
-    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
+    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests", db)
+    recordDisputesUITiming("player-list-policy", startedAt)
     if not enabled then return {}, reason end
   end
-  if not isLocalActor(actor) then return {}, "PLAYER_SCOPE_REQUIRED" end
-  local ownerId = localIdentity()
-  local state = ensureState()
+  startedAt = beginDisputesUITiming()
+  if not isLocalActor(actor) then
+    recordDisputesUITiming("player-list-actor-check", startedAt)
+    return {}, "PLAYER_SCOPE_REQUIRED"
+  end
+  recordDisputesUITiming("player-list-actor-check", startedAt)
+  startedAt = beginDisputesUITiming()
+  local localNameId = identity(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil)
+  local localGuid = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+    and Dibs.Permissions.CanonicalPlayerId(nil)
+  local localGuidId = identity(localGuid)
+  local scope = currentScope()
+  local query = string.lower(trim(options.query))
+  local status = options.status and normalizeStatus(options.status) or nil
+  recordDisputesUITiming("player-list-filter-context", startedAt)
+  startedAt = beginDisputesUITiming()
+  local state = ensureState(db)
+  recordDisputesUITiming("player-list-state", startedAt)
+  startedAt = beginDisputesUITiming()
   local result = {}
   for _, requestId in ipairs(state.order or {}) do
     local request = state.requests[requestId]
-    if request and request.guildScope == currentScope() and isLocalIdentity(requestOwner(request)) then
-      local statusOk = not options.status or normalizeStatus(options.status) == request.status
-      local query = string.lower(trim(options.query))
-      local haystack = string.lower((request.categoryLabel or "") .. " " .. (request.note or "") .. " " .. request.status)
-      if statusOk and (query == "" or string.find(haystack, query, 1, true)) then
+    if request and request.guildScope == scope then
+      local ownerId = identity(requestOwner(request))
+      if ownerId and (ownerId == localNameId or ownerId == localGuidId) then
+        local statusOk = not status or status == request.status
+        local queryOk = true
+        if query ~= "" then
+          local haystack = string.lower((request.categoryLabel or "") .. " " .. (request.note or "") .. " " .. request.status)
+          queryOk = string.find(haystack, query, 1, true) ~= nil
+        end
+        if statusOk and queryOk then
         table.insert(result, Disputes.BuildSafeView(request))
+        end
       end
     end
   end
+  recordDisputesUITiming("player-list-scan-and-views", startedAt)
   return result
 end
 

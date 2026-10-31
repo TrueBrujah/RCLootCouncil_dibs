@@ -38,6 +38,49 @@ describe("Retail Officer navigation lifecycle", function()
     assert_true(#(frame.contentHost.children[1].children or {}) > 0)
   end)
 
+  it("shows every guild rank with a compact editable allocation row", function()
+    local dibs = setup({ wow = {
+      guildLeader = true,
+      guildMembers = { "Tester-Realm", "Officer-Realm", "Member-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 2, [3] = 7 },
+    } })
+    GuildControlGetNumRanks = function() return 8 end
+    GuildControlGetRankName = function(rankOrder)
+      return ({ "Guild Master", "Officer", "Veteran", "Raider", "Member", "Trial", "Alt", "Recruit" })[rankOrder]
+    end
+
+    local frame = dibs.OfficerUI.CreateWindow("ranks")
+
+    assert_equal(8, #frame.rankRows)
+    assert_equal(0, frame.rankRows[1].rankIndex)
+    assert_equal(7, frame.rankRows[8].rankIndex)
+    assert_equal("Recruit", frame.rankRows[8].rankName)
+    assert_equal("7 - Recruit", frame.rankRows[8].displayLabel)
+    assert_not_nil(frame._officerRouteScroll)
+    assert_equal("ScrollFrame", frame._officerRouteScroll.kind)
+  end)
+
+  it("bounds long Officer configuration pages to a resizable scroll viewport", function()
+    for _, route in ipairs({ "lootTypes", "eligibility", "preDibs", "announcements", "settings", "modules", "diagnostics" }) do
+      local dibs = setup()
+      local frame = dibs.OfficerUI.CreateWindow(route)
+      assert_equal(route, frame.selectedRoute)
+      assert_not_nil(frame._officerRouteScroll)
+      assert_equal("ScrollFrame", frame._officerRouteScroll.kind)
+    end
+
+    local lootDibs = setup()
+    local lootFrame = lootDibs.OfficerUI.CreateWindow("lootTypes")
+    assert_equal(lootFrame._officerRouteScroll, lootFrame.lootRulesScroll)
+    assert_equal(100, lootFrame._officerRouteScroll._dibsResizeOffset)
+
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow("sync")
+    assert_not_nil(frame.syncTablePage)
+    assert_not_nil(frame.syncTablePage.scroll)
+    assert_equal("ScrollFrame", frame.syncTablePage.scroll.kind)
+  end)
+
   it("mounts Requests immediately through its public route alias", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow("requests")
@@ -397,6 +440,18 @@ describe("Retail Officer navigation lifecycle", function()
     assert_equal(1, #(reopened.contentHost.children or {}))
   end)
 
+  it("drops route viewport references when the Officer page changes", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow("lootTypes")
+    local previousScroll = frame._officerRouteScroll
+    assert_not_nil(previousScroll)
+    frame.SelectTab("overview")
+    assert_nil(frame._officerRouteScroll)
+    for _, scroll in ipairs(frame.dibsAceGUIShell._dibsResponsiveScrolls or {}) do
+      assert_false(scroll == previousScroll)
+    end
+  end)
+
   it("releases the previous page before mounting the next page", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow()
@@ -463,7 +518,12 @@ describe("Retail Officer navigation lifecycle", function()
   end)
 
   it("keeps Officer routes unavailable to a production player", function()
-    local dibs = setup({ wow = { guildLeader = false } })
+    local dibs = setup({ wow = {
+      guildLeader = false,
+      playerName = "Tester-Realm",
+      guildMembers = { "GM-Realm", "Tester-Realm" },
+      guildRankIndices = { 0, 3 },
+    } })
     assert_equal("player", dibs.OfficerUI.GetPresentationRole())
     assert_equal(0, #dibs.OfficerUI.GetNavigationTree())
     assert_false(dibs.OfficerUI.Toggle(true))

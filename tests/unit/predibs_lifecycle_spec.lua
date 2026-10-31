@@ -14,12 +14,17 @@ describe("Pre-Dib lifecycle", function()
 
   it("does not reactivate terminal requests", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local initialRevision = dibs.PreDibs.GetHistoryRevision()
     local request = dibs.PreDibs.Create("Tester-Realm", 21002, "Item 21002", dibs.GetCurrentSeasonId())
     assert_not_nil(request)
+    local createdRevision = dibs.PreDibs.GetHistoryRevision()
 
     local cancelled = dibs.PreDibs.Cancel(request.requestId)
     local reactivated = dibs.PreDibs.Confirm(request.requestId)
 
+    assert_true(createdRevision > initialRevision)
+    assert_true(dibs.PreDibs.GetHistoryRevision() > createdRevision,
+      "request status changes should invalidate request-index projections")
     assert_equal("cancelled", cancelled.status)
     assert_nil(reactivated)
     assert_equal("cancelled", dibs.PreDibs.GetHistory()[1].status)
@@ -69,5 +74,85 @@ describe("Pre-Dib lifecycle", function()
     assert_equal(2, details.activeRequestCount)
     assert_true(string.find(summary, "pending | Pending item", 1, true) ~= nil)
     assert_true(string.find(summary, "confirmed | Confirmed item", 1, true) ~= nil)
+  end)
+
+  it("builds the Wizard summary from one resolved Pre-Dibs store", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local db = dibs.GetDB()
+    local seasonId = dibs.GetCurrentSeasonId()
+    db.preDibs.modePolicies[seasonId] = { mode = "ENCOUNTER" }
+    db.settings.allowPublicPreDibs = false
+
+    local summary = dibs.PreDibs.GetStatusSummary(seasonId)
+    assert_equal("ENCOUNTER", summary.mode)
+    assert_equal(false, summary.publicEnabled)
+    assert_equal(0, summary.activeRequestCount)
+    assert_equal(0, summary.historyCount)
+  end)
+
+  it("reads the Wizard summary from the resolved guild DB without re-running DB resolution", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local seasonId = dibs.GetCurrentSeasonId()
+    local getDB = dibs.GetDB
+    local getPolicySummary = dibs.OperationalPolicy.GetPreDibSummary
+    dibs.GetDB = function() error("read-only Wizard summary should use the resolved guild DB") end
+    dibs.OperationalPolicy.GetPreDibSummary = function() return { adopted = false } end
+
+    local ok, summary = pcall(dibs.PreDibs.GetStatusSummary, seasonId, "guild-primary")
+    dibs.GetDB = getDB
+    dibs.OperationalPolicy.GetPreDibSummary = getPolicySummary
+    assert_true(ok, tostring(summary))
+    assert_equal(0, summary.historyCount)
+  end)
+
+  it("reads legacy Wizard history without migrating SavedVariables", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local db = dibs.GetDB()
+    local root = db.preDibs
+    local seasonId = dibs.GetCurrentSeasonId()
+    root.ledgerStorageVersion = nil
+    root.ledgers = {}
+    root.requests = { { requestId = "legacy-request", status = "pending", seasonId = seasonId } }
+    root.modePolicies = { [seasonId] = { mode = "ENCOUNTER" } }
+
+    local summary = dibs.PreDibs.GetStatusSummary(seasonId)
+    assert_equal("ENCOUNTER", summary.mode)
+    assert_equal(1, summary.historyCount)
+    assert_equal(nil, root.ledgerStorageVersion)
+    assert_equal(nil, root.ledgers["guild-primary"])
+    assert_equal(nil, root.requests[1].ledgerId)
+    assert_equal(1, #dibs.PreDibs.GetHistory())
+  end)
+
+  it("reuses the resolved request index for a cached Player summary", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local history = dibs.PreDibs.GetHistory("guild-primary")
+    history[#history + 1] = {
+      requestId = "summary-index-cache", playerName = "Tester-Realm",
+      seasonId = dibs.GetCurrentSeasonId(), status = "pending", createdAt = 10,
+    }
+    dibs.PreDibs.MarkHistoryChanged("guild-primary")
+    local first = dibs.PreDibs.GetPlayerSeasonRequestSummary(
+      "Tester-Realm", dibs.GetCurrentSeasonId(), "guild-primary")
+    assert_equal(1, #first.active)
+
+    local getHistoryLookup = dibs.PreDibs.GetHistoryLookup
+    local getActiveLedgerId = dibs.MultiLedger.GetActiveLedgerId
+    local lookupCalls, activeLedgerCalls = 0, 0
+    dibs.PreDibs.GetHistoryLookup = function(...)
+      lookupCalls = lookupCalls + 1
+      return getHistoryLookup(...)
+    end
+    dibs.MultiLedger.GetActiveLedgerId = function(...)
+      activeLedgerCalls = activeLedgerCalls + 1
+      return getActiveLedgerId(...)
+    end
+
+    local second = dibs.PreDibs.GetPlayerSeasonRequestSummary(
+      "Tester-Realm", dibs.GetCurrentSeasonId(), "guild-primary")
+    dibs.PreDibs.GetHistoryLookup, dibs.MultiLedger.GetActiveLedgerId = getHistoryLookup, getActiveLedgerId
+    assert_equal(first, second)
+    assert_equal(0, lookupCalls, "the validated history index should be reused directly")
+    assert_equal(0, activeLedgerCalls, "an explicit read-only ledger should not be resolved again")
   end)
 end)

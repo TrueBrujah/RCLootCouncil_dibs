@@ -17,10 +17,30 @@ local function command(dibs, fields, context)
     playerGuid = fields.playerGuid,
     awardRef = fields.awardRef,
   }
-  return dibs.Ledger.CommitLocalTransaction(context or { action = "ledger.use" }, value, context and context.ledgerId)
+  -- Use internal=true for direct CommitLocalTransaction calls in tests
+  local ctx = context or { action = "ledger.use", internal = true }
+  return dibs.Ledger.CommitLocalTransaction(ctx, value, context and context.ledgerId)
 end
 
 describe("B03 local canonical ledger", function()
+  it("detects non-allocation history with an early-exit cache invalidated on ledger changes", function()
+    local dibs = load()
+    local ledger = dibs.GetDB().ledgers["guild-primary"]
+    ledger.transactions = {
+      allocation = { type = "SEASON_ALLOCATION" },
+    }
+    dibs.Ledger.MarkTransactionsChanged("guild-primary")
+    assert_false(dibs.Ledger.HasNonAllocationTransactions("guild-primary"))
+
+    ledger.transactions.manual = { type = "DIB_ADMIN_ADJUSTMENT" }
+    dibs.Ledger.MarkTransactionsChanged("guild-primary")
+    assert_true(dibs.Ledger.HasNonAllocationTransactions("guild-primary"))
+
+    ledger.transactions.manual = nil
+    dibs.Ledger.MarkTransactionsChanged("guild-primary")
+    assert_false(dibs.Ledger.HasNonAllocationTransactions("guild-primary"))
+  end)
+
   it("commits a valid local use with an immutable Name-Realm snapshot", function()
     local dibs = load()
     local before = dibs.Ledger.GetBalance("Tester-Realm")
@@ -40,7 +60,7 @@ describe("B03 local canonical ledger", function()
     local rejected = command(dibs, { transactionId = "no-debt", amount = -2 })
     assert_false(rejected.accepted); assert_equal("INSUFFICIENT_BALANCE", rejected.reasonCode)
     assert_equal(beforeCount, #dibs.Ledger.GetAllTransactions()); assert_equal(beforeBalance, dibs.Ledger.GetBalance("Tester-Realm"))
-    local accepted = command(dibs, { transactionId = "debt", amount = -2 }, { action = "ledger.use", debtPolicy = { allowDebt = true, source = "B03_TEST" } })
+      local accepted = command(dibs, { transactionId = "debt", amount = -2 }, { action = "ledger.use", debtPolicy = { allowDebt = true, source = "B03_TEST" }, internal = true })
     assert_true(accepted.accepted); assert_true(accepted.value.debtPolicy.allowDebt)
   end)
 
@@ -120,7 +140,7 @@ describe("B03 local canonical ledger", function()
     assert_true(dibs.MultiLedger.ApproveLedger("Tester-Realm", proposal.ledgerId).ok)
 
     -- Commit transaction in secondary ledger partition
-    local result = command(dibs, { transactionId = "alt-grant", type = "DIB_GRANTED", amount = 2 }, { action = "ledger.grant", ledgerId = proposal.ledgerId })
+      local result = command(dibs, { transactionId = "alt-grant", type = "DIB_GRANTED", amount = 2 }, { action = "ledger.grant", ledgerId = proposal.ledgerId, internal = true })
     assert_true(result.accepted, tostring(result.reasonCode))
     assert_equal("COMMITTED_LOCAL", result.reasonCode)
 
@@ -139,5 +159,171 @@ describe("B03 local canonical ledger", function()
     assert_true(history[#history].reason ~= "mutated read copy")
     assert_equal("RESOLVED", dibs.Identity.ResolveRosterMember("Tester-Realm").status)
     assert_equal("POLICY_UNINITIALIZED", dibs.Governance.GetState().status)
+  end)
+
+  it("caches a bounded history index and invalidates it after a ledger commit", function()
+    local dibs = load()
+    local initial = dibs.Ledger.GetPlayerHistorySummary("Tester-Realm")
+
+    assert_true(command(dibs, { transactionId = "history-page-grant", type = "DIB_GRANTED", amount = 5 },
+      { action = "ledger.grant", internal = true }).accepted)
+    assert_true(command(dibs, { transactionId = "history-page-use", type = "DIB_USED", amount = -3 }).accepted)
+    assert_true(command(dibs, { transactionId = "history-page-refund", type = "DIB_REFUNDED", amount = 1 },
+      { action = "ledger.refund", internal = true }).accepted)
+
+    local summary = dibs.Ledger.GetPlayerHistorySummary("Tester-Realm")
+    assert_equal(initial.count + 3, summary.count)
+    assert_equal(initial.seasonUsed + 2, summary.seasonUsed)
+    assert_equal(initial.balance + 3, summary.balance)
+    local firstPage, total, page = dibs.Ledger.GetHistoryPage("Tester-Realm", nil, nil, 1, 2)
+    assert_equal(2, #firstPage)
+    assert_equal(summary.count, total)
+    assert_equal(1, page)
+    firstPage[1].reason = "mutated page copy"
+    local storedReason
+    for _, transaction in ipairs(dibs.Ledger.GetHistory("Tester-Realm")) do
+      if transaction.transactionId == firstPage[1].transactionId then storedReason = transaction.reason end
+    end
+    assert_true(storedReason ~= "mutated page copy")
+
+    assert_true(command(dibs, { transactionId = "history-page-late-grant", type = "DIB_GRANTED", amount = 2 },
+      { action = "ledger.grant", internal = true }).accepted)
+    local refreshed = dibs.Ledger.GetPlayerHistorySummary("Tester-Realm")
+    assert_equal(summary.count + 1, refreshed.count)
+    assert_equal(summary.balance + 2, refreshed.balance)
+    assert_equal(summary.seasonUsed, refreshed.seasonUsed)
+  end)
+
+  it("returns lightweight recent-history choices with the total count", function()
+    local dibs = load()
+    local result = command(dibs, {
+      transactionId = "history-choice-grant", type = "DIB_GRANTED", amount = 2,
+      itemID = 12345, reason = "Test grant",
+    }, { action = "ledger.grant", internal = true })
+    assert_true(result.accepted)
+
+    local choices, total = dibs.Ledger.GetRecentHistoryChoices("Tester-Realm", nil, nil, 50)
+    assert_true(total >= 1)
+    assert_equal(total, #choices)
+    local grant
+    for _, choice in ipairs(choices) do
+      if choice.transactionId == "b03-history-choice-grant" then grant = choice end
+      assert_nil(choice.context, "dropdown choice should not copy full transaction context")
+      assert_nil(choice.actorSnapshot, "dropdown choice should not copy actor snapshots")
+    end
+    assert_not_nil(grant)
+    assert_equal("DIB_GRANTED", grant.type)
+    assert_equal("Test grant", grant.reason)
+  end)
+
+  it("reuses bounded recent-history choices until ledger revisions change", function()
+    local dibs = load()
+    assert_true(command(dibs, {
+      transactionId = "history-choice-cache-first", type = "DIB_GRANTED", amount = 2,
+      reason = "Cached grant",
+    }, { action = "ledger.grant", internal = true }).accepted)
+
+    local previousProfiler = _G.debugprofilestop
+    local profilerTick = 0
+    _G.debugprofilestop = function()
+      profilerTick = profilerTick + 1
+      return profilerTick
+    end
+    dibs.UIRenderStats.Reset()
+    dibs.UIRenderStats.SetEnabled(true)
+    local first, firstTotal = dibs.Ledger.GetRecentHistoryChoices("Tester-Realm", nil, nil, 50)
+    first[1].reason = "caller mutation"
+    local cached = dibs.Ledger.GetRecentHistoryChoices("Tester-Realm", nil, nil, 50)
+    assert_true(cached[1].reason ~= "caller mutation", "cached projection must not be exposed to callers")
+    assert_true(command(dibs, {
+      transactionId = "history-choice-cache-second", type = "DIB_GRANTED", amount = 1,
+      reason = "New grant",
+    }, { action = "ledger.grant", internal = true }).accepted)
+    local refreshed, total = dibs.Ledger.GetRecentHistoryChoices("Tester-Realm", nil, nil, 50)
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = previousProfiler
+
+    assert_equal(firstTotal + 1, total)
+    assert_equal(total, #refreshed)
+    local hits, misses, dbReads, ledgerIds, ledgerNormalizations
+    for _, row in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if row.kind == "Ledger data" and row.page == "recent-history-choices-cache-hit" then hits = row.count end
+      if row.kind == "Ledger data" and row.page == "recent-history-choices-cache-miss" then misses = row.count end
+      if row.kind == "Ledger data" and row.page == "recent-history-choices-db-read" then dbReads = row.count end
+      if row.kind == "Ledger data" and row.page == "recent-history-choices-ledger-id" then ledgerIds = row.count end
+      if row.kind == "Ledger data" and row.page == "recent-history-choices-ledger-normalize" then ledgerNormalizations = row.count end
+    end
+    assert_equal(1, hits)
+    assert_equal(2, misses, "a new ledger revision must invalidate the cached choices")
+    assert_equal(3, dbReads)
+    assert_equal(3, ledgerIds)
+    assert_equal(3, ledgerNormalizations)
+  end)
+
+  it("selects only the newest history choices without sorting all history IDs", function()
+    local dibs = load()
+    local seasonId = dibs.GetCurrentSeasonId()
+    local ledger = dibs.GetDB().ledgers["guild-primary"]
+    local state = { allocation = 0, transactions = {} }
+    ledger.transactions = {}
+    ledger.playerStates[seasonId] = { ["tester-realm"] = state }
+    for index = 1, 80 do
+      local id = "choice-" .. tostring(index)
+      ledger.transactions[id] = {
+        transactionId = id, type = "DIB_USED", amount = -1,
+        playerName = "Tester-Realm", playerKey = "tester-realm",
+        seasonId = seasonId, createdAt = index,
+      }
+      state.transactions[index] = id
+    end
+    dibs.Ledger.MarkTransactionsChanged("guild-primary")
+
+    local choices, total = dibs.Ledger.GetRecentHistoryChoices("Tester-Realm", seasonId, "guild-primary", 50)
+    assert_equal(80, total)
+    assert_equal(50, #choices)
+    assert_equal("choice-31", choices[1].transactionId)
+    assert_equal("choice-80", choices[#choices].transactionId)
+  end)
+
+  it("aggregates season activity without returning transaction records", function()
+    local dibs = load()
+    local seasonId = dibs.GetCurrentSeasonId()
+    local ledger = dibs.GetDB().ledgers["guild-primary"]
+    ledger.transactions = {
+      use1 = { seasonId = seasonId, playerName = "Member-Realm", type = "DIB_USED", amount = -2, createdAt = 10 },
+      use2 = { seasonId = seasonId, playerName = "Member-Realm", type = "DIB_USED", amount = -1, createdAt = 20 },
+      grant = { seasonId = seasonId, playerName = "Member-Realm", type = "DIB_GRANTED", amount = 4, createdAt = 15 },
+      correction = { seasonId = seasonId, playerName = "Member-Realm", type = "DIB_REFUNDED", amount = 1, createdAt = 30 },
+      outsider = { seasonId = seasonId, playerName = "Former-Realm", type = "DIB_USED", amount = -9 },
+      otherSeason = { seasonId = "old-season", playerName = "Member-Realm", type = "DIB_USED", amount = -9 },
+    }
+    dibs.Ledger.MarkTransactionsChanged("guild-primary")
+
+    local summary = dibs.Ledger.GetSeasonActivitySummary(seasonId, "guild-primary", function(name)
+      return name == "Member-Realm" and name or nil
+    end, 2)
+    assert_equal(5, summary.transactions)
+    assert_equal(1, summary.players)
+    assert_equal(4, summary.granted)
+    assert_equal(3, summary.used)
+    assert_equal(2, summary.awards)
+    assert_equal(1, summary.corrections)
+    assert_equal(2, summary.awardCount["member-realm"])
+    assert_equal(2, #summary.recentTransactions)
+    assert_equal("Member-Realm", summary.recentTransactions[1].playerName)
+    assert_equal("DIB_REFUNDED", summary.recentTransactions[1].type)
+    assert_equal("DIB_USED", summary.recentTransactions[2].type)
+    assert_nil(summary[1], "aggregate should not expose a transaction array")
+  end)
+
+  it("computes a player summary without sorting the full history", function()
+    local dibs = load()
+    local originalSort = table.sort
+    table.sort = function() error("summary query must not sort history rows") end
+    local ok, summary = pcall(dibs.Ledger.GetPlayerHistorySummary, "Tester-Realm")
+    table.sort = originalSort
+
+    assert_true(ok, tostring(summary))
+    assert_true(summary.count > 0)
   end)
 end)

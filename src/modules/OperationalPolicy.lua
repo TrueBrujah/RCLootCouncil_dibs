@@ -66,8 +66,8 @@ local function defaultState()
   return { schema = SCHEMA, status = "POLICY_UNINITIALIZED", policyRevision = 0, hash = GENESIS_HASH, records = {}, auditLog = {}, conflicts = {} }
 end
 
-local function ensureState()
-  local db = Dibs.GetDB()
+local function ensureState(dbOverride)
+  local db = dbOverride or Dibs.GetDB()
   if type(db.operationalPolicy) ~= "table" then db.operationalPolicy = defaultState() end
   local state = db.operationalPolicy
   if state.schema ~= SCHEMA then state.schema = SCHEMA end
@@ -232,6 +232,30 @@ end
 
 function Policy.CalculateContentHash(record) return canonicalHash(record or {}) end
 function Policy.GetState() return copy(ensureState()) end
+
+-- Digest consumers need only these scalar fields, not a copy of policy history.
+function Policy.GetDigestSummary()
+  local state = ensureState()
+  return { policyRevision = state.policyRevision, hash = state.hash }
+end
+
+-- Compact read model for Pre-Dibs summaries. Avoid copying the complete
+-- policy record twice when the Wizard needs only one mode and one flag.
+function Policy.GetPreDibSummary(seasonId, ledgerId)
+  local state = ensureState()
+  if state.status ~= "POLICY_ADOPTED" then return { adopted = false } end
+  local record = state.records[tostring(state.policyRevision)]
+  local values = type(record) == "table" and record.values or nil
+  if type(values) ~= "table" then return { adopted = true } end
+  local modes = values.preDibModes
+  local selectedLedger = ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+    and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
+  local mode = type(modes) == "table" and modes[tostring(selectedLedger) .. ":" .. tostring(seasonId)] or nil
+  if not mode and selectedLedger == "guild-primary" and type(modes) == "table" then
+    mode = modes[tostring(seasonId)]
+  end
+  return { adopted = true, mode = mode, publicEnabled = values.allowPublicPreDibs }
+end
 function Policy.GetCurrentRecord()
   local state = ensureState(); return copy(state.records[tostring(state.policyRevision)])
 end
@@ -288,15 +312,21 @@ function Policy.GetModuleValues()
   end
   return copy(modules)
 end
-function Policy.IsModuleEnabled(moduleKey)
+function Policy.IsModuleEnabled(moduleKey, dbOverride)
   if not MODULE_KEYS[moduleKey] then return false, "UNKNOWN_MODULE" end
-  return Policy.GetModuleValues()[moduleKey] == true
+  local state = ensureState(dbOverride)
+  local record = state.records[tostring(state.policyRevision)]
+  local storedModules = type(record) == "table" and type(record.values) == "table"
+    and record.values.modules or nil
+  local enabled
+  if type(storedModules) == "table" then enabled = storedModules[moduleKey] end
+  return enabled == nil or enabled == true
 end
-function Policy.GetModuleStatus(moduleKey)
+function Policy.GetModuleStatus(moduleKey, dbOverride)
   local definition = Policy.GetModuleDefinition(moduleKey)
   if not definition then return { key = moduleKey, enabled = false, reasonCode = "UNKNOWN_MODULE" } end
-  local enabled = Policy.IsModuleEnabled(moduleKey) == true
-  if enabled and definition.requires and Policy.IsModuleEnabled(definition.requires) ~= true then enabled = false end
+  local enabled = Policy.IsModuleEnabled(moduleKey, dbOverride) == true
+  if enabled and definition.requires and Policy.IsModuleEnabled(definition.requires, dbOverride) ~= true then enabled = false end
   local reasonCodes = { preDibs = "MODULE_DISABLED_PRE_DIBS" }
   return {
     key = definition.key, label = definition.label, enabled = enabled,
@@ -304,8 +334,8 @@ function Policy.GetModuleStatus(moduleKey)
     requires = definition.requires,
   }
 end
-function Policy.RequireModuleEnabled(moduleKey)
-  local status = Policy.GetModuleStatus(moduleKey)
+function Policy.RequireModuleEnabled(moduleKey, dbOverride)
+  local status = Policy.GetModuleStatus(moduleKey, dbOverride)
   if status.enabled then return true end
   return false, status.reasonCode, (status.label or tostring(moduleKey)) .. " is disabled by the Guild Master."
 end

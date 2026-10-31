@@ -229,7 +229,7 @@ describe("B12 module management", function()
     dibs.AceGUI.FlushRefreshes()
     assert_true(dibs.OperationalPolicy.IsModuleEnabled("preDibs"))
     assert_true(frame.moduleDraft.preDibs == false)
-    assert_not_nil(findLabel(frame.contentHost, "Modules - Unsaved changes"))
+    assert_not_nil(findLabel(frame.contentHost, "Unsaved changes"))
     assert_not_nil(findButton(frame.contentHost, "Reset"))
     local save = findButton(frame.contentHost, "Save changes")
     assert_not_nil(save)
@@ -265,7 +265,13 @@ describe("B12 module management", function()
     local controls = collectCheckBoxes(frame.contentHost)
     local enabled = 0
     for _, control in ipairs(controls) do if control.disabled ~= true then enabled = enabled + 1 end end
-    assert_equal(6, enabled)
+    local expectedEnabled = 0
+    for _, definition in ipairs(dibs.OperationalPolicy.GetModuleDefinitions()) do
+      if not definition.requires or frame.moduleDraft[definition.requires] == true then
+        expectedEnabled = expectedEnabled + 1
+      end
+    end
+    assert_equal(expectedEnabled, enabled)
     findButton(frame.contentHost, "Save changes").callbacks.OnClick()
     assert_false(frame.moduleDraft.preDibs)
     assert_true(dibs.OperationalPolicy.IsModuleEnabled("preDibs"))
@@ -294,7 +300,7 @@ describe("B12 module management", function()
   it("keeps core services immutable and changes optional modules in one policy revision", function()
     local dibs = load(); adopt(dibs)
     local core = dibs.OperationalPolicy.GetCoreModuleDefinitions()
-    assert_equal(7, #core)
+    assert_equal(8, #core)
     assert_true(core[1].alwaysEnabled)
     local beforeRequests = dibs.GetDB().disputes
     local changed, reason = dibs.OperationalPolicy.ChangeModules({ preDibs = false, requests = false }, nil, "test module change")

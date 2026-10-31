@@ -267,10 +267,11 @@ end
 ---@doc.help-key UI_HELP_SETUP_ASSISTANT
 ---@doc.label-key DOC_SETUP_ASSISTANT_LABEL
 function SetupAssistant.Evaluate(options)
+  local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   options = type(options) == "table" and options or {}
   local actorRole = role()
   if actorRole == "player" and options.allowPlayer ~= true then
-    return {
+    local denied = {
       status = "DENIED",
       actorRole = actorRole,
       checks = {},
@@ -278,6 +279,10 @@ function SetupAssistant.Evaluate(options)
       checkedAt = time and time() or 0,
       reasonCode = "GUILD_ADMIN_REQUIRED",
     }
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Setup data", "evaluation", renderStartedAt)
+    end
+    return denied
   end
 
   local report = {
@@ -290,7 +295,11 @@ function SetupAssistant.Evaluate(options)
   }
   local readiness
   if Dibs.Readiness and Dibs.Readiness.Evaluate then
+    local readinessStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
     local ok, value = call(Dibs.Readiness.Evaluate, { allowPlayer = true })
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Setup data", "readiness-evaluation", readinessStartedAt)
+    end
     if ok and type(value) == "table" then readiness = value end
   end
   local seen = addReadinessChecks(report, readiness)
@@ -311,7 +320,11 @@ function SetupAssistant.Evaluate(options)
       "The optional Raid Dibs channel is not visible in this session.",
       "Join or configure the channel before relying on raid announcements.", "readiness")
   end
+  local lootTypesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local lootState, lootReason = lootTypesAvailability()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "loot-types-availability", lootTypesStartedAt)
+  end
   local scopeLabel, scopeExplanation
   if lootState == "ready" then
     scopeLabel = (Dibs.L and Dibs.L.SETUP_ASSISTANT_LOOT_LOCAL_LABEL) or "Controls available"
@@ -368,6 +381,9 @@ function SetupAssistant.Evaluate(options)
     report.status = "UNAVAILABLE"
   else
     report.status = "READY_FOR_RAID"
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "evaluation", renderStartedAt)
   end
   return report
 end

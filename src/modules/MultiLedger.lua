@@ -104,14 +104,12 @@ local function refreshOpenWindows()
   end
 end
 
--- Aligns the local working ledger with the guild-imposed one carried by the
--- synchronized operational policy. Without an imposed ledger, the local
--- choice remains (legacy behavior).
-function MultiLedger.EnforceGuildActiveLedger(silent)
+-- Aligns an already-resolved database with the guild-imposed ledger. Callers
+-- that have resolved the active DB should reuse it instead of resolving it again.
+local function enforceGuildActiveLedger(db, silent, imposed)
   if enforcingGuildLedger then return true, "ENFORCEMENT_IN_PROGRESS" end
-  local db = ensureLedgers()
   if not db then return false, "DB_UNAVAILABLE" end
-  local imposed = imposedLedgerId()
+  if imposed == nil then imposed = imposedLedgerId() end
   if not imposed then return true, "NOT_IMPOSED" end
   if db.activeLedgerId == imposed then return true, "IMPOSED" end
   local ledger = db.ledgers[imposed]
@@ -125,9 +123,24 @@ function MultiLedger.EnforceGuildActiveLedger(silent)
   return true, "IMPOSED"
 end
 
+-- Aligns the local working ledger with the guild-imposed one carried by the
+-- synchronized operational policy. Without an imposed ledger, the local
+-- choice remains (legacy behavior).
+function MultiLedger.EnforceGuildActiveLedger(silent)
+  if enforcingGuildLedger then return true, "ENFORCEMENT_IN_PROGRESS" end
+  return enforceGuildActiveLedger(ensureLedgers(), silent)
+end
+
 function MultiLedger.GetActiveLedgerId()
-  if not enforcingGuildLedger then MultiLedger.EnforceGuildActiveLedger(true) end
+  if enforcingGuildLedger then
+    return Dibs.db and Dibs.db.activeLedgerId or DEFAULT_LEDGER_ID
+  end
   local db = ensureLedgers()
+  if not db then return DEFAULT_LEDGER_ID end
+  local imposed = imposedLedgerId()
+  if imposed and db.activeLedgerId ~= imposed then
+    enforceGuildActiveLedger(db, true, imposed)
+  end
   return db and db.activeLedgerId or DEFAULT_LEDGER_ID
 end
 
@@ -227,16 +240,21 @@ function MultiLedger.IsViewingOtherLedger()
   return MultiLedger.GetViewLedgerId() ~= MultiLedger.GetActiveLedgerId()
 end
 
-function MultiLedger.GetLedgers()
+function MultiLedger.GetLedgers(options)
+  options = type(options) == "table" and options or {}
+  local includeTransactionCount = options.includeTransactionCount ~= false
   local db = ensureLedgers()
   if not db then return {} end
 
   local list = {}
   for id, ledger in pairs(db.ledgers) do
-    local txCount = 0
-    if type(ledger.transactions) == "table" then
-      for _ in pairs(ledger.transactions) do
-        txCount = txCount + 1
+    local txCount
+    if includeTransactionCount then
+      txCount = 0
+      if type(ledger.transactions) == "table" then
+        for _ in pairs(ledger.transactions) do
+          txCount = txCount + 1
+        end
       end
     end
 

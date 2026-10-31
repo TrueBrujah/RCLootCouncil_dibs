@@ -155,6 +155,12 @@ end
 
 local function getGuildRosterMembers()
   local members = {}
+  local identity = Dibs.Identity
+  local getRoster = identity and (identity.GetRosterSnapshot or identity.GetRosterMembers)
+  if type(getRoster) == "function" then
+    local ok, roster = pcall(getRoster)
+    if ok and type(roster) == "table" then return roster end
+  end
   if type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then
     return members
   end
@@ -167,20 +173,63 @@ local function getGuildRosterMembers()
   return members
 end
 
-function Dibs.RankRules.GetAllocationReconciliation(seasonId, members)
+function Dibs.RankRules.GetAllocationReconciliation(seasonId, members, options)
   ensureState()
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  -- Resolve seasonal rules once. The roster loop only needs one rule lookup per
+  -- member; the public GetRankAllocation/GetAllocationForRank accessors each
+  -- repeat DB and season-rule resolution, so calling both for every member
+  -- amplified that work across the entire guild roster.
+  local rules = Dibs.RankRules.GetRulesForSeason(targetSeason)
   local roster = type(members) == "table" and members or getGuildRosterMembers()
+  local includeBalance = not (type(options) == "table" and options.includeBalance == false)
   local rows = {}
+  local profileTimer = Dibs.UIRenderStats and Dibs.UIRenderStats.IsEnabled and Dibs.UIRenderStats.IsEnabled()
+    and type(_G.debugprofilestop) == "function" and _G.debugprofilestop or nil
+  local allocationLookupMs = 0
+  local allocationsByMember
+  if not includeBalance and Dibs.Ledger and Dibs.Ledger.GetPlayerAllocations then
+    local bulkStartedAt = profileTimer and profileTimer()
+    allocationsByMember = Dibs.Ledger.GetPlayerAllocations(roster, targetSeason)
+    if bulkStartedAt and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Rank data", "member-allocations-bulk", bulkStartedAt)
+    end
+  end
   for _, member in ipairs(roster) do
-    local name = member.playerName or member.name
+    local name = member.playerName or member.name or member.displayName
     if name and name ~= "" then
       local rankInfo = member.rankIndex ~= nil and member or Dibs.RankRules.GetPlayerRankInfo(name)
       local rankIndex = normalizeRankIndex(rankInfo.rankIndex)
-      local rule = Dibs.RankRules.GetRankAllocation(targetSeason, rankIndex)
+      local rule = rules[tostring(rankIndex)]
       if not (rule and rule.enabled == false) then
-        local expected = Dibs.RankRules.GetAllocationForRank(targetSeason, rankIndex)
-        local state = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(name, targetSeason) or {}
+        local expected
+        if rule ~= nil then
+          expected = tonumber(rule.allocation) or 0
+        elseif Dibs.db.settings and Dibs.db.settings.defaultAllocation then
+          expected = tonumber(Dibs.db.settings.defaultAllocation) or Dibs.DEFAULT_DIBS_PER_RANK
+        else
+          expected = Dibs.DEFAULT_DIBS_PER_RANK
+        end
+        local state
+        if includeBalance then
+          state = Dibs.Ledger and Dibs.Ledger.GetPlayerHistorySummary
+            and Dibs.Ledger.GetPlayerHistorySummary(name, targetSeason) or nil
+          if not state then
+            state = Dibs.Ledger and Dibs.Ledger.GetPlayerState and Dibs.Ledger.GetPlayerState(name, targetSeason) or {}
+          end
+        else
+          local allocation
+          if allocationsByMember then
+            local memberKey = member.memberKey or (Dibs.Identity and Dibs.Identity.CanonicalMemberKey
+              and Dibs.Identity.CanonicalMemberKey(name)) or string.lower(tostring(name))
+            allocation = allocationsByMember[memberKey]
+          elseif Dibs.Ledger and Dibs.Ledger.GetPlayerAllocation then
+            local allocationStartedAt = profileTimer and profileTimer()
+            allocation = Dibs.Ledger.GetPlayerAllocation(name, targetSeason)
+            if allocationStartedAt then allocationLookupMs = allocationLookupMs + math.max(0, profileTimer() - allocationStartedAt) end
+          end
+          state = { allocation = allocation or 0 }
+        end
         local assigned = tonumber(state.allocation) or 0
         local difference = (tonumber(expected) or 0) - assigned
         local delta = math.max(0, difference)
@@ -194,11 +243,15 @@ function Dibs.RankRules.GetAllocationReconciliation(seasonId, members)
           behavior = Dibs.RankRules.GetRankReconciliationBehavior(difference),
           missingAllocation = delta,
           surplusAllocation = math.max(0, assigned - (tonumber(expected) or 0)),
-          balance = Dibs.Ledger and Dibs.Ledger.GetBalance and Dibs.Ledger.GetBalance(name, targetSeason) or 0,
+          balance = includeBalance and (tonumber(state.balance) or (Dibs.Ledger and Dibs.Ledger.GetBalance
+            and Dibs.Ledger.GetBalance(name, targetSeason) or 0)) or nil,
           status = delta > 0 and "MISSING" or (assigned > (tonumber(expected) or 0) and "SURPLUS" or "ALIGNED"),
         })
       end
     end
+  end
+  if profileTimer and allocationLookupMs > 0 and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Rank data", "member-allocation-total", profileTimer() - allocationLookupMs)
   end
   table.sort(rows, function(left, right)
     return string.lower(tostring(left.playerName)) < string.lower(tostring(right.playerName))
@@ -242,15 +295,28 @@ function Dibs.RankRules.GetRankConfigurationSummary(seasonId)
   ensureState()
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
   local rules = Dibs.RankRules.GetRulesForSeason(targetSeason)
+  local rosterStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local roster = getGuildRosterMembers()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Rank data", "roster-snapshot", rosterStartedAt)
+  end
   local byRank = {}
+  local countStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   for _, member in ipairs(roster) do
     local key = tostring(normalizeRankIndex(member.rankIndex))
     byRank[key] = byRank[key] or { rankIndex = normalizeRankIndex(member.rankIndex), rankName = member.rankName, memberCount = 0 }
     byRank[key].memberCount = byRank[key].memberCount + 1
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Rank data", "roster-rank-counts", countStartedAt)
+  end
   local missingByRank, surplusByRank = {}, {}
-  for _, row in ipairs(Dibs.RankRules.GetAllocationReconciliation(targetSeason, roster)) do
+  local reconciliationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local reconciliation = Dibs.RankRules.GetAllocationReconciliation(targetSeason, roster, { includeBalance = false })
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Rank data", "rank-reconciliation", reconciliationStartedAt)
+  end
+  for _, row in ipairs(reconciliation) do
     local key = tostring(normalizeRankIndex(row.rankIndex))
     if row.status == "MISSING" then
       missingByRank[key] = (missingByRank[key] or 0) + 1

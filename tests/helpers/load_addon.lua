@@ -50,6 +50,7 @@ local TOC_FILES = {
   "ui/EnvironmentAdapters.lua",
   "ui/WindowState.lua",
   "ui/AceGUI.lua",
+  "ui/PerfUI.lua",
   "ui/SetupAssistant.lua",
   "ui/HealthUI.lua",
   "ui/DeveloperUI.lua",

@@ -39,6 +39,59 @@ describe("Officer history filters and fairness statistics", function()
     assert_equal(1.5, stats.fairness.medianAwards)
   end)
 
+  it("reuses season statistics until the ledger revision changes", function()
+    local _, dibs = loader.load({
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm" } },
+      withAce3 = true,
+    })
+    dibs.GetDB().ledger.transactions = {
+      a = { transactionId = "a", seasonId = "S1", playerName = "Tester-Realm", type = "DIB_USED", amount = -1 },
+    }
+    local original, calls = dibs.Ledger.GetTransactions, 0
+    dibs.Ledger.GetTransactions = function(...)
+      calls = calls + 1
+      return original(...)
+    end
+    local first = dibs.OfficerUI.BuildSeasonStatistics("S1")
+    local second = dibs.OfficerUI.BuildSeasonStatistics("S1")
+    assert_equal(1, calls)
+    assert_equal(first.awards, second.awards)
+    assert_equal(first.fairness.meanAwards, second.fairness.meanAwards)
+
+    dibs.Ledger.MarkTransactionsChanged()
+    dibs.OfficerUI.BuildSeasonStatistics("S1")
+    assert_equal(2, calls, "ledger changes should invalidate the cached aggregate")
+    dibs.Ledger.GetTransactions = original
+  end)
+
+  it("reuses the dashboard active Pre-Dibs count until its source revisions change", function()
+    local _, dibs = loader.load({
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm" } },
+      withAce3 = true,
+    })
+    local revision, reads = 1, 0
+    dibs.PreDibs.GetHistoryRevisionFast = function() return revision end
+    dibs.PreDibs.GetHistory = function()
+      reads = reads + 1
+      return {
+        { seasonId = "S1", status = "pending", playerName = "Tester-Realm" },
+        { seasonId = "S1", status = "fulfilled", playerName = "Tester-Realm" },
+        { seasonId = "S1", status = "confirmed", playerName = "Former-Realm" },
+      }
+    end
+
+    local first = dibs.OfficerUI.BuildSeasonStatistics("S1")
+    local second = dibs.OfficerUI.BuildSeasonStatistics("S1")
+    assert_equal(1, first.activePreDibs)
+    assert_equal(first.activePreDibs, second.activePreDibs)
+    assert_equal(1, reads, "unchanged request history should reuse its active count")
+
+    revision = 2
+    local updated = dibs.OfficerUI.BuildSeasonStatistics("S1")
+    assert_equal(1, updated.activePreDibs)
+    assert_equal(2, reads, "request history revision should invalidate the active count")
+  end)
+
   it("summarizes player activity inside an inclusive period without ranking players", function()
     local _, dibs = loader.load({
       wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Other-Realm" } },

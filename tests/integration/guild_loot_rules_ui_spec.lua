@@ -24,6 +24,13 @@ local function widget(kind, text)
   end
 end
 
+local function widgetContaining(kind, text)
+  for _, candidate in ipairs(_G.__dibsAceWidgets or {}) do
+    if candidate.kind == kind and (tostring(candidate.text or ""):find(text, 1, true)
+      or tostring(candidate.label or ""):find(text, 1, true)) then return candidate end
+  end
+end
+
 describe("Guild-authoritative Loot Rules UI", function()
   it("LRA09 shows semantic draft controls and an explicit adoption action to the GM", function()
     local gm = load("GameMaster-Realm")
@@ -48,7 +55,7 @@ describe("Guild-authoritative Loot Rules UI", function()
     assert_equal(expectedCount * 2, checkboxes)
     frame._scripts.OnSizeChanged(frame, 940, 760)
     assert_equal("WIDE", frame.lootRulesLayoutMode)
-    assert_equal(4, frame.lootRulesColumnCount)
+    assert_equal(3, frame.lootRulesColumnCount)
     assert_not_nil(frame.rcLootTemplateControls.TOKEN)
     frame.rcLootTemplateControls.TOKEN.callbacks.OnValueChanged(nil, nil, templateId)
     assert_equal(templateId, gm.RCOptions.GetButtonTemplateAssignment("TOKEN"))
@@ -109,7 +116,7 @@ describe("Guild-authoritative Loot Rules UI", function()
     local scroll = frame.lootRulesScroll
     local footer = frame.lootRulesFooter
     local shell = frame.dibsAceGUIShell
-    assert_equal(220, scroll._dibsResizeOffset)
+    assert_equal(100, scroll._dibsResizeOffset)
     local scrollRegistered = false
     for _, registeredScroll in ipairs(shell._dibsResponsiveScrolls) do
       if registeredScroll == scroll then scrollRegistered = true end
@@ -118,8 +125,8 @@ describe("Guild-authoritative Loot Rules UI", function()
     assert_equal("WIDE", frame.lootRulesLayoutMode)
     assert_equal(gm.AceGUI.GetLayoutMetrics().minWidth, frame.lootRulesMinimumWindowWidth)
     assert_equal(190, frame.officerNavigationWidth)
-    assert_not_nil(widget("Label", gm.L.LOOT_RULES_COLUMN_GUILD_RC))
-    assert_not_nil(widget("Label", gm.L.LOOT_RULES_COLUMN_DRAFT_GUIDE))
+    assert_not_nil(widgetContaining("Label", gm.L.LOOT_RULES_COLUMN_GUILD_RC))
+    assert_not_nil(widgetContaining("CheckBox", gm.L.LOOT_RULES_COLUMN_DRAFT_GUIDE))
     assert_equal(frame.mountedPageHost, footer.parent)
     assert_true(scroll.parent ~= footer)
 
@@ -128,7 +135,7 @@ describe("Guild-authoritative Loot Rules UI", function()
     assert_not_nil(resize)
     resize(frame, 940, 760)
     assert_equal("WIDE", frame.lootRulesLayoutMode)
-    assert_equal(6, frame.lootRulesColumnCount)
+    assert_equal(5, frame.lootRulesColumnCount)
     assert_not_nil(frame.rcLootTemplateControls.TOKEN)
     assert_true(frame.lootRulesColumnWidths[1] < 191)
     resize(frame, 700, 760)
@@ -137,7 +144,7 @@ describe("Guild-authoritative Loot Rules UI", function()
     resize(frame, 520, 360)
     assert_equal("NARROW", frame.lootRulesLayoutMode)
     assert_equal(360, shell.layout.height)
-    assert_equal(140, scroll.height)
+    assert_equal(260, scroll.height)
     assert_equal(615, scroll.localstatus.scrollvalue)
     assert_equal(navigation, frame.aceTabs)
     assert_equal(scroll, frame.lootRulesScroll)

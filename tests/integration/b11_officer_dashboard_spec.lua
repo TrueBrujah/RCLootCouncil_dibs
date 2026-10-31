@@ -3,12 +3,32 @@ local loader = require("helpers.load_addon")
 local function setup()
   local _, dibs = loader.load({ wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Player-1", "Player-2", "Player-3", "Player-4", "Player-5", "Player-6", "Player-7", "Player-8", "Coordinator-Realm" } }, withAce3 = true })
   dibs.Seasons.GetCurrent = function() return { id = 7, name = "Midnight Season" } end
+  local fixtureTransactions = {}
+  for index = 1, 8 do
+    fixtureTransactions["dashboard-" .. tostring(index)] = {
+      seasonId = 7, createdAt = 100 + index, playerName = "Player-" .. tostring(index),
+      type = "DIB_USED", amount = -index, reason = "Award",
+    }
+  end
+  dibs.GetDB().ledgers["guild-primary"].transactions = fixtureTransactions
   dibs.Ledger.GetTransactions = function()
     local rows = {}
     for index = 1, 8 do
-      rows[index] = { createdAt = 100 + index, playerName = "Player-" .. tostring(index), type = "DIB_USED", amount = -index, reason = "Award" }
+      rows[index] = fixtureTransactions["dashboard-" .. tostring(index)]
     end
     return rows
+  end
+  dibs.Ledger.GetRecentTransactions = function(seasonId, limit, ledgerId, include)
+    local rows = dibs.Ledger.GetTransactions(seasonId, nil, ledgerId)
+    local recent = {}
+    table.sort(rows, function(first, second) return first.createdAt > second.createdAt end)
+    for _, row in ipairs(rows) do
+      if type(include) ~= "function" or include(row) then
+        recent[#recent + 1] = row
+        if #recent >= limit then break end
+      end
+    end
+    return recent
   end
   dibs.PreDibs.GetHistory = function()
     return {
@@ -19,6 +39,7 @@ local function setup()
     }
   end
   dibs.Sync.GetStatus = function() return { state = "SYNC_BEHIND", protocolState = "V2_ENFORCED", reason = "SYNC_BEHIND" } end
+  dibs.Sync.GetStatusSummary = function() return dibs.Sync.GetStatus() end
   dibs.Governance.GetAuthorityState = function() return {
     state = "ACTIVE", protocolState = "V2_ENFORCED", ledgerEpoch = 4,
     coordinator = { displayName = "Coordinator-Realm" },
@@ -305,6 +326,36 @@ describe("B11d Officer dashboard", function()
     assert_equal(0, calls.vault)
   end)
 
+  it("shares one season scan between statistics and recent dashboard activity", function()
+    local dibs = setup()
+    local original = dibs.OfficerUI.GetPagedView
+    local originalSummary = dibs.Ledger.GetSeasonActivitySummary
+    local fullActions, fullPreDibs = 0, 0
+    local summaryReads = 0
+    dibs.Ledger.GetSeasonActivitySummary = function(...)
+      summaryReads = summaryReads + 1
+      return originalSummary(...)
+    end
+    dibs.OfficerUI.GetPagedView = function(view, ...)
+      if view == "actions" then fullActions = fullActions + 1 end
+      if view == "predibs" then fullPreDibs = fullPreDibs + 1 end
+      return original(view, ...)
+    end
+
+    local dashboard = dibs.OfficerUI.GetDashboardProjection()
+    dibs.OfficerUI.GetDashboardProjection()
+
+    assert_equal(5, #dashboard.recentActivity)
+    assert_equal(1, summaryReads, "statistics and recent rows should share one cold ledger scan")
+    assert_equal(0, fullActions, "dashboard should use the bounded transaction query")
+    assert_equal(0, fullPreDibs, "five recent actions should avoid scanning Pre-Dibs history")
+    dibs.Ledger.MarkTransactionsChanged()
+    dibs.OfficerUI.GetDashboardProjection()
+    assert_equal(2, summaryReads, "ledger revision should invalidate both statistics and recent rows")
+    dibs.OfficerUI.GetPagedView = original
+    dibs.Ledger.GetSeasonActivitySummary = originalSummary
+  end)
+
   it("avoids a duplicate first-show render and a full-ledger overview scan", function()
     local dibs = setup()
     dibs.Ledger.GetAllTransactions = function()
@@ -321,5 +372,20 @@ describe("B11d Officer dashboard", function()
     assert_equal(1, frame.routeDispatchCount)
     onShow(frame)
     assert_equal(2, frame.routeDispatchCount)
+  end)
+
+  it("does not build the Pre-Dib table projection twice when opening its Officer route", function()
+    local dibs = setup()
+    local frame = dibs.OfficerUI.CreateWindow()
+    local original = dibs.OfficerUI.GetPagedView
+    dibs.OfficerUI.GetPagedView = function(view, ...)
+      if view == "predibs" then error("Pre-Dib Requests should reuse its filtered request projection") end
+      return original(view, ...)
+    end
+
+    local ok, reason = pcall(frame.ActivateRoute, frame, "preDibRequests")
+    dibs.OfficerUI.GetPagedView = original
+    assert_true(ok, tostring(reason))
+    assert_equal("preDibRequests", frame.activeTab)
   end)
 end)

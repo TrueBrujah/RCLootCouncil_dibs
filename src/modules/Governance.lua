@@ -346,6 +346,39 @@ function Governance.GetState()
   return copy(ensureState())
 end
 
+-- Compact read model for the synchronization page. Callers that display only
+-- adoption and pending counts should not copy and sort the complete governance
+-- and proposal history on every refresh.
+function Governance.GetSynchronizationSummary()
+  local state = ensureState()
+  local authority = authorityState(state)
+  local pendingAwardProposals = 0
+  for _, proposal in pairs(authority.proposals) do
+    if type(proposal) == "table" and proposal.status ~= "COMMITTED" then
+      pendingAwardProposals = pendingAwardProposals + 1
+    end
+  end
+  return { status = state.status, pendingAwardProposals = pendingAwardProposals }
+end
+
+-- Compact installation read model. Installation only displays scalar governance
+-- and coordinator fields, so avoid deep-copying the complete audit/proposal state.
+function Governance.GetInstallationSummary()
+  local state = ensureState()
+  local authority = authorityState(state)
+  local future = state.future or {}
+  local coordinator = authority.coordinator
+  return {
+    status = state.status,
+    authorityState = authority.state,
+    coordinatorDisplayName = type(coordinator) == "table" and coordinator.displayName or nil,
+    coordinatorMemberKey = type(coordinator) == "table" and coordinator.memberKey or nil,
+    ledgerEpoch = authority.ledgerEpoch,
+    protocolActive = future.protocolState == "V2_ENFORCED",
+    protocolState = future.protocolState,
+  }
+end
+
 function Governance.GetCurrentRecord()
   local state = ensureState()
   return state.records[tostring(state.revision)] and copy(state.records[tostring(state.revision)]) or nil
@@ -437,6 +470,24 @@ end
 ---@doc.label-key DOC_SYNC_COORDINATOR_LABEL
 function Governance.GetAuthorityState()
   return copy(authorityState(ensureState()))
+end
+
+-- Hot-path consumers such as ledger digesting need only these scalar fields.
+-- Avoid cloning the full authority record, which can contain growing audit and
+-- proposal histories, just to inspect the active epoch and handoff root.
+function Governance.GetAuthorityDigestState()
+  local state = ensureState()
+  local authority = authorityState(state)
+  local transition = authority.transition
+  local parentClosure = type(transition) == "table" and transition.parentClosure or nil
+  return {
+    protocolState = state.future and state.future.protocolState,
+    state = authority.state,
+    ledgerEpoch = authority.ledgerEpoch,
+    transitionKind = type(transition) == "table" and transition.kind or nil,
+    transitionRootHash = type(transition) == "table" and transition.baselineHash or nil,
+    parentClosureRootHash = type(parentClosure) == "table" and parentClosure.rootHash or nil,
+  }
 end
 
 function Governance.IsV2Enforced()

@@ -28,6 +28,36 @@ describe("MultiLedger lifecycle", function()
     assert_true(ledgers[1].isDefault)
   end)
 
+  it("can omit transaction counts for ledger selectors while preserving the full listing default", function()
+    local dibs = loadGM()
+    local primary = dibs.GetDB().ledgers["guild-primary"]
+    primary.transactions = { first = {}, second = {} }
+
+    local full = dibs.MultiLedger.GetLedgers()
+    local selector = dibs.MultiLedger.GetLedgers({ includeTransactionCount = false })
+
+    assert_equal(2, full[1].transactionCount)
+    assert_nil(selector[1].transactionCount)
+    assert_equal(full[1].id, selector[1].id)
+    assert_equal(full[1].name, selector[1].name)
+    assert_equal(full[1].status, selector[1].status)
+  end)
+
+  it("resolves the active ledger without a second MultiLedger DB lookup", function()
+    local dibs = loadGM()
+    local getDB = dibs.GetDB
+    local calls = 0
+    dibs.GetDB = function(...)
+      calls = calls + 1
+      return getDB(...)
+    end
+
+    local activeLedgerId = dibs.MultiLedger.GetActiveLedgerId()
+    dibs.GetDB = getDB
+    assert_equal("guild-primary", activeLedgerId)
+    assert_equal(2, calls, "one MultiLedger lookup plus one policy read should resolve the active ledger")
+  end)
+
   it("allows verified officer to propose a new ledger", function()
     local dibs = loadOfficer()
     local result = dibs.MultiLedger.ProposeLedger("Officer-Realm", "Roster Alts")

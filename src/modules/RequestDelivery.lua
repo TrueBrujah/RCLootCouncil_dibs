@@ -365,9 +365,9 @@ function Delivery.CheckReminders()
   end
 end
 
-function Delivery.Pump()
+function Delivery.Pump(skipReminderScan)
   if not enabled() then return false, "REQUEST_CONTEXT_ISOLATED" end
-  Delivery.CheckReminders()
+  if skipReminderScan ~= true then Delivery.CheckReminders() end
   local current, actor = authority(), localMember()
   if current and actor and current.memberKey == actor.memberKey then
     local order = Dibs.GetDB().disputes.order

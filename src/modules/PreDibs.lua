@@ -53,6 +53,19 @@ end
 
 local DEFAULT_PREDIB_TEMPLATE = "[Dibs] %player requested %item (%difficulty) - %date %time"
 local DEFAULT_REMINDER_TEMPLATE = "[Dibs] Review your eligible Pre-Dibs before the encounter. [%date %time]"
+local RAID_DIBS_CHANNEL_CACHE_TTL = 5
+local raidDibsChannelCache, raidDibsChannelCacheUntil
+local vaultAcquisitionRevision = 0
+
+local function raidDibsNow()
+  if type(GetTime) == "function" then return tonumber(GetTime()) end
+  if type(time) == "function" then return tonumber(time()) end
+  return nil
+end
+
+function Dibs.PreDibs.InvalidateRaidDibsChannelCache()
+  raidDibsChannelCache, raidDibsChannelCacheUntil = nil, nil
+end
 
 local function isRaidDibsChannelAvailable()
   local clubId, streamId = Dibs.PreDibs.GetRaidDibsChannel()
@@ -60,6 +73,10 @@ local function isRaidDibsChannelAvailable()
 end
 
 function Dibs.PreDibs.GetRaidDibsChannel()
+  local now = raidDibsNow()
+  if raidDibsChannelCache and now and raidDibsChannelCacheUntil and now < raidDibsChannelCacheUntil then
+    return raidDibsChannelCache.clubId, raidDibsChannelCache.streamId
+  end
   local clubs = _G.C_Club
   if type(clubs) ~= "table" or type(clubs.GetSubscribedClubs) ~= "function" or type(clubs.GetStreams) ~= "function" then
     announcementDebug("C_Club API incomplet: GetSubscribedClubs/GetStreams manquant")
@@ -94,12 +111,20 @@ function Dibs.PreDibs.GetRaidDibsChannel()
         announcementDebug(" stream[" .. tostring(streamKey) .. "] id=" .. tostring(streamId) .. " name=" .. tostring(streamName))
         if streamId and streamName == "raid dibs" then
           announcementDebug("MATCH clubId=" .. tostring(clubId) .. " streamId=" .. tostring(streamId))
+          if now then
+            raidDibsChannelCache = { clubId = clubId, streamId = streamId }
+            raidDibsChannelCacheUntil = now + RAID_DIBS_CHANNEL_CACHE_TTL
+          end
           return clubId, streamId
         end
       end
     end
   end
   announcementDebug("aucun stream Raid Dibs trouve; clubs inspectes=" .. tostring(clubCount))
+  if now then
+    raidDibsChannelCache = { clubId = nil, streamId = nil }
+    raidDibsChannelCacheUntil = now + RAID_DIBS_CHANNEL_CACHE_TTL
+  end
   return nil
 end
 
@@ -128,6 +153,29 @@ local function ensureRaidDibsChannel()
 end
 
 local DEFAULT_LEDGER_ID = "guild-primary"
+local requestHistoryRevisions = {}
+local requestStatusCountCaches = {}
+local MAX_REQUEST_HISTORY_LOOKUPS = 8
+local requestHistoryLookups, requestHistoryLookupOrder = {}, {}
+
+local function markRequestHistoryChanged(ledgerId)
+  local key = tostring(ledgerId or DEFAULT_LEDGER_ID)
+  requestHistoryRevisions[key] = (requestHistoryRevisions[key] or 0) + 1
+  requestHistoryLookups[key] = nil
+  requestStatusCountCaches[key] = nil
+  return requestHistoryRevisions[key]
+end
+
+local function beginPreDibsUITiming()
+  return Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+end
+
+local function recordPreDibsUITiming(page, startedAt)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Pre-Dibs data", page, startedAt)
+  end
+end
+
 local migratedRequestCounts = setmetatable({}, { __mode = "k" })
 
 local function migrateRequestList(requests, ledgerId)
@@ -146,6 +194,14 @@ local function activeLedgerId()
     and Dibs.MultiLedger.GetActiveLedgerId() or DEFAULT_LEDGER_ID
 end
 
+local function readResolvedGuildDB()
+  local currentGuildKey = type(Dibs.GetGuildKey) == "function" and Dibs.GetGuildKey() or nil
+  if currentGuildKey and Dibs.currentGuildKey == currentGuildKey and type(Dibs.db) == "table" then
+    return Dibs.db
+  end
+  return Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+end
+
 local function requireGuildActiveLedger()
   if not (Dibs.MultiLedger and Dibs.MultiLedger.RequireGuildActiveLedger) then return true end
   return Dibs.MultiLedger.RequireGuildActiveLedger()
@@ -161,7 +217,7 @@ local function isApprovedLedger(ledgerId)
     and Dibs.Governance.IsLedgerApproved(ledgerId) == true
 end
 
-local function ensureState(targetLedgerId, bindActive)
+local function ensureState(targetLedgerId, bindActive, skipActiveBindingCheck)
   Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   Dibs.db.preDibs = Dibs.db.preDibs or { requests = {} }
   local root = Dibs.db.preDibs
@@ -193,7 +249,7 @@ local function ensureState(targetLedgerId, bindActive)
   store.vaultConflicts = type(store.vaultConflicts) == "table" and store.vaultConflicts or {}
   store.ledgerId = ledgerId
   migrateRequestList(store.requests, ledgerId)
-  if bindActive == true or ledgerId == activeLedgerId() then
+  if bindActive == true or (skipActiveBindingCheck ~= true and ledgerId == activeLedgerId()) then
     root.requests, root.modePolicies, root.vaultConflicts = store.requests, store.modePolicies, store.vaultConflicts
   end
   Dibs.db.settings = Dibs.db.settings or {}
@@ -553,7 +609,17 @@ end
 ---@doc.help-key UI_HELP_ANNOUNCEMENT_CHANNELS
 ---@doc.label-key DOC_ANNOUNCEMENT_CHANNELS_LABEL
 function Dibs.PreDibs.GetAnnouncementSettings()
-  ensureState()
+  -- Announcement settings are guild settings, not Pre-Dibs ledger state. Avoid
+  -- initializing/binding the entire Pre-Dibs ledger on every AceConfig getter.
+  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  db.settings = type(db.settings) == "table" and db.settings or {}
+  local saved = db.settings
+  saved.preDibAnnouncementChannel = normalizeChannel(saved.preDibAnnouncementChannel, "GUILD")
+  saved.preDibOfficerAnnouncementChannel = normalizeChannel(saved.preDibOfficerAnnouncementChannel, "OFFICER")
+  if saved.preDibAnnouncementTemplate == nil then saved.preDibAnnouncementTemplate = DEFAULT_PREDIB_TEMPLATE end
+  if saved.raidReminderTemplate == nil then
+    saved.raidReminderTemplate = saved.raidReminderMessage or DEFAULT_REMINDER_TEMPLATE
+  end
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
     and Dibs.OperationalPolicy.GetAnnouncementChannels then
     local shared = Dibs.OperationalPolicy.GetAnnouncementChannels()
@@ -565,8 +631,8 @@ function Dibs.PreDibs.GetAnnouncementSettings()
     end
   end
   return {
-    publicChannel = normalizeChannel(Dibs.db.settings.preDibAnnouncementChannel, "GUILD"),
-    officerChannel = normalizeChannel(Dibs.db.settings.preDibOfficerAnnouncementChannel, "OFFICER"),
+    publicChannel = saved.preDibAnnouncementChannel,
+    officerChannel = saved.preDibOfficerAnnouncementChannel,
   }
 end
 
@@ -624,10 +690,18 @@ function Dibs.PreDibs.SetAnnouncementEnabled(kind, enabled, actor)
 end
 
 function Dibs.PreDibs.GetAnnouncementTemplates()
-  ensureState()
+  -- Template reads are also independent of ledger state. AceConfig asks for
+  -- these values repeatedly while constructing the announcement page.
+  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  db.settings = type(db.settings) == "table" and db.settings or {}
+  local saved = db.settings
+  if saved.preDibAnnouncementTemplate == nil then saved.preDibAnnouncementTemplate = DEFAULT_PREDIB_TEMPLATE end
+  if saved.raidReminderTemplate == nil then
+    saved.raidReminderTemplate = saved.raidReminderMessage or DEFAULT_REMINDER_TEMPLATE
+  end
   return {
-    preDib = tostring(Dibs.db.settings.preDibAnnouncementTemplate or DEFAULT_PREDIB_TEMPLATE),
-    reminder = tostring(Dibs.db.settings.raidReminderTemplate or DEFAULT_REMINDER_TEMPLATE),
+    preDib = tostring(saved.preDibAnnouncementTemplate),
+    reminder = tostring(saved.raidReminderTemplate),
   }
 end
 
@@ -677,6 +751,7 @@ function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId, ledgerId)
   }
 
   table.insert(store.requests, request)
+  markRequestHistoryChanged(store.ledgerId)
   announceRequestIndex(store.ledgerId)
   return request
 end
@@ -735,6 +810,7 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
       existing.updatedAt = existing.confirmedAt
       existing.revision = (tonumber(existing.revision) or 1) + 1
       existing.source = source or existing.source or "public"
+      markRequestHistoryChanged(store.ledgerId)
       announcePreDib(existing)
       announceRequestIndex(store.ledgerId)
     end
@@ -762,6 +838,7 @@ function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, sourc
   }
 
   table.insert(store.requests, request)
+  markRequestHistoryChanged(store.ledgerId)
   announcePreDib(request)
   announceRequestIndex(store.ledgerId)
   return request
@@ -821,6 +898,7 @@ function Dibs.PreDibs.UpdateStatus(requestId, status)
       request.status = status
       request.updatedAt = time()
       request.revision = (tonumber(request.revision) or 1) + 1
+      markRequestHistoryChanged(request.ledgerId or DEFAULT_LEDGER_ID)
       if status == "confirmed" and request.confirmedAt == nil then
         request.confirmedAt = request.updatedAt
         announcePreDib(request)
@@ -890,6 +968,7 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
          if key ~= "playerName" and key ~= "itemID" and key ~= "seasonId" and key ~= "modeAtCreation"
            and key ~= "createdAt" and key ~= "delivery" then existing[key] = value end
       end
+      markRequestHistoryChanged(targetLedgerId)
       return existing
     end
   end
@@ -901,6 +980,7 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
   -- sync record can never claim that an officer received it.
   incoming.delivery = { state = "PENDING" }
   table.insert(store.requests, incoming)
+  markRequestHistoryChanged(targetLedgerId)
   return incoming
 end
 
@@ -944,6 +1024,7 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName, targetLedger
       for key, value in pairs(incoming) do
         if key ~= "playerName" and key ~= "itemID" and key ~= "seasonId" and key ~= "modeAtCreation" and key ~= "createdAt" and key ~= "delivery" then existing[key] = value end
       end
+      markRequestHistoryChanged(ledgerId)
       announceRequestIndex(ledgerId)
       return existing
     end
@@ -953,6 +1034,7 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName, targetLedger
   record.ledgerId = ledgerId
   record.delivery = { state = "PENDING" }
   table.insert(store.requests, record)
+  markRequestHistoryChanged(ledgerId)
   announceRequestIndex(ledgerId)
   return record
 end
@@ -1020,10 +1102,12 @@ end
 function Dibs.PreDibs.GetActiveRequests(playerName, ledgerId)
   local store = ensureState(ledgerId)
   if ledgerId ~= nil and not store then return {} end
-  local requests = ledgerId ~= nil and store.requests or Dibs.db.preDibs.requests
   local active = {}
+  local requests = Dibs.PreDibs.GetRequestsForPlayer
+    and Dibs.PreDibs.GetRequestsForPlayer(playerName or Dibs.GetPlayerName(), ledgerId)
+    or (ledgerId ~= nil and store.requests or Dibs.db.preDibs.requests)
   for _, request in ipairs(requests or {}) do
-    if request.playerName == (playerName or Dibs.GetPlayerName()) and isRequestActive(request) then
+    if samePlayer(request.playerName, playerName or Dibs.GetPlayerName()) and isRequestActive(request) then
       table.insert(active, request)
     end
   end
@@ -1157,6 +1241,7 @@ function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty, opt
         record.outcome = "ALREADY_RECORDED"
       end
       record.idempotentReplay = true
+      Dibs.PreDibs.MarkAcquisitionsChanged()
       return record
     end
   end
@@ -1173,6 +1258,7 @@ function Dibs.PreDibs.RecordVaultAcquisition(playerName, itemID, difficulty, opt
     outcome = source == "VAULT_MANUAL" and "RECORDED_MANUAL" or verificationState,
   }
   table.insert(Dibs.db.preDibs.acquisitions, record)
+  Dibs.PreDibs.MarkAcquisitionsChanged()
   if Dibs.Notifications and Dibs.Notifications.Notify then
     Dibs.Notifications.Notify("vault:" .. tostring(record.acquisitionId), "VAULT_RECORDED", record)
   end
@@ -1231,6 +1317,7 @@ function Dibs.PreDibs.ReviewVaultAcquisition(acquisitionId, decision, actor, rea
   table.insert(target.reviewHistory, copy(target.review))
   target.revision = (tonumber(target.revision) or 1) + 1
   target.syncState = "LOCAL"
+  Dibs.PreDibs.MarkAcquisitionsChanged()
   Dibs.db.auditLog = Dibs.db.auditLog or {}
   table.insert(Dibs.db.auditLog, {
     eventId = Dibs.NewId("vault-review"), action = "great_vault.review",
@@ -1309,6 +1396,7 @@ function Dibs.PreDibs.ApplyVaultSyncRecord(incoming)
   else
     table.insert(Dibs.db.preDibs.acquisitions, record)
   end
+  Dibs.PreDibs.MarkAcquisitionsChanged()
   return copyVaultAcquisition(record), "APPLIED"
 end
 
@@ -1363,7 +1451,11 @@ function Dibs.PreDibs.ResolveVaultConflict(conflictId, decision, actor, reason)
     incoming.originalEvidence = nil
     incoming.review = nil
     for index, record in ipairs(Dibs.db.preDibs.acquisitions) do
-      if record.acquisitionId == conflict.acquisitionId then Dibs.db.preDibs.acquisitions[index] = incoming break end
+      if record.acquisitionId == conflict.acquisitionId then
+        Dibs.db.preDibs.acquisitions[index] = incoming
+        Dibs.PreDibs.MarkAcquisitionsChanged()
+        break
+      end
     end
   end
   conflict.status = "RESOLVED"
@@ -1402,6 +1494,31 @@ function Dibs.PreDibs.GetAcquisitions()
   return Dibs.db.preDibs.acquisitions
 end
 
+-- Sync status needs only the acquisition array identity and its runtime
+-- revision. Reuse the already-resolved guild DB on this read-only hot path;
+-- otherwise keep the normal initialization/migration behavior as fallback.
+function Dibs.PreDibs.GetAcquisitionsSnapshotFast()
+  local db = Dibs.db
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  local acquisitions = type(db) == "table" and type(db.preDibs) == "table"
+    and db.preDibs.acquisitions or nil
+  if guildKey and Dibs.currentGuildKey == guildKey and type(acquisitions) == "table" then
+    return acquisitions, vaultAcquisitionRevision
+  end
+  return Dibs.PreDibs.GetAcquisitions(), vaultAcquisitionRevision
+end
+
+-- Runtime-only token for derived sync digests. Array identity also guards
+-- wholesale replacement during import or SavedVariables migration.
+function Dibs.PreDibs.GetAcquisitionsRevision()
+  return vaultAcquisitionRevision
+end
+
+function Dibs.PreDibs.MarkAcquisitionsChanged()
+  vaultAcquisitionRevision = vaultAcquisitionRevision + 1
+  return vaultAcquisitionRevision
+end
+
 function Dibs.PreDibs.GetConfirmedRequestsForItem(itemID)
   ensureState()
   local list = {}
@@ -1423,24 +1540,334 @@ function Dibs.PreDibs.GetHistory(ledgerId)
   return store.requests
 end
 
--- Read-only Pre-Dibs summary for the Guided Setup Wizard; composes existing
--- accessors only and mutates nothing.
-function Dibs.PreDibs.GetStatusSummary(seasonId, ledgerId)
+-- Count history without initializing or migrating the Pre-Dibs store. Read-only
+-- installation checks need only know whether history exists, not a normalized
+-- request projection.
+function Dibs.PreDibs.GetHistoryCount(ledgerId)
+  local totalStartedAt = beginPreDibsUITiming()
+  local dbStartedAt = beginPreDibsUITiming()
+  local db = readResolvedGuildDB()
+  recordPreDibsUITiming("history-count-db-read", dbStartedAt)
+  local root = type(db.preDibs) == "table" and db.preDibs or {}
+  local targetLedgerId = ledgerId
+  if targetLedgerId == nil then
+    local ledgerStartedAt = beginPreDibsUITiming()
+    targetLedgerId = activeLedgerId()
+    recordPreDibsUITiming("history-count-ledger-resolution", ledgerStartedAt)
+  end
+  if type(targetLedgerId) ~= "string" or targetLedgerId == "" then return nil, "INVALID_LEDGER_ID" end
+  local approvalStartedAt = beginPreDibsUITiming()
+  local approved = isApprovedLedger(targetLedgerId)
+  recordPreDibsUITiming("history-count-approval-check", approvalStartedAt)
+  if not approved then return nil, "LEDGER_NOT_APPROVED" end
+
+  local lookupStartedAt = beginPreDibsUITiming()
+  local store = type(root.ledgers) == "table" and root.ledgers[targetLedgerId] or nil
+  local requests = type(store) == "table" and store.requests or nil
+  if targetLedgerId == DEFAULT_LEDGER_ID and root.ledgerStorageVersion ~= 1 and type(requests) ~= "table" then
+    requests = root.requests
+  end
+  local count = type(requests) == "table" and #requests or 0
+  recordPreDibsUITiming("history-count-lookup", lookupStartedAt)
+  recordPreDibsUITiming("history-count", totalStartedAt)
+  return count
+end
+
+function Dibs.PreDibs.GetHistoryRevision(ledgerId)
   local store, reason = ensureState(ledgerId)
   if not store then return nil, reason end
-  local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
-  local policy = Dibs.PreDibs.GetModePolicy(targetSeason, store.ledgerId)
-  local activeCount, historyCount = 0, 0
-  for _, request in ipairs(store.requests) do
-    historyCount = historyCount + 1
-    if isRequestActive(request) then activeCount = activeCount + 1 end
+  return requestHistoryRevisions[store.ledgerId] or 0
+end
+
+-- Fast read-only revision token for UI cache keys; it avoids normalizing the
+-- SavedVariables store just to discover that a cached projection is current.
+function Dibs.PreDibs.GetHistoryRevisionFast(ledgerId)
+  local key = ledgerId or activeLedgerId() or DEFAULT_LEDGER_ID
+  if type(key) ~= "string" or key == "" then return nil end
+  return requestHistoryRevisions[key] or 0
+end
+
+function Dibs.PreDibs.MarkHistoryChanged(ledgerId)
+  local store, reason = ensureState(ledgerId)
+  if not store then return nil, reason end
+  return markRequestHistoryChanged(store.ledgerId)
+end
+
+function Dibs.PreDibs.GetHistoryLookup(ledgerId)
+  local lookupStartedAt = beginPreDibsUITiming()
+  local store, reason = ensureState(ledgerId)
+  if not store then return nil, reason end
+  local key, revision = store.ledgerId, requestHistoryRevisions[store.ledgerId] or 0
+  local cached = requestHistoryLookups[key]
+  if cached and cached.revision == revision and cached.records == store.requests then
+    recordPreDibsUITiming("history-index-hit", lookupStartedAt)
+    return cached.byId
   end
-  return {
-    publicEnabled = Dibs.PreDibs.IsPublicEnabled(),
+  local byId, byPlayer = {}, {}
+  for _, request in ipairs(store.requests) do
+    if type(request) == "table" then
+      if type(request.requestId) == "string" and byId[request.requestId] == nil then
+        byId[request.requestId] = request
+      end
+      local playerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+        and Dibs.Permissions.CanonicalPlayerId(request.playerName)
+      local playerKey = string.lower(tostring(playerId or request.playerName or ""))
+      if playerKey ~= "" then
+        local playerRequests = byPlayer[playerKey]
+        if not playerRequests then playerRequests = {}; byPlayer[playerKey] = playerRequests end
+        playerRequests[#playerRequests + 1] = request
+      end
+    end
+  end
+  local tracked = false
+  for _, existingKey in ipairs(requestHistoryLookupOrder) do
+    if existingKey == key then tracked = true; break end
+  end
+  if not tracked then
+    if #requestHistoryLookupOrder >= MAX_REQUEST_HISTORY_LOOKUPS then
+      local expired = table.remove(requestHistoryLookupOrder, 1)
+      requestHistoryLookups[expired] = nil
+    end
+    requestHistoryLookupOrder[#requestHistoryLookupOrder + 1] = key
+  end
+  requestHistoryLookups[key] = {
+    revision = revision, records = store.requests, byId = byId,
+    byPlayer = byPlayer,
+  }
+  recordPreDibsUITiming("history-index-build", lookupStartedAt)
+  return byId
+end
+
+-- Read-only player index over the cached history projection. The index is
+-- rebuilt only when the ledger history revision changes.
+function Dibs.PreDibs.GetRequestsForPlayer(playerName, ledgerId)
+  local store, reason = ensureState(ledgerId)
+  if not store then return nil, reason end
+  Dibs.PreDibs.GetHistoryLookup(ledgerId)
+  local cached = requestHistoryLookups[store.ledgerId]
+  local playerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+    and Dibs.Permissions.CanonicalPlayerId(playerName)
+  local playerKey = string.lower(tostring(playerId or playerName or ""))
+  return cached and cached.byPlayer and cached.byPlayer[playerKey] or {}
+end
+
+-- UI history rows are newest-first. Keep this ordering in the revisioned index
+-- so opening My Dibs does not sort the same player's complete history again.
+function Dibs.PreDibs.GetRecentRequestsForPlayer(playerName, ledgerId)
+  local cacheCheckStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local stateStartedAt = beginPreDibsUITiming()
+  local store, reason = ensureState(ledgerId)
+  recordPreDibsUITiming("recent-state", stateStartedAt)
+  if not store then return nil, reason end
+  local lookupStartedAt = beginPreDibsUITiming()
+  Dibs.PreDibs.GetHistoryLookup(ledgerId)
+  recordPreDibsUITiming("recent-lookup", lookupStartedAt)
+  local cached = requestHistoryLookups[store.ledgerId]
+  local identityStartedAt = beginPreDibsUITiming()
+  local playerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+    and Dibs.Permissions.CanonicalPlayerId(playerName)
+  local playerKey = string.lower(tostring(playerId or playerName or ""))
+  recordPreDibsUITiming("recent-identity", identityStartedAt)
+  if not cached then return {} end
+  if cached.recentPlayerKey == playerKey and type(cached.recentRequests) == "table" then
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player data", "predib-index-hit", cacheCheckStartedAt)
+    end
+    return cached.recentRequests
+  end
+  local recentRequests = {}
+  local sortStartedAt = beginPreDibsUITiming()
+  for _, request in ipairs(cached.byPlayer and cached.byPlayer[playerKey] or {}) do
+    recentRequests[#recentRequests + 1] = request
+  end
+  table.sort(recentRequests, function(first, second)
+    local firstTime = tonumber(first.createdAt or first.updatedAt) or 0
+    local secondTime = tonumber(second.createdAt or second.updatedAt) or 0
+    if firstTime == secondTime then return tostring(first.requestId or "") < tostring(second.requestId or "") end
+    return firstTime > secondTime
+  end)
+  cached.recentPlayerKey, cached.recentRequests = playerKey, recentRequests
+  recordPreDibsUITiming("recent-sort-build", sortStartedAt)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "predib-index-miss", cacheCheckStartedAt)
+  end
+  return recentRequests
+end
+
+-- Revisioned current-season lists used by the Player summary. This avoids
+-- rescanning and resorting a player's complete request history on every tab render.
+function Dibs.PreDibs.GetPlayerSeasonRequestSummary(playerName, seasonId, ledgerId)
+  local cacheCheckStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local stateStartedAt = beginPreDibsUITiming()
+  -- This is a read-only projection. PlayerUI passes the already-resolved
+  -- ledger ID, so checking the active ledger again would repeat resolution
+  -- and could not change which store this summary reads.
+  local store, reason = ensureState(ledgerId, false, ledgerId ~= nil)
+  recordPreDibsUITiming("summary-state", stateStartedAt)
+  if not store then return nil, reason end
+  local lookupStartedAt = beginPreDibsUITiming()
+  local cached = requestHistoryLookups[store.ledgerId]
+  local historyRevision = requestHistoryRevisions[store.ledgerId] or 0
+  if not cached or cached.revision ~= historyRevision or cached.records ~= store.requests then
+    Dibs.PreDibs.GetHistoryLookup(store.ledgerId)
+    cached = requestHistoryLookups[store.ledgerId]
+  end
+  recordPreDibsUITiming("summary-lookup", lookupStartedAt)
+  if not cached then return { active = {}, fulfilled = {} } end
+  local identityStartedAt = beginPreDibsUITiming()
+  local playerId = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId
+    and Dibs.Permissions.CanonicalPlayerId(playerName)
+  local playerKey = string.lower(tostring(playerId or playerName or ""))
+  local rawPlayerKey = string.lower(tostring(playerName or ""))
+  recordPreDibsUITiming("summary-identity", identityStartedAt)
+  local summaryKey = playerKey .. "|" .. rawPlayerKey .. "|" .. tostring(seasonId or "*")
+  if cached.playerSeasonSummaryKey == summaryKey and cached.playerSeasonSummary then
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Player data", "predib-summary-hit", cacheCheckStartedAt)
+    end
+    return cached.playerSeasonSummary
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Player data", "predib-summary-miss", cacheCheckStartedAt)
+  end
+
+  local active, fulfilled, pastRequests = {}, {}, {}
+  local buildStartedAt = beginPreDibsUITiming()
+  for _, request in ipairs(cached.byPlayer and cached.byPlayer[playerKey] or {}) do
+    local inSeason = not seasonId or request.seasonId == seasonId
+    local activeNow = inSeason and isRequestActive(request)
+    local exactPlayer = string.lower(tostring(request.playerName or "")) == rawPlayerKey
+    local fulfilledNow = inSeason and exactPlayer and request.status == "fulfilled"
+    if activeNow then active[#active + 1] = request end
+    if fulfilledNow then fulfilled[#fulfilled + 1] = request end
+    if exactPlayer and not activeNow and not fulfilledNow then
+      pastRequests[#pastRequests + 1] = request
+    end
+  end
+  table.sort(fulfilled, function(first, second)
+    local firstTime = tonumber(first.fulfilledAt or first.updatedAt or first.createdAt) or 0
+    local secondTime = tonumber(second.fulfilledAt or second.updatedAt or second.createdAt) or 0
+    if firstTime == secondTime then return tostring(first.requestId or "") < tostring(second.requestId or "") end
+    return firstTime > secondTime
+  end)
+  table.sort(pastRequests, function(first, second)
+    local firstTime = tonumber(first.createdAt or first.updatedAt) or 0
+    local secondTime = tonumber(second.createdAt or second.updatedAt) or 0
+    if firstTime == secondTime then return tostring(first.requestId or "") < tostring(second.requestId or "") end
+    return firstTime > secondTime
+  end)
+  recordPreDibsUITiming("summary-build", buildStartedAt)
+  cached.playerSeasonSummaryKey = summaryKey
+  cached.playerSeasonSummary = { active = active, fulfilled = fulfilled, pastRequests = pastRequests }
+  return cached.playerSeasonSummary
+end
+
+function Dibs.PreDibs.GetRequestById(requestId, ledgerId)
+  local lookup, reason = Dibs.PreDibs.GetHistoryLookup(ledgerId)
+  if not lookup then return nil, reason end
+  return lookup[requestId]
+end
+
+-- Read-only Pre-Dibs summary for the Guided Setup Wizard; composes existing
+-- accessors only and mutates nothing.
+local EMPTY_STATUS_REQUESTS, EMPTY_STATUS_POLICIES = {}, {}
+local function resolveStatusReadStore(ledgerId)
+  local totalStartedAt = beginPreDibsUITiming()
+  local dbStartedAt = beginPreDibsUITiming()
+  local db = readResolvedGuildDB()
+  recordPreDibsUITiming("status-store-db-read", dbStartedAt)
+  local root = type(db.preDibs) == "table" and db.preDibs or {}
+  local ledgerStartedAt = beginPreDibsUITiming()
+  local targetLedgerId = ledgerId or activeLedgerId()
+  recordPreDibsUITiming("status-store-ledger-resolution", ledgerStartedAt)
+  if type(targetLedgerId) ~= "string" or targetLedgerId == "" then return nil, "INVALID_LEDGER_ID" end
+  local approvalStartedAt = beginPreDibsUITiming()
+  local approved = isApprovedLedger(targetLedgerId)
+  recordPreDibsUITiming("status-store-approval-check", approvalStartedAt)
+  if not approved then return nil, "LEDGER_NOT_APPROVED" end
+
+  local lookupStartedAt = beginPreDibsUITiming()
+  local store = type(root.ledgers) == "table" and root.ledgers[targetLedgerId] or nil
+  local requests = type(store) == "table" and store.requests or nil
+  local modePolicies = type(store) == "table" and store.modePolicies or nil
+  if root.ledgerStorageVersion ~= 1 and targetLedgerId == DEFAULT_LEDGER_ID then
+    requests = type(requests) == "table" and requests or root.requests
+    modePolicies = type(modePolicies) == "table" and modePolicies or root.modePolicies
+  end
+  local result = {
+    ledgerId = targetLedgerId,
+    requests = type(requests) == "table" and requests or EMPTY_STATUS_REQUESTS,
+    modePolicies = type(modePolicies) == "table" and modePolicies or EMPTY_STATUS_POLICIES,
+  }
+  recordPreDibsUITiming("status-store-lookup", lookupStartedAt)
+  recordPreDibsUITiming("status-store-resolution-detail", totalStartedAt)
+  return result
+end
+
+function Dibs.PreDibs.GetStatusSummary(seasonId, ledgerId)
+  local storeStartedAt = beginPreDibsUITiming()
+  local store, reason = resolveStatusReadStore(ledgerId)
+  recordPreDibsUITiming("status-store-resolution", storeStartedAt)
+  if not store then return nil, reason end
+  local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
+  -- This read-only projection already has the resolved ledger store. Avoid
+  -- calling the public accessors below, which each re-run ensureState and
+  -- re-resolve the same active ledger during the Wizard's single render.
+  local policyStartedAt = beginPreDibsUITiming()
+  local policySummary = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetPreDibSummary
+    and Dibs.OperationalPolicy.GetPreDibSummary(targetSeason, store.ledgerId) or nil
+  local policy
+  if policySummary and policySummary.adopted == true and policySummary.mode then
+    policy = { seasonId = targetSeason, ledgerId = store.ledgerId, mode = policySummary.mode, source = "OPERATIONAL_POLICY" }
+  elseif not policySummary and Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted
+    and Dibs.OperationalPolicy.IsAdopted() and Dibs.OperationalPolicy.GetPreDibMode then
+    local sharedMode = Dibs.OperationalPolicy.GetPreDibMode(targetSeason, store.ledgerId)
+    if sharedMode then
+      policy = { seasonId = targetSeason, ledgerId = store.ledgerId, mode = sharedMode, source = "OPERATIONAL_POLICY" }
+    end
+  end
+  if not policy then
+    policy = targetSeason and store.modePolicies[targetSeason] or nil
+  end
+  recordPreDibsUITiming("status-policy", policyStartedAt)
+  local revision = requestHistoryRevisions[store.ledgerId] or 0
+  local counts = requestStatusCountCaches[store.ledgerId]
+  if not counts or counts.revision ~= revision or counts.records ~= store.requests then
+    local countStartedAt = beginPreDibsUITiming()
+    local activeCount, historyCount = 0, 0
+    for _, request in ipairs(store.requests) do
+      historyCount = historyCount + 1
+      if isRequestActive(request) then activeCount = activeCount + 1 end
+    end
+    counts = {
+      revision = revision, records = store.requests,
+      activeRequestCount = activeCount, historyCount = historyCount,
+    }
+    requestStatusCountCaches[store.ledgerId] = counts
+    recordPreDibsUITiming("status-count-build", countStartedAt)
+  else
+    local cacheHitStartedAt = beginPreDibsUITiming()
+    recordPreDibsUITiming("status-count-hit", cacheHitStartedAt)
+  end
+  local publicEnabled
+  if policySummary and policySummary.adopted == true then
+    publicEnabled = policySummary.publicEnabled
+  elseif not policySummary and Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted
+    and Dibs.OperationalPolicy.IsAdopted() and Dibs.OperationalPolicy.GetPublicPreDibsEnabled then
+    publicEnabled = Dibs.OperationalPolicy.GetPublicPreDibsEnabled()
+  end
+  if publicEnabled == nil then
+    publicEnabled = Dibs.db.settings.allowPublicPreDibs ~= false
+  end
+  local projectionStartedAt = beginPreDibsUITiming()
+  local result = {
+    publicEnabled = publicEnabled,
     ledgerId = store.ledgerId,
     seasonId = targetSeason,
-    mode = policy and policy.mode or nil,
-    activeRequestCount = activeCount,
-    historyCount = historyCount,
+    mode = type(policy) == "table" and policy.mode or "WILD_OPEN",
+    activeRequestCount = counts.activeRequestCount,
+    historyCount = counts.historyCount,
   }
+  recordPreDibsUITiming("status-projection", projectionStartedAt)
+  return result
 end

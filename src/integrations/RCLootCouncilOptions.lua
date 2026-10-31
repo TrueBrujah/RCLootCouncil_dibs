@@ -1828,7 +1828,11 @@ groups.announcements = { type = "group", name = "Announcements", order = 6, args
     return clubId and ("Raid Dibs: available (club " .. tostring(clubId) .. ", stream " .. tostring(streamId) .. ")")
       or "Raid Dibs: channel not found for this character. Join the community/channel, then refresh."
   end),
-  refresh = execute(11, "Refresh", function() end),
+  refresh = execute(11, "Refresh", function()
+    if Dibs.PreDibs and Dibs.PreDibs.InvalidateRaidDibsChannelCache then
+      Dibs.PreDibs.InvalidateRaidDibsChannelCache()
+    end
+  end),
   preview = description(14, function()
     local templates = Dibs.PreDibs.GetAnnouncementTemplates()
     return "Pre-Dib: " .. Dibs.PreDibs.FormatAnnouncement(templates.preDib, {
@@ -2047,7 +2051,12 @@ local function refreshButtonTemplateOptions()
 end
 
 local function getSelectedButtonTemplate()
-  return Dibs.RCOptions.GetButtonTemplate(Dibs.RCOptions.GetSelectedButtonTemplate())
+  -- AceConfig evaluates this getter repeatedly while drawing every template
+  -- field and its visibility predicates. The public accessor intentionally
+  -- returns a defensive copy; this private renderer only reads the saved
+  -- value, so avoid copying all ten buttons and their colors for each field.
+  local store = getButtonTemplateStore()
+  return store.templates[store.selected]
 end
 
 local function setTemplateButtonValue(index, field, value)

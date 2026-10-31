@@ -30,6 +30,7 @@ describe("Synchronization status", function()
     local status = dibs.Sync.GetSynchronizationStatus()
     assert_equal("0.7.5", status.lastAddonVersionMismatch.remoteVersion)
     assert_equal("Tester-Realm", status.lastAddonVersionMismatch.sender)
+    assert_equal("ADDON_UPDATE_REQUIRED", dibs.Sync.GetStatusSummary().lastAddonVersionMismatchReasonCode)
     dibs.db.settings.dibAllowedTypes = { TOKEN = false }
     assert_equal("GUILD_LOOT_RULES_INCOMPATIBLE", dibs.LootRules.GetStatus().status)
     local effective, effectiveReason = dibs.LootRules.GetEffectiveValue("TOKEN", "adventureGuide")
@@ -72,6 +73,58 @@ describe("Synchronization status", function()
     assert_true(uiStatus:find("Tester-Realm", 1, true) ~= nil)
   end)
 
+  it("builds synchronization status from compact summaries without copying full histories", function()
+    local dibs = load()
+    local originalGovernanceState = dibs.Governance.GetState
+    local originalProposals = dibs.Governance.GetAwardProposals
+    local originalCatalog = dibs.Seasons.GetCatalogState
+    dibs.Governance.GetState = function() error("full governance copy should not be needed") end
+    dibs.Governance.GetAwardProposals = function() error("full proposal copy should not be needed") end
+    dibs.Seasons.GetCatalogState = function() error("full catalog copy should not be needed") end
+
+    local status = dibs.Sync.GetSynchronizationStatus()
+
+    assert_false(status.governanceAdopted)
+    assert_equal(0, status.pendingAwardProposals)
+    assert_equal(0, status.seasonCatalogRevision)
+    dibs.Governance.GetState = originalGovernanceState
+    dibs.Governance.GetAwardProposals = originalProposals
+    dibs.Seasons.GetCatalogState = originalCatalog
+  end)
+
+  it("provides the scalar synchronization fields used by Loot Rules without building the full status", function()
+    local dibs = load()
+    dibs.Sync.MarkSyncBehind("SEASON_CATALOG_PARENT_MISSING")
+    local summary = dibs.Sync.GetStatusSummary()
+    assert_equal("SYNC_BEHIND", summary.state)
+    assert_true(summary.syncBehind)
+    assert_equal("SEASON_CATALOG_PARENT_MISSING", summary.reason)
+    assert_nil(summary.lastAddonVersionMismatchReasonCode)
+  end)
+
+  it("builds scalar status without constructing detailed behind-reason rows", function()
+    local dibs = load()
+    dibs.Sync.MarkSyncBehind("SEASON_CATALOG_PARENT_MISSING")
+    local getReasons = dibs.Sync.GetSyncBehindReasons
+    dibs.Sync.GetSyncBehindReasons = function() error("scalar status must not build detailed reason rows") end
+    local ok, summary = pcall(dibs.Sync.GetStatusSummary)
+    dibs.Sync.GetSyncBehindReasons = getReasons
+    assert_true(ok, tostring(summary))
+    assert_equal("SYNC_BEHIND", summary.state)
+    assert_true(summary.syncBehind)
+    assert_equal("SEASON_CATALOG_PARENT_MISSING", summary.reason)
+  end)
+
+  it("reads the resolved active guild Sync store without re-running database resolution", function()
+    local dibs = load()
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("hot Sync summary should use the resolved guild store") end
+    local ok, summary = pcall(dibs.Sync.GetStatusSummary)
+    dibs.GetDB = getDB
+    assert_true(ok, tostring(summary))
+    assert_equal("SYNC_READY", summary.state)
+  end)
+
   it("turns peer synchronization states into explicit next actions", function()
     local dibs = load()
     local offline = dibs.OfficerUI.GetSynchronizationPeerPresentation({
@@ -107,6 +160,7 @@ describe("Synchronization status", function()
       local name, rankName, rankIndex = originalGetGuildRosterInfo(index)
       return name, rankName, rankIndex, nil, nil, nil, nil, nil, false
     end
+    dibs.Identity.OnRosterChanged()
 
     local member = dibs.Identity.ResolveRosterMember("Officer-Realm")
     dibs.GetDB().sync.v2.peers[member.memberKey] = {

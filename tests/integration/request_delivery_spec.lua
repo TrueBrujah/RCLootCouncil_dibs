@@ -61,6 +61,23 @@ describe("Private request delivery between simulated production clients", functi
     assert_equal("REQUEST_PEER_UNSUPPORTED", dibs.RequestDelivery.GetStatus(request.requestId).reason)
   end)
 
+  it("lets Player UI refresh pending delivery without scanning all reminders", function()
+    local world = clients.new()
+    local dibs = world:Activate(PLAYER)
+    local original = dibs.RequestDelivery.CheckReminders
+    local scans = 0
+    dibs.RequestDelivery.CheckReminders = function(...)
+      scans = scans + 1
+      return original(...)
+    end
+
+    dibs.RequestDelivery.Pump(true)
+    assert_equal(0, scans)
+    dibs.RequestDelivery.Pump()
+    assert_equal(1, scans)
+    dibs.RequestDelivery.CheckReminders = original
+  end)
+
   it("sends safe owner state and private officer replicas, then delivers the owner reply", function()
     local world, request, packets = setup()
     local coordinator = world:Deliver(COORDINATOR, packets)

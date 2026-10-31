@@ -103,7 +103,8 @@ function HealthUI.Evaluate(options)
     observedVersion = rc.observedVersion,
   }
 
-  local sync = safeCall(Dibs.Sync and Dibs.Sync.GetStatus) or { state = "SYNC_UNAVAILABLE" }
+  local getSyncStatus = Dibs.Sync and (Dibs.Sync.GetStatusSummary or Dibs.Sync.GetStatus)
+  local sync = safeCall(getSyncStatus) or { state = "SYNC_UNAVAILABLE" }
   local syncState = sync.state == "SYNC_READY" and "ready"
     or (sync.state == "SYNC_BEHIND" and "degraded" or "unavailable")
   addCheck(report, "sync", syncState, sync.reason or sync.state,
