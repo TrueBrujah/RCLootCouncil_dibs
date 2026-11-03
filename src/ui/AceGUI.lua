@@ -398,7 +398,9 @@ function Adapter.BuildShellStatusText()
     end
     parts[#parts + 1] = ledgerText
   end
-  parts[#parts + 1] = string.format(strings.SHELL_STATUS_VERSION or "Version %s", tostring(Dibs.VERSION or "?"))
+  local versionText = tostring(Dibs.VERSION or "?")
+  if Dibs.BUILD_ID then versionText = versionText .. " / " .. tostring(Dibs.BUILD_ID) end
+  parts[#parts + 1] = string.format(strings.SHELL_STATUS_VERSION or "Version %s", versionText)
   local syncText
   local syncStartedAt = beginStatusTiming()
   local okSync, sync = pcall(function()

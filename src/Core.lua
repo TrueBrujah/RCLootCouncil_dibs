@@ -75,6 +75,13 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
 Dibs.VERSION = "0.8.10"
+local getAddonMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
+if type(getAddonMetadata) == "function" then
+  local ok, buildId = pcall(getAddonMetadata, Dibs.ADDON_NAME, "X-Dibs-Build")
+  if ok and type(buildId) == "string" and buildId ~= "" and buildId ~= "source" then
+    Dibs.BUILD_ID = buildId
+  end
+end
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -1588,6 +1595,11 @@ function Dibs.HandleSlashCommand(msg)
 
   if string.lower(action) == "factoryreset" then
     Dibs.FactoryReset(args[2])
+    return
+  end
+
+  if string.lower(action) == "build" then
+    Dibs.Message("Dibs " .. tostring(Dibs.VERSION or "unknown") .. " | Build " .. tostring(Dibs.BUILD_ID or "not stamped; use scripts/deploy.ps1"))
     return
   end
 

@@ -41,4 +41,30 @@ if ($exitCode -ge 8) {
     exit $exitCode
 }
 
+$commit = git -C $repoRoot rev-parse --short=12 HEAD
+if ($LASTEXITCODE -ne 0 -or -not $commit) {
+    [Console]::Error.WriteLine("ERROR: Could not identify the current Git commit.")
+    exit 1
+}
+$sourceChanges = git -C $repoRoot status --porcelain --untracked-files=all -- src
+if ($LASTEXITCODE -ne 0) {
+    [Console]::Error.WriteLine("ERROR: Could not inspect source worktree state.")
+    exit 1
+}
+$worktreeState = if ($sourceChanges) { 'dirty' } else { 'clean' }
+$buildId = "$commit-$worktreeState"
+$tocPath = Join-Path $TargetPath 'RCLootCouncil_dibs.toc'
+if (-not (Test-Path -LiteralPath $tocPath -PathType Leaf)) {
+    [Console]::Error.WriteLine("ERROR: Deployed TOC file is missing: $tocPath")
+    exit 1
+}
+$tocContent = [System.IO.File]::ReadAllText($tocPath)
+$buildMetadata = "## X-Dibs-Build: $buildId"
+if ($tocContent -match '(?m)^## X-Dibs-Build:') {
+    $tocContent = [regex]::Replace($tocContent, '(?m)^## X-Dibs-Build:.*$', $buildMetadata)
+} else {
+    $tocContent = $tocContent.TrimEnd() + "`r`n$buildMetadata`r`n"
+}
+[System.IO.File]::WriteAllText($tocPath, $tocContent, [System.Text.UTF8Encoding]::new($false))
 Write-Output "Deployed src/ -> $TargetPath"
+Write-Output "Stamped in-game build ID: $buildId"

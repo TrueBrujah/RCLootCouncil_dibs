@@ -263,7 +263,7 @@ L.SLASH_HELP_RAID = "Raid : raid [status|sync|start|stop|ledger <id>] | remind <
 L.SLASH_HELP_STATUS = "Verifications : status | readiness | dryrun <objet> <gagnant> <reponse> <statut> [session] | sync probe|report <joueur> | sync repair <joueur|guild>"
 L.SLASH_HELP_ADMIN = "Administration (GM/officier) : grant/use <joueur> <montant> | admin list|add|remove <Nom-Royaume> | mode <AUTO|STANDALONE|RCLootCouncil> | predibmode <mode>"
 L.SLASH_HELP_DATA = "Donnees : data | backup | profiles | import | export"
-L.SLASH_HELP_DEBUG = "Diagnostics : debug <module|all> 0-5 | debug report|rc|logs | perf window|on|off|report|reset | ejdebug | ejsub ... | announce debug on|off|scan | rcopts"
+L.SLASH_HELP_DEBUG = "Diagnostics : build | debug <module|all> 0-5 | debug report|rc|logs | perf window|on|off|report|reset | ejdebug | ejsub ... | announce debug on|off|scan | rcopts"
 L.SLASH_HELP_DEVELOPER = "Mode developpeur uniquement : dev on|off|status | testitem <itemID>"
 
 L.NOTIFY_PREDIB_CONFIRMED = "Pre-Dib accepte pour %s."
