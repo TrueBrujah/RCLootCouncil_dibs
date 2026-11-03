@@ -12,29 +12,50 @@ end
 describe("Installation readiness projection", function()
   it("resolves the active ledger once for the legacy ledger and Pre-Dibs status checks", function()
     local dibs = load("Tester-Realm", true)
+    local resolvedGuildDB = dibs.GetDB()
     local originalActiveLedger = dibs.Ledger.GetActiveLedgerId
     local originalHasHistory = dibs.Ledger.HasNonAllocationTransactions
     local originalHistoryCount = dibs.PreDibs.GetHistoryCount
-    local activeReads, ledgerTarget, predibsTarget = 0, nil, nil
-    dibs.Ledger.GetActiveLedgerId = function()
+    local originalSyncBehind = dibs.Sync.IsSyncBehind
+    local originalSyncCompatibility = dibs.Sync.CanEnforceV2
+    local originalBaselineSummary = dibs.HistoricalBaseline.GetInstallationSummary
+    local activeReads, ledgerTarget, predibsTarget, activeDatabase, historyDatabase, baselineDatabase = 0, nil, nil, nil, nil, nil
+    local syncBehindDatabase, syncCompatibilityDatabase
+    dibs.Ledger.GetActiveLedgerId = function(db)
       activeReads = activeReads + 1
+      activeDatabase = db
       return "guild-primary"
     end
-    dibs.Ledger.HasNonAllocationTransactions = function(targetLedgerId)
+    dibs.Ledger.HasNonAllocationTransactions = function(targetLedgerId, db)
       ledgerTarget = targetLedgerId
+      historyDatabase = db
       return false
     end
     dibs.PreDibs.GetHistoryCount = function(targetLedgerId)
       predibsTarget = targetLedgerId
       return 0
     end
+    dibs.HistoricalBaseline.GetInstallationSummary = function(db)
+      baselineDatabase = db
+      return originalBaselineSummary(db)
+    end
+    dibs.Sync.IsSyncBehind = function(db) syncBehindDatabase = db; return false end
+    dibs.Sync.CanEnforceV2 = function(_, db) syncCompatibilityDatabase = db; return true end
 
     local status = dibs.Installation.GetStatus()
 
     dibs.Ledger.GetActiveLedgerId = originalActiveLedger
     dibs.Ledger.HasNonAllocationTransactions = originalHasHistory
     dibs.PreDibs.GetHistoryCount = originalHistoryCount
+    dibs.Sync.IsSyncBehind = originalSyncBehind
+    dibs.Sync.CanEnforceV2 = originalSyncCompatibility
+    dibs.HistoricalBaseline.GetInstallationSummary = originalBaselineSummary
     assert_equal(1, activeReads)
+    assert_equal(resolvedGuildDB, activeDatabase)
+    assert_equal(resolvedGuildDB, historyDatabase)
+    assert_equal(resolvedGuildDB, baselineDatabase)
+    assert_equal(resolvedGuildDB, syncBehindDatabase)
+    assert_equal(resolvedGuildDB, syncCompatibilityDatabase)
     assert_equal("guild-primary", ledgerTarget)
     assert_equal(ledgerTarget, predibsTarget)
     assert_equal("NOT_INITIALIZED", status.state)
@@ -57,6 +78,20 @@ describe("Installation readiness projection", function()
     assert_true(ok, tostring(status))
     assert_equal("READY_TO_INITIALIZE", status.state)
     assert_false(status.protocol.active)
+  end)
+
+  it("builds the compact historical baseline summary from a supplied guild DB", function()
+    local dibs = load("Tester-Realm", true)
+    local resolvedGuildDB = dibs.GetDB()
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("summary should reuse the supplied guild DB") end
+
+    local ok, summary = pcall(dibs.HistoricalBaseline.GetInstallationSummary, resolvedGuildDB)
+
+    dibs.GetDB = getDB
+    assert_true(ok, tostring(summary))
+    assert_equal(0, summary.evidenceCount)
+    assert_equal(false, summary.baselinePresent)
   end)
 
   it("counts Pre-Dibs history without migrating the legacy SavedVariables store", function()
@@ -295,6 +330,81 @@ describe("Guild Configuration next steps after activation", function()
     frame:ActivateRoute("sync")
     clickLatestButton("Open Guild Ledgers")
     assert_equal("installation", frame.activeTab)
+  end)
+
+  it("reuses the installation ledger snapshot for the active-ledger selector", function()
+    local dibs = load("Tester-Realm", true)
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    local originalGetLedgers = dibs.MultiLedger.GetLedgers
+    local originalGetDropdownValues = dibs.AceGUI.GetLedgerDropdownValues
+    local ledgerReads, dropdownArgs, dropdownValues = 0, nil, nil
+    dibs.MultiLedger.GetLedgers = function(...)
+      ledgerReads = ledgerReads + 1
+      return originalGetLedgers(...)
+    end
+    dibs.AceGUI.GetLedgerDropdownValues = function(ledgers, activeId, viewId)
+      dropdownArgs = { ledgers, activeId, viewId }
+      dropdownValues = originalGetDropdownValues(ledgers, activeId, viewId)
+      return dropdownValues
+    end
+
+    frame:ActivateRoute("installation")
+
+    dibs.MultiLedger.GetLedgers = originalGetLedgers
+    dibs.AceGUI.GetLedgerDropdownValues = originalGetDropdownValues
+    assert_equal(1, ledgerReads, "installation should read the ledger catalog once")
+    assert_not_nil(dropdownArgs)
+    assert_equal("table", type(dropdownArgs[1]), "selector should receive the rendered ledger snapshot")
+    assert_equal("guild-primary", dropdownArgs[2])
+    assert_not_nil(dropdownValues["guild-primary"], "selector should retain the default ledger option")
+    local selector = findLatestWidget(function(widget)
+      return widget.kind == "Dropdown" and widget.label == "Ledger to activate"
+    end)
+    assert_not_nil(selector, "active-ledger selector should remain populated")
+  end)
+
+  it("reuses the route database for Installation status and ledger reads", function()
+    local dibs = load("Tester-Realm", true)
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    local originalSetShellStatus = dibs.AceGUI.SetShellStatus
+    local originalGetStatus = dibs.Installation.GetStatus
+    local originalGetLedgers = dibs.MultiLedger.GetLedgers
+    local originalGetActiveLedgerId = dibs.MultiLedger.GetActiveLedgerId
+    local originalGetGuildLedgerStatus = dibs.MultiLedger.GetGuildLedgerStatus
+    local routeDB = dibs.GetDB()
+    local statusDB, catalogDB, activeDB, guildStatusDB
+    dibs.AceGUI.SetShellStatus = function(shell, text)
+      local ok = originalSetShellStatus(shell, text)
+      return ok, routeDB
+    end
+    dibs.Installation.GetStatus = function(actor, dbOverride)
+      statusDB = dbOverride
+      return originalGetStatus(actor, dbOverride)
+    end
+    dibs.MultiLedger.GetLedgers = function(options, dbOverride)
+      catalogDB = dbOverride
+      return originalGetLedgers(options, dbOverride)
+    end
+    dibs.MultiLedger.GetActiveLedgerId = function(dbOverride)
+      activeDB = dbOverride
+      return originalGetActiveLedgerId(dbOverride)
+    end
+    dibs.MultiLedger.GetGuildLedgerStatus = function(dbOverride)
+      guildStatusDB = dbOverride
+      return originalGetGuildLedgerStatus(dbOverride)
+    end
+
+    frame:ActivateRoute("installation")
+
+    dibs.AceGUI.SetShellStatus = originalSetShellStatus
+    dibs.Installation.GetStatus = originalGetStatus
+    dibs.MultiLedger.GetLedgers = originalGetLedgers
+    dibs.MultiLedger.GetActiveLedgerId = originalGetActiveLedgerId
+    dibs.MultiLedger.GetGuildLedgerStatus = originalGetGuildLedgerStatus
+    assert_equal(routeDB, statusDB, "Installation status should use the route's resolved DB")
+    assert_equal(routeDB, catalogDB, "ledger catalog should use the route's resolved DB")
+    assert_equal(routeDB, activeDB, "active ledger lookup should use the route's resolved DB")
+    assert_equal(routeDB, guildStatusDB, "guild ledger status should use the route's resolved DB")
   end)
 
   it("archives and permanently deletes a non-default ledger through Guild Configuration", function()

@@ -66,8 +66,8 @@ local function defaultState()
     activeDecisionByEvidence = {}, baseline = nil, recoveries = {}, auditLog = {},
   }
 end
-local function ensure()
-  local db = Dibs.GetDB()
+local function ensure(db)
+  db = type(db) == "table" and db or Dibs.GetDB()
   if type(db.legacyBaseline) ~= "table" then db.legacyBaseline = defaultState() end
   local state = db.legacyBaseline
   if state.schema ~= SCHEMA then state.schema = SCHEMA end
@@ -352,15 +352,15 @@ function M.GetState() return copy(ensure()) end
 function M.GetEvidence() return sortedValues(ensure().evidence) end
 function M.GetFindings() return sortedValues(ensure().findings) end
 function M.GetBaseline() return copy(ensure().baseline) end
-function M.GetBaselineHash()
-  local baseline = ensure().baseline
+function M.GetBaselineHash(db)
+  local baseline = ensure(db).baseline
   return baseline and baseline.legacyBaselineHash or nil
 end
 -- Compact read for Installation.GetStatus. Status needs counts and baseline
 -- identity; copying full evidence, decisions, recoveries and audit rows here
 -- made repeated readiness checks scale with the historical record.
-function M.GetInstallationSummary()
-  local state = ensure()
+function M.GetInstallationSummary(db)
+  local state = ensure(db)
   local openFindings, incompleteSources = 0, false
   for _, finding in pairs(state.findings) do
     if finding.status == "OPEN" then openFindings = openFindings + 1 end

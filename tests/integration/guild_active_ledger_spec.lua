@@ -65,6 +65,36 @@ describe("Guild active ledger imposed through operational policy", function()
     assert_true(again); assert_equal("UNCHANGED", againReason)
   end)
 
+  it("reads an already-aligned active ledger from the resolved guild DB", function()
+    local dibs = load(); adoptGovernance(dibs)
+    local other = approvedLedger(dibs, "Other")
+    assert_true(dibs.MultiLedger.SetActiveLedger(other))
+    assert_true(dibs.MultiLedger.SetGuildActiveLedger("guild-primary"))
+
+    local db = dibs.GetDB()
+    local originalGetDB = dibs.GetDB
+    dibs.GetDB = function() error("resolved-database lookup should be reused") end
+    local ok, activeLedgerId = pcall(dibs.Ledger.GetActiveLedgerId, db)
+    dibs.GetDB = originalGetDB
+
+    assert_true(ok, tostring(activeLedgerId))
+    assert_equal("guild-primary", activeLedgerId)
+    assert_equal("guild-primary", db.activeLedgerId)
+    assert_equal(db.ledgers["guild-primary"], db.ledger)
+  end)
+
+  it("checks ledger history using the already-resolved guild DB", function()
+    local dibs = load(); adoptGovernance(dibs)
+    local db = dibs.GetDB()
+    local originalGetDB = dibs.GetDB
+    dibs.GetDB = function() error("resolved-database lookup should be reused") end
+    local ok, hasHistory = pcall(dibs.Ledger.HasNonAllocationTransactions, "guild-primary", db)
+    dibs.GetDB = originalGetDB
+
+    assert_true(ok, tostring(hasHistory))
+    assert_false(hasHistory)
+  end)
+
   it("applies the imposed ledger on a member client and fails closed until the ledger is known", function()
     local gm = load(); adoptGovernance(gm)
     local ledgerId = approvedLedger(gm, "Raid Team 2")
@@ -120,6 +150,45 @@ describe("Guild active ledger imposed through operational policy", function()
     assert_true(string.find(text, tostring(dibs.VERSION), 1, true) ~= nil)
   end)
 
+  it("reuses a supplied database while building guild ledger status", function()
+    local dibs = load()
+    local db = dibs.GetDB()
+    local originalGetDB = dibs.GetDB
+    dibs.GetDB = function() error("supplied ledger database should be reused") end
+
+    local status = dibs.MultiLedger.GetGuildLedgerStatus(db)
+    assert_equal("guild-primary", status.activeLedgerId)
+    assert_equal("guild-primary", status.viewLedgerId)
+    assert_equal("Primary", status.activeLedgerName)
+    assert_equal("guild-primary", dibs.MultiLedger.GetViewLedgerId(db))
+
+    dibs.GetDB = originalGetDB
+  end)
+
+  it("resolves the shell footer database once and passes it to ledger status", function()
+    local dibs = load()
+    local db = dibs.GetDB()
+    local originalGetDB = dibs.GetDB
+    local originalGetGuildLedgerStatus = dibs.MultiLedger.GetGuildLedgerStatus
+    local originalGetStatusSummary = dibs.Sync.GetStatusSummary
+    local calls, supplied = 0, nil
+    dibs.GetDB = function() calls = calls + 1; return db end
+    dibs.MultiLedger.GetGuildLedgerStatus = function(value)
+      supplied = value
+      return { state = "NOT_IMPOSED", activeLedgerId = "guild-primary", activeLedgerName = "Primary" }
+    end
+    dibs.Sync.GetStatusSummary = function() return { state = "SYNC_READY" } end
+
+    local text = dibs.AceGUI.BuildShellStatusText()
+    assert_equal(1, calls)
+    assert_equal(db, supplied)
+    assert_true(string.find(text, "Primary", 1, true) ~= nil)
+
+    dibs.GetDB = originalGetDB
+    dibs.MultiLedger.GetGuildLedgerStatus = originalGetGuildLedgerStatus
+    dibs.Sync.GetStatusSummary = originalGetStatusSummary
+  end)
+
   it("offers the footer ledger menu with Active and Read only states", function()
     local dibs = load(); adoptGovernance(dibs)
     local imposed = approvedLedger(dibs, "Imposed")
@@ -158,6 +227,22 @@ describe("Guild active ledger imposed through operational policy", function()
     root.radios[2].select()
     assert_equal(imposed, dibs.MultiLedger.GetViewLedgerId())
     assert_equal(imposed, dibs.MultiLedger.GetActiveLedgerId())
+  end)
+
+  it("builds ledger selector labels without scanning transaction counts", function()
+    local dibs = load(); adoptGovernance(dibs)
+    local originalGetLedgers = dibs.MultiLedger.GetLedgers
+    local receivedOptions
+    dibs.MultiLedger.GetLedgers = function(options)
+      receivedOptions = options
+      return { { id = "guild-primary", name = "Primary", status = "APPROVED", isDefault = true } }
+    end
+
+    local values = dibs.AceGUI.GetLedgerDropdownValues()
+
+    assert_equal(false, receivedOptions and receivedOptions.includeTransactionCount)
+    assert_equal("Primary (Active)", values["guild-primary"])
+    dibs.MultiLedger.GetLedgers = originalGetLedgers
   end)
 
   it("builds toolbar ledger values from an existing snapshot without resolving it again", function()

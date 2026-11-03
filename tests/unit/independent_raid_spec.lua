@@ -44,6 +44,22 @@ describe("Dibs.IndependentRaid", function()
     assert_equal("CONCLUDED", past[1].status)
   end)
 
+  it("resolves the database once when checking for an active session", function()
+    local _, dibs = setup()
+    local originalGetDB = dibs.GetDB
+    local reads = 0
+    dibs.GetDB = function(...)
+      reads = reads + 1
+      return originalGetDB(...)
+    end
+
+    local active = dibs.IndependentRaid.IsSessionActive()
+
+    dibs.GetDB = originalGetDB
+    assert_false(active)
+    assert_equal(1, reads)
+  end)
+
   it("tracks local ephemeral point balances and prevents overspending", function()
     local _, dibs = setup()
     dibs.IndependentRaid.StartSession("Friday Ad-hoc", 1)

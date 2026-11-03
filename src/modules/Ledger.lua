@@ -50,6 +50,10 @@ local function beginLedgerUITiming()
   return Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
 end
 
+local function beginLedgerCPUUITiming()
+  return Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+end
+
 local function recordLedgerUITiming(name, startedAt)
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Ledger data", name, startedAt)
@@ -73,17 +77,17 @@ local function rememberPlayerDibsProjection(key, entry)
   playerDibsProjections[key] = entry
 end
 
-function Ledger.GetActiveLedgerId()
+function Ledger.GetActiveLedgerId(dbOverride)
   if Dibs.MultiLedger and type(Dibs.MultiLedger.GetActiveLedgerId) == "function" then
-    return Dibs.MultiLedger.GetActiveLedgerId()
+    return Dibs.MultiLedger.GetActiveLedgerId(dbOverride)
   end
-  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   return db.activeLedgerId or "guild-primary"
 end
 
-local function ensureState(targetLedgerId, timingPrefix)
+local function ensureState(targetLedgerId, timingPrefix, dbOverride)
   local dbReadStartedAt = timingPrefix and beginLedgerUITiming()
-  Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  Dibs.db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   local db = Dibs.db
   if timingPrefix then recordLedgerUITiming(timingPrefix .. "-db-read", dbReadStartedAt) end
   db.ledgers = db.ledgers or {}
@@ -103,7 +107,7 @@ local function ensureState(targetLedgerId, timingPrefix)
   end
 
   local idStartedAt = timingPrefix and beginLedgerUITiming()
-  local id = targetLedgerId or Ledger.GetActiveLedgerId() or "guild-primary"
+  local id = targetLedgerId or Ledger.GetActiveLedgerId(dbOverride) or "guild-primary"
   if timingPrefix then recordLedgerUITiming(timingPrefix .. "-ledger-id", idStartedAt) end
   local ledgerStartedAt = timingPrefix and beginLedgerUITiming()
   db.ledgers[id] = db.ledgers[id] or {
@@ -315,37 +319,93 @@ local function createMemberSnapshot(value)
 end
 
 function Ledger.GetRankReconciliationSnapshot(playerName, seasonId)
-  if not v2Enforced() then return nil, "V2_ENFORCED_REQUIRED" end
-  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return nil, "SYNC_BEHIND" end
+  local v2StartedAt = beginLedgerCPUUITiming()
+  if not v2Enforced() then
+    recordLedgerUITiming("reconciliation-snapshot-v2-check", v2StartedAt)
+    return nil, "V2_ENFORCED_REQUIRED"
+  end
+  recordLedgerUITiming("reconciliation-snapshot-v2-check", v2StartedAt)
+  local syncStartedAt = beginLedgerCPUUITiming()
+  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then
+    recordLedgerUITiming("reconciliation-snapshot-sync-behind-check", syncStartedAt)
+    return nil, "SYNC_BEHIND"
+  end
+  recordLedgerUITiming("reconciliation-snapshot-sync-behind-check", syncStartedAt)
+  local seasonStartedAt = beginLedgerCPUUITiming()
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
-  if targetSeason ~= (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()) then return nil, "STALE_SEASON" end
+  local currentSeasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or targetSeason
+  if targetSeason ~= currentSeasonId then
+    recordLedgerUITiming("reconciliation-snapshot-season", seasonStartedAt)
+    return nil, "STALE_SEASON"
+  end
+  recordLedgerUITiming("reconciliation-snapshot-season", seasonStartedAt)
+  local authorityStartedAt = beginLedgerCPUUITiming()
   local authorityState = authority()
   if not authorityState or authorityState.state ~= "ACTIVE" or not authorityState.coordinator
-    or not finiteInteger(authorityState.ledgerEpoch) then return nil, "COORDINATOR_UNAVAILABLE" end
+    or not finiteInteger(authorityState.ledgerEpoch) then
+    recordLedgerUITiming("reconciliation-snapshot-authority", authorityStartedAt)
+    return nil, "COORDINATOR_UNAVAILABLE"
+  end
+  recordLedgerUITiming("reconciliation-snapshot-authority", authorityStartedAt)
+  local identityStartedAt = beginLedgerCPUUITiming()
   local resolved = Dibs.Identity and Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember(playerName)
-  if not resolved or resolved.status ~= "RESOLVED" then return nil, resolved and resolved.status or "ROSTER_UNAVAILABLE" end
+  if not resolved or resolved.status ~= "RESOLVED" then
+    recordLedgerUITiming("reconciliation-snapshot-identity", identityStartedAt)
+    return nil, resolved and resolved.status or "ROSTER_UNAVAILABLE"
+  end
   local targetSnapshot, identityReason = createMemberSnapshot(resolved.displayName)
-  if not targetSnapshot then return nil, identityReason end
-  if targetSnapshot.memberKey ~= resolved.memberKey then return nil, "STALE_TARGET" end
+  if not targetSnapshot then
+    recordLedgerUITiming("reconciliation-snapshot-identity", identityStartedAt)
+    return nil, identityReason
+  end
+  if targetSnapshot.memberKey ~= resolved.memberKey then
+    recordLedgerUITiming("reconciliation-snapshot-identity", identityStartedAt)
+    return nil, "STALE_TARGET"
+  end
+  recordLedgerUITiming("reconciliation-snapshot-identity", identityStartedAt)
+  local rankStartedAt = beginLedgerCPUUITiming()
   local rankInfo = Dibs.RankRules and Dibs.RankRules.GetPlayerRankInfo and Dibs.RankRules.GetPlayerRankInfo(resolved.displayName)
-  if type(rankInfo) ~= "table" or tonumber(rankInfo.rankIndex) == nil then return nil, "RANK_UNAVAILABLE" end
+  if type(rankInfo) ~= "table" or tonumber(rankInfo.rankIndex) == nil then
+    recordLedgerUITiming("reconciliation-snapshot-rank-catalog", rankStartedAt)
+    return nil, "RANK_UNAVAILABLE"
+  end
   local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
   local catalogRevision = tonumber(catalog.catalogRevision)
   if not finiteInteger(catalogRevision) or catalogRevision < 1 or type(catalog.hash) ~= "string" or catalog.hash == "GENESIS" then
+    recordLedgerUITiming("reconciliation-snapshot-rank-catalog", rankStartedAt)
     return nil, "SEASON_CATALOG_UNPUBLISHED"
   end
-  local expected = Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer
-    and tonumber(Dibs.RankRules.GetAllocationForPlayer(resolved.displayName, targetSeason))
-  if not finiteInteger(expected) or expected < 0 then return nil, "RANK_RULE_INVALID" end
+  local expected
+  if Dibs.RankRules and Dibs.RankRules.GetAllocationForRank then
+    expected = tonumber(Dibs.RankRules.GetAllocationForRank(targetSeason, rankInfo.rankIndex))
+  elseif Dibs.RankRules and Dibs.RankRules.GetAllocationForPlayer then
+    expected = tonumber(Dibs.RankRules.GetAllocationForPlayer(resolved.displayName, targetSeason))
+  end
+  if not finiteInteger(expected) or expected < 0 then
+    recordLedgerUITiming("reconciliation-snapshot-rank-catalog", rankStartedAt)
+    return nil, "RANK_RULE_INVALID"
+  end
+  recordLedgerUITiming("reconciliation-snapshot-rank-catalog", rankStartedAt)
+  local ledgerStartedAt = beginLedgerCPUUITiming()
   local playerState = Ledger.GetPlayerHistorySummary and Ledger.GetPlayerHistorySummary(resolved.displayName, targetSeason)
     or Ledger.GetPlayerState(resolved.displayName, targetSeason) or {}
   local assigned = tonumber(playerState.allocation) or 0
-  if not finiteInteger(assigned) or assigned < 0 then return nil, "ASSIGNED_ALLOCATION_INVALID" end
-  local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
-  local policyState = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or {}
+  if not finiteInteger(assigned) or assigned < 0 then
+    recordLedgerUITiming("reconciliation-snapshot-player-state", ledgerStartedAt)
+    return nil, "ASSIGNED_ALLOCATION_INVALID"
+  end
+  recordLedgerUITiming("reconciliation-snapshot-player-state", ledgerStartedAt)
+  local policyStartedAt = beginLedgerCPUUITiming()
+  local governanceState = Dibs.Governance and Dibs.Governance.GetRevisionSummary
+    and Dibs.Governance.GetRevisionSummary()
+    or (Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState()) or {}
+  local policyState = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetDigestSummary
+    and Dibs.OperationalPolicy.GetDigestSummary()
+    or (Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState()) or {}
+  recordLedgerUITiming("reconciliation-snapshot-policy-revisions", policyStartedAt)
   local snapshot = {
     playerName = resolved.displayName, targetSnapshot = targetSnapshot, targetMemberKey = resolved.memberKey,
-    seasonId = targetSeason, currentSeasonId = Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or targetSeason,
+    seasonId = targetSeason, currentSeasonId = currentSeasonId,
     currentRankIndex = tonumber(rankInfo.rankIndex), currentRankName = rankInfo.rankName or "Guild Member",
     expectedAllocation = expected, assignedBefore = assigned, seasonCatalogRevision = catalogRevision,
     seasonCatalogHash = catalog.hash, governanceRevision = tonumber(governanceState.revision) or 0,
@@ -360,9 +420,14 @@ function Ledger.GetRankReconciliationSnapshot(playerName, seasonId)
     governanceRevision = snapshot.governanceRevision, operationalPolicyRevision = snapshot.operationalPolicyRevision,
     authorityEpoch = snapshot.authorityEpoch, coordinatorMemberKey = snapshot.coordinatorMemberKey,
   }
+  local hashStartedAt = beginLedgerCPUUITiming()
   local serialized, serializeReason = canonicalSerialize(operationBasis)
-  if not serialized then return nil, serializeReason end
+  if not serialized then
+    recordLedgerUITiming("reconciliation-snapshot-operation-hash", hashStartedAt)
+    return nil, serializeReason
+  end
   snapshot.operationKey = contentHash(serialized)
+  recordLedgerUITiming("reconciliation-snapshot-operation-hash", hashStartedAt)
   return snapshot
 end
 
@@ -1040,9 +1105,9 @@ end
 
 -- Read a roster's assigned allocations with one ledger resolution. The result
 -- contains only compact numeric values and is keyed by canonical member ID.
-function Ledger.GetPlayerAllocations(members, seasonId, ledgerId)
+function Ledger.GetPlayerAllocations(members, seasonId, ledgerId, dbOverride)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
-  local ledger = ensureState(ledgerId)
+  local ledger = ensureState(ledgerId, nil, dbOverride)
   local states = ledger.playerStates[targetSeason] or {}
   local allocations = {}
   for _, member in ipairs(type(members) == "table" and members or {}) do
@@ -1329,8 +1394,8 @@ function Ledger.MarkTransactionsChanged(ledgerId)
   return ledgerDataRevisions[ledger.id]
 end
 
-function Ledger.GetDataRevision(ledgerId)
-  local ledger = ensureState(ledgerId)
+function Ledger.GetDataRevision(ledgerId, dbOverride)
+  local ledger = ensureState(ledgerId, nil, dbOverride)
   return ledgerDataRevisions[ledger.id] or 0
 end
 
@@ -1350,10 +1415,10 @@ end
 -- Installation readiness only needs to know whether the ledger contains any
 -- real (non-allocation) history. Stop at the first match instead of counting
 -- every transaction on a UI render path.
-function Ledger.HasNonAllocationTransactions(ledgerId)
+function Ledger.HasNonAllocationTransactions(ledgerId, dbOverride)
   local totalStartedAt = beginLedgerUITiming()
   local stateStartedAt = beginLedgerUITiming()
-  local ledger = ensureState(ledgerId)
+  local ledger = ensureState(ledgerId, nil, dbOverride)
   recordLedgerUITiming("non-allocation-ledger-resolution", stateStartedAt)
   local revision = ledgerDataRevisions[ledger.id] or 0
   local cached = ledgerHasNonAllocationTransactions[ledger.id]
@@ -1445,13 +1510,105 @@ function Ledger.GetTransactions(seasonId, playerGuidOrName, ledgerId)
   sortTransactions(list); return list
 end
 
+-- Build the Officer period-statistics projection directly from the ledger.
+-- Unlike GetTransactions + HistoryFilters.FilterRecords, this query does not
+-- deep-copy matching transactions or allocate/sort temporary record arrays.
+-- The resolver may map legacy transaction names to the current guild roster;
+-- only aggregate rows and scalar counts are returned.
+function Ledger.GetSeasonPlayerActivity(seasonId, ledgerId, resolvePlayerName, fromTimestamp, toTimestamp, dbOverride)
+  local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
+  local hasDateFilter = fromTimestamp ~= nil or toTimestamp ~= nil
+  local rowsByPlayer, count, undatedExcluded, unmatchedPlayers = {}, 0, 0, 0
+  local ledger = ensureState(ledgerId, nil, dbOverride)
+  local seasonSummary = {
+    transactions = 0, players = 0, granted = 0, used = 0, awards = 0,
+    corrections = 0, awardCount = {}, recentTransactions = {},
+  }
+  local activePlayers = {}
+  local function resolvePeriodPlayerName(transaction, summaryIdentity, summaryName)
+    local periodIdentity = transaction.playerName or transaction.playerKey or transaction.memberKey or transaction.playerId
+    if periodIdentity == summaryIdentity then return summaryName end
+    return type(resolvePlayerName) == "function" and resolvePlayerName(periodIdentity) or nil
+  end
+  for _, transaction in pairs(ledger.transactions) do
+    if type(transaction) == "table" and transaction.seasonId == targetSeason then
+      seasonSummary.transactions = seasonSummary.transactions + 1
+      -- Keep the header summary's original identity rules while collecting it
+      -- during this same scan as the filtered per-player rows.
+      local summaryIdentity = transaction.playerName or transaction.playerKey or transaction.playerId
+      local summaryName = type(resolvePlayerName) == "function" and resolvePlayerName(summaryIdentity)
+      if summaryName and summaryName ~= "" then
+        local summaryKey = string.lower(tostring(summaryName))
+        if not activePlayers[summaryKey] then
+          activePlayers[summaryKey] = true
+          seasonSummary.players = seasonSummary.players + 1
+        end
+        local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+        if transaction.type == "DIB_GRANTED" then
+          seasonSummary.granted = seasonSummary.granted + amount
+        elseif transaction.type == "DIB_USED" then
+          seasonSummary.used = seasonSummary.used + math.abs(amount)
+          seasonSummary.awards = seasonSummary.awards + 1
+          seasonSummary.awardCount[summaryKey] = (seasonSummary.awardCount[summaryKey] or 0) + 1
+        elseif transaction.type == "DIB_REFUNDED" or transaction.type == "DIB_REVOKED"
+          or transaction.type == "DIB_ADMIN_ADJUSTMENT" then
+          seasonSummary.corrections = seasonSummary.corrections + 1
+        end
+      end
+      local timestamp = tonumber(transaction.createdAt) or tonumber(transaction.timestamp)
+      if hasDateFilter and not timestamp then
+        undatedExcluded = undatedExcluded + 1
+        local playerName = resolvePeriodPlayerName(transaction, summaryIdentity, summaryName)
+        if playerName and playerName ~= "" then
+          local key = string.lower(tostring(playerName))
+          local row = rowsByPlayer[key]
+          if not row then
+            row = { playerName = tostring(playerName), transactions = 0, awards = 0, grantedDibs = 0,
+              usedDibs = 0, corrections = 0, undatedExcluded = 0, partial = false }
+            rowsByPlayer[key] = row
+          end
+          row.undatedExcluded = row.undatedExcluded + 1
+          row.partial = true
+        end
+      elseif (fromTimestamp == nil or timestamp >= fromTimestamp)
+        and (toTimestamp == nil or timestamp < toTimestamp) then
+        count = count + 1
+        local playerName = resolvePeriodPlayerName(transaction, summaryIdentity, summaryName)
+        if playerName and playerName ~= "" then
+          local key = string.lower(tostring(playerName))
+          local row = rowsByPlayer[key]
+          if not row then
+            row = { playerName = tostring(playerName), transactions = 0, awards = 0, grantedDibs = 0,
+              usedDibs = 0, corrections = 0, undatedExcluded = 0, partial = false }
+            rowsByPlayer[key] = row
+          end
+          row.transactions = row.transactions + 1
+          local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
+          if transaction.type == "DIB_USED" then
+            row.awards = row.awards + 1
+            row.usedDibs = row.usedDibs + math.abs(amount)
+          elseif transaction.type == "DIB_GRANTED" then
+            row.grantedDibs = row.grantedDibs + amount
+          elseif transaction.type == "DIB_REFUNDED" or transaction.type == "DIB_REVOKED"
+            or transaction.type == "DIB_ADMIN_ADJUSTMENT" then
+            row.corrections = row.corrections + 1
+          end
+        else
+          unmatchedPlayers = unmatchedPlayers + 1
+        end
+      end
+    end
+  end
+  return rowsByPlayer, count, undatedExcluded, unmatchedPlayers, seasonSummary, ledger.id
+end
+
 -- Aggregate the Officer dashboard's season metrics without deep-copying every
 -- matching transaction into a temporary array. The optional resolver maps a
 -- transaction identity to a current guild member name; only scalar metrics
 -- and per-member award counts are retained in the result.
-function Ledger.GetSeasonActivitySummary(seasonId, ledgerId, resolvePlayerName, recentLimit)
+function Ledger.GetSeasonActivitySummary(seasonId, ledgerId, resolvePlayerName, recentLimit, dbOverride)
   local targetSeason = seasonId or Dibs.GetCurrentSeasonId()
-  local ledger = ensureState(ledgerId)
+  local ledger = ensureState(ledgerId, nil, dbOverride)
   local transactionCount, players, awardCount = 0, {}, {}
   local granted, used, awards, corrections = 0, 0, 0, 0
   local recentCount = math.max(0, math.min(20, math.floor(tonumber(recentLimit) or 0)))

@@ -316,6 +316,46 @@ describe("B11c Player UI", function()
     end
   end)
 
+  it("saves a selected color theme from Player Preferences and refreshes the UI", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("preferences")
+    local selector = frame.themeSelector
+    assert_not_nil(selector)
+    assert_equal("MIDNIGHT", selector.value)
+    assert_equal("Fel Green", selector.list.FEL_GREEN)
+
+    selector.callbacks.OnValueChanged(selector, "OnValueChanged", "FEL_GREEN")
+
+    assert_equal("FEL_GREEN", dibs.Midnight.GetTokens().theme)
+    assert_equal("FEL_GREEN", _G.RCLootCouncil_dibsLocalDB.presentation.profile.theme)
+    assert_not_nil(frame.themeSelector, "refresh should keep the theme selector on Preferences")
+    assert_equal(0.025, frame.dibsAceGUIShell.frame._backdropColor[1],
+      "the refreshed Player window should use the selected palette surface")
+  end)
+
+  it("keeps adapter-provided scale when restyling the Player window and an open Officer window", function()
+    local _, dibs = setup()
+    assert_true(dibs.EnvironmentAdapters.Register("ELVUI", function()
+      return "available", { scale = 1.2 }, "AVAILABLE"
+    end))
+    local frame = dibs.PlayerUI.CreateWindow()
+    local playerScale
+    frame.dibsAceGUIShell.frame.SetScale = function(_, value) playerScale = value end
+    frame.SelectTab("preferences")
+    assert_equal(1.2, playerScale, "rendering a Player page should keep the adapter scale hint")
+
+    local officerScale
+    _G.DibsOfficerFrame = {
+      dibsAceGUIShell = { _dibsActive = true, frame = { SetScale = function(_, value) officerScale = value end } },
+      Refresh = function() end,
+    }
+    local selector = frame.themeSelector
+    selector.callbacks.OnValueChanged(selector, "OnValueChanged", "FEL_GREEN")
+    _G.DibsOfficerFrame = nil
+    assert_equal(1.2, officerScale, "changing the palette should keep the adapter scale on an open Officer window")
+  end)
+
   it("builds a history projection only for the History page", function()
     local _, dibs = setup()
     local frame = dibs.PlayerUI.CreateWindow()

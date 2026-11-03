@@ -8,16 +8,20 @@ See [the installation guide](../INSTALLATION.md) for the published ZIP.
 
 CurseForge's native packager/webhook publishes packages when it receives Git tags. It determines Beta versus Release from the tag name, not from the branch. GitHub Actions do not upload directly to CurseForge.
 
+CurseForge marks tags containing `alpha` as Alpha and tags containing `beta` as Beta; other tag names are marked as Release. Keep local development checkpoints on the `dev` branch and identify the loaded code with `/dibs build`; do not push a bare `v<VERSION>-dev` tag while the CurseForge repository webhook is active. The beta workflow tags tested builds as `v<VERSION>-dev-beta.<RUN_NUMBER>`, which keeps the development label and lets CurseForge recognize the Beta channel. The manual-only `Manual development tag check` workflow can inspect an existing development tag without publishing a CurseForge file. If a bare `-dev` file was already published as Release, change its Release Type to Beta in the CurseForge Author Dashboard (Projects > Files > Edit file), or archive it if it should no longer be downloadable.
+
+CurseForge files use the short, version-specific `docs/CURSEFORGE-CHANGELOG.txt` selected by `.pkgmeta`. Update its highlights and compatibility notes for each addon version before publishing a Beta or stable tag; its first line must be `RCLootCouncil_dibs <TOC version>`. The Beta workflow validates this header before creating a tag. Keep the full historical engineering log in `CHANGELOG.md`, which remains separate from the published file notes.
+
 For the repeatable pre-release, approval, beta, and stable release checklist, see the [Speckit release quickstart](../../specs/019-addon-release-operations/quickstart.md).
 
 ## Development beta
 
 1. Push a validated change to `dev`.
 2. The beta workflow runs the Fengari suite and reuses the addon package workflow.
-3. After both succeed, it tags that exact commit as `v<VERSION>-beta.<RUN_NUMBER>` and pushes the tag.
+3. After both succeed, it tags that exact commit as `v<VERSION>-dev-beta.<RUN_NUMBER>` and pushes the tag.
 4. CurseForge's webhook packages the tag as a Beta. The tagged release workflow also creates a prerelease on GitHub.
 
-Examples: `v0.8.9-beta.1` = CurseForge Beta, `v0.8.9-beta.2` = CurseForge Beta, and `v0.8.9` = CurseForge Release. A failed build or test does not create a tag. A rerun refuses to reuse an existing tag; push a new commit to get a new run number.
+Examples: `v0.8.11-dev-beta.1` and `v0.8.11-dev-beta.2` are CurseForge Beta files; `v0.8.11` is a CurseForge Release. A failed build or test does not create a tag. A rerun refuses to reuse an existing tag; push a new commit to get a new run number.
 
 Automatic beta and `main` package workflows run only when `src/**` or the root `.pkgmeta` changes. Documentation-only and workflow-only pushes do not create a beta. The package workflow can still be started manually or reused by another workflow.
 
@@ -38,7 +42,7 @@ The tag workflow uses a GitHub App installation token so the tag push triggers t
 
 4. The tagged release workflow creates a normal GitHub Release and attaches the package ZIP and checksum. CurseForge's webhook packages the tag as a Release.
 
-A push to `main` that changes `src/**` or the root `.pkgmeta` runs the package artifact workflow; it does not create a stable tag or publish a CurseForge release. CurseForge selects its channel from tag naming, not the Git branch: `beta` tags are Beta and plain `v<VERSION>` tags are Release. `rc` tags are GitHub prereleases; their CurseForge behavior depends on webhook configuration.
+A push to `main` that changes `src/**` or the root `.pkgmeta` runs the package artifact workflow; it does not create a stable tag or publish a CurseForge release. CurseForge selects its channel from tag naming, not the Git branch: tags containing `beta` are Beta and plain `v<VERSION>` tags are Release. `rc` tags are GitHub prereleases; their CurseForge behavior depends on webhook configuration.
 
 ## CurseForge package layout
 

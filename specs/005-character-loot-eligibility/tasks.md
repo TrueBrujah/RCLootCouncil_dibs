@@ -26,3 +26,4 @@
 - [X] T013 Add unit and integration coverage for policy, rounds, privacy, authority, and replay.
 - [X] T014 Update README, options guide, test plan, changelog, and addon version.
 - [ ] T015 Perform Retail visual and two-client validation from `quickstart.md`.
+- [X] T016 Restore the Officer Main/Alt review surface and re-enforce group identity at main-change request/approval and acquisition/declaration writes. Cover pending review, protected-action authorization, caller-supplied group rejection, and stored-change revalidation with the RF-0014/RF-0017/RF-0020 suites. Retail UI verification remains part of T015.

@@ -1,6 +1,62 @@
 local loader = require("helpers.load_addon")
 
 describe("Officer player-period statistics UI", function()
+  it("records CPU-only subphases for the Statistics page when profiling is enabled", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalDebugProfileStop = _G.debugprofilestop
+    local profileTicks = 0
+    _G.debugprofilestop = function()
+      profileTicks = profileTicks + 1
+      return profileTicks
+    end
+    local originalActivityQuery = dibs.Ledger.GetSeasonPlayerActivity
+    local activityQueryDatabase
+    dibs.Ledger.GetSeasonPlayerActivity = function(seasonId, ledgerId, resolvePlayerName,
+      fromTimestamp, toTimestamp, database)
+      activityQueryDatabase = database
+      return originalActivityQuery(seasonId, ledgerId, resolvePlayerName,
+        fromTimestamp, toTimestamp, database)
+    end
+    local originalSeasonStatistics = dibs.OfficerUI.BuildSeasonStatistics
+    local seasonStatisticsArguments
+    dibs.OfficerUI.BuildSeasonStatistics = function(...)
+      seasonStatisticsArguments = { ... }
+      return originalSeasonStatistics(...)
+    end
+    dibs.UIRenderStats.Reset()
+    dibs.UIRenderStats.SetEnabled(true)
+    local frame = dibs.OfficerUI.CreateWindow("statistics")
+    frame:ActivateRoute("statistics")
+    dibs.UIRenderStats.SetEnabled(false)
+    dibs.Ledger.GetSeasonPlayerActivity = originalActivityQuery
+    dibs.OfficerUI.BuildSeasonStatistics = originalSeasonStatistics
+    _G.debugprofilestop = originalDebugProfileStop
+    assert_equal(dibs.GetDB(), activityQueryDatabase,
+      "Statistics should reuse the route-resolved database for player aggregation")
+    assert_equal("guild-primary", seasonStatisticsArguments[2],
+      "Statistics should reuse the ledger selected by its activity query")
+    assert_equal("guild-primary", seasonStatisticsArguments[4],
+      "Active Pre-Dibs should use the same ledger as season statistics")
+    assert_equal(dibs.GetDB(), seasonStatisticsArguments[6],
+      "Season statistics should reuse the route-resolved database")
+
+    local counters = {}
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "Officer data" then counters[entry.page] = true end
+    end
+    assert_true(counters["statistics-summary"])
+    assert_true(counters["statistics-summary-authorization"])
+    assert_true(counters["statistics-summary-cache-key"])
+    assert_true(counters["statistics-summary-cache-rebuild"])
+    assert_true(counters["statistics-active-predib-projection"])
+    assert_true(counters["statistics-summary-result-projection"])
+    assert_true(counters["statistics-static-controls"])
+    assert_true(counters["player-period-aggregate"])
+    assert_true(counters["statistics-visible-row-projection"])
+    assert_true(counters["statistics-table-render"])
+    assert_true(counters["statistics-footer-controls"])
+  end)
+
   it("shows descriptive per-player activity for the selected inclusive dates", function()
     local _, dibs = loader.load({
       wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Other-Realm" } },

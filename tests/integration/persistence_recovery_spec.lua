@@ -136,6 +136,37 @@ describe("SavedVariables validation and recovery", function()
     assert_equal(999, _G.RCLootCouncil_dibsDB.schemaVersion)
   end)
 
+  it("avoids recopying the root for a future guild schema while remaining read-only", function()
+    local source = currentRoot(legacyGuild(8))
+    local _, dibs = loader.load({ savedVariables = source })
+    assert_equal("FUTURE_UNSUPPORTED", dibs.GetPersistenceStatus().state)
+    assert_true(dibs.GetPersistenceStatus().readOnly)
+
+    local originalDebugProfileStop = _G.debugprofilestop
+    local profileTicks = 0
+    _G.debugprofilestop = function()
+      profileTicks = profileTicks + 1
+      return profileTicks
+    end
+    dibs.UIRenderStats.Reset()
+    dibs.UIRenderStats.SetEnabled(true)
+    dibs.GetDB()
+    dibs.GetDB()
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = originalDebugProfileStop
+
+    local measured = {}
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "Core data" then measured[entry.page] = entry.count end
+    end
+    assert_equal(2, measured["get-db-future-guild-schema"])
+    assert_nil(measured["get-db-root-copy"], "future-schema checks should not clone the full root")
+    assert_equal(source, _G.RCLootCouncil_dibsDB)
+    assert_equal(8, source.guilds["realm:testguild"].version)
+    assert_equal("FUTURE_UNSUPPORTED", dibs.GetPersistenceStatus().state)
+    assert_true(dibs.GetPersistenceStatus().readOnly)
+  end)
+
   it("is idempotent after a completed migration and keeps one startup backup", function()
     local _, dibs = loader.load({ savedVariables = legacyGuild(1) })
     local root = _G.RCLootCouncil_dibsDB

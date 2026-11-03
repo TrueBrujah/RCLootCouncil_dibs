@@ -117,8 +117,9 @@ local function allowsLegacyWhisper(message, transfer)
   return false
 end
 
-local function ensure()
-  local db = Dibs.GetDB()
+local function ensure(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB()
+  Dibs.db = db
   db.sync = db.sync or {}
   local state = db.sync
   state.v2 = state.v2 or { schema = 1, protocolState = "LEGACY_LOCAL", requestIndex = {}, tombstones = {}, replay = {}, peers = {} }
@@ -305,7 +306,7 @@ local function recordPeerStatusTiming(name, startedAt)
     Dibs.UIRenderStats.Record("Sync data", name, startedAt)
   end
 end
-local function localSyncDigests()
+local function localSyncDigests(dbOverride)
   local digests = {}
   local stateStartedAt = beginPeerStatusTiming()
   local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogSummary and Dibs.Seasons.GetCatalogSummary()
@@ -315,8 +316,10 @@ local function localSyncDigests()
     or (Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState()) or {}
   digests.OPERATIONAL_POLICY = { revision = tonumber(policy.policyRevision) or 0, contentHash = policy.hash }
   recordPeerStatusTiming("local-catalog-policy", stateStartedAt)
+  local activeLedgerStartedAt = beginPeerStatusTiming()
   local activeLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
-    and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
+    and Dibs.MultiLedger.GetActiveLedgerId(dbOverride) or "guild-primary"
+  recordPeerStatusTiming("local-active-ledger-id", activeLedgerStartedAt)
   local requestStartedAt = beginPeerStatusTiming()
   local manifest = Sync.GetManifestDigestSummary and Sync.GetManifestDigestSummary(activeLedgerId)
     or (Sync.BuildManifest and Sync.BuildManifest(activeLedgerId)) or {}
@@ -330,7 +333,7 @@ local function localSyncDigests()
   digests.VAULT_INDEX = { revision = tonumber(vault.revision) or 0, contentHash = vault.contentHash }
   recordPeerStatusTiming("local-vault-digest", vaultStartedAt)
   local ledgerStartedAt = beginPeerStatusTiming()
-  local ledger = Sync.BuildLedgerDigest and Sync.BuildLedgerDigest() or {}
+  local ledger = Sync.BuildLedgerDigest and Sync.BuildLedgerDigest(activeLedgerId, dbOverride) or {}
   digests.LEDGER = { revision = tonumber(ledger.revision) or 0, contentHash = ledger.contentHash }
   recordPeerStatusTiming("local-ledger-digest", ledgerStartedAt)
   return digests
@@ -565,7 +568,7 @@ function Sync.GetStatusSummary()
   recordPeerStatusTiming("status-summary", stateStartedAt)
   return result
 end
-function Sync.GetSynchronizationStatus()
+function Sync.GetSynchronizationStatus(dbOverride)
   local renderStartedAt = beginPeerStatusTiming()
   local governanceStartedAt = beginPeerStatusTiming()
   local governance = Dibs.Governance and Dibs.Governance.GetSynchronizationSummary
@@ -585,14 +588,16 @@ function Sync.GetSynchronizationStatus()
     recordPeerStatusTiming("synchronization-proposals", proposalsStartedAt)
   end
   local mismatchStartedAt = beginPeerStatusTiming()
-  local mismatches = ensure().protocolMismatches
+  local syncState = statusReadState()
+  local mismatches = type(syncState.protocolMismatches) == "table" and syncState.protocolMismatches or {}
   local lastProtocolMismatch = copy(mismatches[#mismatches])
-  local versionMismatches = ensure().addonVersionMismatches
+  local versionMismatches = type(syncState.addonVersionMismatches) == "table" and syncState.addonVersionMismatches or {}
   local lastAddonVersionMismatch = copy(versionMismatches[#versionMismatches])
   recordPeerStatusTiming("synchronization-mismatches", mismatchStartedAt)
   local result = {
     governanceAdopted = governance.status == "GOVERNANCE_ADOPTED",
-    operationalPolicyAdopted = Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted() == true,
+    operationalPolicyAdopted = Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted
+      and Dibs.OperationalPolicy.IsAdopted(dbOverride) == true,
     seasonCatalogRevision = tonumber(catalog.catalogRevision) or 0,
     pendingAwardProposals = pending,
     lastProtocolMismatch = lastProtocolMismatch,
@@ -713,19 +718,25 @@ function Sync.GetPeerStatuses(rosterScope, options)
   -- These local projections can hash or copy ledger-sized data. Build them
   -- once per roster render, not once for every guild or group member.
   local digestStartedAt = beginPeerStatusTiming()
-  local localDigests = #roster > 0 and localSyncDigests() or {}
+  local localDigests = #roster > 0 and localSyncDigests(options and options.db) or {}
+  local memberSnapshotStartedAt = beginPeerStatusTiming()
   local localMember = #roster > 0 and (localSnapshot() or {}) or {}
+  recordPeerStatusTiming("local-member-snapshot", memberSnapshotStartedAt)
+  local baselineHashStartedAt = beginPeerStatusTiming()
   local localBaselineHash
   if #roster > 0 and Dibs.HistoricalBaseline then
     if Dibs.HistoricalBaseline.GetBaselineHash then
-      localBaselineHash = Dibs.HistoricalBaseline.GetBaselineHash()
+      localBaselineHash = Dibs.HistoricalBaseline.GetBaselineHash(options and options.db)
     elseif Dibs.HistoricalBaseline.GetBaseline then
       local localBaseline = Dibs.HistoricalBaseline.GetBaseline()
       localBaselineHash = localBaseline and localBaseline.legacyBaselineHash
     end
   end
+  recordPeerStatusTiming("local-baseline-hash", baselineHashStartedAt)
+  local activeLedgerStartedAt = beginPeerStatusTiming()
   local activeLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
-    and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
+    and Dibs.MultiLedger.GetActiveLedgerId(options and options.db) or "guild-primary"
+  recordPeerStatusTiming("peer-active-ledger-id", activeLedgerStartedAt)
   local predibKey = activeLedgerId == "guild-primary" and "PREDIB_INDEX"
     or ("PREDIB_INDEX:" .. tostring(activeLedgerId))
   recordPeerStatusTiming("local-digest-projection", digestStartedAt)
@@ -734,7 +745,10 @@ function Sync.GetPeerStatuses(rosterScope, options)
     local name = rosterEntry.name or rosterEntry.displayName
     local online, rankIndex = rosterEntry.online, rosterEntry.rankIndex
     if type(name) == "string" and name ~= "" then
-      local resolved = member(name)
+      -- The shared guild-roster snapshot already carries canonical identity
+      -- fields. Reuse them instead of resolving every visible row again.
+      local resolved = type(rosterEntry.memberKey) == "string" and rosterEntry.memberKey ~= ""
+        and rosterEntry or member(name)
       local memberKey = resolved and resolved.memberKey or string.lower(name)
       local peer = state.peers[memberKey]
       local lastSeen = peer and tonumber(peer.lastSeenAt or peer.at) or 0
@@ -860,7 +874,7 @@ local function latestBehindReason(reasons)
   end
   return latestCode
 end
-function Sync.IsSyncBehind() return ensure().syncBehind == true end
+function Sync.IsSyncBehind(dbOverride) return ensure(dbOverride).syncBehind == true end
 function Sync.MarkSyncBehind(reason)
   local state = ensure(); local code = reason or "SYNC_BEHIND"
   local reasons = behindReasons(state)
@@ -1224,11 +1238,11 @@ function Sync.SetProtocolState(state, governanceApproved)
   if state ~= "LEGACY_LOCAL" and state ~= "CUTOVER_PREPARED" and state ~= "V2_ENFORCED" then return false, "INVALID_PROTOCOL_STATE" end
   ensure().protocolState = state; return true, state
 end
-function Sync.CanEnforceV2(writers)
+function Sync.CanEnforceV2(writers, dbOverride)
   local localMember = localSnapshot(); if not localMember then return false, "ROSTER_UNAVAILABLE" end
   writers = writers or { localMember.displayName }
   if type(writers) ~= "table" or #writers < 1 or #writers > 32 then return false, "WRITER_COMPATIBILITY_REQUIRED" end
-  local state = ensure()
+  local state = ensure(dbOverride)
   for _, writer in ipairs(writers) do
     local resolved, reason = member(writer); if not resolved then return false, reason end
     if resolved.memberKey ~= localMember.memberKey then
@@ -1634,20 +1648,27 @@ function Sync.AnnounceAllRequestIndexes()
   end
   return sentAny, sentAny and nil or "NO_APPROVED_LEDGERS"
 end
-function Sync.BuildLedgerDigest(targetLedgerId)
-  local ledgerId = targetLedgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
+function Sync.BuildLedgerDigest(targetLedgerId, dbOverride)
+  local ledgerId = targetLedgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId(dbOverride)) or "guild-primary"
+  local authorityStartedAt = beginPeerStatusTiming()
   local authorityDigest = Dibs.Governance and Dibs.Governance.GetAuthorityDigestState
     and Dibs.Governance.GetAuthorityDigestState() or nil
+  recordPeerStatusTiming("ledger-digest-authority", authorityStartedAt)
   local isV2Enforced = authorityDigest and authorityDigest.protocolState ~= nil
     and authorityDigest.protocolState == "V2_ENFORCED"
   if isV2Enforced == nil then
     isV2Enforced = Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()
   end
   if not isV2Enforced then
-    return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = Dibs.GetCurrentSeasonId() or "none", revision = 0, contentHash = "LOCAL_ONLY" }
+    local seasonStartedAt = beginPeerStatusTiming()
+    local seasonId = Dibs.GetCurrentSeasonId(dbOverride) or "none"
+    recordPeerStatusTiming("ledger-digest-current-season", seasonStartedAt)
+    return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = seasonId, revision = 0, contentHash = "LOCAL_ONLY" }
   end
   local getDigestState = Dibs.Ledger and (Dibs.Ledger.GetCanonicalDigestState or Dibs.Ledger.GetCanonicalState)
+  local canonicalStartedAt = beginPeerStatusTiming()
   local state = getDigestState and getDigestState(ledgerId, authorityDigest) or {}
+  recordPeerStatusTiming("ledger-digest-canonical-state", canonicalStartedAt)
   if not state then return nil, "LEDGER_NOT_APPROVED" end
   return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = tostring(state.epoch or "none"), revision = tonumber(state.nextSeq or 1) - 1,
     contentHash = state.rootHash or "UNINITIALIZED", ledgerEpoch = state.epoch, lastSeq = tonumber(state.nextSeq or 1) - 1, rootHash = state.rootHash }

@@ -79,8 +79,8 @@ local function onlyKeys(value, allowed)
   return true
 end
 
-local function catalogState()
-  ensureState()
+local function catalogState(dbOverride)
+  ensureState(dbOverride)
   if type(Dibs.db.seasonCatalog) ~= "table" then
     Dibs.db.seasonCatalog = { schema = CATALOG_SCHEMA, catalogRevision = 0, hash = CATALOG_GENESIS_HASH, records = {}, conflicts = {} }
   end
@@ -171,8 +171,9 @@ local function validateCatalog(record)
   return true
 end
 
-ensureState = function()
-  Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+ensureState = function(dbOverride)
+  Dibs.db = type(dbOverride) == "table" and dbOverride
+    or (Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {}))
   if type(Dibs.db.seasons) ~= "table" then
     Dibs.db.seasons = {}
   end
@@ -186,8 +187,8 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_SEASON
 ---@doc.label-key DOC_SEASON_LABEL
-function Dibs.Seasons.Create(name)
-  ensureState()
+function Dibs.Seasons.Create(name, dbOverride)
+  ensureState(dbOverride)
 
   local count = 0
   for _ in pairs(Dibs.db.seasons) do
@@ -232,8 +233,8 @@ function Dibs.Seasons.Create(name)
   return season
 end
 
-function Dibs.Seasons.GetById(seasonId)
-  ensureState()
+function Dibs.Seasons.GetById(seasonId, dbOverride)
+  ensureState(dbOverride)
   if not seasonId then
     return nil
   end
@@ -241,14 +242,14 @@ function Dibs.Seasons.GetById(seasonId)
   return Dibs.db.seasons[seasonId]
 end
 
-function Dibs.Seasons.GetCurrent()
-  ensureState()
+function Dibs.Seasons.GetCurrent(dbOverride)
+  ensureState(dbOverride)
   if Dibs.db.currentSeasonId and Dibs.db.seasons[Dibs.db.currentSeasonId] and not Dibs.db.seasons[Dibs.db.currentSeasonId].isArchived then
     return Dibs.db.seasons[Dibs.db.currentSeasonId]
   end
 
   if not next(Dibs.db.seasons) then
-    return Dibs.Seasons.Create("Season 1")
+    return Dibs.Seasons.Create("Season 1", dbOverride)
   end
   for _, season in pairs(Dibs.db.seasons) do
     if not season.isArchived then
@@ -281,8 +282,8 @@ function Dibs.Seasons.SetCurrent(seasonId)
   return false
 end
 
-function Dibs.Seasons.List(includeArchived)
-  ensureState()
+function Dibs.Seasons.List(includeArchived, dbOverride)
+  ensureState(dbOverride)
   local seasons = {}
   for _, season in pairs(Dibs.db.seasons) do
     if includeArchived or not season.isArchived then
@@ -343,14 +344,22 @@ function Dibs.Seasons.RenameSeason(seasonId, newName)
   return season
 end
 
-function Dibs.Seasons.GetCatalogState()
-  return copy(catalogState())
+function Dibs.Seasons.GetCatalogState(dbOverride)
+  return copy(catalogState(dbOverride))
 end
 
 -- Compact synchronization view; avoids copying all catalog records merely to
 -- show the active catalog revision and hash.
 function Dibs.Seasons.GetCatalogSummary()
-  local state = catalogState()
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  local db = Dibs.db
+  local state = type(db) == "table" and db.seasonCatalog or nil
+  if not (guildKey and Dibs.currentGuildKey == guildKey and type(state) == "table"
+      and state.schema == CATALOG_SCHEMA and integer(state.catalogRevision) and state.catalogRevision >= 0
+      and type(state.hash) == "string" and state.hash ~= ""
+      and type(state.records) == "table" and type(state.conflicts) == "table") then
+    state = catalogState()
+  end
   return { catalogRevision = state.catalogRevision, hash = state.hash }
 end
 
@@ -368,8 +377,29 @@ function Dibs.Seasons.GetGuildConfiguration()
   return guildConfiguration()
 end
 
-function Dibs.Seasons.GetCatalogRecord(revision)
-  return copy(catalogState().records[tostring(revision)])
+function Dibs.Seasons.GetCatalogRecord(revision, dbOverride)
+  return copy(catalogState(dbOverride).records[tostring(revision)])
+end
+
+-- Read only the current published Guild Loot Rules field for readiness/status
+-- checks. Copy this small value tree instead of the complete catalog record,
+-- which also contains season and rank-rule data that the caller does not use.
+function Dibs.Seasons.GetGuildLootRulesSnapshot(dbOverride)
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.db
+  local state = type(db) == "table" and db.seasonCatalog or nil
+  local validState = guildKey and Dibs.currentGuildKey == guildKey and type(state) == "table"
+    and state.schema == CATALOG_SCHEMA and integer(state.catalogRevision) and state.catalogRevision >= 0
+    and type(state.hash) == "string" and state.hash ~= ""
+    and type(state.records) == "table" and type(state.conflicts) == "table"
+  if not validState then state = catalogState(dbOverride) end
+
+  local revision = tonumber(state.catalogRevision) or 0
+  if revision < 1 then return nil, "GUILD_LOOT_RULES_NOT_CONFIGURED", revision end
+  local record = state.records[tostring(revision)]
+  local rules = record and record.guildConfiguration and record.guildConfiguration.guildLootRules
+  if rules == nil then return nil, "GUILD_LOOT_RULES_NOT_CONFIGURED", revision end
+  return copy(rules), nil, revision
 end
 
 function Dibs.Seasons.CalculateCatalogHash(record)

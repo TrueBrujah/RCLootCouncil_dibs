@@ -106,6 +106,32 @@ function M.List(scope, actor)
   end
   return result
 end
+function M.GetSummary(scope, actor, dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride
+    or (type(Dibs.GetDB) == "function" and Dibs.GetDB()) or nil
+  local backups = type(db) == "table" and type(db.backups) == "table" and db.backups or {}
+  local count, latest, canViewRestricted = 0, nil, nil
+  for _, snapshot in ipairs(backups) do
+    if type(snapshot) == "table" and (not scope or snapshot.scope == scope) then
+      local allowed = snapshot.scope == "local"
+      if not allowed then
+        if canViewRestricted == nil then
+          canViewRestricted = authorized(snapshot.scope, actor)
+        end
+        allowed = canViewRestricted
+      end
+      if allowed then
+        count = count + 1
+        if not latest then latest = snapshot end
+      end
+    end
+  end
+  return {
+    count = count,
+    available = latest ~= nil,
+    createdAt = latest and latest.createdAt,
+  }
+end
 function M.Get(snapshotId)
   local db = ensure(); for _, snapshot in ipairs(db.backups) do if snapshot.snapshotId == snapshotId then return snapshot end end; return nil
 end

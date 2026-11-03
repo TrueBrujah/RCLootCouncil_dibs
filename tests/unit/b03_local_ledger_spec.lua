@@ -316,6 +316,25 @@ describe("B03 local canonical ledger", function()
     assert_nil(summary[1], "aggregate should not expose a transaction array")
   end)
 
+  it("reuses a supplied DB for ledger revision and season activity reads", function()
+    local dibs = load()
+    local seasonId = dibs.GetCurrentSeasonId()
+    local db = dibs.GetDB()
+    local initialRevision = dibs.Ledger.GetDataRevision("guild-primary", db)
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("supplied ledger DB should avoid resolving SavedVariables again") end
+
+    local ok, revision = pcall(dibs.Ledger.GetDataRevision, "guild-primary", db)
+    local summaryOK, summary = pcall(dibs.Ledger.GetSeasonActivitySummary,
+      seasonId, "guild-primary", nil, 5, db)
+    dibs.GetDB = getDB
+
+    assert_true(ok, tostring(revision))
+    assert_equal(initialRevision, revision)
+    assert_true(summaryOK, tostring(summary))
+    assert_true(type(summary.transactions) == "number")
+  end)
+
   it("computes a player summary without sorting the full history", function()
     local dibs = load()
     local originalSort = table.sort

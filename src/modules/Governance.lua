@@ -153,8 +153,8 @@ local function authorityState(state)
   return authority
 end
 
-local function ensureState()
-  local db = Dibs.GetDB()
+local function ensureState(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB()
   if type(db.governance) ~= "table" then db.governance = defaultState() end
   local state = db.governance
   if state.schema ~= SCHEMA then state.schema = SCHEMA end
@@ -171,6 +171,35 @@ local function ensureState()
   if type(state.future) ~= "table" then state.future = defaultState().future end
   authorityState(state)
   return state
+end
+
+-- Compact status readers often run while rendering Officer pages. Reuse the
+-- resolved guild state when it already satisfies the same invariants as
+-- ensureState; malformed or not-yet-resolved state still follows the normal
+-- initialization path.
+local function readResolvedState()
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  local db = Dibs.db
+  local state = type(db) == "table" and db.governance or nil
+  local authority = type(state) == "table" and state.authority or nil
+  local validStatus = type(state) == "table"
+    and (state.status == "POLICY_UNINITIALIZED" or state.status == "GOVERNANCE_ADOPTED")
+  local validAuthority = type(authority) == "table" and authority.schema == AUTHORITY_SCHEMA
+    and (authority.state == "LEGACY_LOCAL" or authority.state == "ACTIVE"
+      or authority.state == "HANDOFF_CLOSING" or authority.state == "COORDINATOR_UNAVAILABLE"
+      or authority.state == "RECOVERY_PENDING")
+    and type(authority.proposals) == "table" and type(authority.orphanedEvidence) == "table"
+    and type(authority.auditLog) == "table"
+  if guildKey and Dibs.currentGuildKey == guildKey and type(state) == "table"
+    and state.schema == SCHEMA and validStatus and type(state.revision) == "number" and state.revision >= 0
+    and type(state.hash) == "string" and type(state.records) == "table"
+    and type(state.auditLog) == "table" and type(state.conflicts) == "table"
+    and type(state.aliases) == "table" and type(state.aliases.records) == "table"
+    and type(state.approvedLedgers) == "table" and type(state.approvedLedgers["guild-primary"]) == "table"
+    and type(state.future) == "table" and validAuthority then
+    return state
+  end
+  return ensureState()
 end
 
 local function isInteger(value)
@@ -346,11 +375,36 @@ function Governance.GetState()
   return copy(ensureState())
 end
 
+-- Compact module-management status. The Officer page needs the current
+-- governance identity/hash only; avoid copying the complete audit and
+-- authority histories just to decide whether its controls are editable.
+function Governance.GetModuleManagementSummary(dbOverride)
+  local state = ensureState(dbOverride)
+  local record = state.records[tostring(state.revision)]
+  local author = type(record) == "table" and record.authorSnapshot or nil
+  return {
+    status = state.status,
+    revision = tonumber(state.revision) or 0,
+    hash = state.hash,
+    contentHash = type(record) == "table" and record.contentHash or nil,
+    authorNameRealm = type(record) == "table" and record.authorNameRealm or nil,
+    authorMemberKey = type(record) == "table" and record.authorMemberKey or nil,
+    authorDisplayName = type(author) == "table" and author.displayName or nil,
+  }
+end
+
+-- Read only the revision for snapshot identity without cloning governance,
+-- proposal, and audit histories.
+function Governance.GetRevisionSummary()
+  local state = readResolvedState()
+  return { revision = tonumber(state.revision) or 0 }
+end
+
 -- Compact read model for the synchronization page. Callers that display only
 -- adoption and pending counts should not copy and sort the complete governance
 -- and proposal history on every refresh.
 function Governance.GetSynchronizationSummary()
-  local state = ensureState()
+  local state = readResolvedState()
   local authority = authorityState(state)
   local pendingAwardProposals = 0
   for _, proposal in pairs(authority.proposals) do
@@ -363,8 +417,8 @@ end
 
 -- Compact installation read model. Installation only displays scalar governance
 -- and coordinator fields, so avoid deep-copying the complete audit/proposal state.
-function Governance.GetInstallationSummary()
-  local state = ensureState()
+function Governance.GetInstallationSummary(dbOverride)
+  local state = type(dbOverride) == "table" and ensureState(dbOverride) or readResolvedState()
   local authority = authorityState(state)
   local future = state.future or {}
   local coordinator = authority.coordinator
@@ -468,15 +522,15 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_COORDINATOR
 ---@doc.label-key DOC_SYNC_COORDINATOR_LABEL
-function Governance.GetAuthorityState()
-  return copy(authorityState(ensureState()))
+function Governance.GetAuthorityState(dbOverride)
+  return copy(authorityState(ensureState(dbOverride)))
 end
 
 -- Hot-path consumers such as ledger digesting need only these scalar fields.
 -- Avoid cloning the full authority record, which can contain growing audit and
 -- proposal histories, just to inspect the active epoch and handoff root.
 function Governance.GetAuthorityDigestState()
-  local state = ensureState()
+  local state = readResolvedState()
   local authority = authorityState(state)
   local transition = authority.transition
   local parentClosure = type(transition) == "table" and transition.parentClosure or nil
@@ -491,7 +545,8 @@ function Governance.GetAuthorityDigestState()
 end
 
 function Governance.IsV2Enforced()
-  return ensureState().future and ensureState().future.protocolState == "V2_ENFORCED"
+  local state = readResolvedState()
+  return state.future and state.future.protocolState == "V2_ENFORCED"
 end
 
 function Governance.EnableV2(actor, writers)

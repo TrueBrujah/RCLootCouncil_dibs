@@ -32,6 +32,82 @@ local function widgetContaining(kind, text)
 end
 
 describe("Guild-authoritative Loot Rules UI", function()
+  it("reuses authority, editability, and template values for one page render", function()
+    local gm = load("GameMaster-Realm")
+    local routeDB = gm.GetDB()
+    local authorityCalls, fullAuthorityCalls, statusSnapshotCalls, editabilityCalls, templateValueCalls = 0, 0, 0, 0, 0
+    local assignmentBatchCalls, perTypeAssignmentCalls = 0, 0
+    local authorityDB, draftDB, statusDB, templateValuesDB, assignmentsDB
+    local setShellStatus = gm.AceGUI.SetShellStatus
+    gm.AceGUI.SetShellStatus = function(...)
+      setShellStatus(...)
+      return true, routeDB
+    end
+    local getAuthoritySnapshot = gm.LootRules.GetAuthoritySnapshot
+    local getAuthorityRulesSnapshot = gm.LootRules.GetAuthorityRulesSnapshot
+    local getDraftSnapshot = gm.LootRules.GetDraftSnapshot
+    local getStatusWithAuthoritySnapshot = gm.LootRules.GetStatusWithAuthoritySnapshot
+    local canEditDibsSettings = gm.RCOptions.CanEditDibsSettings
+    local getButtonTemplateValues = gm.RCOptions.GetButtonTemplateValues
+    local getButtonTemplateAssignments = gm.RCOptions.GetButtonTemplateAssignments
+    local getButtonTemplateAssignment = gm.RCOptions.GetButtonTemplateAssignment
+    gm.LootRules.GetAuthoritySnapshot = function(...)
+      fullAuthorityCalls = fullAuthorityCalls + 1
+      return getAuthoritySnapshot(...)
+    end
+    gm.LootRules.GetAuthorityRulesSnapshot = function(...)
+      authorityCalls = authorityCalls + 1
+      authorityDB = select(1, ...)
+      return getAuthorityRulesSnapshot(...)
+    end
+    gm.LootRules.GetDraftSnapshot = function(...)
+      draftDB = select(1, ...)
+      return getDraftSnapshot(...)
+    end
+    gm.LootRules.GetStatusWithAuthoritySnapshot = function(...)
+      statusSnapshotCalls = statusSnapshotCalls + 1
+      statusDB = select(4, ...)
+      local readsBeforeStatus = authorityCalls
+      local result = getStatusWithAuthoritySnapshot(...)
+      assert_equal(readsBeforeStatus, authorityCalls, "status re-read the authority snapshot")
+      return result
+    end
+    gm.RCOptions.CanEditDibsSettings = function(...)
+      editabilityCalls = editabilityCalls + 1
+      return canEditDibsSettings(...)
+    end
+    gm.RCOptions.GetButtonTemplateValues = function(...)
+      templateValueCalls = templateValueCalls + 1
+      templateValuesDB = select(1, ...)
+      return getButtonTemplateValues(...)
+    end
+    gm.RCOptions.GetButtonTemplateAssignments = function(...)
+      assignmentBatchCalls = assignmentBatchCalls + 1
+      assignmentsDB = select(2, ...)
+      return getButtonTemplateAssignments(...)
+    end
+    gm.RCOptions.GetButtonTemplateAssignment = function(...)
+      perTypeAssignmentCalls = perTypeAssignmentCalls + 1
+      return getButtonTemplateAssignment(...)
+    end
+
+    gm.OfficerUI.CreateWindow("lootTypes")
+    assert_equal(1, statusSnapshotCalls)
+    assert_equal(1, editabilityCalls)
+    assert_equal(1, templateValueCalls)
+    assert_equal(1, assignmentBatchCalls)
+    assert_equal(0, perTypeAssignmentCalls,
+      "Loot Rules resolved the template store again for individual rows")
+    assert_equal(1, authorityCalls, "the page did not resolve one compact authority snapshot")
+    assert_equal(0, fullAuthorityCalls, "the page copied the full season catalog record")
+    assert_equal(routeDB, authorityDB)
+    assert_equal(routeDB, draftDB)
+    assert_equal(routeDB, statusDB)
+    assert_equal(routeDB, templateValuesDB)
+    assert_equal(routeDB, assignmentsDB)
+    gm.AceGUI.SetShellStatus = setShellStatus
+  end)
+
   it("LRA09 shows semantic draft controls and an explicit adoption action to the GM", function()
     local gm = load("GameMaster-Realm")
     local supported = gm.RCOptions.GetSupportedLootRuleTypeValues()
@@ -56,7 +132,28 @@ describe("Guild-authoritative Loot Rules UI", function()
     frame._scripts.OnSizeChanged(frame, 940, 760)
     assert_equal("WIDE", frame.lootRulesLayoutMode)
     assert_equal(3, frame.lootRulesColumnCount)
+    local lootRulesColumnsWidth = 0
+    for _, width in ipairs(frame.lootRulesColumnWidths) do lootRulesColumnsWidth = lootRulesColumnsWidth + width end
+    assert_true(lootRulesColumnsWidth <= frame.lootRulesAvailableWidth - 56)
     assert_not_nil(frame.rcLootTemplateControls.TOKEN)
+    assert_true(frame.rcLootTypeControls.TOKEN.width > 0)
+    assert_true(frame.lootTypeControls.TOKEN.width > 0)
+    assert_false(frame.rcLootTypeControls.TOKEN.fullWidth == true)
+    assert_false(frame.lootTypeControls.TOKEN.fullWidth == true)
+    assert_true(frame.rcLootTemplateControls.TOKEN.width > 0)
+    assert_equal("", frame.rcLootTemplateControls.TOKEN.label,
+      "wide rows should not repeat the template label for every loot type")
+    assert_true(frame.rcLootTemplateControls.TOKEN.width < frame.lootRulesColumnWidths[2] - 12,
+      "wide template dropdown should size to its choices instead of filling the whole column")
+    local tokenCard = frame.lootRulesCards.TOKEN
+    local tokenRuleRow = tokenCard.children[1]
+    assert_equal("InlineGroup", tokenCard.kind, "the loot type should title a bordered section like Rank Rules")
+    assert_equal(gm.RCOptions.GetLootTypeOptions().types.values().TOKEN, tokenCard.title)
+    assert_equal("SimpleGroup", tokenRuleRow.kind)
+    assert_equal(tokenRuleRow, frame.rcLootTypeControls.TOKEN.parent)
+    assert_equal(tokenRuleRow, frame.rcLootTemplateControls.TOKEN.parent)
+    assert_equal(tokenRuleRow, frame.lootTypeControls.TOKEN.parent)
+    assert_equal(3, #tokenRuleRow.children)
     frame.rcLootTemplateControls.TOKEN.callbacks.OnValueChanged(nil, nil, templateId)
     assert_equal(templateId, gm.RCOptions.GetButtonTemplateAssignment("TOKEN"))
   end)
@@ -137,7 +234,19 @@ describe("Guild-authoritative Loot Rules UI", function()
     assert_equal("WIDE", frame.lootRulesLayoutMode)
     assert_equal(5, frame.lootRulesColumnCount)
     assert_not_nil(frame.rcLootTemplateControls.TOKEN)
+    local authoritativeTokenCard = frame.lootRulesCards.TOKEN
+    local authoritativeTokenRow = authoritativeTokenCard.children[1]
+    assert_equal("InlineGroup", authoritativeTokenCard.kind,
+      "the loot type should title a bordered section like Rank Rules")
+    assert_equal(gm.RCOptions.GetLootTypeOptions().types.values().TOKEN, authoritativeTokenCard.title)
+    assert_equal(authoritativeTokenRow, frame.rcLootTypeControls.TOKEN.parent)
+    assert_equal(authoritativeTokenRow, frame.rcLootTemplateControls.TOKEN.parent)
+    assert_equal(authoritativeTokenRow, frame.lootTypeControls.TOKEN.parent)
+    assert_equal(5, #authoritativeTokenRow.children)
     assert_true(frame.lootRulesColumnWidths[1] < 191)
+    lootRulesColumnsWidth = 0
+    for _, width in ipairs(frame.lootRulesColumnWidths) do lootRulesColumnsWidth = lootRulesColumnsWidth + width end
+    assert_true(lootRulesColumnsWidth <= frame.lootRulesAvailableWidth - 56)
     resize(frame, 700, 760)
     assert_equal("MEDIUM", frame.lootRulesLayoutMode)
     assert_equal(615, scroll.localstatus.scrollvalue)

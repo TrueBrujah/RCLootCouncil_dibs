@@ -210,6 +210,8 @@ description: "Task list for Midnight UI and Safe Developer Sandbox"
 - [ ] T063 Re-test current-version Retail sandbox isolation, simulated role/provider lifecycle, production noninterference, and explicit re-entry on one and two clients; record evidence in `specs/011-midnight-ui-developer-sandbox/quickstart.md`.
 - [X] T064 Confirm no production SavedVariables migration, SyncV2 change, ledger semantic change, RCLootCouncil write, or sandbox-to-production path exists; record the B11 release note in `CHANGELOG.md` only when implementation is complete.
 - [X] T065 Record confirmed one-client and two-client Retail validation of UI fallback, combat safety, provider restoration, player privacy, Officer authority, and reconciliation in `specs/011-midnight-ui-developer-sandbox/quickstart.md`, excluding the pending sandbox retest.
+- [X] T066 Add the built-in Dibs palette selector to Player Preferences, persist the validated selection in the character-local presentation profile, apply it through the shared Midnight tokens, and cover profile persistence plus UI selection in `src/ui/Midnight.lua`, `src/ui/PlayerUI.lua`, `tests/integration/midnight_components_spec.lua`, and `tests/integration/b11_player_ui_spec.lua`.
+- T066 validation: Midnight components, Player UI, and localized help suites pass **42/42**; the Player UI regression confirms the selected palette is persisted locally and recolors the refreshed window. Retail reload validation remains manual.
 
 ---
 

@@ -105,6 +105,19 @@ describe("Pre-Dib lifecycle", function()
     assert_equal(0, summary.historyCount)
   end)
 
+  it("reuses the resolved guild DB when reading initialized Pre-Dibs history", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true } })
+    local history = dibs.PreDibs.GetHistory("guild-primary")
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("initialized Pre-Dibs history should reuse the resolved guild DB") end
+
+    local ok, result = pcall(dibs.PreDibs.GetHistory, "guild-primary")
+    dibs.GetDB = getDB
+
+    assert_true(ok, tostring(result))
+    assert_equal(history, result, "history read should return the same initialized request array")
+  end)
+
   it("reads legacy Wizard history without migrating SavedVariables", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local db = dibs.GetDB()

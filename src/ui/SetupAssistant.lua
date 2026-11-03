@@ -64,7 +64,11 @@ local function lootTypesAvailability()
   if not Dibs.RCOptions or type(Dibs.RCOptions.GetLootTypeOptions) ~= "function" then
     return "unavailable", "LOOT_TYPES_UNAVAILABLE"
   end
+  local optionsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   local ok, options = call(Dibs.RCOptions.GetLootTypeOptions)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "loot-type-option-tree", optionsStartedAt)
+  end
   if not ok or type(options) ~= "table" or type(options.types) ~= "table" then
     return "unavailable", "LOOT_TYPES_UNAVAILABLE"
   end
@@ -72,7 +76,11 @@ local function lootTypesAvailability()
   if type(lootTypes.values) ~= "function" or type(lootTypes.get) ~= "function" or type(lootTypes.set) ~= "function" then
     return "degraded", "LOOT_TYPES_INVALID"
   end
+  local valuesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   local valuesOK, values = call(lootTypes.values)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "loot-type-values", valuesStartedAt)
+  end
   if not valuesOK or type(values) ~= "table" or next(values) == nil then
     return "degraded", "LOOT_TYPES_INVALID"
   end
@@ -269,7 +277,11 @@ end
 function SetupAssistant.Evaluate(options)
   local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   options = type(options) == "table" and options or {}
+  local roleStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   local actorRole = role()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "actor-role", roleStartedAt)
+  end
   if actorRole == "player" and options.allowPlayer ~= true then
     local denied = {
       status = "DENIED",
@@ -296,20 +308,38 @@ function SetupAssistant.Evaluate(options)
   local readiness
   if Dibs.Readiness and Dibs.Readiness.Evaluate then
     local readinessStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-    local ok, value = call(Dibs.Readiness.Evaluate, { allowPlayer = true })
+    local ok, value = call(Dibs.Readiness.Evaluate, { allowPlayer = true, db = options.db })
     if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
       Dibs.UIRenderStats.Record("Setup data", "readiness-evaluation", readinessStartedAt)
     end
     if ok and type(value) == "table" then readiness = value end
   end
+  local mappingStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   local seen = addReadinessChecks(report, readiness)
-  local season = Dibs.Seasons and Dibs.Seasons.GetCurrent and select(2, call(Dibs.Seasons.GetCurrent)) or nil
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "readiness-check-mapping", mappingStartedAt)
+  end
+  local seasonStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+  local season
+  -- Readiness already reports both checks on the normal guild path. Resolve
+  -- the season only when a missing check needs it, avoiding another SavedVars
+  -- resolution during every Guided Setup verification.
+  if not seen.season or not seen.policy then
+    season = Dibs.Seasons and Dibs.Seasons.GetCurrent and select(2, call(Dibs.Seasons.GetCurrent, options.db)) or nil
+  end
   if not season and not seen.season then
     report.checks[#report.checks + 1] = check("season", "blocked", true, "SEASON_UNAVAILABLE",
       "No active season is available.", "Create or activate a season through Officer controls.", "seasons")
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "season-lookup", seasonStartedAt)
+  end
   if season and not seen.policy then
+    local rankRulesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     local ruleCount = countRules(season.id)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Setup data", "rank-rule-count", rankRulesStartedAt)
+    end
     report.checks[#report.checks + 1] = check("rank_rules", ruleCount and ruleCount > 0 and "ready" or "blocked",
       true, ruleCount and ruleCount > 0 and nil or "POLICY_UNAVAILABLE",
       ruleCount and ruleCount > 0 and "Rank rules are available." or "No rank allocation policy is configured.",
@@ -353,7 +383,14 @@ function SetupAssistant.Evaluate(options)
   local scope = (options.scope == "guild" or options.scope == "raid") and options.scope or "all"
   report.scope = scope
   if scope ~= "all" then
-    report.checks[#report.checks + 1] = syncStateCheck()
+    if options.includeSyncState ~= false then
+      local syncStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+      report.checks[#report.checks + 1] = syncStateCheck()
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Setup data", "sync-state-check", syncStartedAt)
+      end
+    end
+    local scopeStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     local guildChecks, raidChecks = {}, {}
     for _, item in ipairs(report.checks) do
       if GUILD_SETUP_CHECKS[item.id] then guildChecks[#guildChecks + 1] = item end
@@ -366,8 +403,12 @@ function SetupAssistant.Evaluate(options)
       raidChecks[#raidChecks + 1] = raidMembersCheck()
       report.checks = raidChecks
     end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Setup data", "scope-filter", scopeStartedAt)
+    end
   end
 
+  local finalizeStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   for _, item in ipairs(report.checks) do
     if item.required and item.state ~= "ready" and item.state ~= "skipped" then
       report.blockingCount = report.blockingCount + 1
@@ -381,6 +422,9 @@ function SetupAssistant.Evaluate(options)
     report.status = "UNAVAILABLE"
   else
     report.status = "READY_FOR_RAID"
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Setup data", "report-finalization", finalizeStartedAt)
   end
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Setup data", "evaluation", renderStartedAt)

@@ -104,6 +104,28 @@ describe("Backup, import/export and profiles", function()
     assert_nil(second.payload.pendingRestores)
   end)
 
+  it("summarizes backups without repeating the shared-scope authorization check", function()
+    local db = dibs.GetDB()
+    db.backups = {
+      { snapshotId = "local-1", scope = "local", createdAt = 30, payload = { private = true } },
+      { snapshotId = "full-1", scope = "full", createdAt = 20, payload = { private = true } },
+      { snapshotId = "guild-1", scope = "guild", createdAt = 10, payload = { private = true } },
+    }
+    local originalCan, authorizationChecks = dibs.Permissions.Can, 0
+    dibs.Permissions.Can = function(action, actor)
+      authorizationChecks = authorizationChecks + 1
+      return originalCan(action, actor)
+    end
+
+    local summary = dibs.Backup.GetSummary(nil, nil, db)
+
+    dibs.Permissions.Can = originalCan
+    assert_equal(3, summary.count)
+    assert_true(summary.available)
+    assert_equal(30, summary.createdAt)
+    assert_equal(1, authorizationChecks, "all non-local scopes share the same per-call permission decision")
+  end)
+
   it("reports database and full package size diagnostics", function()
     local diagnostics = dibs.ImportExport.GetSizeDiagnostics()
     assert_true(diagnostics.databaseBytes > 0)

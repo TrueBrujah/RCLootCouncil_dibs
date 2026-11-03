@@ -157,11 +157,14 @@ function Identity.RefreshRoster()
   end
 
   local members, shortNames, displayNames = {}, {}, {}
+  local entries = {}
   for index = 1, tonumber(count) or 0 do
     local success, name, rankName, rankIndex, _, className, _, _, _, online, _, classFileName = pcall(GetGuildRosterInfo, index)
     if success and name then
       local member = rosterMember(name, rankName, rankIndex, className, classFileName, online)
       if member then
+        member.rosterIndex = index
+        entries[#entries + 1] = member
         members[member.memberKey] = member
         local short = string.lower(member.displayName:match("^([^%-]+)"))
         shortNames[short] = shortNames[short] or {}
@@ -175,9 +178,14 @@ function Identity.RefreshRoster()
   for _, candidates in pairs(shortNames) do
     if #candidates > 1 then table.sort(candidates) end
   end
-  local sortedMembers = {}
-  for _, member in pairs(members) do sortedMembers[#sortedMembers + 1] = member end
-  table.sort(sortedMembers, function(first, second) return first.memberKey < second.memberKey end)
+  -- The ordered list keeps every roster entry. The memberKey map above resolves
+  -- one entry per key, so building this list from it would silently merge
+  -- duplicate names and hide the ambiguity that callers must fail closed on.
+  table.sort(entries, function(first, second)
+    if first.memberKey ~= second.memberKey then return first.memberKey < second.memberKey end
+    return first.rosterIndex < second.rosterIndex
+  end)
+  local sortedMembers = entries
   state.generation = state.generation + 1
   state.fresh = true
   state.members = members

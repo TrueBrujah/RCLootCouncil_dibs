@@ -80,6 +80,61 @@ describe("Rank allocation reconciliation workflow", function()
     assert_equal("Reconciliation required", row.action)
   end)
 
+  it("reuses the resolved rank when calculating a reconciliation snapshot allocation", function()
+    local dibs = setup()
+    local seasonId = dibs.GetCurrentSeasonId()
+    setRule(dibs, 3, 2)
+    local originalGetAllocationForPlayer = dibs.RankRules.GetAllocationForPlayer
+    local allocationForPlayerCalls = 0
+    dibs.RankRules.GetAllocationForPlayer = function(...)
+      allocationForPlayerCalls = allocationForPlayerCalls + 1
+      return originalGetAllocationForPlayer(...)
+    end
+
+    local row = rowFor(dibs, seasonId, "Alice-Realm")
+
+    dibs.RankRules.GetAllocationForPlayer = originalGetAllocationForPlayer
+    assert_equal(2, row.expected)
+    assert_equal(0, allocationForPlayerCalls,
+      "snapshot allocation should reuse its rank instead of rescanning the guild roster")
+  end)
+
+  it("reads only compact governance and policy revisions for reconciliation snapshots", function()
+    local dibs = setup()
+    local seasonId = dibs.GetCurrentSeasonId()
+    setRule(dibs, 3, 2)
+    local preview = rowFor(dibs, seasonId, "Alice-Realm").reconciliationSnapshot
+    local originalGovernanceState = dibs.Governance.GetState
+    local originalPolicyState = dibs.OperationalPolicy.GetState
+    dibs.Governance.GetState = function() error("snapshot must not copy full governance history") end
+    dibs.OperationalPolicy.GetState = function() error("snapshot must not copy full policy history") end
+
+    local snapshot, reason = dibs.Ledger.GetRankReconciliationSnapshot("Alice-Realm", seasonId)
+
+    dibs.Governance.GetState = originalGovernanceState
+    dibs.OperationalPolicy.GetState = originalPolicyState
+    assert_not_nil(snapshot, tostring(reason))
+    assert_equal(preview.governanceRevision, snapshot.governanceRevision)
+    assert_equal(preview.operationalPolicyRevision, snapshot.operationalPolicyRevision)
+  end)
+
+  it("checks V2 enforcement from the resolved guild state without re-running database resolution", function()
+    local dibs = setup()
+    local originalGetDB = dibs.GetDB
+    local getDBCalls = 0
+    dibs.GetDB = function()
+      getDBCalls = getDBCalls + 1
+      error("warm V2 checks should reuse the resolved governance state")
+    end
+
+    local ok, enforced = pcall(dibs.Governance.IsV2Enforced)
+
+    dibs.GetDB = originalGetDB
+    assert_true(ok, tostring(enforced))
+    assert_true(enforced)
+    assert_equal(0, getDBCalls)
+  end)
+
   it("binds the preview to identity, rank, catalog, governance, policy, and coordinator state", function()
     local dibs = setup()
     local seasonId = dibs.GetCurrentSeasonId()

@@ -61,6 +61,32 @@ describe("Ace3 options integration", function()
     assert_true(templates.reminder:find("%date", 1, true) ~= nil)
   end)
 
+  it("reuses announcement settings from the current guild DB and falls back after a guild-key mismatch", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("current-guild announcement reads should reuse Dibs.db") end
+    local ok, settings, templates = pcall(function()
+      return dibs.PreDibs.GetAnnouncementSettings(), dibs.PreDibs.GetAnnouncementTemplates()
+    end)
+    dibs.GetDB = getDB
+    assert_true(ok, tostring(settings))
+    assert_equal("GUILD", settings.publicChannel)
+    assert_true(templates.preDib:find("%player", 1, true) ~= nil)
+
+    local currentGuildKey = dibs.currentGuildKey
+    local calls = 0
+    dibs.currentGuildKey = "stale-guild-key"
+    dibs.GetDB = function(...)
+      calls = calls + 1
+      return getDB(...)
+    end
+    dibs.PreDibs.GetAnnouncementSettings()
+    dibs.PreDibs.GetAnnouncementTemplates()
+    dibs.GetDB = getDB
+    dibs.currentGuildKey = currentGuildKey
+    assert_equal(1, calls, "the first mismatch should resolve the DB and repair the guild key; observed " .. tostring(calls))
+  end)
+
   it("reuses Raid Dibs stream discovery briefly and supports explicit refresh", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     local clubs = _G.C_Club
@@ -416,6 +442,46 @@ describe("Dibs options compatibility", function()
     assert_equal(62, controls.down.width)
   end)
 
+  it("shares button-template reads only for the duration of one options render", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true } })
+    local options = dibs.RCOptions.GetOptionsTable()
+    local integration = options.args.dibsSettings.args.officer.args.integration
+    local button = integration.args.templates.args.button1
+    local originalGetDB = dibs.GetDB
+    local calls = 0
+    dibs.GetDB = function(...)
+      calls = calls + 1
+      return originalGetDB(...)
+    end
+
+    button.hidden()
+    button.args.text.get()
+    button.args.response.get()
+    button.args.requireNotes.get()
+    assert_equal(4, calls)
+
+    calls = 0
+    dibs.RCOptions.WithOptionsReadSnapshot(function()
+      assert_false(button.hidden())
+      assert_equal("Need", button.args.text.get())
+      assert_equal("Need", button.args.response.get())
+      assert_false(button.args.requireNotes.get())
+    end)
+    assert_equal(1, calls)
+
+    button.hidden()
+    assert_equal(2, calls)
+
+    calls = 0
+    local ok = pcall(function()
+      dibs.RCOptions.WithOptionsReadSnapshot(function() error("render failed") end)
+    end)
+    assert_false(ok)
+    button.hidden()
+    assert_equal(2, calls)
+    dibs.GetDB = originalGetDB
+  end)
+
   it("refreshes options after a range value is committed", function()
     local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true } })
     local shell = dibs.AceGUI.CreateWindow("Range refresh test", 800, 500, { "CENTER", 0, 0 })
@@ -722,7 +788,53 @@ describe("Dibs options compatibility", function()
 end)
 
 
+describe("AceGUI child list normalization", function()
+  it("compacts sparse child arrays before appending a newly rendered widget", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("Child normalization", 600, 400)
+    local parent = dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    local children = {}
+    for index = 1, 3 do
+      children[index] = dibs.AceGUI.Create(shell, "Label", parent)
+    end
+
+    parent.children[2] = nil
+    local appended = dibs.AceGUI.Create(shell, "Label", parent)
+
+    assert_equal(children[1], parent.children[1])
+    assert_equal(children[3], parent.children[2])
+    assert_equal(appended, parent.children[3])
+    assert_equal(3, #parent.children)
+  end)
+end)
+
 describe("Officer loot type controls", function()
+  it("uses the matching resolved guild DB for dynamic loot types and falls back on a guild mismatch", function()
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    local values = dibs.RCOptions.GetLootTypeOptions().types.values
+    local originalGetDB, originalGuildKey = dibs.GetDB, dibs.currentGuildKey
+
+    dibs.GetDB = function() error("matching guild reads should reuse Dibs.db") end
+    local ok, currentValues = pcall(values)
+    dibs.GetDB = originalGetDB
+    assert_true(ok, tostring(currentValues))
+    assert_true(currentValues.TOKEN ~= nil)
+
+    dibs.currentGuildKey = "stale-guild-snapshot"
+    local fallbackCalls = 0
+    dibs.GetDB = function(...)
+      fallbackCalls = fallbackCalls + 1
+      return originalGetDB(...)
+    end
+    local fallbackOK, fallbackValues = pcall(values)
+    dibs.GetDB = originalGetDB
+    dibs.currentGuildKey = originalGuildKey
+    assert_true(fallbackOK, tostring(fallbackValues))
+    assert_true(fallbackCalls > 0, "guild mismatch must use the validated DB accessor")
+    assert_true(fallbackValues.TOKEN ~= nil)
+  end)
+
   it("shares dynamic types and draft changes with RC options without bulk presets", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
@@ -745,6 +857,63 @@ describe("Officer loot type controls", function()
 end)
 
 describe("Player and officer option visibility", function()
+  it("reuses the RC options tree when the Officer integration page is revisited", function()
+    local profile = {
+      buttons = { default = { numButtons = 1, { text = "Need", whisperKey = "need" } } },
+      responses = { default = { { text = "Need", sort = 1, color = { 0.2, 0.8, 0.3, 1 } } } },
+    }
+    local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
+    rc.Getdb = function() return profile end
+    rc.ConfigTableChanged = function() end
+    local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    local options = dibs.RCOptions.GetOptionsTable()
+    local integration = options.args.dibsSettings.args.officer.args.integration
+    local buttonCount = profile.buttons.default.numButtons
+    local buttonText = {}
+    local responseText, responseColor = {}, {}
+    for index = 1, buttonCount do
+      buttonText[index] = profile.buttons.default[index] and profile.buttons.default[index].text
+      responseText[index] = profile.responses.default[index] and profile.responses.default[index].text
+      responseColor[index] = profile.responses.default[index] and profile.responses.default[index].color[1]
+    end
+    local config = dibs.Ace3.libs.config
+    local dialog = dibs.Ace3.libs.dialog
+    local registrations, attachments, messages = 0, 0, 0
+    local registerOptionsTable = config.RegisterOptionsTable
+    local addToBlizOptions = dialog.AddToBlizOptions
+    local registerMessage = rc.RegisterMessage
+    function config:RegisterOptionsTable(...)
+      registrations = registrations + 1
+      return registerOptionsTable(self, ...)
+    end
+    function dialog:AddToBlizOptions(...)
+      attachments = attachments + 1
+      return addToBlizOptions(self, ...)
+    end
+    function rc:RegisterMessage(...)
+      messages = messages + 1
+      return registerMessage(self, ...)
+    end
+
+    local frame = dibs.OfficerUI.CreateWindow()
+    for _, route in ipairs({ "integration", "settings", "integration", "overview", "integration" }) do
+      frame.SelectTab(route)
+      assert_equal(route, frame.activeTab)
+    end
+
+    assert_equal(options, dibs.RCOptions.GetOptionsTable())
+    assert_equal(integration, dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.officer.args.integration)
+    assert_equal(0, registrations, "page navigation must not register the options table again")
+    assert_equal(0, attachments, "page navigation must not attach another Settings category")
+    assert_equal(0, messages, "page navigation must not register additional RC message hooks")
+    assert_equal(buttonCount, profile.buttons.default.numButtons)
+    for index = 1, buttonCount do
+      assert_equal(buttonText[index], profile.buttons.default[index] and profile.buttons.default[index].text)
+      assert_equal(responseText[index], profile.responses.default[index] and profile.responses.default[index].text)
+      assert_equal(responseColor[index], profile.responses.default[index] and profile.responses.default[index].color[1])
+    end
+  end)
+
   it("hides officer controls for a player", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {}, enabled = false })
     local _, dibs = loader.load({ wow = { guildLeader = false }, rclootcouncil = rc, withAce3 = true })

@@ -45,6 +45,18 @@ local function normalizeChannel(value, fallback)
   return fallback or "NONE"
 end
 
+local function getAnnouncementSettingsStore()
+  local db = Dibs.db
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  if not (guildKey and Dibs.currentGuildKey == guildKey
+      and type(db) == "table" and type(db.settings) == "table") then
+    db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  end
+  if type(db) ~= "table" then db = _G.DibsDB or {} end
+  db.settings = type(db.settings) == "table" and db.settings or {}
+  return db, db.settings
+end
+
 local function announcementDebug(message)
   if Dibs.PreDibs.announcementDebug and Dibs.DebugEnabled and Dibs.DebugEnabled("announce", 4) and Dibs.Message then
     Dibs.Message("[Announcement Debug] " .. tostring(message), { chat = false })
@@ -189,12 +201,13 @@ local function migrateRequestList(requests, ledgerId)
   migratedRequestCounts[requests] = requestCount
 end
 
-local function activeLedgerId()
+local function activeLedgerId(dbOverride)
   return Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
-    and Dibs.MultiLedger.GetActiveLedgerId() or DEFAULT_LEDGER_ID
+    and Dibs.MultiLedger.GetActiveLedgerId(dbOverride) or DEFAULT_LEDGER_ID
 end
 
-local function readResolvedGuildDB()
+local function readResolvedGuildDB(dbOverride)
+  if type(dbOverride) == "table" then return dbOverride end
   local currentGuildKey = type(Dibs.GetGuildKey) == "function" and Dibs.GetGuildKey() or nil
   if currentGuildKey and Dibs.currentGuildKey == currentGuildKey and type(Dibs.db) == "table" then
     return Dibs.db
@@ -217,8 +230,11 @@ local function isApprovedLedger(ledgerId)
     and Dibs.Governance.IsLedgerApproved(ledgerId) == true
 end
 
-local function ensureState(targetLedgerId, bindActive, skipActiveBindingCheck)
-  Dibs.db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+local function ensureState(targetLedgerId, bindActive, skipActiveBindingCheck, dbOverride)
+  -- Reuse the already-resolved guild database when it still belongs to the
+  -- current guild; otherwise readResolvedGuildDB retains the normal DB path.
+  local db = readResolvedGuildDB(dbOverride)
+  Dibs.db = db
   Dibs.db.preDibs = Dibs.db.preDibs or { requests = {} }
   local root = Dibs.db.preDibs
   root.requests = root.requests or {}
@@ -236,7 +252,7 @@ local function ensureState(targetLedgerId, bindActive, skipActiveBindingCheck)
     root.ledgerStorageVersion = 1
   end
   local ledgerId = targetLedgerId
-  if ledgerId == nil then ledgerId = activeLedgerId() end
+  if ledgerId == nil then ledgerId = activeLedgerId(db) end
   if type(ledgerId) ~= "string" or ledgerId == "" then return nil, "INVALID_LEDGER_ID" end
   if not isApprovedLedger(ledgerId) then return nil, "LEDGER_NOT_APPROVED" end
   local store = root.ledgers[ledgerId]
@@ -249,7 +265,7 @@ local function ensureState(targetLedgerId, bindActive, skipActiveBindingCheck)
   store.vaultConflicts = type(store.vaultConflicts) == "table" and store.vaultConflicts or {}
   store.ledgerId = ledgerId
   migrateRequestList(store.requests, ledgerId)
-  if bindActive == true or (skipActiveBindingCheck ~= true and ledgerId == activeLedgerId()) then
+  if bindActive == true or (skipActiveBindingCheck ~= true and ledgerId == activeLedgerId(db)) then
     root.requests, root.modePolicies, root.vaultConflicts = store.requests, store.modePolicies, store.vaultConflicts
   end
   Dibs.db.settings = Dibs.db.settings or {}
@@ -519,25 +535,25 @@ local function findActiveRequest(playerName, itemID, seasonId, difficulty, reque
   return nil
 end
 
-function Dibs.PreDibs.IsPublicEnabled()
-  ensureState()
-  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+function Dibs.PreDibs.IsPublicEnabled(dbOverride)
+  ensureState(nil, nil, nil, dbOverride)
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted(dbOverride)
     and Dibs.OperationalPolicy.GetPublicPreDibsEnabled then
-    local shared = Dibs.OperationalPolicy.GetPublicPreDibsEnabled()
+    local shared = Dibs.OperationalPolicy.GetPublicPreDibsEnabled(dbOverride)
     if shared ~= nil then return shared end
   end
   return Dibs.db.settings.allowPublicPreDibs ~= false
 end
 
-function Dibs.PreDibs.GetModePolicy(seasonId, ledgerId)
+function Dibs.PreDibs.GetModePolicy(seasonId, ledgerId, dbOverride)
   local targetLedgerId = ledgerId
-  if targetLedgerId == nil then targetLedgerId = activeLedgerId() end
-  local store, storeReason = ensureState(targetLedgerId)
+  if targetLedgerId == nil then targetLedgerId = activeLedgerId(dbOverride) end
+  local store, storeReason = ensureState(targetLedgerId, nil, nil, dbOverride)
   if not store then return nil, storeReason end
-  local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
-  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+  local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId(dbOverride) or nil)
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted(dbOverride)
     and Dibs.OperationalPolicy.GetPreDibMode then
-    local sharedMode = Dibs.OperationalPolicy.GetPreDibMode(targetSeason, targetLedgerId)
+    local sharedMode = Dibs.OperationalPolicy.GetPreDibMode(targetSeason, targetLedgerId, dbOverride)
     if sharedMode then return { seasonId = targetSeason, ledgerId = targetLedgerId, mode = sharedMode, source = "OPERATIONAL_POLICY" } end
   end
   local policy = targetSeason and store.modePolicies[targetSeason] or nil
@@ -610,19 +626,18 @@ end
 ---@doc.label-key DOC_ANNOUNCEMENT_CHANNELS_LABEL
 function Dibs.PreDibs.GetAnnouncementSettings()
   -- Announcement settings are guild settings, not Pre-Dibs ledger state. Avoid
-  -- initializing/binding the entire Pre-Dibs ledger on every AceConfig getter.
-  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
-  db.settings = type(db.settings) == "table" and db.settings or {}
-  local saved = db.settings
+  -- initializing/binding the entire Pre-Dibs ledger or revalidating the guild
+  -- DB on every AceConfig getter. The fast path is valid only for this guild.
+  local db, saved = getAnnouncementSettingsStore()
   saved.preDibAnnouncementChannel = normalizeChannel(saved.preDibAnnouncementChannel, "GUILD")
   saved.preDibOfficerAnnouncementChannel = normalizeChannel(saved.preDibOfficerAnnouncementChannel, "OFFICER")
   if saved.preDibAnnouncementTemplate == nil then saved.preDibAnnouncementTemplate = DEFAULT_PREDIB_TEMPLATE end
   if saved.raidReminderTemplate == nil then
     saved.raidReminderTemplate = saved.raidReminderMessage or DEFAULT_REMINDER_TEMPLATE
   end
-  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted()
+  if Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted(db)
     and Dibs.OperationalPolicy.GetAnnouncementChannels then
-    local shared = Dibs.OperationalPolicy.GetAnnouncementChannels()
+    local shared = Dibs.OperationalPolicy.GetAnnouncementChannels(db)
     if shared then
       return {
         publicChannel = normalizeChannel(shared.publicChannel, "GUILD"),
@@ -691,10 +706,9 @@ end
 
 function Dibs.PreDibs.GetAnnouncementTemplates()
   -- Template reads are also independent of ledger state. AceConfig asks for
-  -- these values repeatedly while constructing the announcement page.
-  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
-  db.settings = type(db.settings) == "table" and db.settings or {}
-  local saved = db.settings
+  -- these values repeatedly while constructing the announcement page. Reuse
+  -- the already-resolved guild DB when its live guild key still matches.
+  local _, saved = getAnnouncementSettingsStore()
   if saved.preDibAnnouncementTemplate == nil then saved.preDibAnnouncementTemplate = DEFAULT_PREDIB_TEMPLATE end
   if saved.raidReminderTemplate == nil then
     saved.raidReminderTemplate = saved.raidReminderMessage or DEFAULT_REMINDER_TEMPLATE
@@ -1804,7 +1818,7 @@ local function resolveStatusReadStore(ledgerId)
   return result
 end
 
-function Dibs.PreDibs.GetStatusSummary(seasonId, ledgerId)
+function Dibs.PreDibs.GetStatusSummary(seasonId, ledgerId, sharedPolicySummary)
   local storeStartedAt = beginPreDibsUITiming()
   local store, reason = resolveStatusReadStore(ledgerId)
   recordPreDibsUITiming("status-store-resolution", storeStartedAt)
@@ -1814,8 +1828,11 @@ function Dibs.PreDibs.GetStatusSummary(seasonId, ledgerId)
   -- calling the public accessors below, which each re-run ensureState and
   -- re-resolve the same active ledger during the Wizard's single render.
   local policyStartedAt = beginPreDibsUITiming()
-  local policySummary = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetPreDibSummary
-    and Dibs.OperationalPolicy.GetPreDibSummary(targetSeason, store.ledgerId) or nil
+  local policySummary = sharedPolicySummary
+  if policySummary == nil then
+    policySummary = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetPreDibSummary
+      and Dibs.OperationalPolicy.GetPreDibSummary(targetSeason, store.ledgerId) or nil
+  end
   local policy
   if policySummary and policySummary.adopted == true and policySummary.mode then
     policy = { seasonId = targetSeason, ledgerId = store.ledgerId, mode = policySummary.mode, source = "OPERATIONAL_POLICY" }

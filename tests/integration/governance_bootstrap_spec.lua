@@ -101,6 +101,22 @@ describe("Governance bootstrap and identity", function()
     assert_false(dibs.Governance.AdoptInitial(nil, { reason = "local settings are not authority" }))
   end)
 
+  it("reads an authority snapshot from a supplied guild DB without resolving it again", function()
+    local dibs = load()
+    local db = dibs.GetDB()
+    local expected = dibs.Governance.GetAuthorityState(db)
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("supplied authority DB should be reused") end
+
+    local ok, actual = pcall(dibs.Governance.GetAuthorityState, db)
+    dibs.GetDB = getDB
+
+    assert_true(ok, tostring(actual))
+    assert_equal(expected.state, actual.state)
+    assert_equal(expected.revision, actual.revision)
+    assert_equal(expected.hash, actual.hash)
+  end)
+
   it("allows only the current GM to create an auditable initial governance record", function()
     local dibs = load({ guildMembers = { "Tester-Realm", "Officer-Realm" }, guildRankIndices = { [1] = 0, [2] = 1 } })
     local denied, denialReason = dibs.Governance.AdoptInitial("Officer-Realm", { reason = "officer attempt" })

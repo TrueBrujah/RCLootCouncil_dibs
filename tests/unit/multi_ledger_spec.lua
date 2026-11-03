@@ -43,6 +43,37 @@ describe("MultiLedger lifecycle", function()
     assert_equal(full[1].status, selector[1].status)
   end)
 
+  it("reuses transaction counts until the ledger data revision changes", function()
+    local dibs = loadGM()
+    local primary = dibs.GetDB().ledgers["guild-primary"]
+    primary.transactions = { first = {}, second = {} }
+
+    local originalPairs = pairs
+    local transactionScans = 0
+    _G.pairs = function(value)
+      if value == primary.transactions then transactionScans = transactionScans + 1 end
+      return originalPairs(value)
+    end
+    local first = dibs.MultiLedger.GetLedgers()
+    local second = dibs.MultiLedger.GetLedgers()
+    _G.pairs = originalPairs
+
+    assert_equal(2, first[1].transactionCount)
+    assert_equal(2, second[1].transactionCount)
+    assert_equal(1, transactionScans)
+
+    primary.transactions.third = {}
+    dibs.Ledger.MarkTransactionsChanged("guild-primary")
+    _G.pairs = function(value)
+      if value == primary.transactions then transactionScans = transactionScans + 1 end
+      return originalPairs(value)
+    end
+    local afterMutation = dibs.MultiLedger.GetLedgers()
+    _G.pairs = originalPairs
+    assert_equal(3, afterMutation[1].transactionCount)
+    assert_equal(2, transactionScans)
+  end)
+
   it("resolves the active ledger without a second MultiLedger DB lookup", function()
     local dibs = loadGM()
     local getDB = dibs.GetDB

@@ -14,6 +14,12 @@ local Dibs = _G.Dibs
 Dibs.Installation = Dibs.Installation or {}
 local Installation = Dibs.Installation
 
+local function recordInstallationTiming(counter, startedAt)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Installation data", counter, startedAt)
+  end
+end
+
 local function localPlayer()
   return Dibs.GetPlayerName and Dibs.GetPlayerName() or nil
 end
@@ -62,12 +68,16 @@ end
 -- SEASON_ALLOCATION transactions are excluded: Dibs.Initialize() creates a
 -- default season and automatic rank allocations for every guild, so their
 -- presence alone is not evidence of prior manual Dibs usage.
-local function detectRealLegacyData()
+local function detectRealLegacyData(resolvedGuildDB)
   local hasLedgerHistory = false
+  -- Resolve the current guild DB once, then let the active-ledger path reuse
+  -- this verified snapshot instead of resolving the guild key again.
+  local db = type(resolvedGuildDB) == "table" and resolvedGuildDB
+    or Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   local ledgerIdStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local targetLedgerId = Dibs.Ledger and Dibs.Ledger.GetActiveLedgerId
-    and Dibs.Ledger.GetActiveLedgerId()
-    or Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId()
+    and Dibs.Ledger.GetActiveLedgerId(db)
+    or Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId(db)
     or "guild-primary"
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-active-ledger-id", ledgerIdStartedAt)
@@ -75,7 +85,7 @@ local function detectRealLegacyData()
   local ledgerStatusRead = false
   local ledgerStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   if Dibs.Ledger and type(Dibs.Ledger.HasNonAllocationTransactions) == "function" then
-    local ok, value = pcall(Dibs.Ledger.HasNonAllocationTransactions, targetLedgerId)
+    local ok, value = pcall(Dibs.Ledger.HasNonAllocationTransactions, targetLedgerId, db)
     if ok and type(value) == "boolean" then
       hasLedgerHistory = value
       ledgerStatusRead = true
@@ -112,7 +122,6 @@ local function detectRealLegacyData()
   end
   local preDibCount = 0
   local preDibsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-  local db = Dibs.GetDB and Dibs.GetDB()
   if Dibs.PreDibs and type(Dibs.PreDibs.GetHistoryCount) == "function" then
     local ok, count = pcall(Dibs.PreDibs.GetHistoryCount, targetLedgerId)
     if ok and tonumber(count) ~= nil then preDibCount = tonumber(count) end
@@ -125,7 +134,7 @@ local function detectRealLegacyData()
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-predibs-count", preDibsStartedAt)
   end
-  return hasLedgerHistory or preDibCount > 0, hasLedgerHistory and 1 or 0, preDibCount
+  return hasLedgerHistory or preDibCount > 0, hasLedgerHistory and 1 or 0, preDibCount, targetLedgerId, db
 end
 
 ---@param actor string|nil Optional actor override; defaults to the local player.
@@ -138,10 +147,10 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_GUILD_LEDGER_STATUS
 ---@doc.label-key DOC_GUILD_LEDGER_STATUS_LABEL
-function Installation.GetStatus(actor)
+function Installation.GetStatus(actor, dbOverride)
   local governanceStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local governanceSummary = Dibs.Governance and Dibs.Governance.GetInstallationSummary
-    and Dibs.Governance.GetInstallationSummary()
+    and Dibs.Governance.GetInstallationSummary(dbOverride)
   local governance, authority, protocolActive
   if type(governanceSummary) == "table" then
     governance = { status = governanceSummary.status, future = { protocolState = governanceSummary.protocolState } }
@@ -162,9 +171,16 @@ function Installation.GetStatus(actor)
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "governance-authority", governanceStartedAt)
   end
+  -- Resolve the active guild DB once for this synchronous status projection.
+  -- The baseline summary and legacy-history check are read-only and can safely
+  -- share this normalized snapshot instead of re-running Core's DB validation.
+  local guildDBStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local statusDB = type(dbOverride) == "table" and dbOverride
+    or (Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {}))
+  recordInstallationTiming("guild-db-resolution", guildDBStartedAt)
   local baselineStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local baselineSummary = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetInstallationSummary
-    and Dibs.HistoricalBaseline.GetInstallationSummary()
+    and Dibs.HistoricalBaseline.GetInstallationSummary(statusDB)
   if type(baselineSummary) ~= "table" then
     local baselineState = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetState
       and Dibs.HistoricalBaseline.GetState() or { evidence = {}, sources = {} }
@@ -188,7 +204,7 @@ function Installation.GetStatus(actor)
   local incompleteSources = baselineSummary.incompleteSources == true
   local baselinePresent = baselineSummary.baselinePresent == true
   local legacyStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-  local hasRealLegacyData = detectRealLegacyData()
+  local hasRealLegacyData, _, _, activeLedgerId, resolvedGuildDB = detectRealLegacyData(statusDB)
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-data-detection", legacyStartedAt)
   end
@@ -196,14 +212,24 @@ function Installation.GetStatus(actor)
   local reconciliationRequired = hasUncollectedEvidence or (evidenceCount > 0 and openFindings > 0)
 
   local identityStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local gmRoleStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local actorIsGM = isGM(actor)
+  recordInstallationTiming("actor-gm-role", gmRoleStartedAt)
+  local officerRoleStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local actorIsOfficer = isOfficer(actor)
+  recordInstallationTiming("actor-officer-role", officerRoleStartedAt)
+  local snapshotStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local snapshot = actorSnapshot(actor)
+  recordInstallationTiming("actor-snapshot", snapshotStartedAt)
   local candidateDisplayName = (authority.coordinator and authority.coordinator.displayName) or (snapshot and snapshot.displayName)
-  local syncBehind = Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() == true
+  local syncBehindStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local syncBehind = Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind(resolvedGuildDB) == true
+  recordInstallationTiming("sync-behind-check", syncBehindStartedAt)
   local compatibilityReady, compatibilityReason = true, nil
   if candidateDisplayName and Dibs.Sync and type(Dibs.Sync.CanEnforceV2) == "function" then
-    compatibilityReady, compatibilityReason = Dibs.Sync.CanEnforceV2({ candidateDisplayName })
+    local compatibilityStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    compatibilityReady, compatibilityReason = Dibs.Sync.CanEnforceV2({ candidateDisplayName }, resolvedGuildDB)
+    recordInstallationTiming("sync-compatibility-check", compatibilityStartedAt)
   end
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "identity-sync-compatibility", identityStartedAt)
@@ -239,7 +265,7 @@ function Installation.GetStatus(actor)
     end
   end
 
-  return {
+  local result = {
     state = state,
     installType = hasRealLegacyData and "UPGRADE" or "CLEAN",
     actor = { isGM = actorIsGM, isOfficer = actorIsOfficer, displayName = snapshot and snapshot.displayName or nil },
@@ -269,6 +295,7 @@ function Installation.GetStatus(actor)
       coordinatorMemberKey = authority.coordinator and authority.coordinator.memberKey or nil,
     },
   }
+  return result, activeLedgerId
 end
 
 ---@doc.id setup.reconciliation

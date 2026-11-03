@@ -1,0 +1,10 @@
+RCLootCouncil_dibs 0.8.11
+
+Highlights
+- Improved Player and Officer page responsiveness by reusing resolved guild, roster, ledger, and history data instead of repeating broad scans.
+- Improved large Officer pages with more efficient rendering and scrolling behavior.
+- Preserved duplicate guild roster entries so ambiguous player identities remain safely distinguishable.
+- Added an in-game build identifier in the window footer and with /dibs build, including the deployed commit and source-worktree state.
+
+Compatibility
+- Existing 0.8.10 SavedVariables remain compatible; this update does not change the SavedVariables schema or synchronization protocol.

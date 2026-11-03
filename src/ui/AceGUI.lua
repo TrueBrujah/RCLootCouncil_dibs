@@ -20,6 +20,7 @@ local Adapter = Dibs.AceGUI
 local unpackValues = table.unpack or unpack
 local LOGO_TEXTURE = Dibs.ICON_TEXTURE or "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 local activeLayoutBatch
+local activePresentationContext
 local PAGE_SCROLL_BOTTOM_RESERVE = 100
 
 Adapter.windowShellEnabled = true
@@ -294,11 +295,36 @@ local function applyRCLootCouncilTheme(frame)
 end
 
 function Adapter.GetPresentationTokens()
+  if activePresentationContext and type(activePresentationContext.tokens) == "table" then
+    return activePresentationContext.tokens
+  end
+  if activeLayoutBatch and type(activeLayoutBatch.presentationTokens) == "table" then
+    return activeLayoutBatch.presentationTokens
+  end
   if Dibs.EnvironmentAdapters and Dibs.EnvironmentAdapters.ResolveTokens then
     local ok, tokens = pcall(Dibs.EnvironmentAdapters.ResolveTokens)
     if ok and type(tokens) == "table" then return tokens end
   end
   return Dibs.Midnight and Dibs.Midnight.GetTokens and Dibs.Midnight.GetTokens() or nil
+end
+
+function Adapter.BeginPresentationContext()
+  local stats = Dibs.UIRenderStats
+  local startedAt = stats and stats.Begin and stats.Begin(false)
+  local context = { previous = activePresentationContext, tokens = Adapter.GetPresentationTokens() }
+  activePresentationContext = context
+  if startedAt and stats and stats.Record then
+    stats.Record("UI theme", "render-token-context", startedAt)
+  end
+  return context
+end
+
+function Adapter.EndPresentationContext(context)
+  if type(context) ~= "table" or activePresentationContext ~= context then return false end
+  activePresentationContext = context.previous
+  context.previous = nil
+  context.tokens = nil
+  return true
 end
 
 function Adapter.RequestRefresh(reason, callback)
@@ -338,8 +364,22 @@ end
 function Adapter.BuildShellStatusText()
   local strings = Dibs.L or {}
   local parts = {}
+  local renderStats = Dibs.UIRenderStats
+  local function beginStatusTiming()
+    return renderStats and renderStats.Begin and renderStats.Begin(false)
+  end
+  local function recordStatusTiming(name, startedAt)
+    if startedAt and renderStats and renderStats.Record then
+      renderStats.Record("UI shell status", name, startedAt)
+    end
+  end
+  local databaseStartedAt = beginStatusTiming()
+  local db = Dibs.GetDB and Dibs.GetDB() or nil
+  recordStatusTiming("guild-database", databaseStartedAt)
+  local ledgerStartedAt = beginStatusTiming()
   local status = Dibs.MultiLedger and Dibs.MultiLedger.GetGuildLedgerStatus
-    and Dibs.MultiLedger.GetGuildLedgerStatus() or nil
+    and Dibs.MultiLedger.GetGuildLedgerStatus(db) or nil
+  recordStatusTiming("ledger-projection", ledgerStartedAt)
   if status then
     local ledgerText
     if status.state == "UNAVAILABLE" then
@@ -358,12 +398,16 @@ function Adapter.BuildShellStatusText()
     end
     parts[#parts + 1] = ledgerText
   end
-  parts[#parts + 1] = string.format(strings.SHELL_STATUS_VERSION or "Version %s", tostring(Dibs.VERSION or "?"))
+  local versionText = tostring(Dibs.VERSION or "?")
+  if Dibs.BUILD_ID then versionText = versionText .. " / " .. tostring(Dibs.BUILD_ID) end
+  parts[#parts + 1] = string.format(strings.SHELL_STATUS_VERSION or "Version %s", versionText)
   local syncText
+  local syncStartedAt = beginStatusTiming()
   local okSync, sync = pcall(function()
     local getStatus = Dibs.Sync and (Dibs.Sync.GetStatusSummary or Dibs.Sync.GetStatus)
     return getStatus and getStatus() or nil
   end)
+  recordStatusTiming("sync-projection", syncStartedAt)
   if okSync and type(sync) == "table" then
     if sync.syncBehind then
       syncText = strings.SHELL_STATUS_SYNC_BEHIND or "Sync: behind"
@@ -376,14 +420,21 @@ function Adapter.BuildShellStatusText()
     syncText = strings.SHELL_STATUS_SYNC_UNKNOWN or "Sync: unknown"
   end
   parts[#parts + 1] = syncText
-  return table.concat(parts, "  -  ")
+  return table.concat(parts, "  -  "), db
 end
 
 function Adapter.SetShellStatus(shell, text)
   local window = shell and shell.window
   if not window or type(window.SetStatusText) ~= "function" then return false end
-  local ok = pcall(window.SetStatusText, window, text or Adapter.BuildShellStatusText())
-  return ok
+  local renderStats = Dibs.UIRenderStats
+  local startedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
+  local statusDB
+  if text == nil then text, statusDB = Adapter.BuildShellStatusText() end
+  local ok = pcall(window.SetStatusText, window, text or "")
+  if startedAt and renderStats and renderStats.Record then
+    renderStats.Record("UI shell status", "build-and-set", startedAt)
+  end
+  return ok, statusDB
 end
 
 local function ledgerChoiceName(ledger)
@@ -397,7 +448,11 @@ function Adapter.GetLedgerChoices(ledgers, activeId, viewId)
   local multiLedger = Dibs.MultiLedger
   if not (multiLedger and type(multiLedger.GetLedgers) == "function") then return {} end
   local strings = Dibs.L or {}
-  if type(ledgers) ~= "table" then ledgers = multiLedger.GetLedgers() or {} end
+  if type(ledgers) ~= "table" then
+    -- Selector labels only need ledger metadata; counting every transaction
+    -- here makes opening otherwise lightweight pages scale with ledger history.
+    ledgers = multiLedger.GetLedgers({ includeTransactionCount = false }) or {}
+  end
   if activeId == nil then activeId = multiLedger.GetActiveLedgerId and multiLedger.GetActiveLedgerId() or nil end
   if viewId == nil then viewId = multiLedger.GetViewLedgerId and multiLedger.GetViewLedgerId() or activeId end
   local choices, seen = {}, {}
@@ -656,7 +711,7 @@ local function pauseLayoutContainer(batch, container)
 end
 
 function Adapter.BeginLayoutBatch(root)
-  local batch = { containers = {}, seen = {}, previous = activeLayoutBatch }
+  local batch = { containers = {}, seen = {}, presentationTokens = nil, previous = activeLayoutBatch }
   activeLayoutBatch = batch
   pauseLayoutContainer(batch, root)
   return batch
@@ -699,24 +754,36 @@ end
 local function normalizeChildren(container)
   local children = container and container.children
   if type(children) ~= "table" then return end
-  local ordered = {}
   local maxIndex = 0
+  local childCount = 0
   for index, child in pairs(children) do
     if type(index) == "number" then
       maxIndex = math.max(maxIndex, index)
-      if child then
-        ordered[#ordered + 1] = { index = index, child = child }
-      end
+      if child then childCount = childCount + 1 end
     end
   end
-  if maxIndex == #ordered then return end
+
+  -- Adapter.Create calls this before every AddChild. Dense AceGUI child arrays
+  -- are the common case, so avoid allocating an ordered table and one entry
+  -- table per existing child just to confirm that no repair is needed.
+  if maxIndex == childCount then return end
+
+  local ordered = {}
+  for index, child in pairs(children) do
+    if type(index) == "number" and child then
+      ordered[#ordered + 1] = { index = index, child = child }
+    end
+  end
   table.sort(ordered, function(left, right) return left.index < right.index end)
   for index = 1, #ordered do children[index] = ordered[index].child end
   for index = #ordered + 1, #children do children[index] = nil end
 end
 
 function Adapter.Create(shell, kind, parent)
-  local widgetStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  -- This counter can run thousands of times per profiling session. Keep its
+  -- CPU timing, but do not sample the global Lua heap around every widget.
+  local renderStats = Dibs.UIRenderStats
+  local widgetStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   if not shell or not shell.gui then return nil end
   local ok, widget = pcall(shell.gui.Create, shell.gui, kind)
   if not ok or not widget then return nil end
@@ -730,10 +797,22 @@ function Adapter.Create(shell, kind, parent)
   owner:AddChild(widget)
   pauseLayoutContainer(activeLayoutBatch, widget)
   if Dibs.Midnight and type(Dibs.Midnight.ApplyToWidget) == "function" then
-    Dibs.Midnight.ApplyToWidget(widget, Adapter.GetPresentationTokens())
+    local tokens = activePresentationContext and activePresentationContext.tokens
+      or (activeLayoutBatch and activeLayoutBatch.presentationTokens)
+    if not tokens then
+      local tokenResolutionStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
+      tokens = Adapter.GetPresentationTokens()
+      if activeLayoutBatch and not activeLayoutBatch.presentationTokens then
+        activeLayoutBatch.presentationTokens = tokens
+      end
+      if tokenResolutionStartedAt and renderStats and renderStats.Record then
+        renderStats.Record("UI theme", "widget-token-resolution", tokenResolutionStartedAt)
+      end
+    end
+    Dibs.Midnight.ApplyToWidget(widget, tokens)
   end
-  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-    Dibs.UIRenderStats.Record("UI widget", "create", widgetStartedAt)
+  if widgetStartedAt and renderStats and renderStats.Record then
+    renderStats.Record("UI widget", shell._dibsPerfRoute or "create", widgetStartedAt)
   end
   return widget
 end
@@ -1131,6 +1210,7 @@ end
 function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, options)
   local tableStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   options = options or {}
+  local activeRoute = shell and type(shell._dibsPerfRoute) == "string" and shell._dibsPerfRoute or nil
   local rowSelectionEnabled = options.enableRowSelection == true or type(options.onRowClick) == "function"
   local rowContextEnabled = options.disableContextMenu ~= true
     and (type(options.contextMenu) == "function" or rowActions ~= nil or options.allowTableSort == true)
@@ -1184,6 +1264,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     }
   end
   local widths
+  local needsFluidWidthReflow = false
   local fluidOptions = {
     horizontalPadding = options.horizontalPadding or 0,
     scrollbarReserve = options.scrollbarReserve or 0,
@@ -1202,19 +1283,23 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     widths[index] = width
     definition.width, definition.minWidth = width, width
     definitions[index].width, definitions[index].minWidth = width, width
+    needsFluidWidthReflow = true
   end
   local actualWidth = 0
   for index in ipairs(definitions) do actualWidth = actualWidth + widths[index] end
 
   local function cellText(value, width, preserveText)
     local result = tostring(value or "")
-    if preserveText then return result end
+    if preserveText then return result, false end
     -- Let WoW render a complete hyperlink. Truncating the colour and Hitem
     -- escape sequence makes the visible cell look like raw `[Hitem:...]` text.
-    if result:find("|Hitem:", 1, true) then return result end
+    if result:find("|Hitem:", 1, true) then return result, false end
     local characters = math.max(8, math.floor((width or 100) / 7))
-    if Dibs.Midnight and Dibs.Midnight.Truncate then result = Dibs.Midnight.Truncate(result, characters) end
-    return result
+    local truncated = false
+    if Dibs.Midnight and Dibs.Midnight.Truncate then
+      result, truncated = Dibs.Midnight.Truncate(result, characters)
+    end
+    return result, truncated == true
   end
 
   local renderedGroups = {}
@@ -1312,6 +1397,7 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
       local column = definitions[index]
       local value = header and column.title or values[index]
       local cellAction = not header and options.cellAction and options.cellAction(values, index)
+      local cellWasTruncated = false
       local sortableHeader = header and column.sortable ~= false and not column.action
         and (options.onHeaderClick or options.allowTableSort ~= false)
       local cell
@@ -1331,9 +1417,13 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         cell = Adapter.AddButton(shell, rowGroup, cellAction.text or value, cellAction.callback, widths[index],
           Adapter.GetLayoutMetrics().buttonSizingSafetyMargin)
         Adapter.SetDisabled(cell, cellAction.disabled)
-        Adapter.AddTooltip(cell, cellAction.text, cellAction.tooltip)
+        if options.tooltipOnlyWhenTruncated ~= true or cellAction.tooltip then
+          Adapter.AddTooltip(cell, cellAction.text, cellAction.tooltip)
+        end
       else
-        cell = Adapter.AddLabel(shell, rowGroup, cellText(value, widths[index], column.wrap), false)
+        local displayText
+        displayText, cellWasTruncated = cellText(value, widths[index], column.wrap)
+        cell = Adapter.AddLabel(shell, rowGroup, displayText, false)
       end
       if cell then
         if cellAction then promoteActionWidth(index, cell._dibsRequiredWidth) end
@@ -1349,7 +1439,10 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         end
         if not cellAction then
           local tooltip = header and column.tooltip or (options.cellTooltip and options.cellTooltip(values, index) or column.tooltip)
-          if options.disableCellTooltips ~= true then Adapter.AddTooltip(cell, value, tooltip) end
+          if options.disableCellTooltips ~= true
+            and (options.tooltipOnlyWhenTruncated ~= true or tooltip or cellWasTruncated) then
+            Adapter.AddTooltip(cell, value, tooltip)
+          end
           if not header and record and (rowSelectionEnabled or rowContextEnabled) then
             attachGridScript(cell, "OnMouseUp", function(_, mouseButton)
               if mouseButton == "RightButton" then
@@ -1392,14 +1485,26 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
   end
 
   local headerTarget = options.headerParent or scroll
+  local timingLabel = type(options.timingLabel) == "string" and options.timingLabel
+    or activeRoute and (activeRoute .. "-table") or nil
+  local tableHeaderStartedAt = timingLabel and Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   addGridRow({}, nil, true, headerTarget)
+  if timingLabel and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("UI table", timingLabel .. "-header-cells", tableHeaderStartedAt)
+  end
   if #(rows or {}) == 0 and options.emptyText then
     Adapter.AddLabel(shell, scroll, options.emptyText, true)
   end
+  local tableRowsStartedAt = timingLabel and Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   for _, row in ipairs(rows or {}) do
     local action = rowActions and rowActions(row) or nil
     gridState.rows[#gridState.rows + 1] = row
     addGridRow(row, action, false)
+  end
+  if timingLabel and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("UI table", timingLabel .. "-body-rows", tableRowsStartedAt)
   end
   sortGrid = function(index, direction)
     local column = definitions[index]
@@ -1492,9 +1597,16 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
     end
     if not alreadyRegistered then shell._dibsResponsiveScrolls[#shell._dibsResponsiveScrolls + 1] = scroll end
   end
-  applyFluidWidth(frameWidth)
+  -- Initial cells already use these widths. Re-layout the complete table only
+  -- when a rendered action label forced a column wider during row creation.
+  local widthReflowStartedAt = timingLabel and Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  if needsFluidWidthReflow then applyFluidWidth(frameWidth) end
+  if timingLabel and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("UI table", timingLabel .. "-width-reflow", widthReflowStartedAt)
+  end
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-    Dibs.UIRenderStats.Record("UI table", "add-table", tableStartedAt)
+    Dibs.UIRenderStats.Record("UI table", activeRoute and (activeRoute .. "/add-table") or "add-table", tableStartedAt)
   end
   return scroll
 end
@@ -2082,8 +2194,20 @@ end
 -- standalone Officer window without maintaining a second copy of the rules.
 function Adapter.RenderOptionsGroup(shell, parent, group, context)
   if not shell or not parent or type(group) ~= "table" then return false end
-  local groupRenderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local renderStats = Dibs.UIRenderStats
+  local groupRenderStartedAt = renderStats and renderStats.Begin and renderStats.Begin()
+  local callbackGroup = type(group.name) == "string" and group.name or "dynamic-group"
   context = context or {}
+
+  local function beginCallbackTiming()
+    return renderStats and renderStats.Begin and renderStats.Begin(false)
+  end
+
+  local function recordCallbackTiming(phase, startedAt)
+    if startedAt and renderStats and renderStats.Record then
+      renderStats.Record("AceConfig callback", callbackGroup .. "/" .. phase, startedAt)
+    end
+  end
 
   -- TreeGroup's content frame is also responsible for the navigation layout.
   -- Keep each options page inside one stacked root so a long ScrollFrame cannot
@@ -2097,9 +2221,11 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
     page = parent
   end
 
-  local function evaluate(value, ...)
+  local function evaluate(value, phase, ...)
     if type(value) == "function" then
+      local startedAt = beginCallbackTiming()
       local ok, result = pcall(value, ...)
+      recordCallbackTiming(phase or "value", startedAt)
       if ok then return result end
       return nil
     end
@@ -2107,21 +2233,23 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   end
 
   local function optionName(option, key)
-    local value = evaluate(option and option.name)
+    local value = evaluate(option and option.name, "name")
     return tostring(value or key or "")
   end
 
   local function isHidden(option)
-    return evaluate(option and option.hidden) == true
+    return evaluate(option and option.hidden, "hidden") == true
   end
 
   local function isDisabled(option)
-    return evaluate(option and option.disabled) == true
+    return evaluate(option and option.disabled, "disabled") == true
   end
 
   local function getValue(option, key)
     if type(option and option.get) ~= "function" then return nil end
-    local ok, value = pcall(option.get, nil, key)
+    local startedAt = beginCallbackTiming()
+    local ok, value = pcall(option.get, nil, key, context.db)
+    recordCallbackTiming("getter", startedAt)
     if ok then return value end
     return nil
   end
@@ -2133,7 +2261,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   end
 
   local function valuesFor(option)
-    local values = evaluate(option and option.values)
+    local values = evaluate(option and option.values, "values")
     return type(values) == "table" and values or {}
   end
 
@@ -2192,7 +2320,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
       local option = args[key]
       local kind = tostring(option.type or "description")
       local label = optionName(option, key)
-      local description = evaluate(option.desc)
+      local description = evaluate(option.desc, "description")
 
       if kind == "group" then
         local groupTarget = target
@@ -2238,7 +2366,11 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
         end
       elseif kind == "color" then
         local ok, red, green, blue, alpha = false, 1, 1, 1, 1
-        if type(option.get) == "function" then ok, red, green, blue, alpha = pcall(option.get, nil) end
+        if type(option.get) == "function" then
+          local startedAt = beginCallbackTiming()
+          ok, red, green, blue, alpha = pcall(option.get, nil)
+          recordCallbackTiming("getter", startedAt)
+        end
         if not ok then red, green, blue, alpha = 1, 1, 1, 1 end
         local control = Adapter.AddColorPicker(shell, target, label, { red, green, blue, alpha }, function(r, g, b, a)
           if type(option.set) == "function" then pcall(option.set, nil, r, g, b, a) end
@@ -2307,7 +2439,7 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
     return withPausedLayout(target, function() renderChildren(args, target) end)
   end
 
-  local groupTitle = evaluate(group.name)
+  local groupTitle = evaluate(group.name, "group-name")
   if groupTitle and tostring(groupTitle) ~= "" and context.renderGroupTitle ~= false then
     Adapter.AddHeading(shell, page, tostring(groupTitle))
   end
@@ -2322,8 +2454,8 @@ function Adapter.RenderOptionsGroup(shell, parent, group, context)
   if context.onBeforeRender then context.onBeforeRender(target) end
   render(group.args, target)
   if context.onRendered then context.onRendered(target) end
-  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-    Dibs.UIRenderStats.Record("AceConfig", tostring(groupTitle or "unnamed"), groupRenderStartedAt)
+  if renderStats and renderStats.Record then
+    renderStats.Record("AceConfig", tostring(groupTitle or "unnamed"), groupRenderStartedAt)
   end
   return true
 end

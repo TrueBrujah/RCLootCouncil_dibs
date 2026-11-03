@@ -1,18 +1,18 @@
 # Research: Midnight UI and Safe Developer Sandbox
 
-## Decision 1: Keep Midnight as the only Dibs theme
+## Decision 1: Keep Midnight as one Dibs design system with selectable palettes
 
-Use one Dibs-owned Midnight token set and component vocabulary. External UI addons may
-supply presentation hints through optional adapters, but they do not define a second theme
-or alter Dibs behavior.
+Use one Dibs-owned Midnight token set and component vocabulary with a small catalog of
+selectable built-in color palettes. External UI addons may supply presentation hints
+through optional adapters, but they do not define replacement themes or alter Dibs behavior.
 
-**Rationale**: A single theme keeps screenshots, accessibility rules, fallback behavior,
-and test fixtures stable. It also honors the requirement that ElvUI, Tukui, EllesmereUI,
-and BenikUI-family integrations remain optional presentation adapters.
+**Rationale**: A shared design system keeps layout, accessibility rules, and fallback
+behavior stable while palettes let players choose colors without screen-specific styling.
+ElvUI, Tukui, EllesmereUI, and BenikUI-family integrations remain optional presentation adapters.
 
 **Alternatives considered**:
 
-- Build a full theme per external UI addon: rejected because it multiplies UI behavior and
+- Build a full design system per external UI addon: rejected because it multiplies UI behavior and
   makes fallback and accessibility validation inconsistent.
 - Let each screen style itself: rejected because the current AceGUI windows need shared
   sizing, state, and refresh conventions.

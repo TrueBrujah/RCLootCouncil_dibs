@@ -86,6 +86,27 @@ describe("B02b operational policy", function()
     assert_equal("OFFICER", synced.officerChannel)
   end)
 
+  it("reads only the adopted announcement channels from a supplied guild DB", function()
+    local dibs = load(); adoptGovernance(dibs)
+    assert_true(dibs.OperationalPolicy.AdoptInitial(nil, values(dibs)))
+    assert_not_nil(dibs.PreDibs.SetAnnouncementChannels("RAID", "OFFICER", nil))
+    local db = dibs.GetDB()
+    local getDB = dibs.GetDB
+    dibs.GetDB = function() error("scoped policy reads should reuse the supplied guild DB") end
+
+    local ok, adopted, channels = pcall(function()
+      return dibs.OperationalPolicy.IsAdopted(db), dibs.OperationalPolicy.GetAnnouncementChannels(db)
+    end)
+
+    dibs.GetDB = getDB
+    assert_true(ok, tostring(adopted))
+    assert_true(adopted)
+    assert_equal("RAID", channels.publicChannel)
+    assert_equal("OFFICER", channels.officerChannel)
+    channels.publicChannel = "NONE"
+    assert_equal("RAID", dibs.OperationalPolicy.GetAnnouncementChannels(db).publicChannel)
+  end)
+
   it("accepts an authorized officer record but rejects a member and local settings as authority", function()
     local dibs = load(); adoptGovernance(dibs)
     assert_true(dibs.OperationalPolicy.AdoptInitial(nil, values(dibs)))

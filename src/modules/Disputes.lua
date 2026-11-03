@@ -163,8 +163,8 @@ local function currentScope()
   return tostring(Dibs.currentGuildKey or (Dibs.GetGuildKey and Dibs.GetGuildKey()) or "unknown-scope")
 end
 
-local function beginDisputesUITiming()
-  if Dibs.UIRenderStats and Dibs.UIRenderStats.Begin then return Dibs.UIRenderStats.Begin() end
+local function beginDisputesUITiming(trackHeap)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Begin then return Dibs.UIRenderStats.Begin(trackHeap) end
 end
 
 local function recordDisputesUITiming(name, startedAt)
@@ -660,16 +660,40 @@ end
 ---@doc.help-key UI_HELP_REVIEW_REQUESTS
 ---@doc.label-key DOC_REVIEW_REQUESTS_LABEL
 function Disputes.ListForOfficer(actor, options)
+  local startedAt = beginDisputesUITiming(false)
   options = type(options) == "table" and options or {}
+  local requestedPageSize = tonumber(options.pageSize)
+  local paginated = requestedPageSize and requestedPageSize > 0
+  local pageSize = paginated and math.max(1, math.min(100, math.floor(requestedPageSize))) or nil
+  local requestedPage = paginated and math.max(1, math.floor(tonumber(options.page) or 1)) or nil
   if Dibs.OperationalPolicy and Dibs.OperationalPolicy.RequireModuleEnabled then
-    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests")
-    if not enabled then return {}, reason end
+    local policyStartedAt = beginDisputesUITiming(false)
+    local enabled, reason = Dibs.OperationalPolicy.RequireModuleEnabled("requests", options.db)
+    recordDisputesUITiming("officer-list-module-policy", policyStartedAt)
+    if not enabled then
+      recordDisputesUITiming("officer-list-preflight", startedAt)
+      return {}, reason
+    end
   end
-  if not isOfficer(actor) then return {}, "GUILD_ADMIN_REQUIRED" end
-  local state = ensureState()
+  local authorizationStartedAt = beginDisputesUITiming(false)
+  local authorized = isOfficer(actor)
+  recordDisputesUITiming("officer-list-authorization", authorizationStartedAt)
+  if not authorized then
+    recordDisputesUITiming("officer-list-preflight", startedAt)
+    return {}, "GUILD_ADMIN_REQUIRED"
+  end
+  local stateStartedAt = beginDisputesUITiming(false)
+  local state = ensureState(options.db)
+  recordDisputesUITiming("officer-list-state", stateStartedAt)
+  recordDisputesUITiming("officer-list-preflight", startedAt)
   local result = {}
+  local tail = paginated and {} or nil
+  local totalCount = 0
+  local firstIndex = paginated and ((requestedPage - 1) * pageSize + 1) or nil
+  local lastIndex = paginated and (firstIndex + pageSize - 1) or nil
   local status = options.status and normalizeStatus(options.status) or nil
   local query = string.lower(trim(options.query))
+  startedAt = beginDisputesUITiming(false)
   for _, requestId in ipairs(state.order or {}) do
     local request = state.requests[requestId]
     local filterOk = request and (
@@ -681,17 +705,48 @@ function Disputes.ListForOfficer(actor, options)
       or (options.filter == "resolved" and (request.status == Disputes.STATUSES.RESOLVED or request.status == Disputes.STATUSES.REJECTED or request.status == Disputes.STATUSES.CLOSED))
       or (options.filter == "archived" and request.status == Disputes.STATUSES.ARCHIVED))
     if request and filterOk and request.guildScope == currentScope() and (not status or request.status == status) then
-      local evidence = primaryEvidence(request)
-      local haystack = string.lower(table.concat({ request.player and request.player.name or "", request.categoryLabel or "", request.status or "", request.note or "", evidence and evidence.item or "" }, " "))
-      for _, item in ipairs(request.evidence or {}) do
-        haystack = haystack .. " " .. string.lower(table.concat({ tostring(item.item or ""), tostring(item.transactionRef or ""), tostring(item.awardRef or ""), tostring(item.historyRef or "") }, " "))
+      local matchesQuery = true
+      if query ~= "" then
+        local evidence = primaryEvidence(request)
+        local haystack = string.lower(table.concat({ request.player and request.player.name or "", request.categoryLabel or "", request.status or "", request.note or "", evidence and evidence.item or "" }, " "))
+        for _, item in ipairs(request.evidence or {}) do
+          haystack = haystack .. " " .. string.lower(table.concat({ tostring(item.item or ""), tostring(item.transactionRef or ""), tostring(item.awardRef or ""), tostring(item.historyRef or "") }, " "))
+        end
+        for _, reply in ipairs(request.replies or {}) do haystack = haystack .. " " .. string.lower(tostring(reply.boundedText or "")) end
+        for _, event in ipairs(request.timeline or {}) do haystack = haystack .. " " .. string.lower(tostring(event.reason or "")) end
+        matchesQuery = string.find(haystack, query, 1, true) ~= nil
       end
-      for _, reply in ipairs(request.replies or {}) do haystack = haystack .. " " .. string.lower(tostring(reply.boundedText or "")) end
-      for _, event in ipairs(request.timeline or {}) do haystack = haystack .. " " .. string.lower(tostring(event.reason or "")) end
-      if query == "" or string.find(haystack, query, 1, true) then table.insert(result, Disputes.BuildOfficerView(request)) end
+      if matchesQuery then
+        totalCount = totalCount + 1
+        if not paginated or (totalCount >= firstIndex and totalCount <= lastIndex) then
+          result[#result + 1] = request
+        end
+        if paginated then tail[((totalCount - 1) % pageSize) + 1] = request end
+      end
     end
   end
-  return result
+  recordDisputesUITiming("officer-list-filter-scan", startedAt)
+  if not paginated then
+    startedAt = beginDisputesUITiming(false)
+    for index, request in ipairs(result) do result[index] = Disputes.BuildOfficerView(request) end
+    recordDisputesUITiming("officer-list-view-projection", startedAt)
+    return result
+  end
+
+  local totalPages = math.max(1, math.ceil(totalCount / pageSize))
+  local actualPage = math.min(requestedPage, totalPages)
+  if actualPage ~= requestedPage then
+    result = {}
+    local startIndex = math.max(1, ((actualPage - 1) * pageSize) + 1)
+    for index = startIndex, totalCount do
+      local request = tail[((index - 1) % pageSize) + 1]
+      if request then result[#result + 1] = request end
+    end
+  end
+  startedAt = beginDisputesUITiming(false)
+  for index, request in ipairs(result) do result[index] = Disputes.BuildOfficerView(request) end
+  recordDisputesUITiming("officer-list-view-projection", startedAt)
+  return result, nil, totalCount, actualPage
 end
 
 function Disputes.ListRequests(actor, options)

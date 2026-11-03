@@ -12,8 +12,8 @@ local Dibs = _G.Dibs
 Dibs.IndependentRaid = Dibs.IndependentRaid or {}
 local IndependentRaid = Dibs.IndependentRaid
 
-local function ensureState()
-  local db = Dibs.GetDB and Dibs.GetDB() or {}
+local function ensureState(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or (Dibs.GetDB and Dibs.GetDB()) or {}
   db.independentSessions = db.independentSessions or {}
   return db
 end
@@ -56,8 +56,7 @@ function IndependentRaid.StartSession(sessionName, startingPoints)
   return { ok = true, sessionId = sessionId }
 end
 
-function IndependentRaid.GetActiveSessionId()
-  local db = ensureState()
+local function activeSessionId(db)
   local sessionId = db.activeIndependentSessionId
   if not sessionId then return nil end
   local session = db.independentSessions[sessionId]
@@ -67,14 +66,18 @@ function IndependentRaid.GetActiveSessionId()
   return nil
 end
 
-function IndependentRaid.GetActiveSession()
-  local db = ensureState()
-  local sessionId = IndependentRaid.GetActiveSessionId()
+function IndependentRaid.GetActiveSessionId(dbOverride)
+  return activeSessionId(ensureState(dbOverride))
+end
+
+function IndependentRaid.GetActiveSession(dbOverride)
+  local db = ensureState(dbOverride)
+  local sessionId = activeSessionId(db)
   return sessionId and db.independentSessions[sessionId] or nil
 end
 
-function IndependentRaid.IsSessionActive()
-  return IndependentRaid.GetActiveSession() ~= nil
+function IndependentRaid.IsSessionActive(dbOverride)
+  return IndependentRaid.GetActiveSession(dbOverride) ~= nil
 end
 
 function IndependentRaid.ConcludeSession(sessionId)
