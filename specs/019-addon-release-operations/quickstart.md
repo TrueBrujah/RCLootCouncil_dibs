@@ -19,6 +19,7 @@ Use this checklist for every release. The detailed workflow and package layout a
 ## Beta Release
 
 - [ ] Push validated addon changes under `src/` or a root `.pkgmeta` change to `dev`; documentation/workflow-only pushes do not trigger the beta workflow.
+- [ ] Update `docs/CURSEFORGE-CHANGELOG.txt` for the TOC version; its first line must match `RCLootCouncil_dibs <VERSION>`.
 - [ ] In Actions, confirm **Run addon test suite** and **Build addon package** succeed.
 - [ ] Confirm **Tag tested dev build** succeeds and the generated `v<VERSION>-dev-beta.<RUN_NUMBER>` tag points to the tested commit. The `beta` substring is required for CurseForge's native webhook to classify the file as Beta; do not push a bare `-dev` tag.
 - [ ] Open the GitHub prerelease and verify the addon ZIP and `.sha256` checksum are present.
@@ -27,7 +28,7 @@ Use this checklist for every release. The detailed workflow and package layout a
 ## Stable Release
 
 - [ ] Merge validated `dev` into `main` through a reviewed pull request.
-- [ ] Verify the TOC version and explicitly create/push the matching stable `v<VERSION>` tag.
+- [ ] Verify the TOC version, matching `CURSEFORGE-CHANGELOG.txt` header, and explicitly create/push the stable `v<VERSION>` tag.
 - [ ] Verify the normal GitHub release contains the addon ZIP and checksum.
 - [ ] Verify the file appears on CurseForge in the stable channel.
 

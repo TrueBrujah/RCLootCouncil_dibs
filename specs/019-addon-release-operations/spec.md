@@ -22,7 +22,7 @@ A maintainer pushes validated work to the development branch and can verify that
 
 1. **Given** tests or package creation fail, **When** the beta workflow completes, **Then** it does not create or push a beta tag.
 2. **Given** tests and package creation pass, **When** the beta workflow completes, **Then** one unique beta tag points to the tested commit and the GitHub prerelease contains the package ZIP and checksum.
-3. **Given** the CurseForge project is approved and its repository integration is active, **When** a `v<VERSION>-dev-beta.<N>` tag is published, **Then** the matching file is classified as Beta on CurseForge.
+3. **Given** the CurseForge project is approved and its repository integration is active, **When** a `v<VERSION>-dev-beta.<N>` tag is published, **Then** the matching file is classified as Beta on CurseForge and carries the version-matched curated release notes.
 
 ### User Story 2 - Publish an Explicit Stable Release (Priority: P1)
 
@@ -75,6 +75,7 @@ A project owner submits a complete addon listing and understands that moderator 
 - **FR-008**: The procedure MUST warn maintainers not to publish RC tags until CurseForge's RC channel behavior is configured or excluded.
 - **FR-009**: A maintainer MUST be able to verify the final tag, tested commit, GitHub package, and CurseForge file/channel from the release checklist.
 - **FR-010**: Development beta tags MUST contain `beta` (for example `v<VERSION>-dev-beta.<N>`) so CurseForge's native packager classifies them as Beta; bare `-dev` tags MUST NOT be pushed while the webhook is active.
+- **FR-011**: Each Beta or stable tagged package MUST use a concise curated CurseForge changelog whose version matches the addon's TOC version; historical engineering notes MUST remain separate from the published file notes.
 
 ### Key Entities
 

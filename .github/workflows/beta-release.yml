@@ -7,6 +7,7 @@ on:
     paths:
       - 'src/**'
       - '.pkgmeta'
+      - 'docs/CURSEFORGE-CHANGELOG.txt'
 
 permissions:
   contents: read
@@ -20,6 +21,18 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+
+      - name: Verify CurseForge release notes match addon version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^## Version:[[:space:]]*//p' src/RCLootCouncil_dibs.toc | head -n 1 | tr -d '\r')"
+          notes_version="$(head -n 1 docs/CURSEFORGE-CHANGELOG.txt | tr -d '\r')"
+          expected="RCLootCouncil_dibs $version"
+          if [[ "$notes_version" != "$expected" ]]; then
+            echo "CurseForge notes header '$notes_version' must match '$expected'." >&2
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v7

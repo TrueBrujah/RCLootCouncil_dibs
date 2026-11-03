@@ -10,6 +10,8 @@ CurseForge's native packager/webhook publishes packages when it receives Git tag
 
 CurseForge marks tags containing `alpha` as Alpha and tags containing `beta` as Beta; other tag names are marked as Release. Keep local development checkpoints on the `dev` branch and identify the loaded code with `/dibs build`; do not push a bare `v<VERSION>-dev` tag while the CurseForge repository webhook is active. The beta workflow tags tested builds as `v<VERSION>-dev-beta.<RUN_NUMBER>`, which keeps the development label and lets CurseForge recognize the Beta channel. The manual-only `Manual development tag check` workflow can inspect an existing development tag without publishing a CurseForge file. If a bare `-dev` file was already published as Release, change its Release Type to Beta in the CurseForge Author Dashboard (Projects > Files > Edit file), or archive it if it should no longer be downloadable.
 
+CurseForge files use the short, version-specific `docs/CURSEFORGE-CHANGELOG.txt` selected by `.pkgmeta`. Update its highlights and compatibility notes for each addon version before publishing a Beta or stable tag; its first line must be `RCLootCouncil_dibs <TOC version>`. The Beta workflow validates this header before creating a tag. Keep the full historical engineering log in `CHANGELOG.md`, which remains separate from the published file notes.
+
 For the repeatable pre-release, approval, beta, and stable release checklist, see the [Speckit release quickstart](../../specs/019-addon-release-operations/quickstart.md).
 
 ## Development beta
