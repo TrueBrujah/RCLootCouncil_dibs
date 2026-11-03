@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   release:
+    # Development tags are source checkpoints, not distributable addon packages.
+    if: ${{ !endsWith(github.ref_name, '-dev') }}
     name: Publish tagged WoW addon release
     runs-on: ubuntu-latest
     permissions:

@@ -103,6 +103,101 @@ describe("opt-in UI render timing", function()
     dibs.UIRenderStats.SetEnabled(false)
   end)
 
+  it("supports CPU-only timing for high-frequency counters without sampling the global heap", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local timer, collect = _G.debugprofilestop, _G.collectgarbage
+    register_reset(function()
+      _G.debugprofilestop = timer
+      _G.collectgarbage = collect
+    end)
+    local clock, heapReads = 0, 0
+    _G.debugprofilestop = function() clock = clock + 3; return clock end
+    _G.collectgarbage = function(option)
+      assert_equal("count", option)
+      heapReads = heapReads + 1
+      return 128
+    end
+
+    dibs.UIRenderStats.SetEnabled(true)
+    local startedAt = dibs.UIRenderStats.Begin(false)
+    assert_equal(0, heapReads)
+    assert_true(dibs.UIRenderStats.Record("UI widget", "create", startedAt))
+    assert_equal(0, heapReads)
+    local row = dibs.UIRenderStats.GetReport().pages[1]
+    assert_equal(3, row.lastMs)
+    assert_equal(0, row.heapSampleCount)
+
+    local begin = dibs.UIRenderStats.Begin
+    local requestedHeapSampling
+    dibs.UIRenderStats.Begin = function(trackHeap)
+      requestedHeapSampling = trackHeap
+      return begin(trackHeap)
+    end
+    local shell = dibs.AceGUI.CreateWindow("CPU-only widget timing", 400, 300)
+    dibs.AceGUI.Create(shell, "SimpleGroup", shell.window)
+    dibs.UIRenderStats.Begin = begin
+    assert_equal(false, requestedHeapSampling,
+      "per-widget timing should not trigger a global heap query")
+    dibs.UIRenderStats.SetEnabled(false)
+  end)
+
+  it("skips the per-widget Record call entirely when render timing is disabled", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("Disabled widget timing", 400, 300)
+    dibs.UIRenderStats.SetEnabled(false)
+    local record = dibs.UIRenderStats.Record
+    dibs.UIRenderStats.Record = function()
+      error("disabled widget timing must not call Record")
+    end
+
+    local ok, widget = pcall(dibs.AceGUI.Create, shell, "Label", shell.window)
+    dibs.UIRenderStats.Record = record
+
+    assert_true(ok, tostring(widget))
+    assert_not_nil(widget)
+  end)
+
+  it("records dynamic AceConfig callback cost separately by option phase", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local timer = _G.debugprofilestop
+    register_reset(function() _G.debugprofilestop = timer end)
+    local clock = 0
+    _G.debugprofilestop = function()
+      clock = clock + 1
+      return clock
+    end
+    local shell = dibs.AceGUI.CreateWindow("AceConfig callback timing", 500, 350)
+    dibs.UIRenderStats.SetEnabled(true)
+    local options = {
+      name = "Callback probe",
+      args = {
+        enabled = {
+          type = "toggle",
+          name = function() return "Enabled" end,
+          desc = function() return "A measured description." end,
+          hidden = function() return false end,
+          disabled = function() return false end,
+          get = function() return true end,
+          set = function() end,
+        },
+      },
+    }
+    assert_true(dibs.AceGUI.RenderOptionsGroup(shell, shell.window, options, {
+      scroll = false, renderGroupTitle = false,
+    }))
+
+    local measured = {}
+    for _, row in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if row.kind == "AceConfig callback" then measured[row.page] = row end
+    end
+    dibs.UIRenderStats.SetEnabled(false)
+    assert_true(measured["Callback probe/hidden"] ~= nil)
+    assert_true(measured["Callback probe/name"] ~= nil)
+    assert_true(measured["Callback probe/description"] ~= nil)
+    assert_true(measured["Callback probe/disabled"] ~= nil)
+    assert_true(measured["Callback probe/getter"] ~= nil)
+  end)
+
   it("builds a complete copyable report for a selected category and opens from the slash command", function()
     local _, dibs = loader.load({ withAce3 = true })
     local timer = _G.debugprofilestop
@@ -148,17 +243,33 @@ describe("opt-in UI render timing", function()
     dibs.HandleSlashCommand("perf on")
 
     local originalPagedView = dibs.OfficerUI.GetPagedView
+    local originalResolveTokens = dibs.EnvironmentAdapters.ResolveTokens
+    local originalBeginPresentationContext = dibs.AceGUI.BeginPresentationContext
     local rankRouteUsedLedgerView = false
+    local tokenResolutions, presentationContextCalls = 0, 0
     dibs.OfficerUI.GetPagedView = function(view, ...)
       if view == "ranks" then rankRouteUsedLedgerView = true end
       return originalPagedView(view, ...)
     end
     local officer = dibs.OfficerUI.CreateWindow("overview")
+    dibs.EnvironmentAdapters.ResolveTokens = function(...)
+      tokenResolutions = tokenResolutions + 1
+      return originalResolveTokens(...)
+    end
+    dibs.AceGUI.BeginPresentationContext = function(...)
+      presentationContextCalls = presentationContextCalls + 1
+      return originalBeginPresentationContext(...)
+    end
     officer:ActivateRoute("ranks")
+    dibs.EnvironmentAdapters.ResolveTokens = originalResolveTokens
+    dibs.AceGUI.BeginPresentationContext = originalBeginPresentationContext
     officer:ActivateRoute("integration")
     dibs.OfficerUI.GetPagedView = originalPagedView
     assert_false(rankRouteUsedLedgerView,
       "Rank Rules route should render rank configuration instead of the generic player ledger")
+    assert_equal(1, presentationContextCalls, "the Officer route should create one presentation context")
+    assert_equal(1, tokenResolutions,
+      "an Officer page render should build the theme token snapshot once and share it across its widgets")
     local player = dibs.PlayerUI.Show()
     assert_not_nil(player)
     dibs.PlayerUI.GetSummary(nil, nil, {
@@ -212,10 +323,22 @@ describe("opt-in UI render timing", function()
       "Player page widget release should be timed separately")
     assert_true(byKey["Player UI:layout-flush"] ~= nil,
       "Player page layout flush should be timed separately")
-    assert_true(byKey["UI table:add-table"] ~= nil,
-      "table widget construction should be timed separately")
-    assert_true(byKey["UI widget:create"] ~= nil,
-      "individual AceGUI widget construction should be timed separately")
+    local tableRoute
+    for _, row in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if row.kind == "UI table" and row.page:match("/add%-table$") then
+        tableRoute = row.page:match("^(.-)/add%-table$")
+        break
+      end
+    end
+    assert_not_nil(tableRoute, "table construction should be attributed to its active UI route")
+    assert_true(byKey["UI table:" .. tableRoute .. "-table-header-cells"] ~= nil,
+      "table header construction should be attributed to the route that built it")
+    assert_true(byKey["UI widget:Officer/overview"] ~= nil,
+      "Officer widget construction should be attributed to its active page")
+    assert_true(byKey["UI theme:render-token-context"] ~= nil,
+      "Officer page rendering should measure its single theme-token snapshot")
+    assert_true(byKey["UI widget:Player/my-dibs"] ~= nil,
+      "Player widget construction should be attributed to its active page")
     assert_true(byKey["Officer data:dashboard"] ~= nil,
       "Officer dashboard projection should be timed separately")
     assert_true(byKey["Officer data:season-statistics"] ~= nil,

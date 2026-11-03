@@ -199,9 +199,9 @@ end
 
 -- Read-only roster enumeration reusing the existing rank-threshold check;
 -- introduces no second authorization model.
-function Dibs.Permissions.GetAuthorizedOfficers()
+function Dibs.Permissions.GetAuthorizedOfficers(dbOverride)
   local results = {}
-  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  local db = type(dbOverride) == "table" and dbOverride or (Dibs.GetDB and Dibs.GetDB() or {})
   local settings = db.settings or {}
   local members
   local identity = Dibs.Identity

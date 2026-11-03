@@ -87,8 +87,11 @@ local function describe(definition, required)
 end
 
 -- The registry keeps a stable, sorted view of every known feature.
-function Registry.ListFeatures()
-  local required, optional = definitions()
+function Registry.ListFeatures(requiredDefinitions, optionalDefinitions)
+  local required, optional = requiredDefinitions, optionalDefinitions
+  if type(required) ~= "table" or type(optional) ~= "table" then
+    required, optional = definitions()
+  end
   local result = {}
   for _, definition in ipairs(required) do
     local entry = describe(definition, true)
@@ -171,6 +174,71 @@ function Registry.GetEffectiveState(featureId)
   local state = resolve(featureId)
   if not state.known then return nil, REASON.UNKNOWN_FEATURE end
   return state
+end
+
+-- Resolve every feature against one policy/definition snapshot. Officer pages
+-- display many states together, so avoid re-copying the catalogue and policy
+-- values for each row. Existing single-feature callers keep using resolve().
+function Registry.GetEffectiveStates(moduleValues, requiredDefinitions, optionalDefinitions)
+  if type(requiredDefinitions) ~= "table" or type(optionalDefinitions) ~= "table" then
+    requiredDefinitions, optionalDefinitions = definitions()
+  end
+  if type(moduleValues) ~= "table" then
+    local policy = policyModule()
+    moduleValues = policy and policy.GetModuleValues and policy.GetModuleValues() or {}
+  end
+
+  local byId, requiredById = {}, {}
+  for _, definition in ipairs(requiredDefinitions) do
+    if type(definition) == "table" and type(definition.key) == "string" then
+      byId[definition.key], requiredById[definition.key] = definition, true
+    end
+  end
+  for _, definition in ipairs(optionalDefinitions) do
+    if type(definition) == "table" and type(definition.key) == "string" then
+      byId[definition.key] = definition
+    end
+  end
+
+  local states, resolving = {}, {}
+  local function resolveSnapshot(featureId)
+    if states[featureId] then return states[featureId] end
+    local definition = byId[featureId]
+    if not definition then return nil end
+    if resolving[featureId] then
+      return { id = featureId, known = false, enabled = false, reasonCode = REASON.UNKNOWN_FEATURE }
+    end
+    resolving[featureId] = true
+    local required = requiredById[featureId] == true
+    local state = {
+      id = featureId, known = true, enabled = false, required = required,
+      alwaysEnabled = definition.alwaysEnabled, label = definition.label,
+      canDisable = (not required) and definition.configurable ~= false
+        and definition.alwaysEnabled ~= true and definition.defaultEnabled ~= false,
+    }
+    states[featureId] = state
+    if required or definition.alwaysEnabled then
+      state.enabled, state.locked = true, true
+    elseif moduleValues[featureId] ~= true then
+      state.reasonCode = REASON.DISABLED_BY_POLICY
+    elseif definition.requires then
+      local dependency = resolveSnapshot(definition.requires)
+      if not dependency or not dependency.enabled then
+        state.reasonCode = REASON.DISABLED_BY_DEPENDENCY
+        state.dependency = definition.requires
+        state.dependencyReasonCode = dependency and dependency.reasonCode or REASON.UNKNOWN_FEATURE
+      else
+        state.enabled = true
+      end
+    else
+      state.enabled = true
+    end
+    resolving[featureId] = nil
+    return state
+  end
+
+  for featureId in pairs(byId) do resolveSnapshot(featureId) end
+  return states
 end
 
 -- Convenience boolean query. Unknown features fail closed.

@@ -218,7 +218,7 @@ describe("Guild sync scale audit", function()
     assert_equal(59, page.totalMatches)
     assert_equal(3, page.totalPages)
     assert_equal(2, page.page)
-    assert_true(resolveCalls <= 21, "member detail resolution should be limited to visible peers")
+    assert_equal(1, resolveCalls, "the shared roster snapshot should only resolve the local identity")
     for _, peer in ipairs(peers) do
       assert_true(string.lower(peer.playerName):find("audit", 1, true) ~= nil)
     end

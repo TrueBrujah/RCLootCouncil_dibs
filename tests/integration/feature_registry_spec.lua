@@ -63,6 +63,30 @@ describe("Feature registry catalogue", function()
     end
   end)
 
+  it("builds the catalogue from supplied definitions without rereading policy", function()
+    local dibs = load()
+    local required = dibs.OperationalPolicy.GetCoreModuleDefinitions()
+    local optional = dibs.OperationalPolicy.GetModuleDefinitions()
+    local expected = dibs.FeatureRegistry.ListFeatures()
+    local originalCore, originalOptional = dibs.OperationalPolicy.GetCoreModuleDefinitions,
+      dibs.OperationalPolicy.GetModuleDefinitions
+    dibs.OperationalPolicy.GetCoreModuleDefinitions = function() error("unexpected core definition read") end
+    dibs.OperationalPolicy.GetModuleDefinitions = function() error("unexpected optional definition read") end
+
+    local ok, actual = pcall(dibs.FeatureRegistry.ListFeatures, required, optional)
+
+    dibs.OperationalPolicy.GetCoreModuleDefinitions = originalCore
+    dibs.OperationalPolicy.GetModuleDefinitions = originalOptional
+    assert_true(ok, tostring(actual))
+    assert_equal(#expected, #actual)
+    for index, entry in ipairs(expected) do
+      assert_equal(entry.id, actual[index].id)
+      assert_equal(entry.label, actual[index].label)
+      assert_equal(entry.required, actual[index].required)
+      assert_equal(entry.category, actual[index].category)
+    end
+  end)
+
   it("fails closed for an unknown feature identifier", function()
     local dibs = load()
     local enabled, reason = dibs.FeatureRegistry.IsEnabled("notARealFeature")
@@ -86,6 +110,27 @@ describe("Feature registry catalogue", function()
 end)
 
 describe("Feature registry effective state", function()
+  it("resolves all feature states from one supplied snapshot with single-read parity", function()
+    local dibs = load(); adopt(dibs)
+    local changed, reason = dibs.OperationalPolicy.ChangeModules({ requests = false }, nil)
+    assert_true(changed, tostring(reason))
+    local required = dibs.OperationalPolicy.GetCoreModuleDefinitions()
+    local optional = dibs.OperationalPolicy.GetModuleDefinitions()
+    local values = dibs.OperationalPolicy.GetModuleValues()
+    local batch = dibs.FeatureRegistry.GetEffectiveStates(values, required, optional)
+    for _, feature in ipairs(dibs.FeatureRegistry.ListFeatures()) do
+      local expected = dibs.FeatureRegistry.GetEffectiveState(feature.id)
+      local actual = batch[feature.id]
+      assert_not_nil(actual, "missing batch state for " .. feature.id)
+      assert_equal(expected.enabled, actual.enabled, feature.id .. " enabled state")
+      assert_equal(expected.reasonCode, actual.reasonCode, feature.id .. " reason")
+      assert_equal(expected.dependency, actual.dependency, feature.id .. " dependency")
+      assert_equal(expected.dependencyReasonCode, actual.dependencyReasonCode, feature.id .. " dependency reason")
+    end
+    assert_false(batch.requests.enabled)
+    assert_equal("FEATURE_DISABLED_BY_POLICY", batch.requests.reasonCode)
+  end)
+
   it("treats an absent policy decision as the catalogue default", function()
     local dibs = load()
     -- Before any adoption the policy has no record, so the catalogue default

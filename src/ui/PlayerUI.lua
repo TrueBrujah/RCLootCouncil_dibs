@@ -1966,7 +1966,11 @@ local function createAceWindow()
 
   frame.Refresh = function(self)
     if not contentHost then return end
+    shell._dibsPerfRoute = "Player/" .. tostring(self.playerTab or "unknown")
     local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    if Dibs.Midnight and Dibs.Midnight.ApplyToFrame and shell.frame then
+      Dibs.Midnight.ApplyToFrame(shell.frame, Dibs.Midnight.GetTokens())
+    end
     local clearStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
     Dibs.AceGUI.Clear(contentHost)
     if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
@@ -2015,6 +2019,32 @@ local function createAceWindow()
       Dibs.AceGUI.AddHeading(shell, page.header,
         helpText.MINIMAP_SETTINGS_TITLE or "Player preferences",
         helpText.MINIMAP_SETTINGS_DESCRIPTION or "Personal display preferences for this character.")
+      local appearanceSection = Dibs.AceGUI.AddSection(shell, page.header,
+        helpText.PLAYER_APPEARANCE_SECTION or "Appearance",
+        helpText.PLAYER_APPEARANCE_HELP or "Choose a local Dibs color palette. This only changes how the addon is displayed for this character.")
+      local themeCatalog = Dibs.Midnight and Dibs.Midnight.GetThemeCatalog and Dibs.Midnight.GetThemeCatalog() or {}
+      local themeValues = {}
+      for _, theme in ipairs(themeCatalog) do
+        if type(theme) == "table" and type(theme.id) == "string" and type(theme.name) == "string" then
+          themeValues[theme.id] = theme.name
+        end
+      end
+      local profile = Dibs.Midnight and Dibs.Midnight.GetProfile and Dibs.Midnight.GetProfile() or {}
+      local selectedTheme = profile.theme or "MIDNIGHT"
+      self.themeSelector = Dibs.AceGUI.AddDropdown(shell, appearanceSection,
+        helpText.PLAYER_APPEARANCE_THEME or "Color theme", themeValues, function(themeID)
+          if Dibs.Midnight and Dibs.Midnight.SetProfile and Dibs.Midnight.SetProfile({ theme = themeID }) then
+            self:Refresh()
+            local officerFrame = _G.DibsOfficerFrame
+            local officerShell = officerFrame and officerFrame.dibsAceGUIShell
+            if officerShell and officerShell._dibsActive == true and type(officerFrame.Refresh) == "function"
+              and (not officerFrame.IsShown or officerFrame:IsShown()) then
+              Dibs.Midnight.ApplyToFrame(officerShell.frame, Dibs.Midnight.GetTokens())
+              officerFrame:Refresh()
+            end
+          end
+        end, 360)
+      if self.themeSelector then Dibs.AceGUI.SetValue(self.themeSelector, selectedTheme) end
       local section = Dibs.AceGUI.AddSection(shell, page.header,
         helpText.MINIMAP_SETTINGS_SECTION or "Minimap",
         helpText.MINIMAP_SETTINGS_HELP or "Choose whether the Dibs shortcut appears beside the minimap, and adjust its size.")

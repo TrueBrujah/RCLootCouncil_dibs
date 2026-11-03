@@ -65,14 +65,35 @@ describe("Private request delivery between simulated production clients", functi
     local world = clients.new()
     local dibs = world:Activate(PLAYER)
     local original = dibs.RequestDelivery.CheckReminders
+    local originalDebugProfileStop = _G.debugprofilestop
+    local profileTicks = 0
     local scans = 0
+    _G.debugprofilestop = function()
+      profileTicks = profileTicks + 1
+      return profileTicks
+    end
     dibs.RequestDelivery.CheckReminders = function(...)
       scans = scans + 1
       return original(...)
     end
 
+    dibs.UIRenderStats.Reset()
+    dibs.UIRenderStats.SetEnabled(true)
     dibs.RequestDelivery.Pump(true)
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = originalDebugProfileStop
     assert_equal(0, scans)
+    local measured = {}
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "RequestDelivery data" then measured[entry.page] = true end
+    end
+    assert_true(measured["pump-enabled-check"])
+    assert_true(measured["pump-enabled-developer-mode"])
+    assert_true(measured["pump-enabled-independent-raid"])
+    assert_true(measured["pump-enabled-module-policy"])
+    assert_true(measured["pump-coordinator-resolution"])
+    assert_true(measured["pump-snapshot-refresh"])
+    assert_true(measured["pump-pending-outbox"])
     dibs.RequestDelivery.Pump()
     assert_equal(1, scans)
     dibs.RequestDelivery.CheckReminders = original

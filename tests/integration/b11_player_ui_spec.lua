@@ -316,6 +316,24 @@ describe("B11c Player UI", function()
     end
   end)
 
+  it("saves a selected color theme from Player Preferences and refreshes the UI", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("preferences")
+    local selector = frame.themeSelector
+    assert_not_nil(selector)
+    assert_equal("MIDNIGHT", selector.value)
+    assert_equal("Fel Green", selector.list.FEL_GREEN)
+
+    selector.callbacks.OnValueChanged(selector, "OnValueChanged", "FEL_GREEN")
+
+    assert_equal("FEL_GREEN", dibs.Midnight.GetTokens().theme)
+    assert_equal("FEL_GREEN", _G.RCLootCouncil_dibsLocalDB.presentation.profile.theme)
+    assert_not_nil(frame.themeSelector, "refresh should keep the theme selector on Preferences")
+    assert_equal(0.025, frame.dibsAceGUIShell.frame._backdropColor[1],
+      "the refreshed Player window should use the selected palette surface")
+  end)
+
   it("builds a history projection only for the History page", function()
     local _, dibs = setup()
     local frame = dibs.PlayerUI.CreateWindow()

@@ -33,6 +33,7 @@ local PRE_DIB_CHANNEL_VALUES = {
   YELL = "Yell",
 }
 local PRE_DIB_MODE_VALUES = { WILD_OPEN = "Wild Open", ENCOUNTER = "Encounter" }
+local optionsRenderSnapshot
 
 local function canonicalOptionValue(values, value)
   if values and values[value] ~= nil then return value end
@@ -66,18 +67,24 @@ local function trimText(value)
   return tostring(value or ""):match("^%s*(.-)%s*$")
 end
 
+local function ensureSettingsDefaults(settings)
+  settings = type(settings) == "table" and settings or {}
+  if settings.preDibAnnouncementChannel == nil then
+    settings.preDibAnnouncementChannel = "GUILD"
+  end
+  if settings.preDibOfficerAnnouncementChannel == nil then
+    settings.preDibOfficerAnnouncementChannel = "OFFICER"
+  end
+  if settings.raidReminderMessage == nil then
+    settings.raidReminderMessage = "[Dibs] Review your eligible Pre-Dibs before the encounter."
+  end
+  return settings
+end
+
 local function getDBSettings()
+  if optionsRenderSnapshot then return optionsRenderSnapshot.settings end
   local db = Dibs.GetDB and Dibs.GetDB() or {}
-  db.settings = db.settings or {}
-  if db.settings.preDibAnnouncementChannel == nil then
-    db.settings.preDibAnnouncementChannel = "GUILD"
-  end
-  if db.settings.preDibOfficerAnnouncementChannel == nil then
-    db.settings.preDibOfficerAnnouncementChannel = "OFFICER"
-  end
-  if db.settings.raidReminderMessage == nil then
-    db.settings.raidReminderMessage = "[Dibs] Review your eligible Pre-Dibs before the encounter."
-  end
+  db.settings = ensureSettingsDefaults(db.settings)
   return db.settings
 end
 
@@ -113,8 +120,17 @@ local function copyButtonTemplate(template)
   return copy
 end
 
-local function getButtonTemplateStore()
-  local settings = getDBSettings()
+local function getButtonTemplateStore(dbOverride)
+  if type(dbOverride) ~= "table" and optionsRenderSnapshot and optionsRenderSnapshot.buttonTemplateStore then
+    return optionsRenderSnapshot.buttonTemplateStore
+  end
+  local settings
+  if type(dbOverride) == "table" then
+    settings = ensureSettingsDefaults(dbOverride.settings)
+    dbOverride.settings = settings
+  else
+    settings = getDBSettings()
+  end
   local store = settings.rcButtonTemplateStore
   if type(store) ~= "table" then store = {}; settings.rcButtonTemplateStore = store end
   if type(store.templates) ~= "table" then store.templates = {} end
@@ -128,7 +144,28 @@ local function getButtonTemplateStore()
   if type(store.selected) ~= "string" or type(store.templates[store.selected]) ~= "table" then
     store.selected = DEFAULT_BUTTON_TEMPLATE_ID
   end
+  if optionsRenderSnapshot and type(dbOverride) ~= "table" then optionsRenderSnapshot.buttonTemplateStore = store end
   return store
+end
+
+-- AceConfig evaluates many callbacks synchronously while one page is drawn.
+-- Reuse the active settings/store references for that draw only; all later
+-- renders and option mutations read the current SavedVariables again.
+function Dibs.RCOptions.WithOptionsReadSnapshot(callback, dbOverride)
+  if type(callback) ~= "function" then return false end
+  local previous = optionsRenderSnapshot
+  local settings
+  if type(dbOverride) == "table" then
+    settings = ensureSettingsDefaults(dbOverride.settings)
+    dbOverride.settings = settings
+  else
+    settings = getDBSettings()
+  end
+  optionsRenderSnapshot = { settings = settings, db = dbOverride }
+  local ok, result = pcall(callback)
+  optionsRenderSnapshot = previous
+  if not ok then error(result, 0) end
+  return result
 end
 
 local function getButtonTemplateIds(store)
@@ -146,8 +183,8 @@ local function getButtonTemplateIds(store)
   return ids
 end
 
-function Dibs.RCOptions.GetButtonTemplateValues()
-  local store, values = getButtonTemplateStore(), {}
+function Dibs.RCOptions.GetButtonTemplateValues(dbOverride)
+  local store, values = getButtonTemplateStore(dbOverride), {}
   for _, id in ipairs(getButtonTemplateIds(store)) do values[id] = tostring(store.templates[id].name or id) end
   return values
 end
@@ -268,6 +305,19 @@ function Dibs.RCOptions.GetButtonTemplateAssignment(typeKey)
   return type(store.templates[id]) == "table" and id or DEFAULT_BUTTON_TEMPLATE_ID
 end
 
+-- Loot Rules renders one dropdown per supported type. Resolve the backing
+-- SavedVariables store once for that page instead of normalizing it for every
+-- row; the returned map is a short-lived presentation snapshot.
+function Dibs.RCOptions.GetButtonTemplateAssignments(typeKeys, dbOverride)
+  local store = getButtonTemplateStore(dbOverride)
+  local result = {}
+  for _, typeKey in ipairs(type(typeKeys) == "table" and typeKeys or {}) do
+    local id = store.assignments[typeKey]
+    result[typeKey] = type(store.templates[id]) == "table" and id or DEFAULT_BUTTON_TEMPLATE_ID
+  end
+  return result
+end
+
 function Dibs.RCOptions.SetButtonTemplateAssignment(typeKey, templateId)
   if not canEditDibsSettings() then return false, "GUILD_ADMIN_REQUIRED" end
   local store = getButtonTemplateStore()
@@ -279,7 +329,18 @@ function Dibs.RCOptions.SetButtonTemplateAssignment(typeKey, templateId)
 end
 
 local function getDibTypeSettings()
-  local settings = getDBSettings()
+  local settings
+  local db = Dibs.db
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  if not optionsRenderSnapshot and guildKey and Dibs.currentGuildKey == guildKey
+    and type(db) == "table" and type(db.settings) == "table" then
+    -- This is a read-only option projection. Reuse the already-resolved DB
+    -- only when it still belongs to the live guild; otherwise use GetDB's
+    -- normal validation and migration path.
+    settings = ensureSettingsDefaults(db.settings)
+  else
+    settings = getDBSettings()
+  end
   settings.dibAllowedTypes = settings.dibAllowedTypes or {}
   return settings.dibAllowedTypes
 end
@@ -643,6 +704,7 @@ local function getDibTypeValues()
   end
 
   -- Always expose core categories even when RC has not populated per-type button sets yet.
+  local coreStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   addValue("MOUNTS")
   addValue("PETS")
   addValue("TOKEN")
@@ -651,10 +713,20 @@ local function getDibTypeValues()
   addValue("DECOR")
   addValue("OTHER")
   addValue("COSMETIC")
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("RC options data", "loot-type-values-core", coreStartedAt)
+  end
 
-  for key in pairs(getDibTypeSettings()) do
+  local settingsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+  local dibTypeSettings = getDibTypeSettings()
+  for key in pairs(dibTypeSettings) do
     addValue(key)
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("RC options data", "loot-type-values-settings", settingsStartedAt)
+  end
+
+  local buttonsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   local buttons = getRCButtonsTable()
   if type(buttons) == "table" then
     for key, spec in pairs(buttons) do
@@ -663,10 +735,18 @@ local function getDibTypeValues()
       end
     end
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("RC options data", "loot-type-values-rc-buttons", buttonsStartedAt)
+  end
+
+  local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   local projection = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetConfigProjectionStatus
     and Dibs.RCLootCouncil.GetConfigProjectionStatus()
   for key in pairs(projection and projection.additional or {}) do
     addValue(key)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("RC options data", "loot-type-values-projection", projectionStartedAt)
   end
 
   return values
@@ -936,21 +1016,21 @@ local function getRankValues()
   return values
 end
 
-local function seasonIsValid(seasonId)
+local function seasonIsValid(seasonId, dbOverride)
   if not seasonId then
     return false
   end
-  return Dibs.Seasons and Dibs.Seasons.GetById and Dibs.Seasons.GetById(seasonId) ~= nil
+  return Dibs.Seasons and Dibs.Seasons.GetById and Dibs.Seasons.GetById(seasonId, dbOverride) ~= nil
 end
 
 local getState
 
-local function getSelectedSeasonId()
+local function getSelectedSeasonId(dbOverride)
   local state = getState()
-  if seasonIsValid(state.selectedSeasonId) then
+  if seasonIsValid(state.selectedSeasonId, dbOverride) then
     return state.selectedSeasonId
   end
-  return Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil
+  return Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId(dbOverride) or nil
 end
 
 local function getRankAllocationForSeason(seasonId, rankIndex)
@@ -1633,8 +1713,9 @@ local optionsTable = {
               name = "Active season request mode",
               desc = helpText.UI_HELP_PREDIB_MODE,
               values = PRE_DIB_MODE_VALUES,
-              get = function()
-                local policy = Dibs.PreDibs and Dibs.PreDibs.GetModePolicy and Dibs.PreDibs.GetModePolicy(getSelectedSeasonId()) or {}
+              get = function(_, _, dbOverride)
+                local policy = Dibs.PreDibs and Dibs.PreDibs.GetModePolicy
+                  and Dibs.PreDibs.GetModePolicy(getSelectedSeasonId(dbOverride), nil, dbOverride) or {}
                 return policy.mode or "WILD_OPEN"
               end,
               set = function(_, value)
@@ -1660,9 +1741,9 @@ local optionsTable = {
               order = 3,
               type = "toggle",
               name = "Allow public pre-dibs",
-              get = function()
+              get = function(_, _, dbOverride)
                 if Dibs.PreDibs and type(Dibs.PreDibs.IsPublicEnabled) == "function" then
-                  return Dibs.PreDibs.IsPublicEnabled()
+                  return Dibs.PreDibs.IsPublicEnabled(dbOverride)
                 end
                 return getDBSettings().allowPublicPreDibs ~= false
               end,

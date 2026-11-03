@@ -139,19 +139,20 @@ local OFFICER_TAB_ALIASES = {
 
 local canViewOfficerData
 
-local function moduleEnabled(moduleKey)
+local function moduleEnabled(moduleKey, dbOverride)
   return not moduleKey or not Dibs.OperationalPolicy or not Dibs.OperationalPolicy.GetModuleStatus
-    or Dibs.OperationalPolicy.GetModuleStatus(moduleKey).enabled == true
+    or Dibs.OperationalPolicy.GetModuleStatus(moduleKey, dbOverride).enabled == true
 end
 
-local function getOfficerNavigationTree()
+local function getOfficerNavigationTree(dbOverride)
   local role = Dibs.OfficerUI.GetPresentationRole()
   if role ~= "gm" and role ~= "officer" then return {} end
   local developerEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() == true
   local labels = Dibs.L or {}
   local tree = {}
   for _, entry in ipairs(OFFICER_NAV_TREE) do
-    if ((entry.value ~= "developer" and entry.value ~= "debug") or developerEnabled) and moduleEnabled(entry.module) then
+    if ((entry.value ~= "developer" and entry.value ~= "debug") or developerEnabled)
+      and moduleEnabled(entry.module, dbOverride) then
       table.insert(tree, { section = entry.section, text = labels[entry.labelKey] or entry.text, value = entry.value })
     end
   end
@@ -179,8 +180,8 @@ local function normalizeOfficerTab(tab)
   return OFFICER_TAB_ALIASES[route] or route
 end
 
-local function officerTreeSelectionValue(route)
-  for _, entry in ipairs(getOfficerNavigationTree()) do
+local function officerTreeSelectionValue(route, dbOverride)
+  for _, entry in ipairs(getOfficerNavigationTree(dbOverride)) do
     if entry.value == route then
       local section = "section_" .. string.lower((entry.section or ""):gsub("%s+", "_"))
       return section .. string.char(1) .. entry.value
@@ -189,18 +190,25 @@ local function officerTreeSelectionValue(route)
   return route
 end
 
-local function officerRouteVisible(route)
-  if (route == "developer" or route == "debug") and Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled then
-    if Dibs.DeveloperMode.IsEnabled() == true then return true end
-    if canViewOfficerData() then return true end
+local function officerRouteVisible(route, dbOverride)
+  if route == "developer" or route == "debug" then
+    if Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled then
+      if Dibs.DeveloperMode.IsEnabled() == true then return true end
+      if canViewOfficerData() then return true end
+    end
+    return false
   end
-  local routeModules = {
-    disputes = "requests", preDibs = "preDibs", announcements = "announcements",
-    integration = "rclootcouncil", eligibility = "lootEligibility",
-  }
-  if routeModules[route] and not moduleEnabled(routeModules[route]) then return false end
-  for _, entry in ipairs(getOfficerNavigationTree()) do
-    if entry.value == route then return true end
+  local role = Dibs.OfficerUI.GetPresentationRole()
+  if role ~= "gm" and role ~= "officer" then
+    return route == "overview" or route == "reconciliation"
+  end
+  -- The visible navigation tree is rebuilt for display. Route validation only
+  -- needs the selected static entry, so do not re-query every feature module
+  -- whenever an Officer changes pages.
+  for _, entry in ipairs(OFFICER_NAV_TREE) do
+    if entry.value == route then
+      return moduleEnabled(entry.module, dbOverride)
+    end
   end
   return route == "overview" or route == "reconciliation"
 end
@@ -390,6 +398,8 @@ function Dibs.OfficerUI.BuildRequestView(scope, filter)
     return {}
   end
   local source, reason
+  local sourceStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   if filter.kind == "predibs" then
     source = Dibs.PreDibs and Dibs.PreDibs.GetHistory and Dibs.PreDibs.GetHistory() or {}
   elseif Dibs.Disputes and Dibs.Disputes.ListForOfficer then
@@ -397,11 +407,16 @@ function Dibs.OfficerUI.BuildRequestView(scope, filter)
   else
     source = {}
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "request-view-source", sourceStartedAt)
+  end
   if reason then return {} end
   if filter.kind == "predibs" then
     if not Dibs.HistoryFilters or type(Dibs.HistoryFilters.FilterRecords) ~= "function" then
       return {}, "FILTER_UNAVAILABLE"
     end
+    local filterStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     local filtered, filterError = Dibs.HistoryFilters.FilterRecords(source or {}, filter, {
       queryFields = {
         "itemName", "itemLink", "itemID", "playerName", "source", "status",
@@ -419,9 +434,14 @@ function Dibs.OfficerUI.BuildRequestView(scope, filter)
       timestampFields = { "createdAt", "timestamp" },
       identityFields = { "requestId" },
     })
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "request-view-filter", filterStartedAt)
+    end
     if not filtered then return {}, filterError end
     source = filtered
   end
+  local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local rows, limit = {}, math.max(1, math.min(50, tonumber(filter.limit) or 25))
   for _, request in ipairs(source or {}) do
     if #rows >= limit then break end
@@ -430,6 +450,9 @@ function Dibs.OfficerUI.BuildRequestView(scope, filter)
     else
       table.insert(rows, buildOfficerRequestRow(request))
     end
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "request-view-row-projection", projectionStartedAt)
   end
   return rows
 end
@@ -484,7 +507,7 @@ function Dibs.OfficerUI.GetEligibilityProjection(seasonId, options)
       currentState = { enabled = definition.recommended == "allow", source = "recommended" },
     }
     if (definition.family == "TOKEN" or definition.family == "TOKEN_SET") and Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPolicy then
-      local policy = Dibs.CharacterEligibility.GetPolicy(seasonId, definition.family)
+      local policy = Dibs.CharacterEligibility.GetPolicy(seasonId, definition.family, options.db)
       category.currentState = copyProjection(policy or category.currentState)
       local draft = options.draft and options.draft[definition.family]
       if type(draft) == "table" then
@@ -636,25 +659,22 @@ local function configureDropdown(control, width, initializer)
   return true
 end
 
-local function getSeasonList()
-  local seasons = Dibs.Seasons and Dibs.Seasons.List and Dibs.Seasons.List() or {}
-  table.sort(seasons, function(a, b)
-    return (a.createdAt or 0) < (b.createdAt or 0)
-  end)
-  return seasons
+local function getSeasonList(dbOverride)
+  -- Seasons.List already returns seasons in createdAt order.
+  return Dibs.Seasons and Dibs.Seasons.List and Dibs.Seasons.List(false, dbOverride) or {}
 end
 
-local function findSeasonById(seasonId)
-  return Dibs.Seasons and Dibs.Seasons.GetById and Dibs.Seasons.GetById(seasonId) or nil
+local function findSeasonById(seasonId, dbOverride)
+  return Dibs.Seasons and Dibs.Seasons.GetById and Dibs.Seasons.GetById(seasonId, dbOverride) or nil
 end
 
-local function getSelectedSeason(frame)
+local function getSelectedSeason(frame, dbOverride)
   local selected = frame and frame.selectedSeasonId or nil
-  local season = selected and findSeasonById(selected) or nil
+  local season = selected and findSeasonById(selected, dbOverride) or nil
   if season and not season.isArchived then
     return season
   end
-  return Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent() or nil
+  return Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent(dbOverride) or nil
 end
 
 local function getGuildRankNames()
@@ -1471,7 +1491,12 @@ function Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId, options)
   end
   local targetSeason = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
   local includeBalance = options.includeBalance ~= false
-  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
+  local catalogStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+  local catalog = Dibs.Seasons and (Dibs.Seasons.GetCatalogSummary and Dibs.Seasons.GetCatalogSummary()
+    or (Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState())) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "allocation-catalog-summary", catalogStartedAt)
+  end
   local classByMember = {}
   local rosterMembers
   local identity = Dibs.Identity
@@ -1500,7 +1525,8 @@ function Dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId, options)
   local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local projection = Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation
     and Dibs.RankRules.GetAllocationReconciliation(targetSeason,
-      type(members) == "table" and rosterMembers or nil, { includeBalance = includeBalance }) or {}
+      type(members) == "table" and rosterMembers or nil, { includeBalance = includeBalance },
+      type(options.db) == "table" and { db = options.db } or nil) or {}
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Officer data", "allocation-projection", projectionStartedAt)
   end
@@ -1983,7 +2009,7 @@ function Dibs.OfficerUI.BuildPreDibDetails(seasonId, filter)
     timestampFields = { "createdAt", "acquiredAt" },
     identityFields = { "requestId", "acquisitionId" },
   })
-  if not filtered then
+  if filterError then
     return {
       requests = {}, activeRequestCount = 0, hiddenRequestCount = hiddenRequestCount,
       filterError = filterError,
@@ -2223,8 +2249,13 @@ function Dibs.OfficerUI.GetPagedView(view, seasonId, page, pageSize, query, stat
 end
 
 function Dibs.OfficerUI.BuildSeasonStatistics(seasonId, ledgerId, includeRecentActivity,
-  activeLedgerIdForRequests, requestHistoryOverride)
+  activeLedgerIdForRequests, requestHistoryOverride, resolvedDatabase, activitySummary)
+  local authorizationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   if not canViewOfficerData() then
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "statistics-summary-authorization", authorizationStartedAt)
+    end
     return {
       players = 0,
       transactions = 0,
@@ -2237,24 +2268,39 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId, ledgerId, includeRecentA
       hidden = true,
     }
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "statistics-summary-authorization", authorizationStartedAt)
+  end
+  local cacheKeyStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local activeLedgerId = ledgerId or (Dibs.Ledger and Dibs.Ledger.GetActiveLedgerId and Dibs.Ledger.GetActiveLedgerId())
   local activeSeasonId = seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
-  local revision = Dibs.Ledger and Dibs.Ledger.GetDataRevision and Dibs.Ledger.GetDataRevision(activeLedgerId)
+  local database = type(resolvedDatabase) == "table" and resolvedDatabase
+    or (Dibs.GetDB and Dibs.GetDB() or _G.DibsDB)
+  local revision = Dibs.Ledger and Dibs.Ledger.GetDataRevision
+    and Dibs.Ledger.GetDataRevision(activeLedgerId, database)
   local generation = Dibs.Identity and Dibs.Identity.GetInvalidationGeneration and Dibs.Identity.GetInvalidationGeneration()
-  local database = Dibs.GetDB and Dibs.GetDB() or _G.DibsDB
   local cache = cachedSeasonStatistics
   local cacheMatches = cache and cache.database == database and cache.ledgerId == activeLedgerId
     and cache.seasonId == activeSeasonId and cache.ledgerRevision == revision
     and cache.rosterGeneration == generation
   local needsRecentActivity = includeRecentActivity == true
     and (not cacheMatches or type(cache.recentTransactions) ~= "table")
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "statistics-summary-cache-key", cacheKeyStartedAt)
+  end
+  local summaryRebuildStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   if not cacheMatches or needsRecentActivity then
     local memberNames = getCurrentGuildMemberNames()
-    local metrics = Dibs.Ledger and Dibs.Ledger.GetSeasonActivitySummary
-      and Dibs.Ledger.GetSeasonActivitySummary(activeSeasonId, activeLedgerId, function(playerName)
-        return getCurrentGuildMemberName(memberNames, playerName)
-      end, includeRecentActivity == true and 5 or nil) or { transactions = 0, players = 0,
-        granted = 0, used = 0, awards = 0, corrections = 0, awardCount = {}, recentTransactions = {} }
+    local metrics = type(activitySummary) == "table" and includeRecentActivity ~= true and activitySummary
+    if not metrics then
+      metrics = Dibs.Ledger and Dibs.Ledger.GetSeasonActivitySummary
+        and Dibs.Ledger.GetSeasonActivitySummary(activeSeasonId, activeLedgerId, function(playerName)
+          return getCurrentGuildMemberName(memberNames, playerName)
+        end, includeRecentActivity == true and 5 or nil, database) or { transactions = 0, players = 0,
+          granted = 0, used = 0, awards = 0, corrections = 0, awardCount = {}, recentTransactions = {} }
+    end
     local awardCount = metrics.awardCount or {}
     local awardValues = {}
     for _, count in pairs(awardCount) do awardValues[#awardValues + 1] = count end
@@ -2282,6 +2328,9 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId, ledgerId, includeRecentA
       cache = cachedSeasonStatistics
     end
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "statistics-summary-cache-rebuild", summaryRebuildStartedAt)
+  end
 
   activeLedgerIdForRequests = activeLedgerIdForRequests or (Dibs.Ledger and Dibs.Ledger.GetActiveLedgerId
     and Dibs.Ledger.GetActiveLedgerId() or nil)
@@ -2290,6 +2339,8 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId, ledgerId, includeRecentA
   local rosterGeneration = Dibs.Identity and Dibs.Identity.GetInvalidationGeneration
     and Dibs.Identity.GetInvalidationGeneration() or nil
   local activeCache = cachedDashboardActivePreDibs
+  local activePredibStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   if not activeCache or activeCache.seasonId ~= activeSeasonId
     or activeCache.ledgerId ~= activeLedgerIdForRequests
     or activeCache.historyRevision ~= historyRevision
@@ -2312,10 +2363,15 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId, ledgerId, includeRecentA
     }
     activeCache = cachedDashboardActivePreDibs
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "statistics-active-predib-projection", activePredibStartedAt)
+  end
+  local resultProjectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local activePreDibs = activeCache.count
   local awardCount = {}
   for player, count in pairs(cache.awardCount) do awardCount[player] = count end
-  return {
+  local result = {
     players = cache.players,
     transactions = cache.transactions,
     granted = cache.granted,
@@ -2332,9 +2388,13 @@ function Dibs.OfficerUI.BuildSeasonStatistics(seasonId, ledgerId, includeRecentA
     },
     recentTransactions = cache.recentTransactions,
   }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "statistics-summary-result-projection", resultProjectionStartedAt)
+  end
+  return result
 end
 
-function Dibs.OfficerUI.BuildPlayerPeriodStatistics(seasonId, criteria)
+function Dibs.OfficerUI.BuildPlayerPeriodStatistics(seasonId, criteria, resolvedDatabase)
   local empty = {
     status = "UNAVAILABLE",
     rows = {},
@@ -2350,11 +2410,6 @@ function Dibs.OfficerUI.BuildPlayerPeriodStatistics(seasonId, criteria)
     empty.reason = "LEDGER_UNAVAILABLE"
     return empty
   end
-  local ok, transactions = pcall(Dibs.Ledger.GetTransactions, seasonId)
-  if not ok or type(transactions) ~= "table" then
-    empty.reason = "LEDGER_UNAVAILABLE"
-    return empty
-  end
   local filters = Dibs.HistoryFilters
   if not filters or type(filters.FilterRecords) ~= "function" then
     empty.reason = "FILTER_UNAVAILABLE"
@@ -2362,86 +2417,63 @@ function Dibs.OfficerUI.BuildPlayerPeriodStatistics(seasonId, criteria)
   end
   criteria = type(criteria) == "table" and criteria or {}
   local fromDate, toDate = tostring(criteria.fromDate or ""), tostring(criteria.toDate or "")
-  local filtered, filterError = filters.FilterRecords(transactions, {
+  local _, filterError = filters.FilterRecords({}, {
     fromDate = fromDate,
     toDate = toDate,
   }, {
     timestampFields = { "createdAt", "timestamp" },
     identityFields = { "transactionId", "id" },
   })
-  if not filtered then
+  if filterError then
     empty.status = "INVALID_RANGE"
     empty.reason = filterError
     return empty
   end
 
   local memberNames = getCurrentGuildMemberNames()
+  local database = type(resolvedDatabase) == "table" and resolvedDatabase
+    or (Dibs.GetDB and Dibs.GetDB() or _G.DibsDB)
   local rowsByPlayer = {}
-  local function rowForPlayer(playerName)
-    if playerName == nil or tostring(playerName) == "" then return nil end
-    local displayName = getCurrentGuildMemberName(memberNames, playerName)
-    if not displayName or displayName == "" then return nil end
-    local key = string.lower(displayName)
+  local function rowForDisplayName(displayName)
+    if displayName == nil or tostring(displayName) == "" then return nil end
+    local key = string.lower(tostring(displayName))
     local row = rowsByPlayer[key]
     if not row then
-      row = {
-        playerName = displayName,
-        transactions = 0,
-        awards = 0,
-        grantedDibs = 0,
-        usedDibs = 0,
-        corrections = 0,
-        undatedExcluded = 0,
-        partial = false,
-      }
+      row = { playerName = tostring(displayName), transactions = 0, awards = 0, grantedDibs = 0,
+        usedDibs = 0, corrections = 0, undatedExcluded = 0, partial = false }
       rowsByPlayer[key] = row
     end
     return row
   end
 
   if memberNames then
-    local knownNames = {}
-    for _, memberName in pairs(memberNames) do
-      if type(memberName) == "string" and memberName ~= "" then
-        knownNames[string.lower(memberName)] = memberName
-      end
-    end
-    for _, memberName in pairs(knownNames) do rowForPlayer(memberName) end
+    for _, memberName in pairs(memberNames) do rowForDisplayName(memberName) end
   end
 
-  local hasDateFilter = fromDate:match("%S") ~= nil or toDate:match("%S") ~= nil
-  if hasDateFilter then
-    for _, transaction in ipairs(transactions) do
-      if type(transaction) == "table" and not tonumber(transaction.createdAt or transaction.timestamp) then
-        empty.undatedExcluded = empty.undatedExcluded + 1
-        local row = rowForPlayer(transaction.playerName or transaction.playerKey or transaction.memberKey or transaction.playerId)
-        if row then
-          row.undatedExcluded = row.undatedExcluded + 1
-          row.partial = true
-        end
-      end
-    end
+  local fromTimestamp, toTimestamp
+  if fromDate:match("%S") then fromTimestamp = filters.ParseDate(fromDate) end
+  if toDate:match("%S") then local _, endExclusive = filters.ParseDate(toDate); toTimestamp = endExclusive end
+  local aggregateStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local transactionCount, undatedExcluded, unmatchedPlayers
+  if not Dibs.Ledger or type(Dibs.Ledger.GetSeasonPlayerActivity) ~= "function" then
+    empty.reason = "LEDGER_UNAVAILABLE"
+    return empty
   end
-
-  for _, transaction in ipairs(filtered) do
-    local playerName = transaction.playerName or transaction.playerKey or transaction.memberKey or transaction.playerId
-    local row = rowForPlayer(playerName)
-    if row then
-      row.transactions = row.transactions + 1
-      local amount = tonumber(transaction.amount or transaction.quantityDelta) or 0
-      if transaction.type == "DIB_USED" then
-        row.awards = row.awards + 1
-        row.usedDibs = row.usedDibs + math.abs(amount)
-      elseif transaction.type == "DIB_GRANTED" then
-        row.grantedDibs = row.grantedDibs + amount
-      elseif transaction.type == "DIB_REFUNDED" or transaction.type == "DIB_REVOKED"
-        or transaction.type == "DIB_ADMIN_ADJUSTMENT" then
-        row.corrections = row.corrections + 1
-      end
-    else
-      empty.unmatchedPlayers = empty.unmatchedPlayers + 1
-    end
+  local ok, aggregateRows, count, undated, unmatched, seasonSummary, activeLedgerId = pcall(Dibs.Ledger.GetSeasonPlayerActivity,
+    seasonId, nil, function(playerName)
+      if playerName == nil or tostring(playerName) == "" then return nil end
+      if memberNames then return getCurrentGuildMemberName(memberNames, playerName) end
+      return tostring(playerName)
+    end, fromTimestamp, toTimestamp, database)
+  if not ok or type(aggregateRows) ~= "table" then
+    empty.reason = "LEDGER_UNAVAILABLE"
+    return empty
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "player-period-aggregate", aggregateStartedAt)
+  end
+  for key, aggregate in pairs(aggregateRows) do rowsByPlayer[key] = aggregate end
+  transactionCount, undatedExcluded, unmatchedPlayers = count or 0, undated or 0, unmatched or 0
 
   local rows = {}
   for _, row in pairs(rowsByPlayer) do rows[#rows + 1] = row end
@@ -2451,10 +2483,13 @@ function Dibs.OfficerUI.BuildPlayerPeriodStatistics(seasonId, criteria)
   return {
     status = "READY",
     rows = rows,
-    count = #filtered,
-    undatedExcluded = empty.undatedExcluded,
-    unmatchedPlayers = empty.unmatchedPlayers,
+    count = transactionCount,
+    undatedExcluded = undatedExcluded,
+    unmatchedPlayers = unmatchedPlayers,
     rosterAvailable = memberNames ~= nil,
+    seasonSummary = seasonSummary,
+    database = database,
+    ledgerId = activeLedgerId,
     fromDate = fromDate,
     toDate = toDate,
   }
@@ -2644,32 +2679,179 @@ local function buildDashboardPreDibBossGroups(seasonId, requestHistory, ledgerId
   return groups, catalogAvailable, pendingRequestCount
 end
 
-function Dibs.OfficerUI.GetDashboardProjection()
+-- The dashboard only needs a few newest Pre-Dibs lines. Avoid routing this
+-- bounded fallback through BuildPreDibDetails, which copies every historical
+-- request/acquisition and sorts the full projection.
+local function buildRecentPreDibActivity(seasonId, limit, requests)
+  local rosterStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local memberNames = getCurrentGuildMemberNames()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-predibs-roster", rosterStartedAt)
+  end
+  local recent, sequence = {}, 0
+  local function add(record, isAcquisition)
+    if type(record) ~= "table" then return end
+    if isAcquisition then
+      if record.seasonId ~= nil and record.seasonId ~= seasonId then return end
+    elseif record.seasonId ~= seasonId then
+      return
+    end
+    local playerName = getCurrentGuildMemberName(memberNames, record.playerName)
+    if not playerName then return end
+    sequence = sequence + 1
+    local timestamp = isAcquisition and tonumber(record.acquiredAt or record.createdAt)
+      or tonumber(record.createdAt or record.acquiredAt)
+    local identity = tostring(record.requestId or record.acquisitionId or "")
+    local candidate = {
+      record = record, playerName = playerName, acquisition = isAcquisition,
+      timestamp = timestamp or 0, identity = identity, sequence = sequence,
+    }
+    local insertAt = #recent + 1
+    for index, current in ipairs(recent) do
+      if candidate.timestamp > current.timestamp
+        or (candidate.timestamp == current.timestamp and candidate.identity < current.identity)
+        or (candidate.timestamp == current.timestamp and candidate.identity == current.identity
+          and candidate.sequence < current.sequence) then
+        insertAt = index
+        break
+      end
+    end
+    if insertAt <= limit then
+      table.insert(recent, insertAt, candidate)
+      if #recent > limit then table.remove(recent) end
+    end
+  end
+
+  requests = type(requests) == "table" and requests or {}
+  local requestScanStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  for _, request in ipairs(requests) do
+    add(request, false)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-predibs-request-scan", requestScanStartedAt)
+  end
+  local acquisitionReadStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local acquisitions
+  if Dibs.PreDibs and type(Dibs.PreDibs.GetAcquisitionsSnapshotFast) == "function" then
+    acquisitions = Dibs.PreDibs.GetAcquisitionsSnapshotFast()
+  end
+  if type(acquisitions) ~= "table" then
+    acquisitions = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitions
+      and Dibs.PreDibs.GetAcquisitions() or {}
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-predibs-acquisition-read", acquisitionReadStartedAt)
+  end
+  local acquisitionScanStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  for _, acquisition in ipairs(acquisitions) do
+    add(acquisition, true)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-predibs-acquisition-scan", acquisitionScanStartedAt)
+  end
+
+  local formatStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local lines = {}
+  for _, entry in ipairs(recent) do
+    local record = entry.record
+    if entry.acquisition then
+      lines[#lines + 1] = formatHistoryDate(record.acquiredAt) .. " | " .. entry.playerName
+        .. " | Acquired | Item " .. tostring(record.itemID) .. " | "
+        .. tostring(record.difficulty or "UNKNOWN") .. " | " .. tostring(record.source or "VAULT")
+    else
+      lines[#lines + 1] = formatHistoryDate(record.createdAt) .. " | " .. entry.playerName
+        .. " | " .. tostring(record.status) .. " | "
+        .. tostring(record.itemName or ("Item " .. tostring(record.itemID or "?"))) .. " | "
+        .. tostring(record.difficulty or "UNKNOWN") .. " | " .. tostring(record.modeAtCreation or "WILD_OPEN")
+        .. " | " .. tostring(record.delivery and record.delivery.state or "PENDING")
+    end
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-predibs-format", formatStartedAt)
+  end
+  return lines
+end
+
+function Dibs.OfficerUI.GetDashboardProjection(dbOverride)
   if not canViewOfficerData() then
     return { hidden = true, role = Dibs.OfficerUI.GetPresentationRole(), provider = "production" }
   end
   local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
 
+  local contextStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local roleStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local role = Dibs.OfficerUI.GetPresentationRole()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-role", roleStartedAt)
+  end
+  local sandboxStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local sandboxStatus = Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.GetStatus and Dibs.DeveloperSandbox.GetStatus() or {}
   local provider = sandboxStatus.active and "sandbox" or "production"
-  local season = Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent() or nil
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-sandbox", sandboxStartedAt)
+  end
+  local databaseStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local database = type(dbOverride) == "table" and dbOverride
+    or Dibs.GetDB and Dibs.GetDB() or _G.DibsDB
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-database", databaseStartedAt)
+  end
+  local seasonStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local season = Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent(database) or nil
   local seasonId = season and season.id or nil
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-season", seasonStartedAt)
+  end
   local multiLedger = Dibs.MultiLedger
+  local activeLedgerStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local activeLedgerId = multiLedger and type(multiLedger.GetActiveLedgerId) == "function"
-    and multiLedger.GetActiveLedgerId() or (Dibs.Ledger and Dibs.Ledger.GetActiveLedgerId
-      and Dibs.Ledger.GetActiveLedgerId()) or nil
+    and multiLedger.GetActiveLedgerId(database) or (Dibs.Ledger and Dibs.Ledger.GetActiveLedgerId
+      and Dibs.Ledger.GetActiveLedgerId(database)) or nil
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-active-ledger", activeLedgerStartedAt)
+  end
+  local viewLedgerStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local viewLedgerId = multiLedger and type(multiLedger.GetViewLedgerId) == "function"
-    and multiLedger.GetViewLedgerId() or activeLedgerId
+    and multiLedger.GetViewLedgerId(database) or activeLedgerId
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-view-ledger", viewLedgerStartedAt)
+  end
+  local ledgerChoicesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local ledgerChoices = multiLedger and type(multiLedger.GetLedgers) == "function"
+    and multiLedger.GetLedgers({ includeTransactionCount = false }, database) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-ledger-choices", ledgerChoicesStartedAt)
+  end
   local viewingOtherLedger = viewLedgerId ~= activeLedgerId
   local requestLedgerId = activeLedgerId
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-context-ledger", contextStartedAt)
+  end
+  local preDibReadStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local historyRevision = Dibs.PreDibs and Dibs.PreDibs.GetHistoryRevisionFast
     and Dibs.PreDibs.GetHistoryRevisionFast(requestLedgerId) or nil
   local requestHistory = Dibs.PreDibs and Dibs.PreDibs.GetHistory
     and Dibs.PreDibs.GetHistory(requestLedgerId) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-predibs-history-read", preDibReadStartedAt)
+  end
   local statisticsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local statistics = Dibs.OfficerUI.BuildSeasonStatistics(seasonId, viewLedgerId, true,
-    requestLedgerId, requestHistory)
+    requestLedgerId, requestHistory, database)
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Officer data", "season-statistics", statisticsStartedAt)
   end
@@ -2682,10 +2864,28 @@ function Dibs.OfficerUI.GetDashboardProjection()
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Officer data", "dashboard-predib-groups", preDibGroupsStartedAt)
   end
+  local syncStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local getSyncStatus = Dibs.Sync and (Dibs.Sync.GetStatusSummary or Dibs.Sync.GetStatus)
   local sync = getSyncStatus and getSyncStatus() or {}
-  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-sync-status", syncStatusStartedAt)
+  end
+  local authorityStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState
+    and Dibs.Governance.GetAuthorityState(database) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-authority-status", authorityStatusStartedAt)
+  end
+  local rcStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local rc = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-rclootcouncil-status", rcStatusStartedAt)
+  end
+  local encounterStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local currentBossPreDibs = { state = "idle", rows = {}, activeRequestCount = 0, message = "No active boss encounter." }
   if not seasonId then
     currentBossPreDibs = { state = "unavailable", rows = {}, activeRequestCount = 0, message = "No active season." }
@@ -2723,10 +2923,13 @@ function Dibs.OfficerUI.GetDashboardProjection()
       end
     end
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-encounter-projection", encounterStartedAt)
+  end
   local recent = {}
   local recentStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local ledgerRevision = Dibs.Ledger and Dibs.Ledger.GetDataRevision
-    and Dibs.Ledger.GetDataRevision(viewLedgerId) or nil
+    and Dibs.Ledger.GetDataRevision(viewLedgerId, database) or nil
   local rosterGeneration = Dibs.Identity and Dibs.Identity.GetInvalidationGeneration
     and Dibs.Identity.GetInvalidationGeneration() or nil
   local recentCache = cachedDashboardRecentActivity
@@ -2741,6 +2944,8 @@ function Dibs.OfficerUI.GetDashboardProjection()
     for index, line in ipairs(recentCache.lines) do recent[index] = line end
   else
     local recentBuildStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    local recentQueryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     local recentTransactions = statistics.recentTransactions
     local memberNames
     if recentTransactions == nil then
@@ -2751,6 +2956,11 @@ function Dibs.OfficerUI.GetDashboardProjection()
             tx.playerName or tx.playerKey or tx.playerId) ~= nil
         end) or nil
     end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-transaction-query", recentQueryStartedAt)
+    end
+    local recentFormatStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     if recentTransactions then
       for _, tx in ipairs(recentTransactions) do
         local playerName = tx.playerName or getCurrentGuildMemberName(memberNames,
@@ -2764,16 +2974,29 @@ function Dibs.OfficerUI.GetDashboardProjection()
         end
       end
     end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-transaction-format", recentFormatStartedAt)
+    end
     if not recentTransactions then
+      local actionFallbackStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       local ledgerPage = Dibs.OfficerUI.GetPagedView("actions", seasonId, 1, 5, nil, nil, viewLedgerId)
       for _, line in ipairs(ledgerPage.lines or {}) do
         if #recent < 5 and line ~= "No history for this season." then recent[#recent + 1] = line end
       end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-actions-fallback", actionFallbackStartedAt)
+      end
     end
     if #recent < 5 then
-      local preDibPage = Dibs.OfficerUI.GetPagedView("predibs", seasonId, 1, 5 - #recent)
-      for _, line in ipairs(preDibPage.lines or {}) do
+      local preDibsFallbackStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
+      local preDibLines = buildRecentPreDibActivity(seasonId, 5 - #recent, requestHistory)
+      for _, line in ipairs(preDibLines) do
         if #recent < 5 and line ~= "No pre-Dibs for this season." then recent[#recent + 1] = line end
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "dashboard-recent-predibs-fallback", preDibsFallbackStartedAt)
       end
     end
     if cacheable then
@@ -2790,6 +3013,8 @@ function Dibs.OfficerUI.GetDashboardProjection()
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Officer data", "recent-activity", recentStartedAt)
   end
+  local projectionAssemblyStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local ledgerStatus = season and dashboardStatus("Healthy", "The active season ledger is available.", { state = "HEALTHY", seasonId = seasonId })
     or dashboardStatus("Unavailable", "No active season is configured.", { state = "NO_ACTIVE_SEASON" }, "danger")
   if season then ledgerStatus.tone = "success" end
@@ -2799,6 +3024,8 @@ function Dibs.OfficerUI.GetDashboardProjection()
     provider = provider,
     authorityOrigin = sandboxStatus.authorityOrigin or "production",
     season = { id = seasonId, name = season and season.name or "No active season" },
+    ledgerChoices = ledgerChoices,
+    activeLedgerId = activeLedgerId,
     viewLedger = { id = viewLedgerId, readOnly = viewingOtherLedger },
     metrics = {
       activePlayers = statistics.players,
@@ -2832,6 +3059,7 @@ function Dibs.OfficerUI.GetDashboardProjection()
     capabilities = { governance = role == "gm", manageDibs = true, reviewRequests = true },
   }
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-projection-assembly", projectionAssemblyStartedAt)
     Dibs.UIRenderStats.Record("Officer data", "dashboard", renderStartedAt)
   end
   return projection
@@ -2843,24 +3071,38 @@ local function ledgerDisplayName(ledger)
   return ledger.id == "guild-primary" and "Primary" or tostring(ledger.id)
 end
 
-local function addLedgerViewControl(shell, container, frame)
+local function addLedgerViewControl(shell, container, frame, dashboard)
   local strings = Dibs.L or {}
-  local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues()
+  local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues(
+    dashboard and dashboard.ledgerChoices,
+    dashboard and dashboard.activeLedgerId,
+    dashboard and dashboard.viewLedger and dashboard.viewLedger.id)
   local dropdown = Dibs.AceGUI.AddDropdown(shell, container, strings.LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
     Dibs.AceGUI.SelectViewLedger(value)
     frame:Refresh()
   end, 200)
-  local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId()
+  local viewLedgerId = dashboard and dashboard.viewLedger and dashboard.viewLedger.id
+    or Dibs.MultiLedger.GetViewLedgerId()
   Dibs.AceGUI.SetValue(dropdown, viewLedgerId)
   Dibs.AceGUI.AddTooltip(dropdown, strings.LEDGER_VIEW_LABEL or "View ledger", strings.LEDGER_VIEW_TOOLTIP)
   return dropdown
 end
 
-local function renderDashboard(shell, parent, frame)
-  local dashboard = Dibs.OfficerUI.GetDashboardProjection()
+local function renderDashboard(shell, parent, frame, dbOverride)
+  local dashboardRenderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local dashboard = Dibs.OfficerUI.GetDashboardProjection(dbOverride)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-projection", projectionStartedAt)
+  end
   if dashboard.hidden then
     Dibs.AceGUI.AddHeading(shell, parent, "Officer dashboard")
     Dibs.AceGUI.AddLabel(shell, parent, "Officer access required.", true)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-total", dashboardRenderStartedAt)
+    end
     return
   end
   local statusSection
@@ -2884,12 +3126,24 @@ local function renderDashboard(shell, parent, frame)
     end
     Dibs.AceGUI.AddLabel(shell, statusSection, tostring(value and value.explanation or "Unavailable."), true)
   end
+  local controlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local controlHeaderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   Dibs.AceGUI.AddHeading(shell, parent, "Officer dashboard", "Guild-wide operational summary for authorized Officers and GM.")
   local controlRow = Dibs.AceGUI.AddInlineGroup(shell, parent)
   local seasonLabel = Dibs.AceGUI.AddLabel(shell, controlRow, "Season: " .. tostring(dashboard.season and dashboard.season.name or "No active season"), false)
   if seasonLabel and seasonLabel.SetWidth then seasonLabel:SetWidth(180) end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-control-header", controlHeaderStartedAt)
+  end
   if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
-    addLedgerViewControl(shell, controlRow, frame)
+    local selectorStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    addLedgerViewControl(shell, controlRow, frame, dashboard)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-ledger-selector", selectorStartedAt)
+    end
     Dibs.AceGUI.AddButton(shell, controlRow, (Dibs.L or {}).LEDGERS_MANAGE or "Manage ledgers", function()
       frame:ActivateRoute("installation")
     end, 160)
@@ -2904,6 +3158,11 @@ local function renderDashboard(shell, parent, frame)
     Dibs.Midnight.AddStatusBadge(shell, parent, "warning", string.format(strings.LEDGER_VIEW_READONLY or "Read-only: %s",
       tostring(ledgerValues[viewLedgerId] or viewLedgerId)))
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-controls", controlsStartedAt)
+  end
+  local metricsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   Dibs.AceGUI.AddHeader(shell, parent, "Season statistics", "Current-season activity; award distribution values are per recipient.")
   local metricGrid = Dibs.AceGUI.AddInlineGroup(shell, parent)
   local metrics = {
@@ -2933,6 +3192,11 @@ local function renderDashboard(shell, parent, frame)
       if metric.tooltip then Dibs.AceGUI.AddTooltip(label, metric.label, metric.tooltip) end
     end
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-metrics", metricsStartedAt)
+  end
+  local preDibsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local bossGroups = dashboard.preDibBossGroups or {}
   local bossSection = Dibs.AceGUI.AddSection(shell, parent, "Pre-Dibs by boss",
     "Up to five active requests per boss. Open Pre-Dibs to review the full list.")
@@ -2957,11 +3221,21 @@ local function renderDashboard(shell, parent, frame)
   Dibs.AceGUI.AddButton(shell, bossSection, "Open Pre-Dibs", function()
     frame:ActivateRoute("preDibRequests")
   end, 140)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-predibs", preDibsStartedAt)
+  end
+  local servicesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   statusSection = Dibs.AceGUI.AddSection(shell, parent, "Service status", "Current state of the services used by Dibs.")
   addStatus("Ledger", dashboard.status.ledger)
   addStatus("Sync", dashboard.status.sync)
   addStatus("Coordinator", dashboard.status.coordinator)
   addStatus("RCLootCouncil", dashboard.status.rclootcouncil)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-services", servicesStartedAt)
+  end
+  local activityStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local recentLines = {}
   for index = 1, math.min(5, #dashboard.recentActivity) do
     recentLines[#recentLines + 1] = dashboard.recentActivity[index]
@@ -2977,6 +3251,11 @@ local function renderDashboard(shell, parent, frame)
       frame:SetStatus("Activity logs are unavailable.")
     end
   end, 190)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-activity", activityStartedAt)
+  end
+  local technicalStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   Dibs.AceGUI.AddButton(shell, parent, frame.showDashboardTechnical and "Hide technical details" or "Show technical details", function()
     frame.showDashboardTechnical = not frame.showDashboardTechnical
     frame:Refresh()
@@ -2986,6 +3265,10 @@ local function renderDashboard(shell, parent, frame)
     Dibs.AceGUI.AddLabel(shell, parent, "Sync state: " .. tostring(dashboard.technical.sync.state or "unknown"), true)
     Dibs.AceGUI.AddLabel(shell, parent, "Coordinator state: " .. tostring(dashboard.technical.coordinator.state or "unknown"), true)
     Dibs.AceGUI.AddLabel(shell, parent, "RCLootCouncil reason: " .. tostring(dashboard.technical.rclootcouncil.reasonCode or "none"), true)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-technical", technicalStartedAt)
+    Dibs.UIRenderStats.Record("Officer data", "dashboard-ui-total", dashboardRenderStartedAt)
   end
 end
 
@@ -3016,6 +3299,20 @@ end
 
 function Dibs.OfficerUI.SaveEligibilityPolicy(payload)
   return Dibs.ProtectedActions.Execute("eligibility.policy.set", nil, payload or {})
+end
+
+function Dibs.OfficerUI.ReviewEligibilityRelationship(relationshipId, status, reason)
+  return Dibs.ProtectedActions.Execute("eligibility.relationship.review", nil, {
+    relationshipId = relationshipId, status = status, reason = reason,
+  })
+end
+
+function Dibs.OfficerUI.ReviewEligibilityMainChange(changeId, options)
+  local payload = { changeId = changeId }
+  for key, value in pairs(type(options) == "table" and options or {}) do
+    if key ~= "changeId" then payload[key] = value end
+  end
+  return Dibs.ProtectedActions.Execute("eligibility.main.review", nil, payload)
 end
 
 function Dibs.OfficerUI.GetRankChangeDiagnostics()
@@ -3088,8 +3385,8 @@ function Dibs.OfficerUI.BuildStatusText(selectedSeason)
     "RCLootCouncil: " .. tostring(Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetAvailability and Dibs.RCLootCouncil.GetAvailability() or "absent")
 end
 
-function Dibs.OfficerUI.BuildSynchronizationStatus()
-  local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
+function Dibs.OfficerUI.BuildSynchronizationStatus(dbOverride)
+  local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus(dbOverride) or {}
   local messages = {}
   if status.operationalPolicyAdopted ~= true then table.insert(messages, (Dibs.L and Dibs.L.SYNC_POLICY_NOT_ADOPTED) or "Guild-wide rules are not active.") end
   if status.lastProtocolMismatch then
@@ -3103,7 +3400,8 @@ function Dibs.OfficerUI.BuildSynchronizationStatus()
 end
 
 function Dibs.OfficerUI.BuildRankCatalogStatus()
-  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
+  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogSummary and Dibs.Seasons.GetCatalogSummary()
+    or (Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState()) or {}
   local revision = tonumber(catalog.catalogRevision) or 0
   if revision < 1 or type(catalog.hash) ~= "string" or catalog.hash == "GENESIS" then
     return "Guild configuration: Not published to SEASON_CATALOG."
@@ -3176,12 +3474,21 @@ function Dibs.OfficerUI.GetSynchronizationPeerPresentation(peer)
 end
 
 function Dibs.OfficerUI.BuildSynchronizationProjection(rosterScope, options)
-  local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus() or {}
+  options = type(options) == "table" and options or {}
+  local status = Dibs.Sync and Dibs.Sync.GetSynchronizationStatus and Dibs.Sync.GetSynchronizationStatus(options.db) or {}
   local peers, pagination = {}, nil
   if Dibs.Sync and Dibs.Sync.GetPeerStatuses then peers, pagination = Dibs.Sync.GetPeerStatuses(rosterScope, options) end
+  local syncState
+  if Dibs.Sync and Dibs.Sync.GetStatusSummary then
+    syncState = Dibs.Sync.GetStatusSummary() or {}
+    syncState.reasons = syncState.state == "SYNC_BEHIND" and Dibs.Sync.GetSyncBehindReasons
+      and Dibs.Sync.GetSyncBehindReasons() or {}
+  else
+    syncState = Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or {}
+  end
   local baselineHash
   if Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaselineHash then
-    baselineHash = Dibs.HistoricalBaseline.GetBaselineHash()
+    baselineHash = Dibs.HistoricalBaseline.GetBaselineHash(options and options.db)
   elseif Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline then
     local baseline = Dibs.HistoricalBaseline.GetBaseline() or {}
     baselineHash = baseline.legacyBaselineHash
@@ -3190,7 +3497,7 @@ function Dibs.OfficerUI.BuildSynchronizationProjection(rosterScope, options)
     peer.presentation = Dibs.OfficerUI.GetSynchronizationPeerPresentation(peer)
   end
   return {
-    state = Dibs.Sync and Dibs.Sync.GetStatus and Dibs.Sync.GetStatus() or {},
+    state = syncState,
     protocolState = Dibs.Sync and Dibs.Sync.GetProtocolState and Dibs.Sync.GetProtocolState() or "Unknown",
     policy = status.operationalPolicyAdopted == true and "Adopted" or "Not adopted",
     seasonCatalogRevision = tonumber(status.seasonCatalogRevision) or 0,
@@ -3300,18 +3607,20 @@ local function ledgerActionFailed(result)
   return type(result) ~= "table" or result.ok ~= true
 end
 
-local function renderLedgerManagement(shell, parent, frame)
+local function renderLedgerManagement(shell, parent, frame, dbOverride)
   if not (Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function") then return end
   local L = Dibs.L or {}
-  local ledgers = Dibs.MultiLedger.GetLedgers()
+  local ledgers = Dibs.MultiLedger.GetLedgers(nil, dbOverride)
   local isGM = Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM() == true
-  local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
-  local guildStatus = Dibs.MultiLedger.GetGuildLedgerStatus and Dibs.MultiLedger.GetGuildLedgerStatus() or {}
+  local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId(dbOverride)
+  local guildStatus = Dibs.MultiLedger.GetGuildLedgerStatus and Dibs.MultiLedger.GetGuildLedgerStatus(dbOverride) or {}
 
   Dibs.AceGUI.AddHeader(shell, parent, L.GUILD_LEDGER_LABEL or "Guild active ledger",
     L.GUILD_LEDGER_TOOLTIP or "GM/Officers only. The selected ledger is imposed on every guild member through sync; Pre-Dibs and awards use it.")
   local activeRow = Dibs.AceGUI.AddInlineGroup(shell, parent)
-  local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues()
+  -- Reuse the ledger metadata already loaded for the management rows. The
+  -- dropdown only needs this catalog plus the IDs already resolved above.
+  local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues(ledgers, activeLedgerId, guildStatus.viewLedgerId)
   Dibs.AceGUI.AddLabel(shell, activeRow, string.format(L.SHELL_STATUS_LEDGER_GUILD or "Guild ledger: %s",
     tostring(ledgerValues[activeLedgerId] or activeLedgerId)), false)
   local canSet = Dibs.MultiLedger.CanSetGuildActiveLedger and Dibs.MultiLedger.CanSetGuildActiveLedger() == true
@@ -3591,9 +3900,9 @@ local function renderGuildActivation(shell, parent, frame, status)
   end
 end
 
-local function renderInstallationPage(shell, parent, frame)
+local function renderInstallationPage(shell, parent, frame, dbOverride)
   local helpText = Dibs.L or {}
-  local status = Dibs.Installation and Dibs.Installation.GetStatus and Dibs.Installation.GetStatus() or {
+  local status = Dibs.Installation and Dibs.Installation.GetStatus and Dibs.Installation.GetStatus(nil, dbOverride) or {
     state = "NOT_INITIALIZED", actor = {}, governance = {}, legacy = {}, baseline = {},
     coordinator = {}, compatibility = {}, sync = {}, protocol = {}, blockers = {}, warnings = {}, technical = {},
   }
@@ -3609,11 +3918,37 @@ local function renderInstallationPage(shell, parent, frame)
 
   -- Until the guild is activated, activation is the blocking task and comes first.
   if status.state == "READY" then
-    renderLedgerManagement(shell, parent, frame)
+    local compositionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    local ledgerManagementStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    renderLedgerManagement(shell, parent, frame, dbOverride)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "installation-ledger-management-ui", ledgerManagementStartedAt)
+    end
+    local activationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     renderGuildActivation(shell, parent, frame, status)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "installation-guild-activation-ui", activationStartedAt)
+      Dibs.UIRenderStats.Record("Officer data", "installation-page-composition", compositionStartedAt)
+    end
   else
+    local compositionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    local activationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     renderGuildActivation(shell, parent, frame, status)
-    renderLedgerManagement(shell, parent, frame)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "installation-guild-activation-ui", activationStartedAt)
+    end
+    local ledgerManagementStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    renderLedgerManagement(shell, parent, frame, dbOverride)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "installation-ledger-management-ui", ledgerManagementStartedAt)
+      Dibs.UIRenderStats.Record("Officer data", "installation-page-composition", compositionStartedAt)
+    end
   end
 end
 
@@ -3651,7 +3986,7 @@ end
 
 local SETUP_HELP_ROUTES = {
   installation = true, settings = true, seasons = true, ranks = true, integration = true,
-  announcements = true, sync = true, lootTypes = true, automaticDibs = true, preDibs = true,
+  announcements = true, sync = true, lootTypes = true, preDibs = true,
 }
 local SETUP_HELP_OPTION_ROUTES = {
   settings = true, ranks = true, integration = true,
@@ -3664,7 +3999,7 @@ local SETUP_ISSUE_ALIASES = {
 local SETUP_ACTION_GUIDANCE = {
   initialize = "ledger", lootRules = "loot_types", policy = "operationalPolicy",
 }
-local function renderSetupPageHelp(shell, parent, frame)
+local function renderSetupPageHelp(shell, parent, frame, dbOverride)
   local route = frame.activeTab
   if not SETUP_HELP_ROUTES[route] then return end
   local setupHelpStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
@@ -3679,7 +4014,7 @@ local function renderSetupPageHelp(shell, parent, frame)
   local setupEvaluationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local report = frame.setupGuidanceReport
   if type(report) ~= "table" then
-    report = Dibs.SetupAssistant.Evaluate({ scope = "all" })
+    report = Dibs.SetupAssistant.Evaluate({ scope = "all", db = dbOverride })
     frame.setupGuidanceReport = report
     if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
       Dibs.UIRenderStats.Record("Officer data", "setup-page-help-evaluation", setupEvaluationStartedAt)
@@ -3733,7 +4068,7 @@ local function renderSetupPageHelp(shell, parent, frame)
   end
 end
 
-local function renderWizardPage(shell, parent, frame)
+local function renderWizardPage(shell, parent, frame, dbOverride)
   local strings = Dibs.L or {}
   if not canViewOfficerData() then
     Dibs.AceGUI.AddHeading(shell, parent, strings.OFFICER_NAV_GUIDED_SETUP_LABEL or "Guided Setup")
@@ -3741,15 +4076,27 @@ local function renderWizardPage(shell, parent, frame)
     return
   end
 
+  local viewModelStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local stage = Dibs.Wizard.GetCurrentStage()
   local selectedProfileId = Dibs.Wizard.GetSelectedProfileId()
   -- The full turnkey projection walks installation, ledger, sync, rank-rule,
   -- and readiness state. Only Verify displays those results, so defer it on
   -- Choose and Configure where it was adding noticeable UI-open latency.
-  local status = stage == "verify" and Dibs.Wizard.GetTurnkeyStatus() or nil
-  local profileById = {}
-  for _, profile in ipairs(Dibs.Wizard.GetProfiles()) do profileById[profile.id] = profile end
-  local selectedProfile = profileById[selectedProfileId]
+  local status = stage == "verify" and Dibs.Wizard.GetTurnkeyStatus(nil, dbOverride) or nil
+  local profiles, selectedProfile
+  if stage == "choose" or stage == "configure" then
+    profiles = Dibs.Wizard.GetProfiles()
+    for _, profile in ipairs(profiles) do
+      if profile.id == selectedProfileId then
+        selectedProfile = profile
+        break
+      end
+    end
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "wizard-view-model", viewModelStartedAt)
+  end
 
   Dibs.AceGUI.AddHeading(shell, parent, strings.WIZARD_TITLE or "DIBS Guided Setup",
     strings.UI_HELP_WIZARD)
@@ -3768,6 +4115,8 @@ local function renderWizardPage(shell, parent, frame)
     configure = strings.WIZARD_STAGE_CONFIGURE or "2 Configure",
     verify = strings.WIZARD_STAGE_VERIFY or "3 Verify",
   }
+  local stageNavigationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local stageNav = Dibs.AceGUI.AddInlineGroup(shell, parent)
   for _, id in ipairs({ "choose", "configure", "verify" }) do
     local stageId = id
@@ -3777,13 +4126,18 @@ local function renderWizardPage(shell, parent, frame)
       frame:Refresh()
     end, 180)
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "wizard-stage-navigation", stageNavigationStartedAt)
+  end
 
+  local stageContentStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   if stage == "choose" then
     Dibs.AceGUI.AddHeading(shell, parent, stageLabels.choose)
     Dibs.AceGUI.AddLabel(shell, parent, strings.WIZARD_CHOOSE_HELP or
       "Choose a profile. Nothing changes until the next stage.", true)
     local profileList = Dibs.AceGUI.AddScrollableList(shell, parent, 540, 245) or parent
-    for _, profile in ipairs(Dibs.Wizard.GetProfiles()) do
+    for _, profile in ipairs(profiles or {}) do
       local profileId = profile.id
       local section = Dibs.Midnight.CreatePanel(shell, profileList, profile.label)
       Dibs.AceGUI.AddLabel(shell, section, profile.summary, true)
@@ -3945,6 +4299,9 @@ local function renderWizardPage(shell, parent, frame)
       end, 190)
       Dibs.AceGUI.AddTooltip(correction, primary.title, setupIssueHelp(primary))
     end
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Officer data", "wizard-stage-content", stageContentStartedAt)
   end
 end
 
@@ -5277,9 +5634,28 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if activateRoute then activateRoute(tab, true) end
   end
 
-  local function renderStatisticsPage(pageFrame, currentSeasonId, pageTabs)
-    local statistics = Dibs.OfficerUI.BuildSeasonStatistics(currentSeasonId)
+  local function renderStatisticsPage(pageFrame, currentSeasonId, pageTabs, routeDatabase)
     local strings = Dibs.L or {}
+    pageFrame.statisticsFromDate = pageFrame.statisticsFromDate or ""
+    pageFrame.statisticsToDate = pageFrame.statisticsToDate or ""
+    pageFrame.statisticsPage = pageFrame.statisticsPage or 1
+    local playerStatistics = Dibs.OfficerUI.BuildPlayerPeriodStatistics(currentSeasonId, {
+      fromDate = pageFrame.statisticsFromDate,
+      toDate = pageFrame.statisticsToDate,
+    }, routeDatabase)
+    local summaryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    local hasPlayerStatistics = playerStatistics.status == "READY"
+    local statistics = Dibs.OfficerUI.BuildSeasonStatistics(currentSeasonId,
+      hasPlayerStatistics and playerStatistics.ledgerId or nil, false,
+      hasPlayerStatistics and playerStatistics.ledgerId or nil, nil,
+      hasPlayerStatistics and playerStatistics.database or nil,
+      hasPlayerStatistics and playerStatistics.rosterAvailable and playerStatistics.seasonSummary or nil)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "statistics-summary", summaryStartedAt)
+    end
+    local controlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     Dibs.AceGUI.AddHeader(shell, pageTabs,
       strings.OFFICER_STATISTICS_TITLE or "Season statistics",
       strings.OFFICER_STATISTICS_INTRO or "Descriptive activity counts; not a score or award ranking.")
@@ -5289,9 +5665,6 @@ local function createAceWindow(initialRoute, deferInitialRender)
         .. " | Dibs used: " .. tostring(statistics.used)
         .. " | Active Pre-Dibs: " .. tostring(statistics.activePreDibs), true)
 
-    pageFrame.statisticsFromDate = pageFrame.statisticsFromDate or ""
-    pageFrame.statisticsToDate = pageFrame.statisticsToDate or ""
-    pageFrame.statisticsPage = pageFrame.statisticsPage or 1
     local periodControls = Dibs.AceGUI.AddInlineGroup(shell, pageTabs)
     local fromControl = Dibs.AceGUI.AddEditBox(shell, periodControls,
       strings.OFFICER_STATISTICS_FROM_DATE or "From date (YYYY-MM-DD)", function(value)
@@ -5317,11 +5690,10 @@ local function createAceWindow(initialRoute, deferInitialRender)
         pageFrame:Refresh()
       end, 110)
     end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "statistics-static-controls", controlsStartedAt)
+    end
 
-    local playerStatistics = Dibs.OfficerUI.BuildPlayerPeriodStatistics(currentSeasonId, {
-      fromDate = pageFrame.statisticsFromDate,
-      toDate = pageFrame.statisticsToDate,
-    })
     if playerStatistics.status == "INVALID_RANGE" then
       Dibs.AceGUI.AddLabel(shell, pageTabs,
         strings.OFFICER_STATISTICS_INVALID_RANGE or "Enter a valid inclusive date range.", true)
@@ -5351,6 +5723,8 @@ local function createAceWindow(initialRoute, deferInitialRender)
     local totalPages = math.max(1, math.ceil(#playerStatistics.rows / pageSize))
     local page = math.max(1, math.min(tonumber(pageFrame.statisticsPage) or 1, totalPages))
     pageFrame.statisticsPage = page
+    local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     local visibleRows = {}
     for index = ((page - 1) * pageSize) + 1, math.min(page * pageSize, #playerStatistics.rows) do
       local row = playerStatistics.rows[index]
@@ -5365,6 +5739,11 @@ local function createAceWindow(initialRoute, deferInitialRender)
           or (strings.OFFICER_STATISTICS_COMPLETE or "Complete"),
       }
     end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "statistics-visible-row-projection", projectionStartedAt)
+    end
+    local tableStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     if #visibleRows == 0 then
       Dibs.AceGUI.AddLabel(shell, pageTabs,
         strings.OFFICER_STATISTICS_EMPTY or "No players or transactions are available for this season and period.", true)
@@ -5386,6 +5765,11 @@ local function createAceWindow(initialRoute, deferInitialRender)
         emptyText = strings.OFFICER_STATISTICS_EMPTY or "No players or transactions are available for this season and period.",
       })
     end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "statistics-table-render", tableStartedAt)
+    end
+    local footerStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
     local pageControls = Dibs.AceGUI.AddInlineGroup(shell, pageTabs)
     Dibs.AceGUI.AddButton(shell, pageControls, strings.OFFICER_STATISTICS_PREVIOUS or "Previous", function()
       pageFrame.statisticsPage = math.max(1, page - 1)
@@ -5397,10 +5781,16 @@ local function createAceWindow(initialRoute, deferInitialRender)
       pageFrame.statisticsPage = math.min(totalPages, page + 1)
       pageFrame:Refresh()
     end, 100)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "statistics-footer-controls", footerStartedAt)
+    end
   end
 
   -- Common page setup boilerplate extracted from renderRoute to reduce upvalues
-  local function setupRoutePage(self, shell, frame, contentHost)
+  local function setupRoutePage(self, shell, frame, contentHost, routeDB)
+    local profileEligibility = self.activeTab == "eligibility" and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.IsEnabled and Dibs.UIRenderStats.IsEnabled()
+    local previousStateStartedAt = profileEligibility and Dibs.UIRenderStats.Begin(false)
     local previousLootRulesScroll = frame.lootRulesScroll
     local previousOfficerRouteScroll = frame._officerRouteScroll
     if previousLootRulesScroll and shell._dibsResponsiveScrolls then
@@ -5424,8 +5814,21 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if self.activeTab ~= "history" and self.activeTab ~= "reconciliation" and closeHistoryTransfer then
       closeHistoryTransfer()
     end
+    if profileEligibility then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-previous-state-cleanup", previousStateStartedAt)
+    end
     if not contentHost then return end
+    local contentClearStartedAt = profileEligibility and Dibs.UIRenderStats.Begin(false)
+    local automaticDibsClearStartedAt = self.activeTab == "automaticDibs" and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     Dibs.AceGUI.Clear(contentHost)
+    if profileEligibility then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-content-clear", contentClearStartedAt)
+    end
+    if self.activeTab == "automaticDibs" and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-content-clear", automaticDibsClearStartedAt)
+    end
+    local scaffoldStartedAt = profileEligibility and Dibs.UIRenderStats.Begin(false)
     local pageRoot = Dibs.AceGUI.Create(shell, "SimpleGroup", contentHost) or contentHost
     if pageRoot ~= contentHost then
       if pageRoot.SetFullWidth then pageRoot:SetFullWidth(true) end
@@ -5440,35 +5843,60 @@ local function createAceWindow(initialRoute, deferInitialRender)
     pageRoot._dibsOwner = self
     contentHost._dibsCurrentPageRoot = pageRoot
     local tabs = pageRoot
-    local seasons = getSeasonList()
-    local current = getSelectedSeason(self)
+    if profileEligibility then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-scaffold", scaffoldStartedAt)
+    end
+    local seasonContextStartedAt = profileEligibility and Dibs.UIRenderStats.Begin(false)
+    local seasonListStartedAt = profileEligibility and Dibs.UIRenderStats.Begin(false)
+    local seasons = getSeasonList(routeDB)
+    if profileEligibility then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-season-list", seasonListStartedAt)
+    end
+    local selectedSeasonStartedAt = profileEligibility and Dibs.UIRenderStats.Begin(false)
+    local current = getSelectedSeason(self, routeDB)
+    if profileEligibility then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-selected-season", selectedSeasonStartedAt)
+    end
     if not current and #seasons > 0 then
       current = seasons[#seasons]
       self.selectedSeasonId = current.id
     end
     local currentId = current and current.id or nil
+    if profileEligibility then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-season-context", seasonContextStartedAt)
+    end
     return tabs, seasons, current, currentId
   end
 
   -- Simple delegate route handlers
   local simpleRouteHandlers = {
-    overview = function(tabs, shell, self) renderDashboard(shell, tabs, self) end,
+    overview = function(tabs, shell, self, routeContext)
+      renderDashboard(shell, tabs, self, type(routeContext) == "table" and routeContext.db or nil)
+    end,
     independentRaid = function(tabs, shell, self) renderIndependentRaidPage(shell, tabs, self) end,
-    wizard = function(tabs, shell, self) renderWizardPage(shell, tabs, self) end,
+    wizard = function(tabs, shell, self, routeContext)
+      renderWizardPage(shell, tabs, self, type(routeContext) == "table" and routeContext.db or nil)
+    end,
     seasons = function(tabs, shell, self) renderSeasonsPage(shell, tabs) end,
   }
 
-  local function renderRoute(self)
+  local function renderRoute(self, routeContext)
     self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
     self.selectedRoute = self.activeTab
-    local tabs, seasons, current, currentId = setupRoutePage(self, shell, frame, contentHost)
+    local routeDB = type(routeContext) == "table" and routeContext.db or nil
+    local pageSetupStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    local tabs, seasons, current, currentId = setupRoutePage(self, shell, frame, contentHost, routeDB)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", self.activeTab .. "-route-page-setup", pageSetupStartedAt)
+    end
     if not tabs then return end
     local routeModules = {
       disputes = "requests", preDibs = "preDibs", preDibRequests = "preDibs", announcements = "announcements",
       integration = "rclootcouncil", eligibility = "lootEligibility",
     }
     local disabledModule = routeModules[self.activeTab]
-    if disabledModule and not moduleEnabled(disabledModule) then
+    if disabledModule and not moduleEnabled(disabledModule, routeDB) then
       local status = Dibs.OperationalPolicy.GetModuleStatus(disabledModule)
       Dibs.AceGUI.AddHeader(shell, tabs, status.label or disabledModule, "Feature unavailable")
       Dibs.AceGUI.AddLabel(shell, tabs, (status.label or disabledModule) .. " is disabled by the Guild Master.", true)
@@ -5489,7 +5917,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
     if self.activeTab ~= "wizard" and self.activeTab ~= "sync" and self.activeTab ~= "automaticDibs"
       and self.activeTab ~= "lootTypes" and not SETUP_HELP_OPTION_ROUTES[self.activeTab] then
-      renderSetupPageHelp(shell, tabs, self)
+      renderSetupPageHelp(shell, tabs, self, routeDB)
     end
     local routeTitles = {
       disputes = "Requests", preDibs = "Pre-Dibs Settings", preDibRequests = "Pre-Dib Requests", pendingAwards = "Pending Awards", history = "History", reconciliation = "History", seasons = "Seasons",
@@ -5499,7 +5927,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
     }
     routeTitles.setup = (Dibs.L and Dibs.L.DOC_SETUP_ASSISTANT_LABEL) or "Raid Readiness"
     if self.activeTab == "statistics" then
-      renderStatisticsPage(self, currentId, tabs)
+      renderStatisticsPage(self, currentId, tabs, routeDB)
       return
     end
     if self.activeTab == "ranks" then
@@ -5509,7 +5937,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         Dibs.UIRenderStats.Record("Officer data", "rank-catalog-status", rankStatusStartedAt)
       end
     elseif self.activeTab == "preDibs" or self.activeTab == "modules" or self.activeTab == "seasons" or self.activeTab == "announcements" then
-      local syncStatus = Dibs.OfficerUI.BuildSynchronizationStatus()
+      local syncStatus = Dibs.OfficerUI.BuildSynchronizationStatus(routeDB)
       if syncStatus ~= "" then Dibs.AceGUI.AddLabel(shell, tabs, syncStatus, true) end
     end
     if self.activeTab == "ranks" then
@@ -5518,7 +5946,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
     local simpleHandler = simpleRouteHandlers[self.activeTab]
     if simpleHandler then
-      simpleHandler(tabs, shell, self)
+      simpleHandler(tabs, shell, self, routeContext)
       return
     end
     if self.activeTab == "developer" then
@@ -5551,7 +5979,12 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
     if self.activeTab == "diagnostics" then
       local healthText = Dibs.L or {}
-      local health = Dibs.HealthUI and Dibs.HealthUI.Evaluate and Dibs.HealthUI.Evaluate() or nil
+      local healthEvaluateStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+      local health = Dibs.HealthUI and Dibs.HealthUI.Evaluate
+        and Dibs.HealthUI.Evaluate({ db = routeDB }) or nil
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "diagnostics-health-evaluate", healthEvaluateStartedAt)
+      end
       Dibs.AceGUI.AddHeading(shell, tabs, healthText.HEALTH_DASHBOARD_TITLE or "Data health",
         healthText.HEALTH_DASHBOARD_INTRO or "Bounded operational health for the current guild and client.")
       local diagnosticActions = Dibs.AceGUI.AddInlineGroup(shell, tabs)
@@ -5634,8 +6067,12 @@ local function createAceWindow(initialRoute, deferInitialRender)
         Dibs.AceGUI.AddLabel(shell, tabs, healthText.HEALTH_DASHBOARD_NO_REPORT or "Health report unavailable.", true)
       end
       local reviewText = Dibs.L or {}
+      local anomalyScanStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
       local findingScan = Dibs.HealthUI and Dibs.HealthUI.ScanAnomalies
         and Dibs.HealthUI.ScanAnomalies() or { status = "UNAVAILABLE", anomalies = {}, count = 0, sources = {} }
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "diagnostics-anomaly-scan", anomalyScanStartedAt)
+      end
       Dibs.AceGUI.AddHeader(shell, tabs,
         reviewText.HEALTH_REVIEW_TITLE or "Review findings",
         reviewText.HEALTH_REVIEW_INTRO or "Read-only review of guild data findings and Great Vault items.")
@@ -5789,7 +6226,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       return
     end
     if self.activeTab == "installation" then
-      renderInstallationPage(shell, tabs, self)
+      renderInstallationPage(shell, tabs, self, type(routeContext) == "table" and routeContext.db or nil)
       return
     end
 
@@ -5801,7 +6238,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       if not tablePage then return end
       self.syncTablePage = tablePage
       local pageHeader = tablePage.header
-      renderSetupPageHelp(shell, pageHeader, self)
+      renderSetupPageHelp(shell, pageHeader, self, routeDB)
       local groupCount = type(GetNumGroupMembers) == "function" and tonumber(GetNumGroupMembers()) or 0
       local inRaid = type(IsInRaid) == "function" and IsInRaid() == true
       local defaultRosterScope = inRaid and "RAID" or (groupCount > 0 and "PARTY" or "GUILD")
@@ -5813,6 +6250,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       local query = string.lower(trimText(self.syncRosterQuery or ""))
       local projection = Dibs.OfficerUI.BuildSynchronizationProjection(self.syncRosterScope, {
         page = self.syncRosterPage, pageSize = pageSize, query = query,
+        db = type(routeContext) == "table" and routeContext.db or nil,
       })
       local pagination = projection.pagination or { page = 1, pageSize = pageSize, totalMatches = #projection.peers, totalPages = 1 }
       local rosterScope = rosterScopeLabels[self.syncRosterScope] or "Guild"
@@ -6077,7 +6515,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       local setupText = Dibs.L or {}
       local guildScope = self.activeTab == "guildSetup"
       local report = Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate
-        and Dibs.SetupAssistant.Evaluate({ scope = guildScope and "guild" or "raid" }) or {
+        and Dibs.SetupAssistant.Evaluate({ scope = guildScope and "guild" or "raid", db = routeDB }) or {
         status = "UNAVAILABLE", checks = {}, blockingCount = 0,
       }
       if guildScope then
@@ -6358,10 +6796,13 @@ local function createAceWindow(initialRoute, deferInitialRender)
 
     if self.activeTab == "modules" then
       local policy = Dibs.OperationalPolicy
+          local policyReadStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
           local registry = Dibs.FeatureRegistry
           local coreDefinitions = policy and policy.GetCoreModuleDefinitions and policy.GetCoreModuleDefinitions() or {}
           local definitions = policy and policy.GetModuleDefinitions and policy.GetModuleDefinitions() or {}
-          local canonicalModules = policy and policy.GetModuleValues and policy.GetModuleValues() or {}
+          local canonicalModules = policy and policy.GetModuleValues and policy.GetModuleValues(routeDB) or {}
+          local effectiveStates = registry and registry.GetEffectiveStates
+            and registry.GetEffectiveStates(canonicalModules, coreDefinitions, definitions) or {}
           local copyModules = function(value)
             return Dibs.DeepCopy and Dibs.DeepCopy(value or {}) or value or {}
           end
@@ -6376,17 +6817,32 @@ local function createAceWindow(initialRoute, deferInitialRender)
           for _, definition in ipairs(definitions) do
             if draft[definition.key] ~= authoritativeModules[definition.key] then dirty = true; break end
           end
-          local moduleDiagnostics = policy and policy.GetModuleManagementDiagnostics and policy.GetModuleManagementDiagnostics(nil) or {
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-policy-snapshot", policyReadStartedAt)
+          end
+          local authorizationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+          local moduleDiagnostics = policy and policy.GetModuleManagementDiagnostics and policy.GetModuleManagementDiagnostics(nil, routeDB) or {
             canManageModules = false, blockingReason = "POLICY_UNAVAILABLE", blockingMessage = "Module management unavailable.",
           }
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-authorization", authorizationStartedAt)
+          end
           local canWrite = moduleDiagnostics.canManageModules == true
           if dirty then
             moduleUiDebug("MODULE_UI_DIRTY dirty=true")
           end
-          local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
-          local governanceReady = governanceState.status == "GOVERNANCE_ADOPTED"
+          -- Diagnostics already read the canonical governance state while
+          -- checking module authority. Reuse that result for the heading.
+          local governanceReady = moduleDiagnostics.governanceInitialized == true
+          local modulesViewStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+          local modulesGovernanceUiStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+          local modulesGovernanceHeadingStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
           Dibs.AceGUI.AddHeading(shell, tabs, "Module Policy", "GM authority: " .. (canWrite and "Ready" or "Read-only")
             .. " | Governance: " .. (governanceReady and "Adopted" or "Not adopted"))
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-governance-heading", modulesGovernanceHeadingStartedAt)
+          end
+          local modulesGovernanceStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
       if not governanceReady then
         Dibs.AceGUI.AddLabel(shell, tabs, "Module management unavailable", true)
         Dibs.AceGUI.AddLabel(shell, tabs, "Guild governance must be initialized first.", true)
@@ -6441,11 +6897,23 @@ local function createAceWindow(initialRoute, deferInitialRender)
         Dibs.AceGUI.AddLabel(shell, tabs, "Module management unavailable", true)
         Dibs.AceGUI.AddLabel(shell, tabs, moduleDiagnostics.blockingMessage or tostring(moduleDiagnostics.blockingReason or "Authorization could not be verified."), true)
       end
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-governance-status-ui", modulesGovernanceStatusStartedAt)
+          end
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-governance-ui", modulesGovernanceUiStartedAt)
+          end
+          local featureCatalogStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
           -- Build complete feature list from FeatureRegistry for richer metadata
-          local allFeatures = registry and registry.ListFeatures and registry.ListFeatures() or {}
+          local allFeatures = registry and registry.ListFeatures
+            and registry.ListFeatures(coreDefinitions, definitions) or {}
           local featureByKey = {}
           for _, f in ipairs(allFeatures) do featureByKey[f.key] = f end
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-feature-catalog", featureCatalogStartedAt)
+          end
           -- Core Services section
+          local coreFeaturesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
           local coreSection = Dibs.AceGUI.AddSection(shell, tabs, "Core Services", "These services are always enabled and cannot be changed.")
           for _, definition in ipairs(coreDefinitions) do
             local f = featureByKey[definition.key]
@@ -6453,11 +6921,15 @@ local function createAceWindow(initialRoute, deferInitialRender)
             local dep = f and f.requires and (" [Requires: " .. f.requires .. "]") or ""
             Dibs.AceGUI.AddLabel(shell, coreSection, definition.label .. " - LOCKED (Always enabled)" .. desc .. dep, true)
           end
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-core-features-ui", coreFeaturesStartedAt)
+          end
           -- Optional Features section with full metadata and working controls
+          local optionalFeaturesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
           local optionalSection = Dibs.AceGUI.AddSection(shell, tabs, "Optional Features", "Guild-wide activation is stored in the operational policy. Changes require GM authority and adopted governance.")
           for _, definition in ipairs(definitions) do
             local f = featureByKey[definition.key]
-            local effectiveState = registry and registry.GetEffectiveState and registry.GetEffectiveState(definition.key)
+            local effectiveState = effectiveStates[definition.key]
             local isEnabled = draft[definition.key] == true
             local depBlocked = definition.requires and draft[definition.requires] ~= true
             local label = f and f.label or definition.label
@@ -6520,6 +6992,10 @@ local function createAceWindow(initialRoute, deferInitialRender)
                 "Blocked: requires " .. tostring(definition.requires) .. " to be enabled first.", true)
             end
           end
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-optional-features-ui", optionalFeaturesStartedAt)
+          end
+          local moduleActionsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
           local moduleActions = Dibs.AceGUI.AddInlineGroup(shell, optionalSection)
           if dirty then
             Dibs.AceGUI.AddLabel(shell, moduleActions, "Unsaved changes", true)
@@ -6541,6 +7017,12 @@ local function createAceWindow(initialRoute, deferInitialRender)
               self:Refresh()
             end, 140)
             Dibs.AceGUI.SetDisabled(save, not canWrite)
+          end
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-actions-ui", moduleActionsStartedAt)
+          end
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "modules-view-build", modulesViewStartedAt)
           end
           return
         end
@@ -6565,7 +7047,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
     if not optionGroup and self.activeTab ~= "overview" then
       Dibs.AceGUI.AddHeading(shell, tabs, routeTitles[self.activeTab] or "Officer", "Officer controls and current local projection.")
-      if SETUP_HELP_OPTION_ROUTES[self.activeTab] then renderSetupPageHelp(shell, tabs, self) end
+      if SETUP_HELP_OPTION_ROUTES[self.activeTab] then renderSetupPageHelp(shell, tabs, self, routeDB) end
     end
     if optionGroup and Dibs.AceGUI.RenderOptionsGroup then
       self.lootTypeControls = self.activeTab == "integration" and {} or nil
@@ -6575,17 +7057,25 @@ local function createAceWindow(initialRoute, deferInitialRender)
       -- to the bottom of a mostly empty page. Other canonical option pages keep
       -- their bounded scroll frame for long settings lists.
       local renderedTarget
-      Dibs.AceGUI.RenderOptionsGroup(shell, tabs, optionGroup, {
-        controlMap = controlMap,
-        scroll = self.activeTab ~= "overview" and not routeNeedsScroll,
-        renderGroupTitle = true,
-        flattenInlineGroups = not routeNeedsScroll,
-        onBeforeRender = function(target) renderSetupPageHelp(shell, target, self) end,
-        onRendered = function(target) renderedTarget = target end,
-        onChanged = function()
-          self:Refresh()
-        end,
-      })
+      local function renderOptionsGroup()
+        return Dibs.AceGUI.RenderOptionsGroup(shell, tabs, optionGroup, {
+          db = routeDB,
+          controlMap = controlMap,
+          scroll = self.activeTab ~= "overview" and not routeNeedsScroll,
+          renderGroupTitle = true,
+          flattenInlineGroups = not routeNeedsScroll,
+          onBeforeRender = function(target) renderSetupPageHelp(shell, target, self, routeDB) end,
+          onRendered = function(target) renderedTarget = target end,
+          onChanged = function()
+            self:Refresh()
+          end,
+        })
+      end
+      if Dibs.RCOptions and Dibs.RCOptions.WithOptionsReadSnapshot then
+        Dibs.RCOptions.WithOptionsReadSnapshot(renderOptionsGroup, routeDB)
+      else
+        renderOptionsGroup()
+      end
       local actionParent = renderedTarget or tabs
       if self.activeTab == "overview" then
         local officerRoot = optionsTable and optionsTable.args and optionsTable.args.dibsSettings
@@ -6611,8 +7101,15 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if self.activeTab == "eligibility" then
       local scroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 700) or tabs
       local seasonId = currentId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
+      local routeDB = type(routeContext) == "table" and routeContext.db or nil
       self.eligibilityAdvanced = self.eligibilityAdvanced == true
-      local eligibilityProjection = Dibs.OfficerUI.GetEligibilityProjection(seasonId, { expanded = self.eligibilityAdvanced })
+      local eligibilityProjectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+      local eligibilityProjection = Dibs.OfficerUI.GetEligibilityProjection(seasonId, {
+        expanded = self.eligibilityAdvanced, db = routeDB,
+      })
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "eligibility-policy-projection", eligibilityProjectionStartedAt)
+      end
       Dibs.AceGUI.AddHeading(shell, scroll, "Protected loot eligibility", (Dibs.L and Dibs.L.UI_HELP_LOOT_ELIGIBILITY) or "Shows which loot categories may use Dibs under the active guild policy.")
       local recommendedSection = Dibs.AceGUI.AddSection(shell, scroll, "Recommended categories",
         "The active preset describes the default eligibility policy. Customize only when guild rules require it.")
@@ -6643,6 +7140,111 @@ local function createAceWindow(initialRoute, deferInitialRender)
           end } }
         end,
       })
+      local eligibility = Dibs.CharacterEligibility
+      local relationships, relationshipError = {}, nil
+      local mainChanges, mainChangeError = {}, nil
+      local relationshipReadStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+      if eligibility and eligibility.ListRelationships then
+        relationships, relationshipError = eligibility.ListRelationships(Dibs.GetPlayerName(), seasonId, routeDB)
+      end
+      if eligibility and eligibility.ListMainChanges then
+        mainChanges, mainChangeError = eligibility.ListMainChanges(Dibs.GetPlayerName(), seasonId, routeDB)
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "eligibility-relationship-reads", relationshipReadStartedAt)
+      end
+      relationships = type(relationships) == "table" and relationships or {}
+      mainChanges = type(mainChanges) == "table" and mainChanges or {}
+      local relationshipSection = Dibs.AceGUI.AddSection(shell, scroll, "Main / alt declarations",
+        "Review player declarations. Approved links affect protected-loot history; rejected or suspended links do not.")
+      Dibs.AceGUI.AddHeader(shell, relationshipSection, "Main / alt declarations",
+        "Review pending character links and inspect previously reviewed declarations.")
+      local reasonControl = Dibs.AceGUI.AddEditBox(shell, relationshipSection, "Review reason", function(value)
+        self.eligibilityReviewReason = value or ""
+      end, 360)
+      setControlText(reasonControl, self.eligibilityReviewReason or "")
+      local relationshipRows = {}
+      for _, relationship in ipairs(relationships) do
+        relationshipRows[#relationshipRows + 1] = {
+          tostring(relationship.mainCharacterName or relationship.mainCharacterId or "?"),
+          tostring(relationship.altCharacterName or relationship.altCharacterId or "?"),
+          tostring(relationship.status or "unknown"),
+          tostring(relationship.reviewReason or relationship.reason or ""),
+          relationshipId = relationship.relationshipId,
+        }
+      end
+      Dibs.AceGUI.AddTable(shell, relationshipSection, {
+        { title = "Main", width = 150 },
+        { title = "Alt", width = 150 },
+        { title = "Status", width = 100 },
+        { title = "Reason", width = 260 },
+      }, relationshipRows, 180)
+      if relationshipError then
+        Dibs.AceGUI.AddLabel(shell, relationshipSection, "Could not load declarations: " .. tostring(relationshipError), true)
+      elseif #relationshipRows == 0 then
+        Dibs.AceGUI.AddLabel(shell, relationshipSection, "No Main / alt declarations for this season.", true)
+      end
+      for _, relationship in ipairs(relationships) do
+        if relationship.status == "pending" then
+          local relationshipId = relationship.relationshipId
+          local altName = tostring(relationship.altCharacterName or relationship.altCharacterId or "alt")
+          local actions = Dibs.AceGUI.AddInlineGroup(shell, relationshipSection)
+          local function reviewRelationship(status)
+            local result = Dibs.OfficerUI.ReviewEligibilityRelationship(
+              relationshipId, status, self.eligibilityReviewReason)
+            self:SetStatus(result and result.ok and ("Declaration " .. status .. ".")
+              or (result and tostring(result.diagnostic or result.reasonCode) or "Review failed."))
+            self:Refresh()
+          end
+          Dibs.AceGUI.AddButton(shell, actions, "Approve " .. altName, function()
+            reviewRelationship("approved")
+          end, 130)
+          Dibs.AceGUI.AddButton(shell, actions, "Reject " .. altName, function()
+            reviewRelationship("rejected")
+          end, 130)
+          Dibs.AceGUI.AddButton(shell, actions, "Suspend " .. altName, function()
+            reviewRelationship("suspended")
+          end, 130)
+        end
+      end
+      local mainChangeSection = Dibs.AceGUI.AddSection(shell, scroll, "Main-change requests",
+        "Approving a request starts the standard probation period (14 days by default).")
+      local mainChangeRows = {}
+      for _, change in ipairs(mainChanges) do
+        mainChangeRows[#mainChangeRows + 1] = {
+          tostring(change.oldMainName or change.oldMainId or "?"),
+          tostring(change.newMainName or change.newMainId or "?"),
+          tostring(change.status or "unknown"),
+          tostring(change.reason or ""),
+          changeId = change.changeId,
+        }
+      end
+      Dibs.AceGUI.AddTable(shell, mainChangeSection, {
+        { title = "Current main", width = 150 },
+        { title = "Requested main", width = 150 },
+        { title = "Status", width = 100 },
+        { title = "Reason", width = 260 },
+      }, mainChangeRows, 150)
+      if mainChangeError then
+        Dibs.AceGUI.AddLabel(shell, mainChangeSection, "Could not load main-change requests: " .. tostring(mainChangeError), true)
+      elseif #mainChangeRows == 0 then
+        Dibs.AceGUI.AddLabel(shell, mainChangeSection, "No Main-change requests for this season.", true)
+      end
+      for _, change in ipairs(mainChanges) do
+        if change.status == "pending" then
+          local changeId = change.changeId
+          local newMainName = tostring(change.newMainName or change.newMainId or "main")
+          Dibs.AceGUI.AddButton(shell, mainChangeSection,
+            "Approve " .. newMainName .. " (14-day probation)", function()
+              local result = Dibs.OfficerUI.ReviewEligibilityMainChange(changeId, {
+                reason = self.eligibilityReviewReason,
+              })
+              self:SetStatus(result and result.ok and "Main change approved with probation."
+                or (result and tostring(result.diagnostic or result.reasonCode) or "Review failed."))
+              self:Refresh()
+            end, 270)
+        end
+      end
       Dibs.AceGUI.AddButton(shell, recommendedSection, self.eligibilityAdvanced and "Hide Customize" or "Customize", function()
         self.eligibilityAdvanced = not self.eligibilityAdvanced
         self:Refresh()
@@ -6758,7 +7360,6 @@ local function createAceWindow(initialRoute, deferInitialRender)
       self.disputeTablePage = tablePage
       local pageHeader = tablePage.header
       Dibs.AceGUI.AddHeader(shell, pageHeader, "Officer review requests", helpText.UI_HELP_REVIEW_REQUESTS)
-      if Dibs.RequestDelivery then Dibs.RequestDelivery.Pump() end
       local statusChoices = { [""] = "All statuses" }
       for key, value in pairs(Dibs.Disputes and Dibs.Disputes.GetStatuses and Dibs.Disputes.GetStatuses() or {}) do
         statusChoices[value] = value == "Closed" and (Dibs.L.REQUEST_CLOSED or "Closed")
@@ -6794,13 +7395,21 @@ local function createAceWindow(initialRoute, deferInitialRender)
         self:Refresh()
       end, 70)
 
-      local requests, queueReason = {}, nil
+      local pageSize = tonumber(self.disputePageSize) or 10
+      if pageSize ~= 5 and pageSize ~= 10 and pageSize ~= 15 and pageSize ~= 20 then pageSize = 10 end
+      self.disputePageSize = pageSize
+      local requests, queueReason, queueTotalCount, queuePage = {}, nil, nil, nil
+      local queuePreflightPassed = false
       if Dibs.Disputes and Dibs.Disputes.ListForOfficer then
-        requests, queueReason = Dibs.Disputes.ListForOfficer(nil, {
+        requests, queueReason, queueTotalCount, queuePage = Dibs.Disputes.ListForOfficer(nil, {
           status = self.disputeStatusFilter ~= "" and self.disputeStatusFilter or nil,
           query = self.disputeQuery,
           filter = self.disputeFollowUpFilter,
+          page = self.disputePage,
+          pageSize = pageSize,
+          db = routeDB,
         })
+        queuePreflightPassed = queueReason == nil
       end
       if queueReason then
         self.disputeQueueError = "Officer access required: " .. tostring(queueReason)
@@ -6808,15 +7417,32 @@ local function createAceWindow(initialRoute, deferInitialRender)
         requests = {}
       else
         self.disputeQueueError = nil
+        -- ListForOfficer has just verified that Requests is enabled and that
+        -- this viewer is an Officer. Reuse that module check for this render;
+        -- Pump still checks Developer Mode and Independent Raid isolation.
+        -- Reminder scanning is handled by Sync lifecycle, so only flush delivery.
+        local deliveryPumpStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+          and Dibs.UIRenderStats.Begin(false)
+        if queuePreflightPassed and Dibs.RequestDelivery then Dibs.RequestDelivery.Pump(true, true, routeDB) end
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data", "disputes-request-delivery-pump", deliveryPumpStartedAt)
+        end
       end
       uiDebug("ROUTE=requests REQUEST_COUNT=" .. tostring(#(requests or {})))
-      local pageSize = tonumber(self.disputePageSize) or 10
-      if pageSize ~= 5 and pageSize ~= 10 and pageSize ~= 15 and pageSize ~= 20 then pageSize = 10 end
-      self.disputePageSize = pageSize
-      local displayRequests, pageNumber, totalPages, rowCount = Dibs.AceGUI.GetPageSlice(requests,
-        self.disputePage, pageSize)
+      local displayRequests, pageNumber, totalPages, rowCount
+      if type(queueTotalCount) == "number" then
+        displayRequests = requests
+        pageNumber = tonumber(queuePage) or 1
+        totalPages = math.max(1, math.ceil(queueTotalCount / pageSize))
+        rowCount = queueTotalCount
+      else
+        displayRequests, pageNumber, totalPages, rowCount = Dibs.AceGUI.GetPageSlice(requests,
+          self.disputePage, pageSize)
+      end
       self.disputePage = pageNumber
       local requestRows = {}
+      local rowPresentationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       for _, request in ipairs(displayRequests) do
         local presentation = buildOfficerRequestRow(request)
         requestRows[#requestRows + 1] = {
@@ -6826,6 +7452,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
           presentation.status.label,
           request = request,
         }
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "disputes-row-presentation", rowPresentationStartedAt)
       end
       self.disputePagination = Dibs.AceGUI.AddPaginationFooter(shell, tablePage, {
         pageSize = pageSize,
@@ -6847,6 +7476,8 @@ local function createAceWindow(initialRoute, deferInitialRender)
       })
       self.disputePagination.UpdateState(pageNumber, rowCount, pageSize)
       local metrics = Dibs.AceGUI.GetLayoutMetrics()
+      local tableBuildStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       Dibs.AceGUI.AddTable(shell, tablePage.scroll, {
         { title = "Date", width = 145, minWidth = 112, weight = 2, tooltip = helpText.UI_HELP_REVIEW_REQUESTS },
         { title = "Player", width = 125, minWidth = 100, weight = 2, tooltip = helpText.UI_HELP_REVIEW_REQUESTS },
@@ -6889,6 +7520,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
           }
         end,
       })
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "disputes-table-build", tableBuildStartedAt)
+      end
       Dibs.AceGUI.SetValue(self.disputePagination.pageSize, tostring(pageSize))
       tablePage.UpdateViewportHeight()
 
@@ -7829,19 +8463,49 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
 
     if self.activeTab == "lootTypes" then
+      local contextStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
+      local optionsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       local options = Dibs.RCOptions.GetLootTypeOptions()
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "loot-rules-option-tree", optionsStartedAt)
+      end
       local policy = options and options.types
       local lootRules = Dibs.LootRules
-      local authority, authorityStatus
+      local authority, authorityStatus, authorityDetail
       local draft, draftReason
+      local ruleStateStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       if lootRules then
-        authority, authorityStatus = lootRules.GetAuthoritySnapshot()
-        draft, draftReason = lootRules.GetDraftSnapshot()
+        local getAuthorityRules = lootRules.GetAuthorityRulesSnapshot or lootRules.GetAuthoritySnapshot
+        authority, authorityStatus, authorityDetail = getAuthorityRules(routeDB)
+        draft, draftReason = lootRules.GetDraftSnapshot(routeDB)
       end
-      local status = lootRules and lootRules.GetStatus() or { status = "UNAVAILABLE" }
+      local status = { status = "UNAVAILABLE" }
+      if lootRules and lootRules.GetStatusWithAuthoritySnapshot then
+        status = lootRules.GetStatusWithAuthoritySnapshot(authority, authorityStatus, authorityDetail, routeDB)
+      elseif lootRules and lootRules.GetStatus then
+        status = lootRules.GetStatus()
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "loot-rules-state-snapshot", ruleStateStartedAt)
+      end
+      local permissionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       local isGM = Dibs.Permissions and Dibs.Permissions.IsGM and Dibs.Permissions.IsGM() == true
       local canEditDraft = Dibs.RCOptions and Dibs.RCOptions.CanEditDibsSettings
         and Dibs.RCOptions.CanEditDibsSettings() == true
+      local buttonTemplateValues = Dibs.RCOptions and Dibs.RCOptions.GetButtonTemplateValues
+        and Dibs.RCOptions.SetButtonTemplateAssignment and Dibs.RCOptions.GetButtonTemplateValues(routeDB) or nil
+      local buttonTemplateLabels = {}
+      for _, label in pairs(buttonTemplateValues or {}) do
+        buttonTemplateLabels[#buttonTemplateLabels + 1] = tostring(label)
+      end
+      local buttonTemplateWidth = Dibs.AceGUI.GetContentSizedActionWidth(buttonTemplateLabels, 110)
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "loot-rules-permission-and-template", permissionStartedAt)
+      end
       local strings = Dibs.L or {}
       local statusText = {
         GUILD_LOOT_RULES_READY = strings.LOOT_RULES_STATUS_READY or "Guild Loot Rules are active.",
@@ -7924,12 +8588,24 @@ local function createAceWindow(initialRoute, deferInitialRender)
           keys[#keys + 1] = typeKey
         end
       end
+      local templateAssignments = {}
+      if Dibs.RCOptions and Dibs.RCOptions.GetButtonTemplateAssignments then
+        local assignmentsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+          and Dibs.UIRenderStats.Begin(false)
+        templateAssignments = Dibs.RCOptions.GetButtonTemplateAssignments(keys, routeDB) or {}
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data", "loot-rules-template-assignment-snapshot", assignmentsStartedAt)
+        end
+      end
       local visibleRules = authority and authority.types
         or (status.status == "LOCAL_LEGACY_ONLY" or status.status == "GUILD_LOOT_RULES_NOT_CONFIGURED")
           and draft and draft.types or nil
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "loot-rules-context", contextStartedAt)
+      end
       local scroll = (tabs and (tabs.type == "ScrollFrame" or tabs.kind == "ScrollFrame")) and tabs
         or Dibs.AceGUI.AddScrollableList(shell, tabs, 540) or tabs
-      renderSetupPageHelp(shell, scroll, self)
+      renderSetupPageHelp(shell, scroll, self, routeDB)
       self.lootRulesScroll = scroll
       self.lootRulesMinimumWindowWidth = shell.layout and shell.layout.minWidth
       self.lootRulesCards = {}
@@ -7942,14 +8618,23 @@ local function createAceWindow(initialRoute, deferInitialRender)
       local localTitle = strings.LOOT_RULES_GROUP_LOCAL or "Local"
       local rcTitle = strings.LOOT_RULES_FIELD_RC or "RC"
       local guideTitle = strings.LOOT_RULES_COLUMN_GUIDE or "Adventure Guide"
-      local templateTitle = "Button template"
+      local templateTitle = strings.LOOT_RULES_TEMPLATE_LABEL or "Button template"
+      local templateHelp = strings.LOOT_RULES_TEMPLATE_HELP
+        or "Selects the RCLootCouncil response buttons for this loot type."
 
       local function decision(value)
         return value == true and enabledText or disabledText
       end
 
-      local function readOnlyValue(parent, label, value)
-        if parent then Dibs.AceGUI.AddLabel(shell, parent, label .. ": " .. decision(value), true) end
+      local function readOnlyValue(parent, label, value, wideColumnIndex)
+        if not parent then return nil end
+        local control = Dibs.AceGUI.AddLabel(shell, parent, label .. ": " .. decision(value), not wideColumnIndex)
+        if control and wideColumnIndex then
+          responsiveTargets[#responsiveTargets + 1] = {
+            widget = control, kind = "field", index = wideColumnIndex,
+          }
+        end
+        return control
       end
 
       local function lootTypeDescription(typeKey)
@@ -7959,14 +8644,19 @@ local function createAceWindow(initialRoute, deferInitialRender)
         return strings.LOOT_TYPE_HELP_OTHER or "Other eligible loot that does not match a more specific type."
       end
 
-      local function addLootTypeLabel(parent, typeKey)
+      local function addLootTypeLabel(parent, typeKey, wideColumnIndex)
         local labelText = tostring(values[typeKey] or typeKey)
-        local label = Dibs.AceGUI.AddLabel(shell, parent, labelText, true)
+        local label = Dibs.AceGUI.AddLabel(shell, parent, labelText, not wideColumnIndex)
         if label then Dibs.AceGUI.AddTooltip(label, labelText, lootTypeDescription(typeKey)) end
+        if label and wideColumnIndex then
+          responsiveTargets[#responsiveTargets + 1] = {
+            widget = label, kind = "field", index = wideColumnIndex,
+          }
+        end
         return label
       end
 
-      local function addDraftCheckbox(parent, typeKey, field, label)
+      local function addDraftCheckbox(parent, typeKey, field, label, wideColumnIndex)
         if not parent then return nil end
         local draftRule = draft and draft.types[typeKey] or (visibleRules and visibleRules[typeKey])
         local control = Dibs.AceGUI.AddCheckBox(shell, parent, label,
@@ -7974,7 +8664,12 @@ local function createAceWindow(initialRoute, deferInitialRender)
             local changed, reason = lootRules.SetDraftValue(typeKey, field, value == true)
             if not changed then self:SetStatus(tostring(reason)); return end
             self:Refresh()
-          end)
+          end, wideColumnIndex and 120 or nil)
+        if control and wideColumnIndex then
+          responsiveTargets[#responsiveTargets + 1] = {
+            widget = control, kind = "field", index = wideColumnIndex,
+          }
+        end
         if field == "rclootcouncil" then
           self.rcLootTypeControls[typeKey] = control
         else
@@ -7983,37 +8678,34 @@ local function createAceWindow(initialRoute, deferInitialRender)
         return control
       end
 
-      local function addDraftTemplateAssignment(parent, typeKey, showLabel)
-        if not parent or not Dibs.RCOptions or not Dibs.RCOptions.GetButtonTemplateValues
+      local function addDraftTemplateAssignment(parent, typeKey, showLabel, wideColumnIndex)
+        if not parent or not Dibs.RCOptions or not buttonTemplateValues
           or not Dibs.RCOptions.SetButtonTemplateAssignment then return nil end
-        local values = Dibs.RCOptions.GetButtonTemplateValues()
-        local selected = Dibs.RCOptions.GetButtonTemplateAssignment(typeKey)
+        local values = buttonTemplateValues
+        local selected = templateAssignments[typeKey]
+          or Dibs.RCOptions.GetButtonTemplateAssignment(typeKey)
         local wideLayout = layoutState.mode == "WIDE"
         local control = Dibs.AceGUI.AddDropdown(shell, parent,
-          showLabel and "Button template" or (wideLayout and "" or "Button template"), values, function(templateId)
+          showLabel and templateTitle or (wideLayout and "" or templateTitle), values, function(templateId)
           local assigned, reason = Dibs.RCOptions.SetButtonTemplateAssignment(typeKey, templateId)
           if not assigned then self:SetStatus(tostring(reason)); return end
           self:Refresh()
-        end, wideLayout and (layoutState.columnCount == 6 and 125 or 180) or 220)
+        end, wideLayout and buttonTemplateWidth or (wideColumnIndex and 120 or 220))
         if control then
           Dibs.AceGUI.SetValue(control, selected)
           if type(control.SetText) == "function" then control:SetText(values[selected] or selected) end
           Dibs.AceGUI.SetDisabled(control,
-            not (Dibs.RCOptions.CanEditDibsSettings and Dibs.RCOptions.CanEditDibsSettings()))
+            not canEditDraft)
+          Dibs.AceGUI.AddTooltip(control, templateTitle, templateHelp)
           self.rcLootTemplateControls[typeKey] = control
+          if wideColumnIndex then
+            responsiveTargets[#responsiveTargets + 1] = {
+              widget = control, kind = "contentField", index = wideColumnIndex,
+              preferredWidth = buttonTemplateWidth,
+            }
+          end
         end
         return control
-      end
-
-      local function addWideColumn(parent, columnIndex, columnCount)
-        local column = Dibs.AceGUI.Create(shell, "SimpleGroup", parent)
-        if column then
-          if column.SetLayout then column:SetLayout("List") end
-          responsiveTargets[#responsiveTargets + 1] = {
-            widget = column, kind = "column", index = columnIndex, count = columnCount,
-          }
-        end
-        return column
       end
 
       local function addMediumBlock(parent, title, split)
@@ -8062,7 +8754,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
           local draftBlock = addMediumBlock(blocks, draftTitle, authority ~= nil)
           addDraftFields(draftBlock, typeKey)
         else
-          local templateBlock = addMediumBlock(blocks, "Button template", false)
+          local templateBlock = addMediumBlock(blocks, templateTitle, false)
           addDraftTemplateAssignment(templateBlock, typeKey)
         end
       end
@@ -8082,75 +8774,41 @@ local function createAceWindow(initialRoute, deferInitialRender)
           addLocalFields(Dibs.AceGUI.AddSection(shell, card, localTitle), rule)
         end
         if not canEditDraft then
-          addDraftTemplateAssignment(Dibs.AceGUI.AddSection(shell, card, "Button template"), typeKey)
+          addDraftTemplateAssignment(Dibs.AceGUI.AddSection(shell, card, templateTitle), typeKey)
         end
       end
 
       local function wideHeaders()
-        local labels
-        if authority and canEditDraft then
-          labels = {
-            strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
-            strings.LOOT_RULES_COLUMN_GUILD_RC or "Guild RC",
-            strings.LOOT_RULES_COLUMN_DRAFT_RC or "Draft RC",
-            templateTitle,
-            strings.LOOT_RULES_COLUMN_GUILD_GUIDE or "Guild Adventure Guide",
-            strings.LOOT_RULES_COLUMN_DRAFT_GUIDE or "Draft Adventure Guide",
-          }
-        elseif authority then
-          labels = {
-            strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
-            strings.LOOT_RULES_COLUMN_GUILD_RC or "Guild RC",
-            templateTitle,
-            strings.LOOT_RULES_COLUMN_GUILD_GUIDE or "Guild Adventure Guide",
-          }
-        elseif canEditDraft then
-          labels = {
-            strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
-            strings.LOOT_RULES_COLUMN_DRAFT_RC or "Draft RC",
-            templateTitle,
-            strings.LOOT_RULES_COLUMN_DRAFT_GUIDE or "Draft Adventure Guide",
-          }
-        else
-          labels = {
-            strings.LOOT_RULES_COLUMN_TYPE or "Loot type",
-            strings.LOOT_RULES_COLUMN_RC or "RCLootCouncil",
-            templateTitle,
-            strings.LOOT_RULES_COLUMN_GUIDE or "Adventure Guide",
-          }
-        end
-        -- Each loot type is its own compact card. The values remain labeled in
-        -- each card, so a separate full-width header row is unnecessary.
-        layoutState.columnCount = #labels - 1
+        -- The loot-type name sits above each outlined row, like Rank Rules.
+        layoutState.columnCount = authority and canEditDraft and 5 or 3
       end
 
       local function addWideType(typeKey)
         local rule = visibleRules and visibleRules[typeKey]
-        local card = Dibs.AceGUI.AddSection(shell, scroll,
-          tostring(values[typeKey] or typeKey), lootTypeDescription(typeKey))
-        self.lootRulesCards[typeKey] = card
+        local title = tostring(values[typeKey] or typeKey)
+        -- Match Rank Rules: the loot type titles the bordered section, while
+        -- its controls stay together in one compact horizontal row.
+        local card = Dibs.AceGUI.AddSection(shell, scroll, title, lootTypeDescription(typeKey))
         local row = Dibs.AceGUI.AddInlineGroup(shell, card)
-        local function cell(index)
-          return addWideColumn(row, index, layoutState.columnCount)
-        end
+        self.lootRulesCards[typeKey] = card
         if authority and canEditDraft then
-          readOnlyValue(cell(1), strings.LOOT_RULES_COLUMN_GUILD_RC or (guildTitle .. " " .. rcTitle), rule and rule.rclootcouncil)
-          addDraftCheckbox(cell(2), typeKey, "rclootcouncil", strings.LOOT_RULES_COLUMN_DRAFT_RC or (draftTitle .. " " .. rcTitle))
-          addDraftTemplateAssignment(cell(3), typeKey, true)
-          readOnlyValue(cell(4), strings.LOOT_RULES_COLUMN_GUILD_GUIDE or (guildTitle .. " " .. guideTitle), rule and rule.adventureGuide)
-          addDraftCheckbox(cell(5), typeKey, "adventureGuide", strings.LOOT_RULES_COLUMN_DRAFT_GUIDE or (draftTitle .. " " .. guideTitle))
+          readOnlyValue(row, strings.LOOT_RULES_COLUMN_GUILD_RC or (guildTitle .. " " .. rcTitle), rule and rule.rclootcouncil, 1)
+          addDraftCheckbox(row, typeKey, "rclootcouncil", strings.LOOT_RULES_COLUMN_DRAFT_RC or (draftTitle .. " " .. rcTitle), 2)
+          addDraftTemplateAssignment(row, typeKey, false, 3)
+          readOnlyValue(row, strings.LOOT_RULES_COLUMN_GUILD_GUIDE or (guildTitle .. " " .. guideTitle), rule and rule.adventureGuide, 4)
+          addDraftCheckbox(row, typeKey, "adventureGuide", strings.LOOT_RULES_COLUMN_DRAFT_GUIDE or (draftTitle .. " " .. guideTitle), 5)
         elseif authority then
-          readOnlyValue(cell(1), guildTitle .. " " .. rcTitle, rule and rule.rclootcouncil)
-          addDraftTemplateAssignment(cell(2), typeKey, true)
-          readOnlyValue(cell(3), guildTitle .. " " .. guideTitle, rule and rule.adventureGuide)
+          readOnlyValue(row, guildTitle .. " " .. rcTitle, rule and rule.rclootcouncil, 1)
+          addDraftTemplateAssignment(row, typeKey, false, 2)
+          readOnlyValue(row, guildTitle .. " " .. guideTitle, rule and rule.adventureGuide, 3)
         elseif canEditDraft then
-          addDraftCheckbox(cell(1), typeKey, "rclootcouncil", draftTitle .. " " .. rcTitle)
-          addDraftTemplateAssignment(cell(2), typeKey, true)
-          addDraftCheckbox(cell(3), typeKey, "adventureGuide", draftTitle .. " " .. guideTitle)
+          addDraftCheckbox(row, typeKey, "rclootcouncil", draftTitle .. " " .. rcTitle, 1)
+          addDraftTemplateAssignment(row, typeKey, false, 2)
+          addDraftCheckbox(row, typeKey, "adventureGuide", draftTitle .. " " .. guideTitle, 3)
         else
-          readOnlyValue(cell(1), rcTitle, rule and rule.rclootcouncil)
-          addDraftTemplateAssignment(cell(2), typeKey, true)
-          readOnlyValue(cell(3), guideTitle, rule and rule.adventureGuide)
+          readOnlyValue(row, rcTitle, rule and rule.rclootcouncil, 1)
+          addDraftTemplateAssignment(row, typeKey, false, 2)
+          readOnlyValue(row, guideTitle, rule and rule.adventureGuide, 3)
         end
       end
 
@@ -8158,10 +8816,13 @@ local function createAceWindow(initialRoute, deferInitialRender)
         local widths = {}
         local count = layoutState.columnCount or 0
         if count > 0 then
-          local usable = math.max(1, contentWidth - count * 12)
-          local proportions = count == 6 and { 0.22, 0.14, 0.10, 0.18, 0.18, 0.18 }
-            or count == 4 and { 0.30, 0.18, 0.30, 0.22 }
-            or count == 5 and { 0.28, 0.18, 0.18, 0.18, 0.18 }
+          -- The width comes from the Officer content host, while these cells
+          -- live inside both the scroll frame and an InlineGroup card. Reserve
+          -- space for those insets and Flow gaps so the final column does not
+          -- wrap under the first column on Retail.
+          local usable = math.max(1, contentWidth - count * 12 - 32)
+          local proportions = count == 5 and { 0.17, 0.19, 0.25, 0.18, 0.21 }
+            or count == 3 and { 0.30, 0.38, 0.32 }
             or nil
           if proportions then
             for index, proportion in ipairs(proportions) do widths[index] = usable * proportion end
@@ -8172,7 +8833,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
           end
         end
         for _, target in ipairs(responsiveTargets) do
-          local width = target.kind == "column" and widths[target.index]
+          local width = target.kind == "field" and widths[target.index] and math.max(96, widths[target.index] - 12)
+            or target.kind == "contentField" and widths[target.index]
+              and math.max(96, math.min(widths[target.index] - 12, target.preferredWidth or 96))
             or target.kind == "split" and math.max(1, (contentWidth - 16) / 2)
             or nil
           if width and target.widget and target.widget.SetWidth then target.widget:SetWidth(width) end
@@ -8183,6 +8846,10 @@ local function createAceWindow(initialRoute, deferInitialRender)
       end
 
       local function buildRows()
+        local rowsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+          and Dibs.UIRenderStats.Begin(false)
+        local resetStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+          and Dibs.UIRenderStats.Begin(false)
         local resizeOffset = scroll._dibsResizeOffset
         Dibs.AceGUI.Clear(scroll)
         if resizeOffset then
@@ -8202,6 +8869,11 @@ local function createAceWindow(initialRoute, deferInitialRender)
         self.lootRulesCards = {}
         self.lootTypeControls = {}
         self.rcLootTypeControls = {}
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data", "loot-rules-content-reset", resetStartedAt)
+        end
+        local cardsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+          and Dibs.UIRenderStats.Begin(false)
         if layoutState.mode == "WIDE" then wideHeaders() end
         for _, typeKey in ipairs(keys) do
           if layoutState.mode == "WIDE" then
@@ -8211,6 +8883,11 @@ local function createAceWindow(initialRoute, deferInitialRender)
           else
             addNarrowType(typeKey)
           end
+        end
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data",
+            "loot-rules-card-loop-" .. string.lower(layoutState.mode or "unknown"), cardsStartedAt)
+          Dibs.UIRenderStats.Record("Officer data", "loot-rules-row-build", rowsStartedAt)
         end
       end
 
@@ -8240,7 +8917,12 @@ local function createAceWindow(initialRoute, deferInitialRender)
       self.lootRulesResize = reflow
       self.lootRulesLayoutMode = layoutState.mode
       buildRows()
+      local layoutStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       reflow(getOfficerContentWidth(frame, shell))
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "loot-rules-initial-layout", layoutStartedAt)
+      end
 
       local footer = Dibs.AceGUI.AddInlineGroup(shell, self.mountedPageHost or tabs)
       self.lootRulesFooter = footer
@@ -8726,22 +9408,46 @@ local function createAceWindow(initialRoute, deferInitialRender)
       -- The table shows allocations and their differences, not transaction
       -- balances. Avoid scanning every roster member's ledger history here.
       local details = Dibs.OfficerUI.BuildAutomaticAllocationDetails(currentId,
-        { deferSnapshots = true, includeBalance = false })
+        { deferSnapshots = true, includeBalance = false,
+          db = type(routeContext) == "table" and routeContext.db or nil })
       self.automaticDibsFilter = self.automaticDibsFilter or "needsReconciliation"
       local presentation = Dibs.OfficerUI.BuildAutomaticDibsPresentation(details,
         self.automaticDibsFilter, self.automaticDibsQuery)
+      local pageScaffoldStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       local summary = presentation.summary
+      local headerControlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
+      local tablePageCreateStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       local tablePage = Dibs.AceGUI.AddTablePage(shell, tabs, {
         footer = true, boundsFrame = navigation.content,
       })
       if not tablePage then return end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-page-create", tablePageCreateStartedAt)
+      end
+      local pageHeaderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       self.automaticDibsTablePage = tablePage
       local pageHeader = tablePage.header
-      renderSetupPageHelp(shell, pageHeader, self)
+      renderSetupPageHelp(shell, pageHeader, self, routeDB)
       Dibs.AceGUI.AddHeading(shell, pageHeader, "Automatic Dibs", "Current rank allocation compared with assigned seasonal allocation.")
-      Dibs.AceGUI.AddLabel(shell, pageHeader, Dibs.OfficerUI.BuildRankCatalogStatus(), true)
+      local catalogStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
+      local catalogStatus = Dibs.OfficerUI.BuildRankCatalogStatus()
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-rank-catalog-status", catalogStatusStartedAt)
+      end
+      Dibs.AceGUI.AddLabel(shell, pageHeader, catalogStatus, true)
       Dibs.AceGUI.AddLabel(shell, pageHeader, tostring(summary.playersNeedingReconciliation)
         .. " players need reconciliation\nMissing allocation: +" .. tostring(summary.totalMissing) .. " Dibs", true)
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-header-content", pageHeaderStartedAt)
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-page-header", pageHeaderStartedAt)
+      end
+      local searchControlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       local searchControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
       self.automaticDibsSearch = Dibs.AceGUI.AddEditBox(shell, searchControls,
         "Search player", function(value)
@@ -8774,6 +9480,11 @@ local function createAceWindow(initialRoute, deferInitialRender)
         end
         self:Refresh()
       end, 130)
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-search-controls", searchControlsStartedAt)
+      end
+      local statusFilterStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       local statusOptions = {
         all = "All",
         needsReconciliation = "Needs Reconciliation",
@@ -8787,6 +9498,11 @@ local function createAceWindow(initialRoute, deferInitialRender)
           if self.RefreshAutomaticDibsTable then self:RefreshAutomaticDibsTable() end
         end, 240, { tooltip = (Dibs.L or {}).UI_HELP_AUTOMATIC_DIBS_FILTER })
       Dibs.AceGUI.SetValue(self.automaticDibsStatusFilter, self.automaticDibsFilter)
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-status-filter", statusFilterStartedAt)
+      end
+      local reconciliationControlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       if self.automaticDibsStatus and self.automaticDibsStatus ~= "" then
         Dibs.AceGUI.AddLabel(shell, pageHeader, self.automaticDibsStatus, true)
       end
@@ -8809,6 +9525,12 @@ local function createAceWindow(initialRoute, deferInitialRender)
           })
         end, 300)
       end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-reconciliation-controls", reconciliationControlsStartedAt)
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-header-controls", headerControlsStartedAt)
+      end
+      local tableSetupStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
       self.automaticDibsPageSize = tonumber(self.automaticDibsPageSize) or 10
       if self.automaticDibsPageSize ~= 5 and self.automaticDibsPageSize ~= 10
         and self.automaticDibsPageSize ~= 15 and self.automaticDibsPageSize ~= 20 then
@@ -8848,8 +9570,14 @@ local function createAceWindow(initialRoute, deferInitialRender)
         if tableHost.SetLayout then tableHost:SetLayout("List") end
       end
       self.ReflowAutomaticDibsTable = function(_, rebuildRows)
+        local reflowStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
         local currentPresentation = self.automaticDibsCachedPresentation
-        if not currentPresentation then return end
+        if not currentPresentation then
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-reflow", reflowStartedAt)
+          end
+          return
+        end
         local currentWidth = tonumber(tablePage.root.frame and tablePage.root.frame.GetWidth
           and tablePage.root.frame:GetWidth()) or 0
         if currentWidth <= 0 then
@@ -8866,14 +9594,21 @@ local function createAceWindow(initialRoute, deferInitialRender)
         if rebuildRows == false and sameStructure then
           self.automaticDibsLayoutMode = currentMode
           tablePage.UpdateViewportHeight()
+          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+            Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-reflow", reflowStartedAt)
+          end
           return
         end
         local columns = automaticDibsColumns(currentMode,
           self.automaticDibsSortKey, self.automaticDibsSortDescending)
         local metrics = Dibs.AceGUI.GetLayoutMetrics()
         local pageSize = self.automaticDibsPageSize or 10
+        local sortStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
         local rowsForDisplay = sortAutomaticDibsRows(currentPresentation.rows,
           self.automaticDibsSortKey, self.automaticDibsSortDescending)
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-row-sort", sortStartedAt)
+        end
         local _, currentPage, totalPages, rowCount, firstRow, lastRow = Dibs.AceGUI.GetPageSlice(
           rowsForDisplay, self.automaticDibsPage, pageSize)
         self.automaticDibsPage = currentPage
@@ -8881,12 +9616,21 @@ local function createAceWindow(initialRoute, deferInitialRender)
           local projected = rowsForDisplay[index]
           if projected and projected.source and projected.source.snapshotDeferred then
             local row = projected.source
+            local snapshotStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+              and Dibs.UIRenderStats.Begin(false)
             frame._ensureAutomaticReconciliationSnapshot(row)
+            if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+              Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-reconciliation-snapshot", snapshotStartedAt)
+            end
             projected.actionText = row.actionable and "RECONCILE"
               or Dibs.OfficerUI.DescribeReconciliationBlock(row.blockedReason)
           end
         end
+        local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
         local tableRows = frame._automaticDibsTableRows({ rows = rowsForDisplay }, currentMode, firstRow, lastRow)
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-row-projection", projectionStartedAt)
+        end
         local tableRowHeight = math.max(metrics.rowHeight, metrics.buttonHeight + 8)
         if self.automaticDibsPagination then
           self.automaticDibsPage, totalPages = self.automaticDibsPagination.UpdateState(
@@ -8894,6 +9638,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         end
         Dibs.AceGUI.Clear(tablePage.columnHeader)
         Dibs.AceGUI.Clear(tableHost)
+        local tableRenderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
         Dibs.AceGUI.AddTable(shell, tableHost, columns, tableRows, 430, function(displayRow)
           local row = displayRow and displayRow.reconciliationRow
           if not row or not row.actionable or (tonumber(row.difference) or 0) <= 0 then return nil end
@@ -8902,6 +9647,8 @@ local function createAceWindow(initialRoute, deferInitialRender)
           end }
         end, {
           widthHint = currentWidth, disableContextMenu = true, noScrolling = true,
+          timingLabel = "automatic-dibs",
+          tooltipOnlyWhenTruncated = true,
           fluidColumns = true, headerParent = tablePage.columnHeader,
           horizontalPadding = metrics.tableHorizontalPadding,
           scrollbarReserve = metrics.tableScrollbarReserve, columnGap = metrics.tableColumnGap,
@@ -8925,9 +9672,15 @@ local function createAceWindow(initialRoute, deferInitialRender)
             return nil
           end,
         })
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-render", tableRenderStartedAt)
+        end
         tablePage.UpdateViewportHeight()
         self.automaticDibsLayoutMode = currentMode
         self.automaticDibsStructureMode = structureMode
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-reflow", reflowStartedAt)
+        end
       end
       self.RefreshAutomaticDibsTable = function()
         self.automaticDibsCachedPresentation = Dibs.OfficerUI.BuildAutomaticDibsPresentation(
@@ -8935,7 +9688,12 @@ local function createAceWindow(initialRoute, deferInitialRender)
         self:ReflowAutomaticDibsTable()
       end
       self.automaticDibsCachedDetails = details
-      self:RefreshAutomaticDibsTable()
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-setup", tableSetupStartedAt)
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-page-scaffold", pageScaffoldStartedAt)
+      end
       if shell.AddResizeHandler and not self._automaticDibsResizeHandlerInstalled then
         self._automaticDibsResizeHandlerInstalled = true
         shell:AddResizeHandler(function(activeShell, width)
@@ -8974,6 +9732,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if not tablePage then return end
     self.ledgerTablePage = tablePage
     local pageHeader = tablePage.header
+    local isPreDibRequestRoute = self.activeTab == "preDibRequests" or self.activeTab == "predibs"
+    local preDibControlsStartedAt = isPreDibRequestRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     local searchControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
     local strings = Dibs.L or {}
     local historyCriteria = {}
@@ -9045,10 +9806,14 @@ local function createAceWindow(initialRoute, deferInitialRender)
       end
     end
     if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
-      local ledgers = Dibs.MultiLedger.GetLedgers()
-      local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
-      local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues()
-      local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
+      local ledgerSelectorStartedAt = isPreDibRequestRoute and Dibs.UIRenderStats
+        and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+      local selectorDB = type(routeContext) == "table" and routeContext.db or nil
+      local ledgers = Dibs.MultiLedger.GetLedgers({ includeTransactionCount = false }, selectorDB)
+      local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId(selectorDB)
+      local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId
+        and Dibs.MultiLedger.GetViewLedgerId(selectorDB) or activeLedgerId
+      local ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues(ledgers, activeLedgerId, viewLedgerId)
       self.activeLedgerDropdown = Dibs.AceGUI.AddDropdown(shell, searchControls, strings.LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
         if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end
         self.ledgerPage = 1
@@ -9057,14 +9822,22 @@ local function createAceWindow(initialRoute, deferInitialRender)
       Dibs.AceGUI.SetValue(self.activeLedgerDropdown, viewLedgerId)
       Dibs.AceGUI.AddTooltip(self.activeLedgerDropdown, strings.LEDGER_VIEW_LABEL or "View ledger",
         strings.LEDGER_VIEW_TOOLTIP or "Consult another ledger in read-only mode. Pre-Dibs and awards always use the guild active ledger set by GM/Officers.")
+      if isPreDibRequestRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "preDibRequests-ledger-selector", ledgerSelectorStartedAt)
+      end
     end
-    local isPreDibRequestRoute = self.activeTab == "preDibRequests" or self.activeTab == "predibs"
     local requestCriteria = {}
     for key, value in pairs(historyCriteria) do requestCriteria[key] = value end
     requestCriteria.kind, requestCriteria.limit = "predibs", 50
     local preDibRows, preDibFilterError = {}, nil
+    local preDibViewStartedAt = isPreDibRequestRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     if isPreDibRequestRoute then
       preDibRows, preDibFilterError = Dibs.OfficerUI.BuildRequestView("officer", requestCriteria)
+    end
+    if isPreDibRequestRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "preDibRequests-filter-controls", preDibControlsStartedAt)
+      Dibs.UIRenderStats.Record("Officer data", "preDibRequests-view-build", preDibViewStartedAt)
     end
     local viewName = self.activeTab == "history" and "actions" or (isPreDibRequestRoute and "predibs" or self.activeTab)
     self.ledgerPageSize = tonumber(self.ledgerPageSize) or 10
@@ -9082,12 +9855,17 @@ local function createAceWindow(initialRoute, deferInitialRender)
     view.filterError = view.filterError or preDibFilterError
     local totalCount, totalPages, pageNumber = view.totalCount, view.totalPages, view.page
     local pagedPreDibRows = preDibRows
+    local preDibPagingStartedAt = isPreDibRequestRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     if isPreDibRequestRoute then
       pagedPreDibRows, pageNumber, totalPages, totalCount = Dibs.AceGUI.GetPageSlice(
         preDibRows, self.ledgerPage, self.ledgerPageSize)
       self.ledgerPage = pageNumber
     else
       self.ledgerPage = view.page
+    end
+    if isPreDibRequestRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "preDibRequests-page-slice", preDibPagingStartedAt)
     end
     local pageTitle = self.activeTab == "preDibRequests" and "Pre-Dib Requests" or view.title
     if preDibFilterError then
@@ -9113,6 +9891,8 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
     local expectedColumns = (self.activeTab == "history" or self.activeTab == "actions") and 5 or (self.activeTab == "automaticDibs" and 7 or (isPreDibRequestRoute and 7 or (self.activeTab == "vault" and 8 or 3)))
     local tableRows = {}
+    local preDibRowsStartedAt = isPreDibRequestRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     if isPreDibRequestRoute then
       for _, row in ipairs(pagedPreDibRows) do
         local values = {
@@ -9185,6 +9965,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
         { title = "Actions", width = 100, tooltip = "Number of ledger entries." },
       }
     end
+    if isPreDibRequestRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "preDibRequests-table-rows", preDibRowsStartedAt)
+    end
     local compactVault = false
     if self.activeTab == "vault" then
       compactVault = getOfficerContentWidth(frame, shell) < 1200
@@ -9226,6 +10009,8 @@ local function createAceWindow(initialRoute, deferInitialRender)
       Dibs.AceGUI.SetValue(self.vaultStatusControl, self.vaultStatusFilter or "ALL")
     end
     local metrics = Dibs.AceGUI.GetLayoutMetrics()
+    local preDibPaginationStartedAt = isPreDibRequestRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     self.ledgerPagination = Dibs.AceGUI.AddPaginationFooter(shell, tablePage, {
       pageSize = self.ledgerPageSize,
       onPrevious = function()
@@ -9244,8 +10029,13 @@ local function createAceWindow(initialRoute, deferInitialRender)
         end
       end,
     })
+    if isPreDibRequestRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "preDibRequests-pagination-controls", preDibPaginationStartedAt)
+    end
     if not self.ledgerPagination then return end
     self.pageText = self.ledgerPagination.page
+    local preDibTableStartedAt = isPreDibRequestRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     self.aceLedgerScroll = Dibs.AceGUI.AddTable(shell, tablePage.scroll, columns, tableRows, nil, nil, {
       noScrolling = true, fluidColumns = true, headerParent = tablePage.columnHeader,
       widthHint = getOfficerContentWidth(frame, shell),
@@ -9266,6 +10056,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
         end } }
       end or nil,
     })
+    if isPreDibRequestRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "preDibRequests-table-build", preDibTableStartedAt)
+    end
     if isPreDibRequestRoute and self.preDibRequestDetailsId ~= nil then
       local selectedRequest
       for _, request in ipairs(preDibRows) do
@@ -9300,14 +10093,52 @@ local function createAceWindow(initialRoute, deferInitialRender)
   end
   activateRoute = function(route, syncTree)
     local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-    if Dibs.AceGUI.SetShellStatus then Dibs.AceGUI.SetShellStatus(shell) end
+    local routePreflightStartedAt
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.IsEnabled and Dibs.UIRenderStats.IsEnabled()
+      and Dibs.UIRenderStats.Begin then
+      routePreflightStartedAt = Dibs.UIRenderStats.Begin(false)
+    end
+    local shellStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    local statusDatabase
+    if Dibs.AceGUI.SetShellStatus then
+      local _, resolvedDB = Dibs.AceGUI.SetShellStatus(shell)
+      statusDatabase = resolvedDB
+    end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "route-shell-status", shellStatusStartedAt)
+    end
+    local routeResolutionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.IsEnabled
+      and Dibs.UIRenderStats.IsEnabled() and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+    local profileEligibilityRoute = (route == "eligibility" or frame.activeTab == "eligibility")
+      and Dibs.UIRenderStats and Dibs.UIRenderStats.IsEnabled and Dibs.UIRenderStats.IsEnabled()
+    local routeNormalizeStartedAt = profileEligibilityRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     local normalized = normalizeOfficerTab(route or frame.activeTab or "overview")
-    if not officerRouteVisible(normalized) then
+    if profileEligibilityRoute and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-normalization", routeNormalizeStartedAt)
+    end
+    local routeVisibilityStartedAt = profileEligibilityRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+    local routeVisible = officerRouteVisible(normalized, statusDatabase)
+    if profileEligibilityRoute and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "eligibility-route-visibility-check", routeVisibilityStartedAt)
+    end
+    if not routeVisible then
       local routeModules = {
         disputes = "requests", preDibs = "preDibs", preDibRequests = "preDibs", announcements = "announcements",
         integration = "rclootcouncil", eligibility = "lootEligibility",
       }
-      if not routeModules[normalized] or moduleEnabled(routeModules[normalized]) then normalized = "overview" end
+      if not routeModules[normalized] or moduleEnabled(routeModules[normalized], statusDatabase) then normalized = "overview" end
+    end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "route-preflight", routePreflightStartedAt)
+      Dibs.UIRenderStats.Record("Officer data", normalized .. "-route-resolution", routeResolutionStartedAt)
+    end
+    local automaticDibsRoute = normalized == "automaticDibs"
+    if automaticDibsRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-route-preflight", routePreflightStartedAt)
+      Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-route-resolution", routeResolutionStartedAt)
     end
     -- Only reset pagination on an actual tab switch; a same-tab refresh (e.g. Next/Previous) must keep it.
     if normalized ~= frame.activeTab then
@@ -9315,17 +10146,53 @@ local function createAceWindow(initialRoute, deferInitialRender)
       frame.ledgerActivationConfirmId = nil
     end
     frame.activeTab, frame.selectedRoute = normalized, normalized
+    shell._dibsPerfRoute = "Officer/" .. normalized
     frame.routeDispatchCount = (frame.routeDispatchCount or 0) + 1
+    local treeSelectionStartedAt = automaticDibsRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     if syncTree ~= false and navigation and frame._dibsTreeRoute ~= normalized then
       frame._dibsRouteSyncing = true
-      Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(normalized))
+      Dibs.AceGUI.SelectTree(navigation, officerTreeSelectionValue(normalized, statusDatabase))
       frame._dibsRouteSyncing = false
+    end
+    if automaticDibsRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-route-tree-selection", treeSelectionStartedAt)
     end
     frame._dibsTreeRoute = normalized
     frame._dibsRenderingRoute = true
+    local layoutBatchStartedAt = automaticDibsRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     local layoutBatch = Dibs.AceGUI.BeginLayoutBatch and Dibs.AceGUI.BeginLayoutBatch(contentHost) or nil
-    local ok, reason = pcall(renderRoute, frame)
+    if automaticDibsRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-route-batch-start", layoutBatchStartedAt)
+    end
+    local routeBodyStartedAt = automaticDibsRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+    local routeRenderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    local presentationContext = Dibs.AceGUI.BeginPresentationContext
+      and Dibs.AceGUI.BeginPresentationContext() or nil
+    local ok, reason = pcall(renderRoute, frame, { db = statusDatabase })
+    if presentationContext and Dibs.AceGUI.EndPresentationContext then
+      Dibs.AceGUI.EndPresentationContext(presentationContext)
+    end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", normalized .. "-route-render-body", routeRenderStartedAt)
+    end
+    if automaticDibsRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-route-body", routeBodyStartedAt)
+    end
+    local routeLayoutFlushStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    local layoutFlushStartedAt = automaticDibsRoute and Dibs.UIRenderStats
+      and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
     if layoutBatch and Dibs.AceGUI.EndLayoutBatch then Dibs.AceGUI.EndLayoutBatch(layoutBatch) end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", normalized .. "-route-layout-flush", routeLayoutFlushStartedAt)
+    end
+    if automaticDibsRoute and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-route-layout-flush", layoutFlushStartedAt)
+    end
     frame._dibsRenderingRoute = false
     if not ok then
       if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
@@ -9333,7 +10200,34 @@ local function createAceWindow(initialRoute, deferInitialRender)
       end
       error(reason, 0)
     end
-    if navigation and navigation.DoLayout then navigation:DoLayout() end
+    local routeContentLayoutStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+      and Dibs.UIRenderStats.Begin(false)
+    -- The TreeGroup's full layout also reflows every navigation row. Its
+    -- selection callback already refreshes that tree, and page rendering only
+    -- needs the mounted content host laid out after the batch is resumed.
+    if contentHost and contentHost.DoLayout then contentHost:DoLayout() end
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Officer data", normalized .. "-route-content-layout", routeContentLayoutStartedAt)
+    end
+    if automaticDibsRoute and type(frame.RefreshAutomaticDibsTable) == "function" then
+      local tableRefreshStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+        and Dibs.UIRenderStats.Begin(false)
+      local tableLayoutBatch = Dibs.AceGUI.BeginLayoutBatch
+        and Dibs.AceGUI.BeginLayoutBatch(contentHost) or nil
+      local tableRefreshOK, tableRefreshReason = pcall(frame.RefreshAutomaticDibsTable, frame)
+      if tableLayoutBatch and Dibs.AceGUI.EndLayoutBatch then
+        Dibs.AceGUI.EndLayoutBatch(tableLayoutBatch)
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-post-layout-table-refresh", tableRefreshStartedAt)
+      end
+      if not tableRefreshOK then
+        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+          Dibs.UIRenderStats.Record("Officer", normalized, renderStartedAt)
+        end
+        error(tableRefreshReason, 0)
+      end
+    end
     if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
       Dibs.UIRenderStats.Record("Officer", normalized, renderStartedAt)
     end

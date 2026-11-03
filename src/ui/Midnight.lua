@@ -183,6 +183,13 @@ function Midnight.GetThemeTokens(themeID)
   return nil
 end
 
+local function isKnownTheme(themeID)
+  for _, theme in ipairs(THEME_CATALOG) do
+    if theme.id == themeID then return true end
+  end
+  return false
+end
+
 function Midnight.GetThemeCatalog()
   local catalog = {}
   for _, theme in ipairs(THEME_CATALOG) do
@@ -195,10 +202,11 @@ function Midnight.GetThemeCatalog()
 end
 
 function Midnight.GetTokens()
-  local tokens = copy(defaults)
   local profile = localRoot().presentation.profile
+  local themeID = isKnownTheme(profile.theme) and profile.theme or defaults.theme
+  local tokens = Midnight.GetThemeTokens(themeID) or copy(defaults)
   merge(tokens, profile)
-  tokens.theme = "MIDNIGHT"
+  tokens.theme = themeID
   tokens.scale = math.max(0.75, math.min(1.5, tonumber(tokens.scale) or 1))
   tokens.contrast = tokens.contrast == "high" and "high" or "normal"
   tokens.typography.font = safeMedia("font", profile.fontName, tokens.typography.font)
@@ -270,8 +278,12 @@ end
 
 function Midnight.SetProfile(values)
   if type(values) ~= "table" then return false end
+  if values.theme ~= nil and not isKnownTheme(values.theme) then return false end
   local profile = localRoot().presentation.profile
   for key, value in pairs(values) do
+    if key == "theme" then
+      profile.theme = value
+    end
     if key == "scale" then value = math.max(0.75, math.min(1.5, tonumber(value) or 1)) end
     if key == "contrast" then value = value == "high" and "high" or "normal" end
     if key == "density" and value ~= "compact" and value ~= "comfortable" then value = "comfortable" end

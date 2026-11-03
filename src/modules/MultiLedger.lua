@@ -13,6 +13,7 @@ Dibs.MultiLedger = Dibs.MultiLedger or {}
 local MultiLedger = Dibs.MultiLedger
 
 local DEFAULT_LEDGER_ID = "guild-primary"
+local transactionCountCache = setmetatable({}, { __mode = "k" })
 
 local function trim(value)
   if type(value) ~= "string" then return nil end
@@ -24,8 +25,8 @@ local function copy(value)
   return Dibs.DeepCopy and Dibs.DeepCopy(value) or value
 end
 
-local function ensureLedgers()
-  local db = Dibs.GetDB and Dibs.GetDB()
+local function ensureLedgers(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB and Dibs.GetDB()
   if not db then return nil end
 
   if type(db.ledgers) ~= "table" then
@@ -93,9 +94,9 @@ end
 
 local enforcingGuildLedger = false
 
-local function imposedLedgerId()
+local function imposedLedgerId(dbOverride)
   local policy = Dibs.OperationalPolicy
-  return policy and type(policy.GetActiveLedgerId) == "function" and policy.GetActiveLedgerId() or nil
+  return policy and type(policy.GetActiveLedgerId) == "function" and policy.GetActiveLedgerId(dbOverride) or nil
 end
 
 local function refreshOpenWindows()
@@ -131,13 +132,14 @@ function MultiLedger.EnforceGuildActiveLedger(silent)
   return enforceGuildActiveLedger(ensureLedgers(), silent)
 end
 
-function MultiLedger.GetActiveLedgerId()
+function MultiLedger.GetActiveLedgerId(dbOverride)
   if enforcingGuildLedger then
-    return Dibs.db and Dibs.db.activeLedgerId or DEFAULT_LEDGER_ID
+    local db = type(dbOverride) == "table" and dbOverride or Dibs.db
+    return db and db.activeLedgerId or DEFAULT_LEDGER_ID
   end
-  local db = ensureLedgers()
+  local db = ensureLedgers(dbOverride)
   if not db then return DEFAULT_LEDGER_ID end
-  local imposed = imposedLedgerId()
+  local imposed = imposedLedgerId(db)
   if imposed and db.activeLedgerId ~= imposed then
     enforceGuildActiveLedger(db, true, imposed)
   end
@@ -157,10 +159,11 @@ function MultiLedger.RequireGuildActiveLedger()
   return true
 end
 
-function MultiLedger.GetGuildLedgerStatus()
-  local db = ensureLedgers()
-  local active = MultiLedger.GetActiveLedgerId()
-  local imposed = imposedLedgerId()
+function MultiLedger.GetGuildLedgerStatus(dbOverride)
+  local db = ensureLedgers(dbOverride)
+  local active = MultiLedger.GetActiveLedgerId(db)
+  local imposed = imposedLedgerId(db)
+  local viewLedgerId = MultiLedger.GetViewLedgerId(db)
   local function ledgerName(id)
     local ledger = db and id and db.ledgers[id]
     return ledger and ledger.name or (id == DEFAULT_LEDGER_ID and "Primary") or id
@@ -172,8 +175,8 @@ function MultiLedger.GetGuildLedgerStatus()
     activeLedgerName = ledgerName(active),
     imposedLedgerId = imposed,
     imposedLedgerName = imposed and ledgerName(imposed) or nil,
-    viewLedgerId = MultiLedger.GetViewLedgerId(),
-    viewLedgerName = ledgerName(MultiLedger.GetViewLedgerId()),
+    viewLedgerId = viewLedgerId,
+    viewLedgerName = ledgerName(viewLedgerId),
   }
 end
 
@@ -218,8 +221,8 @@ end
 
 -- Read-only consultation of another approved ledger; never changes the ledger
 -- used for Pre-Dibs, awards, or debits. Session-local by design.
-function MultiLedger.GetViewLedgerId()
-  local db = ensureLedgers()
+function MultiLedger.GetViewLedgerId(dbOverride)
+  local db = ensureLedgers(dbOverride)
   local view = MultiLedger.viewLedgerId
   if view and db and isLocallyApproved(view, db.ledgers[view]) then return view end
   MultiLedger.viewLedgerId = nil
@@ -240,20 +243,38 @@ function MultiLedger.IsViewingOtherLedger()
   return MultiLedger.GetViewLedgerId() ~= MultiLedger.GetActiveLedgerId()
 end
 
-function MultiLedger.GetLedgers(options)
+function MultiLedger.GetLedgers(options, dbOverride)
   options = type(options) == "table" and options or {}
   local includeTransactionCount = options.includeTransactionCount ~= false
-  local db = ensureLedgers()
+  local db = ensureLedgers(dbOverride)
   if not db then return {} end
 
   local list = {}
   for id, ledger in pairs(db.ledgers) do
     local txCount
     if includeTransactionCount then
-      txCount = 0
-      if type(ledger.transactions) == "table" then
-        for _ in pairs(ledger.transactions) do
-          txCount = txCount + 1
+      local transactions = type(ledger.transactions) == "table" and ledger.transactions or nil
+      local getRevision = Dibs.Ledger and Dibs.Ledger.GetDataRevision
+      local revision = type(getRevision) == "function" and getRevision(id, db) or nil
+      local cached = transactionCountCache[ledger]
+      if transactions and revision ~= nil and cached
+        and cached.transactions == transactions and cached.revision == revision then
+        txCount = cached.count
+      else
+        txCount = 0
+        if transactions then
+          for _ in pairs(transactions) do
+            txCount = txCount + 1
+          end
+        end
+        if transactions and revision ~= nil then
+          transactionCountCache[ledger] = {
+            transactions = transactions,
+            revision = revision,
+            count = txCount,
+          }
+        else
+          transactionCountCache[ledger] = nil
         end
       end
     end

@@ -713,11 +713,15 @@ local function setReadOnlyRecovery(source, state, diagnostic)
 end
 
 local function isReadyRoot(root, guildKey)
-  if type(root) ~= "table" or root.schemaVersion ~= ROOT_SCHEMA_VERSION or type(root.guilds) ~= "table" or type(root.persistenceRecovery) ~= "table" then return false end
+  if type(root) ~= "table" then return false, "root-type" end
+  if root.schemaVersion ~= ROOT_SCHEMA_VERSION then return false, "root-schema" end
+  if type(root.guilds) ~= "table" then return false, "guild-map-type" end
+  if type(root.persistenceRecovery) ~= "table" then return false, "recovery-metadata-type" end
   local db = root.guilds[guildKey]
-  if type(db) ~= "table" or db.version ~= GUILD_SCHEMA_VERSION then return false end
+  if type(db) ~= "table" then return false, "guild-entry-type" end
+  if db.version ~= GUILD_SCHEMA_VERSION then return false, "guild-schema" end
   for _, key in ipairs({ "seasons", "rankRules", "ledger", "permissions", "preDibs", "disputes", "reconciliation", "characterEligibility", "governance", "backups", "auditLog", "sync", "settings" }) do
-    if type(db[key]) ~= "table" then return false end
+    if type(db[key]) ~= "table" then return false, "guild-subtree-" .. key end
   end
   return true
 end
@@ -747,12 +751,30 @@ end
 
 local function ensureDB()
   local dbName = Dibs.SAVED_VARIABLE_NAME or "RCLootCouncil_dibsDB"
+  local renderStats = Dibs.UIRenderStats
+  local guildKeyStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   local guildKey = Dibs.GetGuildKey()
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-guild-key", guildKeyStartedAt)
+  end
   Dibs.currentGuildKey = guildKey
   local source = _G[dbName]
   if source == nil and type(_G.DibsDB) == "table" then source = _G.DibsDB end
 
-  if Dibs._persistenceSource == source and isReadyRoot(source, guildKey) then
+  local readyCheckStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
+  local sourceMatches = Dibs._persistenceSource == source
+  local rootReady, rootFailureReason = false, "source-identity"
+  if sourceMatches then rootReady, rootFailureReason = isReadyRoot(source, guildKey) end
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-ready-root-check", readyCheckStartedAt)
+    if rootReady then
+      renderStats.Record("Core data", "get-db-fast-path-hit", readyCheckStartedAt)
+    else
+      renderStats.Record("Core data", "get-db-fast-path-miss", readyCheckStartedAt)
+      renderStats.Record("Core data", "get-db-fast-path-miss-" .. tostring(rootFailureReason or "unknown"), readyCheckStartedAt)
+    end
+  end
+  if rootReady then
     Dibs.db = source.guilds[guildKey]
     Dibs.persistenceStatus = Dibs.persistenceStatus or persistenceStatus("VALID", nil, false)
     _G.DibsDB = Dibs.db
@@ -764,8 +786,22 @@ local function ensureDB()
     return
   end
 
+  -- Detect an unsupported guild schema before cloning the full SavedVariables
+  -- root. Keep the same read-only fallback as the staged validation below.
+  local sourceGuild = type(source) == "table" and type(source.guilds) == "table"
+    and source.guilds[guildKey] or nil
+  if sourceMatches and rootFailureReason == "guild-schema" and type(sourceGuild) == "table"
+    and isWholeNumber(sourceGuild.version) and sourceGuild.version > GUILD_SCHEMA_VERSION then
+    if renderStats and renderStats.Record then
+      renderStats.Record("Core data", "get-db-future-guild-schema", readyCheckStartedAt)
+    end
+    setReadOnlyRecovery(source, "FUTURE_UNSUPPORTED", "Guild database version " .. tostring(sourceGuild.version) .. " is newer than supported version " .. tostring(GUILD_SCHEMA_VERSION) .. "; update RCLootCouncil_dibs before modifying data.")
+    return
+  end
+
   local changes = { changed = false, migration = false, recovery = false, needsBackup = false }
   local staged
+  local sourceCopyStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   if source == nil then
     staged = newRoot()
     changes.changed = true
@@ -774,6 +810,9 @@ local function ensureDB()
     quarantine(staged, changes, "root", "EXPECTED_TABLE", source)
   else
     staged = deepcopy(source)
+  end
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-root-copy", sourceCopyStartedAt)
   end
 
   if isFlatLegacyRoot(staged) then
@@ -850,7 +889,11 @@ local function ensureDB()
     end
   end
 
+  local subtreeValidationStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   validateGuildSubtrees(db, staged, changes, guildKey)
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-subtree-validation", subtreeValidationStartedAt)
+  end
   if changes.migration then
     local ok, migrationError = pcall(Dibs.Persistence.MigrateGuild, db)
     if not ok then
@@ -858,7 +901,11 @@ local function ensureDB()
       return
     end
   end
+  local defaultsStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   mergeDefaults(db, defaultDB)
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-merge-defaults", defaultsStartedAt)
+  end
   adoptPreservedBackups(staged, db, guildKey, changes)
 
   if changes.needsBackup and source ~= nil then addStartupBackup(staged, source, changes.recovery and "recovery" or "migration") end
@@ -881,10 +928,19 @@ end
 
 ---@return DibsGuildDB db Active guild-scoped database after migration/defaulting.
 function Dibs.GetDB()
+  local renderStats = Dibs.UIRenderStats
+  local ensureStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   ensureDB()
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-ensure", ensureStartedAt)
+  end
 
   if Dibs.DeveloperSandboxStore and Dibs.DeveloperSandboxStore.Initialize then
+    local sandboxStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
     Dibs.DeveloperSandboxStore.Initialize()
+    if renderStats and renderStats.Record then
+      renderStats.Record("Core data", "get-db-sandbox-store", sandboxStartedAt)
+    end
   end
   return Dibs.db
 end
@@ -1114,12 +1170,19 @@ function Dibs.NewId(prefix)
 end
 
 ---@return string|nil seasonId Active season identifier, if configured.
-function Dibs.GetCurrentSeasonId()
-  ensureDB()
-  if Dibs.db.currentSeasonId and Dibs.db.currentSeasonId ~= "" then
-    return Dibs.db.currentSeasonId
+function Dibs.GetCurrentSeasonId(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or nil
+  if not db then
+    ensureDB()
+    db = Dibs.db
+  end
+  if db.currentSeasonId and db.currentSeasonId ~= "" then
+    return db.currentSeasonId
   end
 
+  -- Preserve the legacy default-season initialization path, which may mutate
+  -- the active SavedVariables database when no current season has been set.
+  if dbOverride then ensureDB(); db = Dibs.db end
   if Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault then
     local season = Dibs.Seasons.GetOrCreateDefault()
     if season then
@@ -1127,7 +1190,7 @@ function Dibs.GetCurrentSeasonId()
     end
   end
 
-  return Dibs.db.currentSeasonId
+  return db and db.currentSeasonId
 end
 
 ---@return string playerName Canonical local player name/GUID representation.
@@ -1298,11 +1361,12 @@ local function getLuaHeapKB()
   local ok, value = pcall(collect, "count")
   return ok and type(value) == "number" and value or nil
 end
-function Dibs.UIRenderStats.Begin()
+function Dibs.UIRenderStats.Begin(trackHeap)
   if not uiRenderStats.enabled then return nil end
   local timer = _G.debugprofilestop
   if type(timer) ~= "function" then return nil end
-  local heapKB = getLuaHeapKB()
+  local heapKB
+  if trackHeap ~= false then heapKB = getLuaHeapKB() end
   return { startedAt = timer(), heapKB = heapKB }
 end
 function Dibs.UIRenderStats.Record(kind, page, startedAt)

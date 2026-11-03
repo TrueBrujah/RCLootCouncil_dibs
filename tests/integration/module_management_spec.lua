@@ -92,6 +92,48 @@ local function adopt(dibs)
 end
 
 describe("B12 module management", function()
+  it("reads only module values instead of copying the full policy record", function()
+    local dibs = load()
+    local originalGetCurrentRecord = dibs.OperationalPolicy.GetCurrentRecord
+    dibs.OperationalPolicy.GetCurrentRecord = function()
+      error("module list should not copy the complete policy record")
+    end
+
+    local ok, values = pcall(dibs.OperationalPolicy.GetModuleValues, dibs.GetDB())
+    dibs.OperationalPolicy.GetCurrentRecord = originalGetCurrentRecord
+
+    assert_true(ok, tostring(values))
+    assert_equal(true, values.preDibs)
+    values.preDibs = false
+    assert_equal(true, dibs.OperationalPolicy.GetModuleValues(dibs.GetDB()).preDibs,
+      "returned module values remain a caller-owned map")
+  end)
+
+  it("uses compact governance and avoids repeating the same GM identity check", function()
+    local dibs = load()
+    adopt(dibs)
+    local originalGetState = dibs.Governance.GetState
+    local originalGetCurrentRecord = dibs.Governance.GetCurrentRecord
+    local originalCreateSnapshot = dibs.Identity.CreateSnapshot
+    local snapshotCalls = 0
+    dibs.Governance.GetState = function() error("module diagnostics should use the compact governance summary") end
+    dibs.Governance.GetCurrentRecord = function() error("module diagnostics should not copy a governance record") end
+    dibs.Identity.CreateSnapshot = function(...)
+      snapshotCalls = snapshotCalls + 1
+      return originalCreateSnapshot(...)
+    end
+
+    local ok, diagnostics = pcall(dibs.OperationalPolicy.GetModuleManagementDiagnostics, nil, dibs.GetDB())
+
+    dibs.Governance.GetState = originalGetState
+    dibs.Governance.GetCurrentRecord = originalGetCurrentRecord
+    dibs.Identity.CreateSnapshot = originalCreateSnapshot
+    assert_true(ok, tostring(diagnostics))
+    assert_true(diagnostics.governanceActive)
+    assert_true(diagnostics.canManageModules)
+    assert_equal(2, snapshotCalls, "only actor and local identity snapshots should be needed")
+  end)
+
   it("renders the GM bootstrap action and refreshes the Modules page after confirmation", function()
     local dibs = load()
     local frame = dibs.OfficerUI.CreateWindow("modules")

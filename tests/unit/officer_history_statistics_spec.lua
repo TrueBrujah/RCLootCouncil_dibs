@@ -47,8 +47,8 @@ describe("Officer history filters and fairness statistics", function()
     dibs.GetDB().ledger.transactions = {
       a = { transactionId = "a", seasonId = "S1", playerName = "Tester-Realm", type = "DIB_USED", amount = -1 },
     }
-    local original, calls = dibs.Ledger.GetTransactions, 0
-    dibs.Ledger.GetTransactions = function(...)
+    local original, calls = dibs.Ledger.GetSeasonActivitySummary, 0
+    dibs.Ledger.GetSeasonActivitySummary = function(...)
       calls = calls + 1
       return original(...)
     end
@@ -61,7 +61,7 @@ describe("Officer history filters and fairness statistics", function()
     dibs.Ledger.MarkTransactionsChanged()
     dibs.OfficerUI.BuildSeasonStatistics("S1")
     assert_equal(2, calls, "ledger changes should invalidate the cached aggregate")
-    dibs.Ledger.GetTransactions = original
+    dibs.Ledger.GetSeasonActivitySummary = original
   end)
 
   it("reuses the dashboard active Pre-Dibs count until its source revisions change", function()
@@ -112,12 +112,21 @@ describe("Officer history filters and fairness statistics", function()
       d = { transactionId = "d", seasonId = "S1", playerName = "Other-Realm", type = "DIB_USED", amount = -1 },
     }
 
-    local stats = dibs.OfficerUI.BuildPlayerPeriodStatistics("S1", {
+    local originalGetTransactions = dibs.Ledger.GetTransactions
+    dibs.Ledger.GetTransactions = function()
+      error("period statistics should aggregate from the ledger without copying transaction rows")
+    end
+    local ok, stats = pcall(dibs.OfficerUI.BuildPlayerPeriodStatistics, "S1", {
       fromDate = "2026-09-06",
       toDate = "2026-09-06",
     })
+    dibs.Ledger.GetTransactions = originalGetTransactions
+    assert_equal(true, ok)
     assert_equal("READY", stats.status)
+    assert_equal(2, stats.count)
     assert_equal(2, #stats.rows)
+    assert_equal(db, stats.database)
+    assert_equal("guild-primary", stats.ledgerId)
     local testerStats, otherStats
     for _, row in ipairs(stats.rows) do
       if row.playerName == "Tester-Realm" then testerStats = row end
@@ -134,6 +143,43 @@ describe("Officer history filters and fairness statistics", function()
     assert_equal(1, stats.undatedExcluded)
     assert_nil(stats.fairnessScore)
     assert_nil(stats.ranking)
+
+    assert_equal(4, stats.seasonSummary.transactions)
+    assert_equal(2, stats.seasonSummary.players)
+    assert_equal(2, stats.seasonSummary.granted)
+    assert_equal(3, stats.seasonSummary.used)
+    assert_equal(3, stats.seasonSummary.awards)
+    local originalSeasonActivitySummary = dibs.Ledger.GetSeasonActivitySummary
+    dibs.Ledger.GetSeasonActivitySummary = function()
+      error("Statistics page should reuse the summary from its player-activity scan")
+    end
+    local summaryOK, summary = pcall(dibs.OfficerUI.BuildSeasonStatistics,
+      "S1", nil, false, nil, nil, nil, stats.seasonSummary)
+    dibs.Ledger.GetSeasonActivitySummary = originalSeasonActivitySummary
+    assert_equal(true, summaryOK)
+    assert_equal(4, summary.transactions)
+    assert_equal(2, summary.players)
+    assert_equal(3, summary.used)
+    assert_equal(3, summary.awards)
+    assert_equal(2, summary.fairness.maxAwards)
+    assert_equal(1, summary.fairness.minAwards)
+    assert_equal(1.5, summary.fairness.meanAwards)
+  end)
+
+  it("resolves a matching season and period identity once per transaction", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    dibs.GetDB().ledger.transactions = {
+      a = { transactionId = "a", seasonId = "S1", playerName = "Tester-Realm", type = "DIB_USED", amount = -1, createdAt = 10 },
+    }
+    local resolveCalls = 0
+    local rows, count, _, _, summary = dibs.Ledger.GetSeasonPlayerActivity("S1", nil, function(name)
+      resolveCalls = resolveCalls + 1
+      return name
+    end)
+    assert_equal(1, count)
+    assert_equal(1, rows["tester-realm"].awards)
+    assert_equal(1, summary.awards)
+    assert_equal(1, resolveCalls)
   end)
 
   it("returns explicit invalid-range and denied states for period statistics", function()
@@ -141,7 +187,10 @@ describe("Officer history filters and fairness statistics", function()
     local invalid = officerDibs.OfficerUI.BuildPlayerPeriodStatistics("S1", { fromDate = "2026-02-30" })
     assert_equal("INVALID_RANGE", invalid.status)
 
-    local _, playerDibs = loader.load({ wow = { guildLeader = false }, withAce3 = true })
+    local _, playerDibs = loader.load({
+      wow = { guildLeader = false, guildRankIndices = { 3 } },
+      withAce3 = true,
+    })
     local denied = playerDibs.OfficerUI.BuildPlayerPeriodStatistics("S1", {})
     assert_equal("DENIED", denied.status)
     assert_equal(0, #denied.rows)

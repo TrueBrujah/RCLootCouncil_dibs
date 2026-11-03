@@ -9,6 +9,133 @@ local function getLootCheck(dibs)
 end
 
 describe("First installation assistant integration", function()
+  it("can omit its optional Sync check without changing the guild setup verdict", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalBehind = dibs.Sync.IsSyncBehind
+    dibs.Sync.IsSyncBehind = function() return true, "SYNC_BEHIND" end
+
+    local complete = dibs.SetupAssistant.Evaluate({ scope = "guild" })
+    local withoutSync = dibs.SetupAssistant.Evaluate({ scope = "guild", includeSyncState = false })
+    dibs.Sync.IsSyncBehind = originalBehind
+
+    local completeSync, omittedSync
+    for _, item in ipairs(complete.checks or {}) do
+      if item.id == "sync_state" then completeSync = item end
+    end
+    for _, item in ipairs(withoutSync.checks or {}) do
+      if item.id == "sync_state" then omittedSync = item end
+    end
+    assert_not_nil(completeSync)
+    assert_equal("degraded", completeSync.state)
+    assert_equal(nil, omittedSync)
+    assert_equal(complete.status, withoutSync.status,
+      "the Sync check is optional and must not affect the guild setup verdict")
+  end)
+
+  it("profiles setup and readiness substeps with CPU-only samples", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local timer = _G.debugprofilestop
+    register_reset(function()
+      _G.debugprofilestop = timer
+      dibs.UIRenderStats.SetEnabled(false)
+    end)
+    local clock = 0
+    _G.debugprofilestop = function() clock = clock + 1; return clock end
+    dibs.UIRenderStats.SetEnabled(true)
+
+    local report = dibs.SetupAssistant.Evaluate({ scope = "guild" })
+    local rows = {}
+    for _, row in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      rows[row.kind .. "/" .. row.page] = row
+    end
+
+    assert_true(report.status == "READY_FOR_RAID" or report.status == "NEEDS_ATTENTION" or report.status == "UNAVAILABLE")
+    for _, key in ipairs({
+      "Setup data/actor-role", "Setup data/readiness-check-mapping", "Setup data/season-lookup",
+      "Setup data/sync-state-check", "Setup data/scope-filter", "Setup data/report-finalization",
+      "Setup data/loot-type-option-tree", "Setup data/loot-type-values",
+      "RC options data/loot-type-values-core", "RC options data/loot-type-values-settings",
+      "RC options data/loot-type-values-rc-buttons", "RC options data/loot-type-values-projection",
+      "Readiness data/evaluation-input-state", "Readiness data/fingerprint", "Readiness data/probe-composition",
+    }) do
+      assert_not_nil(rows[key], key .. " timing should be recorded")
+      assert_equal(0, rows[key].heapSampleCount, key .. " timing must avoid global heap sampling")
+    end
+  end)
+
+  it("reads the Loot Rules option tree and dynamic values once per evaluation", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalOptions = dibs.RCOptions.GetLootTypeOptions
+    local options = originalOptions()
+    local originalValues = options.types.values
+    local optionCalls, valueCalls = 0, 0
+    dibs.RCOptions.GetLootTypeOptions = function(...)
+      optionCalls = optionCalls + 1
+      local result = originalOptions(...)
+      result.types.values = function(...)
+        valueCalls = valueCalls + 1
+        return originalValues(...)
+      end
+      return result
+    end
+
+    local ok, report = pcall(dibs.SetupAssistant.Evaluate, { scope = "guild" })
+
+    dibs.RCOptions.GetLootTypeOptions = originalOptions
+    options.types.values = originalValues
+    assert_true(ok, tostring(report))
+    assert_equal(1, optionCalls)
+    assert_equal(1, valueCalls)
+    assert_not_nil(report)
+  end)
+
+  it("skips the season lookup when readiness already supplied season and policy checks", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalEvaluate = dibs.Readiness.Evaluate
+    local originalGetCurrent = dibs.Seasons.GetCurrent
+    dibs.Readiness.Evaluate = function()
+      return { status = "READY_FOR_RAID", probes = {
+        { name = "season", state = "ready", required = true },
+        { name = "policy", state = "ready", required = true },
+      } }
+    end
+    dibs.Seasons.GetCurrent = function() error("both readiness checks already provide the season result") end
+
+    local ok, report = pcall(dibs.SetupAssistant.Evaluate, { scope = "guild" })
+
+    dibs.Readiness.Evaluate = originalEvaluate
+    dibs.Seasons.GetCurrent = originalGetCurrent
+    assert_true(ok, tostring(report))
+    local seen = {}
+    for _, item in ipairs(report.checks or {}) do seen[item.id] = true end
+    assert_true(seen.season)
+    assert_true(seen.policy)
+
+    dibs.Readiness.Evaluate = function()
+      return { status = "NEEDS_ATTENTION", probes = {
+        { name = "season", state = "ready", required = true },
+      } }
+    end
+    local seasonLookups = 0
+    dibs.Seasons.GetCurrent = function()
+      seasonLookups = seasonLookups + 1
+      return { id = "fallback-season", isArchived = false }
+    end
+    local originalGetRules = dibs.RankRules.GetRulesForSeason
+    dibs.RankRules.GetRulesForSeason = function() return { ["0"] = { allocation = 1 } } end
+    local fallbackOk, fallbackReport = pcall(dibs.SetupAssistant.Evaluate, { scope = "guild" })
+    dibs.Readiness.Evaluate = originalEvaluate
+    dibs.Seasons.GetCurrent = originalGetCurrent
+    dibs.RankRules.GetRulesForSeason = originalGetRules
+    assert_true(fallbackOk, tostring(fallbackReport))
+    assert_equal(1, seasonLookups, "a missing policy check should retain the season/rule fallback")
+    local hasRankRules = false
+    for _, item in ipairs(fallbackReport.checks or {}) do
+      if item.id == "rank_rules" and item.state == "ready" then hasRankRules = true end
+    end
+    assert_true(hasRankRules)
+  end)
+
   it("delegates local dry-run without creating ledger state", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     local before = #((dibs.GetDB() or {}).ledger and dibs.GetDB().ledger.transactions or {})

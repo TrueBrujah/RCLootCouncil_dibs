@@ -1,6 +1,6 @@
 # Implementation Plan: UI Rendering and Data Read Performance
 
-**Branch**: `028-ui-performance`
+**Branch**: `optimization/ui-performance`
 **Date**: 2026-10-31
 **Spec**: `specs/028-ui-performance/spec.md`
 

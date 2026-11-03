@@ -103,6 +103,72 @@ describe("Dispute center", function()
     assert_equal("GUILD_ADMIN_REQUIRED", select(2, dibs.Disputes.ListForOfficer("Other-Realm")))
   end)
 
+  it("keeps empty-query Officer queues complete and searches details when requested", function()
+    local dibs = setup({ guildLeader = true })
+    local request = dibs.Disputes.CreateReport(fixtures.report("other", { note = "Needle in the audit note" }))
+    assert_not_nil(request)
+
+    local unfiltered = dibs.Disputes.ListForOfficer(nil, { query = "" })
+    assert_equal(1, #unfiltered)
+    assert_equal(request.requestId, unfiltered[1].requestId)
+
+    local matching = dibs.Disputes.ListForOfficer(nil, { query = "needle in the audit note" })
+    assert_equal(1, #matching)
+    assert_equal(request.requestId, matching[1].requestId)
+
+    local missing = dibs.Disputes.ListForOfficer(nil, { query = "not present" })
+    assert_equal(0, #missing)
+  end)
+
+  it("paginates Officer review requests before copying full dossiers", function()
+    local dibs = setup({ guildLeader = true })
+    local categories = { "other", "eligibility", "duplicate" }
+    for index, category in ipairs(categories) do
+      local request = dibs.Disputes.CreateReport(fixtures.report(category, {
+        note = "Paginated report " .. tostring(index),
+      }))
+      assert_not_nil(request)
+    end
+    local complete = dibs.Disputes.ListForOfficer(nil)
+    assert_equal(3, #complete)
+
+    local originalBuildOfficerView = dibs.Disputes.BuildOfficerView
+    local dossierCopies = 0
+    dibs.Disputes.BuildOfficerView = function(request)
+      dossierCopies = dossierCopies + 1
+      return originalBuildOfficerView(request)
+    end
+    local firstPage, firstReason, firstTotal, firstPageNumber = dibs.Disputes.ListForOfficer(nil, {
+      page = 1, pageSize = 2,
+    })
+    local lastPage, lastReason, lastTotal, lastPageNumber = dibs.Disputes.ListForOfficer(nil, {
+      page = 2, pageSize = 2,
+    })
+    local outOfRange, rangeReason, rangeTotal, clampedPage = dibs.Disputes.ListForOfficer(nil, {
+      page = 99, pageSize = 2,
+    })
+    dibs.Disputes.BuildOfficerView = originalBuildOfficerView
+
+    assert_nil(firstReason)
+    assert_nil(lastReason)
+    assert_nil(rangeReason)
+    assert_equal(3, firstTotal)
+    assert_equal(3, lastTotal)
+    assert_equal(3, rangeTotal)
+    assert_equal(1, firstPageNumber)
+    assert_equal(2, lastPageNumber)
+    assert_equal(2, clampedPage)
+    assert_equal(2, #firstPage)
+    assert_equal(1, #lastPage)
+    assert_equal(1, #outOfRange)
+    assert_equal(4, dossierCopies, "only visible dossiers should be copied for paginated reads")
+    assert_equal(complete[1].requestId, firstPage[1].requestId)
+    assert_equal(complete[2].requestId, firstPage[2].requestId)
+    assert_equal(complete[3].requestId, lastPage[1].requestId)
+    assert_equal(complete[3].requestId, outOfRange[1].requestId)
+    assert_equal(#complete[1].timeline, #firstPage[1].timeline)
+  end)
+
   it("reuses the resolved database for the request module gate and owner list", function()
     local dibs = setup({ guildLeader = true })
     local originalGetDB, databaseReads = dibs.GetDB, 0
@@ -132,6 +198,85 @@ describe("Dispute center", function()
     officer.SelectTab("disputes")
     assert_equal("disputes", officer.activeTab)
     assert_not_nil(officer.disputeSearchBox)
+  end)
+
+  it("keeps Officer queue rendering from rescanning request reminders", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalCheckReminders = dibs.RequestDelivery.CheckReminders
+    local originalPump = dibs.RequestDelivery.Pump
+    local reminderScans, skipReminderScan, requestsModuleEnabled = 0, nil, nil
+    dibs.RequestDelivery.CheckReminders = function(...)
+      reminderScans = reminderScans + 1
+      return originalCheckReminders(...)
+    end
+    dibs.RequestDelivery.Pump = function(skip, moduleEnabled)
+      skipReminderScan, requestsModuleEnabled = skip, moduleEnabled
+      return originalPump(skip, moduleEnabled)
+    end
+
+    local officer = dibs.OfficerUI.CreateWindow()
+    officer.SelectTab("disputes")
+
+    dibs.RequestDelivery.CheckReminders = originalCheckReminders
+    dibs.RequestDelivery.Pump = originalPump
+    assert_equal(true, skipReminderScan, "queue render should still pump pending delivery without scanning reminders")
+    assert_equal(true, requestsModuleEnabled, "successful Officer queue preflight should be reused by the delivery pump")
+    assert_equal(0, reminderScans)
+  end)
+
+  it("checks Requests module policy only once while rendering the Officer queue", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local officer = dibs.OfficerUI.CreateWindow()
+    local originalRequire = dibs.OperationalPolicy.RequireModuleEnabled
+    local requestsChecks = 0
+    dibs.OperationalPolicy.RequireModuleEnabled = function(moduleId, ...)
+      if moduleId == "requests" then requestsChecks = requestsChecks + 1 end
+      return originalRequire(moduleId, ...)
+    end
+
+    officer.SelectTab("disputes")
+
+    dibs.OperationalPolicy.RequireModuleEnabled = originalRequire
+    assert_equal(1, requestsChecks, "ListForOfficer preflight should supply the same-render policy result to Pump")
+  end)
+
+  it("does not start delivery when the Officer queue preflight fails", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local officer = dibs.OfficerUI.CreateWindow()
+    local originalList, originalPump = dibs.Disputes.ListForOfficer, dibs.RequestDelivery.Pump
+    local pumpCalls = 0
+    dibs.Disputes.ListForOfficer = function() return {}, "REQUESTS_DISABLED" end
+    dibs.RequestDelivery.Pump = function() pumpCalls = pumpCalls + 1 end
+
+    officer.SelectTab("disputes")
+
+    dibs.Disputes.ListForOfficer = originalList
+    dibs.RequestDelivery.Pump = originalPump
+    assert_equal(0, pumpCalls, "a failed queue preflight must not use the optimized delivery path")
+  end)
+
+  it("records the distinct synchronous work in the Officer review queue", function()
+    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local originalDebugProfileStop = _G.debugprofilestop
+    local profileTicks = 0
+    _G.debugprofilestop = function()
+      profileTicks = profileTicks + 1
+      return profileTicks
+    end
+    dibs.UIRenderStats.Reset()
+    dibs.UIRenderStats.SetEnabled(true)
+    local officer = dibs.OfficerUI.CreateWindow()
+    officer.SelectTab("disputes")
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = originalDebugProfileStop
+
+    local measured = {}
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "Officer data" then measured[entry.page] = true end
+    end
+    assert_true(measured["disputes-request-delivery-pump"])
+    assert_true(measured["disputes-row-presentation"])
+    assert_true(measured["disputes-table-build"])
   end)
 
   it("corrects a wrong item or player with an auditable target change", function()

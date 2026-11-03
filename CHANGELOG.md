@@ -2,6 +2,171 @@
 
 ## 0.8.10 - 2026-10-17
 
+- (2026-11-01) Avoid recounting every ledger transaction when building ledger
+  selector labels. The selector needs only ledger metadata, so its cost no
+  longer scales with historical transaction volume.
+- (2026-11-01) Split Officer dashboard control timing into the heading/season
+  row and ledger selector so in-game reports can identify remaining UI cost.
+- (2026-11-01) Reuse the Officer dashboard's resolved ledger choices and active/view IDs
+  when rendering its selector, avoiding repeated guild database resolution.
+- (2026-11-01) Skip the final full-table fluid-width relayout when no action
+  label expanded a column; tables still reflow when an action requires more space.
+- (2026-11-01) Report the opt-in Automatic Dibs table width-reflow phase so
+  in-game samples can confirm whether action-driven layout work ran.
+- (2026-11-01) Resolve presentation adapter tokens once per active UI layout
+  batch, then reuse them for widget styling; later batches resolve the profile again.
+- (2026-11-01) Report the number and CPU time of widget presentation-token
+  resolutions during profiling so batch-cache adoption is visible in-game.
+- (2026-11-01) Reuse a single resolved guild database when building the shared
+  UI footer status, avoiding repeated guild DB and viewed-ledger lookups during
+  Officer route activation. Add opt-in CPU-only timings for the database,
+  ledger, and Sync portions of that footer. The status output and ledger
+  enforcement behavior are unchanged.
+- (2026-11-01) Validate Officer route visibility against the selected static
+  navigation entry instead of rebuilding and filtering the entire tree on each
+  route change. Add opt-in timings that separate route resolution from shell
+  status generation.
+- (2026-11-01) Skip the full Setup Assistant evaluation on Automatic Dibs,
+  which has no Setup Assistant checks mapped to that page. This removes an
+  unrelated cold-page readiness pass without changing its displayed guidance.
+- (2026-11-01) Read only the Season Catalog revision and hash while projecting
+  Automatic Allocation Details, avoiding a deep copy of the full catalog for
+  two scalar fields.
+- (2026-11-01) Add opt-in CPU-only Automatic Dibs timings for clearing the prior
+  page and building the page controls before its table is reflowed.
+- (2026-11-01) Split opt-in Automatic Dibs page-scaffold timing between header
+  controls and pagination/table setup.
+- (2026-11-01) Split Automatic Dibs header timing into page header, search,
+  status filter, and reconciliation controls so the next in-game capture can
+  identify which control group dominates.
+- (2026-11-01) Split Automatic Dibs table-page construction from its heading
+  and status labels in the opt-in render timings.
+- (2026-11-01) Build the Automatic Dibs rank-catalog status from the compact
+  catalog summary instead of copying the complete season catalog; add an
+  opt-in timing for that status projection.
+- (2026-11-01) Add opt-in timings for Automatic Dibs table header-cell and
+  body-row construction to distinguish widget creation costs.
+- (2026-11-01) Avoid attaching redundant generic tooltips to fully visible
+  Automatic Dibs table cells; explicitly described and truncated cells keep
+  their tooltips.
+- (2026-11-01) Add opt-in timings for the Officer dashboard's recent activity
+  transaction query, formatting, and history fallbacks.
+- (2026-11-01) Build the dashboard's bounded recent Pre-Dibs activity directly
+  from matching request/acquisition records instead of constructing and sorting
+  a full Officer Pre-Dibs history projection.
+- (2026-11-01) Split the bounded dashboard Pre-Dibs fallback timing into roster,
+  request/acquisition access and scans, and final line formatting.
+- (2026-11-01) Reuse the dashboard's already-loaded Pre-Dibs request history and
+  use its warmed fast acquisition snapshot when building the bounded recent
+  activity fallback. The state-initializing getter remains the fallback when
+  the fast snapshot is unavailable.
+- (2026-11-01) Reuse the current guild database while ensuring Pre-Dibs state
+  when that database is already resolved for the active guild. Keep the normal
+  database resolution path when the guild snapshot is unavailable or stale.
+- (2026-11-01) Pass the resolved guild database through Officer season-statistic
+  revision and ledger aggregation reads, avoiding repeated SavedVariables
+  resolution during a dashboard projection.
+- (2026-11-01) Add opt-in Officer dashboard context timings for role, sandbox,
+  season, active-ledger, and viewed-ledger resolution.
+- (2026-11-01) Resolve the guild DB once for the Officer dashboard and reuse it
+  for season, active/viewed ledger, and season-statistics reads. Existing APIs
+  retain their DB-resolution behavior when no DB snapshot is supplied.
+- (2026-11-01) Reuse the dashboard DB for Governance authority and recent-activity
+  revision reads; keep the public Governance snapshot copy and default DB path.
+- (2026-11-01) Correct the sandbox phase timer boundary so it excludes the
+  dashboard DB resolution phase.
+- (2026-11-01) Add opt-in Officer overview UI phase timings for dashboard
+  projection, controls, metric cards, Pre-Dibs, service status, activity, and
+  technical details to isolate remaining rendering time.
+- (2026-11-01) Add opt-in Officer dashboard timings for context/history reads,
+  service status projections, encounter state, and final projection assembly.
+- (2026-10-31) Keep high-frequency widget render timings CPU-only. The opt-in
+  `/dibs perf` widget counter no longer samples global Lua heap before and
+  after each widget, reducing diagnostic overhead and avoiding per-widget
+  heap deltas that are too noisy to interpret. No gameplay or SavedVariables
+  behavior changes.
+- (2026-10-31) Avoid temporary table allocations when confirming that AceGUI
+  child lists are already dense during widget creation; sparse lists still use
+  the existing repair path.
+- (2026-10-31) Skip the per-widget render-stat record call while profiling is
+  disabled, keeping normal UI construction free of that diagnostic call.
+- (2026-10-31) Attribute opt-in widget creation timings to the active Officer or
+  Player page so multi-page reports show where widget construction occurs.
+- (2026-10-31) Break down opt-in AceConfig callback timing by group and callback
+  phase (name, visibility, description, disabled state, values, getter) to
+  identify option rendering costs without changing option behavior.
+- (2026-10-31) Reuse active Dibs settings and RC button-template store
+  references only during one synchronous Officer options render. This removes
+  repeated SavedVariables resolution without retaining a cache between renders.
+- (2026-10-31) Read synchronization mismatch diagnostics from the already
+  resolved Sync state, avoiding repeated SavedVariables initialization during
+  status rendering while preserving copied diagnostic results.
+- (2026-10-31) Reuse validated active-guild Governance state for compact
+  synchronization, installation, and authority digest summaries; malformed or
+  unresolved state still uses the normal initialization path.
+- (2026-10-31) Reuse validated active-guild season catalog and operational
+  policy state for compact digest summaries; unresolved or malformed state
+  still follows the existing initialization path.
+- (2026-11-01) Add an opt-in CPU-only sub-counter for each lazily prepared
+  Automatic Dibs reconciliation snapshot, to localize the remaining table
+  reflow cost without changing reconciliation behavior.
+- (2026-11-01) Reuse the reconciliation snapshot's resolved guild rank to
+  calculate expected allocation, removing a redundant roster scan per visible
+  row while preserving fresh validation when an officer confirms the action.
+- (2026-11-01) Read only compact governance and policy revision summaries while
+  building reconciliation snapshots, avoiding copies of complete histories.
+- (2026-11-01) Add opt-in CPU-only phase timings to Automatic Dibs reconciliation
+  snapshots to identify remaining repeated read costs without changing results.
+- (2026-11-01) Reuse resolved governance state for V2 enforcement checks instead
+  of re-resolving the full guild database twice per call; split V2 and Sync-behind
+  timing in reconciliation snapshots.
+- (2026-11-01) Add opt-in CPU phase timings around Automatic Dibs route rendering
+  and its content/navigation layout passes to isolate remaining page latency.
+- (2026-11-01) Split Automatic Dibs pre-render timing among shell status, tree
+  selection, and layout-batch setup to localize the remaining route overhead.
+- (2026-11-01) Attribute Automatic Dibs route timings after normalization so
+  section-qualified Officer tree selections are measured too.
+- (2026-10-31) Add opt-in CPU-only sub-timings for SetupAssistant and Readiness
+  to separate input state, readiness mapping, fingerprinting, scope filtering,
+  and probe composition during Guided Setup profiling.
+- (2026-10-31) Reuse the validated active-guild database for Readiness season
+  and installation-mode reads; unresolved guild identity or malformed state
+  still falls back to the existing public accessors. Add CPU-only timers for
+  the season and mode reads.
+- (2026-10-31) Skip the extra SetupAssistant season lookup when the Readiness
+  report already contains both season and policy checks; retain the fallback
+  lookup when either check is missing.
+- (2026-10-31) Reuse the active ledger ID from Installation's read-only status
+  for the Guided Setup Pre-Dibs summary, avoiding a second active-ledger
+  resolution while preserving Pre-Dibs ledger approval validation.
+- (2026-10-31) Aggregate Guided Setup rank allocation reconciliation directly
+  by rank, avoiding temporary per-member detail rows when the page only needs
+  missing/surplus counts; detailed reconciliation callers keep their existing
+  row format.
+- (2026-10-31) Reuse the current resolved guild database within Installation's
+  active-ledger and history-presence checks while keeping imposed-ledger
+  enforcement; add opt-in CPU sub-timings for its identity/synchronization
+  checks.
+- (2026-10-31) Reuse Installation's current guild DB for Sync-behind and
+  writer-compatibility checks, preserving their existing identity and protocol
+  validation.
+- (2026-10-31) Reuse the resolved guild DB and seasonal rules through the
+  Guided Setup rank summary, compact reconciliation, and batch allocation
+  projection to avoid repeated database resolution.
+- (2026-10-31) Reuse the module-management diagnostics governance result in the
+  Officer Modules heading instead of resolving the same governance state a
+  second time during one render.
+- (2026-10-31) Add opt-in CPU sub-timings for Officer Modules policy snapshot,
+  authorization diagnostics, and view construction; profiling remains off by
+  default and does not change module policy behavior.
+- (2026-10-31) Resolve Officer Modules effective feature states as one batch
+  using the current module-policy snapshot instead of re-reading definitions
+  and policy values for every feature row.
+- (2026-11-01) Reuse Loot Rules authority, edit permission, and button-template
+  values during one Officer page render; mutation callbacks still revalidate
+  permission before applying changes.
+- (2026-11-01) Add opt-in CPU sub-timings for Automatic Dibs row sorting,
+  projection, table rendering, and reflow; profiling stays off by default.
 - (2026-10-18) Make setup warnings actionable: Guided Setup, Guild Setup Checks,
   and Raid Readiness now provide specific EN/FR correction instructions and hover
   help. Their destination pages identify current blockers/warnings, explain what

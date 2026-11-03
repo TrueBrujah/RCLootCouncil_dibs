@@ -41,6 +41,110 @@ local function rankByIndex(rows, rankIndex)
 end
 
 describe("Dibs.Wizard status derivation", function()
+  it("reuses the route-resolved guild DB without changing verification output", function()
+    local dibs = load("Tester-Realm", true)
+    local db = dibs.GetDB()
+    local originalGetDB = dibs.GetDB
+    local function evaluate(dbOverride)
+      local calls = 0
+      dibs.GetDB = function(...)
+        calls = calls + 1
+        return originalGetDB(...)
+      end
+      local ok, status = pcall(dibs.Wizard.GetStatus, nil, dbOverride)
+      dibs.GetDB = originalGetDB
+      assert_true(ok, tostring(status))
+      return status, calls
+    end
+
+    local ordinary, ordinaryReads = evaluate(nil)
+    local reused, reusedReads = evaluate(db)
+    assert_equal(ordinary.overallState, reused.overallState)
+    assert_equal(ordinary.mode, reused.mode)
+    assert_equal(#ordinary.steps, #reused.steps)
+    for index, step in ipairs(ordinary.steps) do
+      assert_equal(step.id, reused.steps[index].id)
+      assert_equal(step.status, reused.steps[index].status)
+      assert_equal(step.summary, reused.steps[index].summary)
+    end
+    assert_true(reusedReads < ordinaryReads,
+      string.format("expected DB reuse to reduce reads (ordinary=%d reused=%d)", ordinaryReads, reusedReads))
+  end)
+
+  it("reuses the installation ledger ID for the Pre-Dibs status summary", function()
+    local dibs = load("Tester-Realm", true)
+    local installationStatus, resolvedLedgerId = dibs.Installation.GetStatus()
+    assert_not_nil(installationStatus)
+    assert_true(type(resolvedLedgerId) == "string" and resolvedLedgerId ~= "",
+      "installation status should return the ledger ID used for its legacy checks")
+    local originalInstallationStatus = dibs.Installation.GetStatus
+    local originalPreDibsSummary = dibs.PreDibs.GetStatusSummary
+    local expectedLedgerId, observedLedgerId, observedSeasonId = "wizard-active-ledger", nil, nil
+    dibs.Installation.GetStatus = function(...)
+      local status = originalInstallationStatus(...)
+      return status, expectedLedgerId
+    end
+    dibs.PreDibs.GetStatusSummary = function(seasonId, ledgerId)
+      observedSeasonId = seasonId
+      observedLedgerId = ledgerId
+      return { publicEnabled = true, mode = "WILD_OPEN", activeRequestCount = 0, historyCount = 0 }
+    end
+
+    local ok, result = pcall(dibs.Wizard.GetStatus)
+
+    dibs.Installation.GetStatus = originalInstallationStatus
+    dibs.PreDibs.GetStatusSummary = originalPreDibsSummary
+    assert_true(ok, tostring(result))
+    assert_equal(expectedLedgerId, observedLedgerId)
+    assert_equal(dibs.GetCurrentSeasonId(), observedSeasonId,
+      "Pre-Dibs summary should receive the current season ID, not the Wizard's season list")
+  end)
+
+  it("reuses one Sync status snapshot for the Wizard synchronization step", function()
+    local dibs = load("Tester-Realm", true)
+    local originalSummary, summaryCalls = dibs.Sync.GetStatusSummary, 0
+    dibs.Sync.GetStatusSummary = function(...)
+      summaryCalls = summaryCalls + 1
+      return { state = "SYNC_READY", syncBehind = false }
+    end
+
+    local ok, status = pcall(dibs.Wizard.GetStatus)
+
+    dibs.Sync.GetStatusSummary = originalSummary
+    assert_true(ok, tostring(status))
+    -- Loot Rules also reads this compact status while Setup Assistant builds
+    -- its report. Wizard must not perform a third, duplicate read for its steps.
+    assert_equal(2, summaryCalls, "expected one Loot Rules read and one shared Wizard read; observed " .. tostring(summaryCalls))
+    assert_equal("READY", stepById(status, "sync").status)
+  end)
+
+  it("shares one compact Guild Policy snapshot across Pre-Dibs and policy steps", function()
+    local dibs = configuredGuild()
+    local originalSummary = dibs.OperationalPolicy.GetPreDibSummary
+    local originalState = dibs.OperationalPolicy.GetState
+    local summaryCalls, stateCalls, sharedSummary = 0, 0, nil
+    dibs.OperationalPolicy.GetPreDibSummary = function(...)
+      summaryCalls = summaryCalls + 1
+      sharedSummary = originalSummary(...)
+      return sharedSummary
+    end
+    dibs.OperationalPolicy.GetState = function(...)
+      stateCalls = stateCalls + 1
+      return originalState(...)
+    end
+
+    local ok, status = pcall(dibs.Wizard.GetStatus)
+
+    dibs.OperationalPolicy.GetPreDibSummary = originalSummary
+    dibs.OperationalPolicy.GetState = originalState
+    assert_true(ok, tostring(status))
+    assert_equal(1, summaryCalls, "Wizard should resolve one compact policy snapshot")
+    assert_equal(0, stateCalls, "Wizard status should not copy the full policy state")
+    assert_equal("POLICY_ADOPTED", sharedSummary.status)
+    assert_equal("READY", stepById(status, "operationalPolicy").status)
+    assert_equal("READY", stepById(status, "preDibs").status)
+  end)
+
   it("caches Pre-Dibs Wizard counts until request history changes", function()
     local dibs = load("Tester-Realm", true)
     local timer, clock = _G.debugprofilestop, 0
@@ -125,7 +229,15 @@ describe("Dibs.Wizard status derivation", function()
     settings.preDibOfficerAnnouncementChannel = "OFFICER"
     dibs.GetDB().preDibs.modePolicies[season.id] = { seasonId = season.id, mode = "ENCOUNTER" }
 
-    local step = stepById(dibs.Wizard.GetStatus(), "operationalPolicy")
+    local originalSeasonList, seasonListCalls = dibs.Seasons.List, 0
+    dibs.Seasons.List = function(...)
+      seasonListCalls = seasonListCalls + 1
+      return originalSeasonList(...)
+    end
+    local wizardStatus = dibs.Wizard.GetStatus()
+    dibs.Seasons.List = originalSeasonList
+    assert_equal(1, seasonListCalls, "Wizard should share its season list with the policy detail")
+    local step = stepById(wizardStatus, "operationalPolicy")
     assert_equal("ACTION_REQUIRED", step.status)
     assert_equal(false, step.detail.allowPublicPreDibs)
     assert_equal("ENCOUNTER", step.detail.preDibModes[tostring(season.id)])
@@ -231,6 +343,23 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal(report.status, readiness.detail.status)
     assert_true(report.status ~= "READY_FOR_RAID")
     assert_equal("BLOCKED", status.overallState)
+  end)
+
+  it("asks Setup Assistant to skip its optional Sync probe because the Wizard checks Sync itself", function()
+    local dibs = load("Tester-Realm", true)
+    local originalEvaluate, capturedOptions = dibs.SetupAssistant.Evaluate, nil
+    dibs.SetupAssistant.Evaluate = function(options)
+      capturedOptions = options
+      return originalEvaluate(options)
+    end
+
+    local status = dibs.Wizard.GetStatus()
+    dibs.SetupAssistant.Evaluate = originalEvaluate
+
+    assert_not_nil(status)
+    assert_equal("guild", capturedOptions.scope)
+    assert_equal(false, capturedOptions.includeSyncState)
+    assert_not_nil(stepById(status, "sync"), "the Wizard retains its authoritative Sync step")
   end)
 
   it("blocks an otherwise complete review when SetupAssistant is unavailable or needs attention", function()
@@ -461,6 +590,37 @@ describe("Guided Setup Wizard UI", function()
     widget.callbacks.OnClick(widget, "OnClick")
     return widget
   end
+
+  it("builds profile models only on Choose and Configure", function()
+    local dibs = load("Tester-Realm", true)
+    local originalGetProfiles, profileCalls = dibs.Wizard.GetProfiles, 0
+    dibs.Wizard.GetProfiles = function(...)
+      profileCalls = profileCalls + 1
+      return originalGetProfiles(...)
+    end
+
+    local frame = dibs.OfficerUI.CreateWindow("wizard", true)
+    profileCalls = 0
+    local routeCount = frame.routeDispatchCount or 0
+    frame:ActivateRoute("wizard", false)
+    local chooseRenders = (frame.routeDispatchCount or 0) - routeCount
+    assert_true(chooseRenders > 0, "Choose route should render")
+    assert_equal(chooseRenders, profileCalls, "Choose renders=" .. tostring(chooseRenders)
+      .. " profile builds=" .. tostring(profileCalls))
+
+    routeCount = frame.routeDispatchCount or 0
+    profileCalls = 0
+    clickLatestButton("3 Verify")
+    assert_equal(0, profileCalls, "Verify does not display or need profile models")
+
+    dibs.Wizard.SetCurrentStage("configure")
+    routeCount = frame.routeDispatchCount or 0
+    frame:Refresh()
+    local configureRenders = (frame.routeDispatchCount or 0) - routeCount
+    assert_true(configureRenders > 0, "Configure route should render")
+    assert_equal(configureRenders, profileCalls, "Configure should build profile models once per render")
+    dibs.Wizard.GetProfiles = originalGetProfiles
+  end)
 
   it("defers the full Guided Setup checks until Verify", function()
     local dibs = load("Tester-Realm", true)

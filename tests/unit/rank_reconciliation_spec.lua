@@ -147,15 +147,46 @@ describe("Rank allocation reconciliation", function()
       summaryCalls = summaryCalls + 1
       return originalSummary(...)
     end
+    local originalGetDB, databaseReads = dibs.GetDB, 0
+    dibs.GetDB = function(...)
+      databaseReads = databaseReads + 1
+      return originalGetDB(...)
+    end
 
     local rows = dibs.RankRules.GetRankConfigurationSummary(seasonId)
+    dibs.GetDB = originalGetDB
     dibs.Ledger.GetPlayerHistorySummary = originalSummary
     local memberRank
     for _, row in ipairs(rows) do if row.rankIndex == 4 then memberRank = row end end
 
     assert_equal(0, summaryCalls)
+    assert_equal(1, databaseReads, "rank summary should resolve the current guild DB once")
     assert_not_nil(memberRank)
     assert_equal(60, memberRank.pendingReconciliation)
+
+    local roster = dibs.Identity.GetRosterSnapshot()
+    local detailed = dibs.RankRules.GetAllocationReconciliation(seasonId, roster, { includeBalance = false })
+    local compact = dibs.RankRules.GetAllocationReconciliation(seasonId, roster,
+      { includeBalance = false, aggregateByRank = true })
+    local expected = {}
+    for _, detail in ipairs(detailed) do
+      local key = tostring(detail.rankIndex)
+      expected[key] = expected[key] or { pending = 0, surplus = 0 }
+      if detail.status == "MISSING" then
+        expected[key].pending = expected[key].pending + 1
+      elseif detail.status == "SURPLUS" then
+        expected[key].surplus = expected[key].surplus + 1
+      end
+    end
+    for _, summary in ipairs(rows) do
+      local key = tostring(summary.rankIndex)
+      local totals = compact[key] or { pendingReconciliation = 0, surplusMembers = 0 }
+      local folded = expected[key] or { pending = 0, surplus = 0 }
+      assert_equal(folded.pending, totals.pendingReconciliation)
+      assert_equal(folded.surplus, totals.surplusMembers)
+      assert_equal(totals.pendingReconciliation, summary.pendingReconciliation)
+      assert_equal(totals.surplusMembers, summary.surplusMembers)
+    end
   end)
 
   it("builds dashboard transaction diagnostics without copying the full transaction list", function()
@@ -225,6 +256,9 @@ describe("Rank allocation reconciliation", function()
     assert_equal(-1, alice.difference)
     assert_equal("KEEP_GRANTED", alice.behavior)
     assert_equal("SURPLUS", alice.status)
+    local compact = dibs.RankRules.GetAllocationReconciliation(seasonId, nil,
+      { includeBalance = false, aggregateByRank = true })
+    assert_equal(1, compact["3"].surplusMembers)
   end)
 
   it("excludes disabled ranks from reconciliation without changing existing allocations", function()
