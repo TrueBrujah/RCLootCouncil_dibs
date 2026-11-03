@@ -90,7 +90,7 @@ jobs:
           fi
 
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          tag="v${version}-beta.${GITHUB_RUN_NUMBER}"
+          tag="v${version}-dev-beta.${GITHUB_RUN_NUMBER}"
 
           set +e
           git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null

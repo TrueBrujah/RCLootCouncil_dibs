@@ -20,7 +20,7 @@ Use this checklist for every release. The detailed workflow and package layout a
 
 - [ ] Push validated addon changes under `src/` or a root `.pkgmeta` change to `dev`; documentation/workflow-only pushes do not trigger the beta workflow.
 - [ ] In Actions, confirm **Run addon test suite** and **Build addon package** succeed.
-- [ ] Confirm **Tag tested dev build** succeeds and the generated `v<VERSION>-beta.<RUN_NUMBER>` tag points to the tested commit.
+- [ ] Confirm **Tag tested dev build** succeeds and the generated `v<VERSION>-dev-beta.<RUN_NUMBER>` tag points to the tested commit. The `beta` substring is required for CurseForge's native webhook to classify the file as Beta; do not push a bare `-dev` tag.
 - [ ] Open the GitHub prerelease and verify the addon ZIP and `.sha256` checksum are present.
 - [ ] After CurseForge approval, verify the matching beta file appears in the project's Files page and is classified as Beta.
 
