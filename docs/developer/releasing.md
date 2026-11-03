@@ -8,6 +8,8 @@ See [the installation guide](../INSTALLATION.md) for the published ZIP.
 
 CurseForge's native packager/webhook publishes packages when it receives Git tags. It determines Beta versus Release from the tag name, not from the branch. GitHub Actions do not upload directly to CurseForge.
 
+**Never push a `v<VERSION>-dev` tag while the CurseForge repository webhook is active.** CurseForge marks tags containing `alpha` as Alpha and tags containing `beta` as Beta; other tag names are marked as Release. A `-dev` tag can therefore become the default CurseForge download even when GitHub Actions skips its own release job. Use the `dev` branch and the in-game `/dibs build` identifier for development checkpoints. After the manual-only `Manual development tag check` workflow is merged into the repository's default branch, it can inspect an existing `-dev` tag without publishing another CurseForge file. If a `-dev` file was already published as Release, change its Release Type to Alpha in the CurseForge Author Dashboard (Projects > Files > Edit file), or archive it if it should no longer be downloadable.
+
 For the repeatable pre-release, approval, beta, and stable release checklist, see the [Speckit release quickstart](../../specs/019-addon-release-operations/quickstart.md).
 
 ## Development beta

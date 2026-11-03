@@ -1,9 +1,6 @@
-name: Development tag check
+name: Manual development tag check
 
 on:
-  push:
-    tags:
-      - 'v*-dev'
   workflow_dispatch:
     inputs:
       tag:
@@ -16,7 +13,7 @@ permissions:
 
 jobs:
   verify:
-    name: Verify source-only development tag
+    name: Inspect source-only development tag
     runs-on: ubuntu-latest
     steps:
       - name: Select tag
