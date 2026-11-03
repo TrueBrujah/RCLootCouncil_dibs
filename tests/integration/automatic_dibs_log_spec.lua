@@ -172,21 +172,29 @@ describe("Automatic Dibs Officer log", function()
     assert_true(recorded["automatic-dibs-route-batch-start"])
     assert_true(recorded["automatic-dibs-route-body"])
     assert_true(recorded["automatic-dibs-route-layout-flush"])
-    assert_true(recorded["automatic-dibs-route-navigation-layout"])
+    assert_true(recorded["automaticDibs-route-content-layout"])
     assert_true(recorded["automatic-dibs-post-layout-table-refresh"])
     local tableTimings = {}
-    local widgetTokenResolutionCount
+    local widgetTokenResolutionCount, renderTokenContextCount
     for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
       if entry.kind == "UI table" then tableTimings[entry.page] = true end
       if entry.kind == "UI theme" and entry.page == "widget-token-resolution" then
         widgetTokenResolutionCount = entry.count
       end
+      if entry.kind == "UI theme" and entry.page == "render-token-context" then
+        renderTokenContextCount = entry.count
+      end
     end
     assert_true(tableTimings["automatic-dibs-header-cells"])
     assert_true(tableTimings["automatic-dibs-body-rows"])
     assert_true(tableTimings["automatic-dibs-width-reflow"])
-    assert_equal(2, widgetTokenResolutionCount,
-      "route scaffolding and the post-layout table batch should each resolve tokens once")
+    -- The route body resolves tokens once for its presentation context, so its
+    -- widgets never resolve individually. Only the post-layout table batch,
+    -- which has no presentation context, resolves tokens for its first widget.
+    assert_equal(1, renderTokenContextCount,
+      "route scaffolding should resolve presentation tokens once for its context")
+    assert_equal(1, widgetTokenResolutionCount,
+      "the post-layout table batch should resolve widget tokens once")
   end)
 
   it("does not query the full module catalogue twice for a selected route", function()
