@@ -1969,7 +1969,7 @@ local function createAceWindow()
     shell._dibsPerfRoute = "Player/" .. tostring(self.playerTab or "unknown")
     local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
     if Dibs.Midnight and Dibs.Midnight.ApplyToFrame and shell.frame then
-      Dibs.Midnight.ApplyToFrame(shell.frame, Dibs.Midnight.GetTokens())
+      Dibs.Midnight.ApplyToFrame(shell.frame, Dibs.AceGUI.GetPresentationTokens())
     end
     local clearStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
     Dibs.AceGUI.Clear(contentHost)
@@ -2039,7 +2039,7 @@ local function createAceWindow()
             local officerShell = officerFrame and officerFrame.dibsAceGUIShell
             if officerShell and officerShell._dibsActive == true and type(officerFrame.Refresh) == "function"
               and (not officerFrame.IsShown or officerFrame:IsShown()) then
-              Dibs.Midnight.ApplyToFrame(officerShell.frame, Dibs.Midnight.GetTokens())
+              Dibs.Midnight.ApplyToFrame(officerShell.frame, Dibs.AceGUI.GetPresentationTokens())
               officerFrame:Refresh()
             end
           end

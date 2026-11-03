@@ -334,6 +334,28 @@ describe("B11c Player UI", function()
       "the refreshed Player window should use the selected palette surface")
   end)
 
+  it("keeps adapter-provided scale when restyling the Player window and an open Officer window", function()
+    local _, dibs = setup()
+    assert_true(dibs.EnvironmentAdapters.Register("ELVUI", function()
+      return "available", { scale = 1.2 }, "AVAILABLE"
+    end))
+    local frame = dibs.PlayerUI.CreateWindow()
+    local playerScale
+    frame.dibsAceGUIShell.frame.SetScale = function(_, value) playerScale = value end
+    frame.SelectTab("preferences")
+    assert_equal(1.2, playerScale, "rendering a Player page should keep the adapter scale hint")
+
+    local officerScale
+    _G.DibsOfficerFrame = {
+      dibsAceGUIShell = { _dibsActive = true, frame = { SetScale = function(_, value) officerScale = value end } },
+      Refresh = function() end,
+    }
+    local selector = frame.themeSelector
+    selector.callbacks.OnValueChanged(selector, "OnValueChanged", "FEL_GREEN")
+    _G.DibsOfficerFrame = nil
+    assert_equal(1.2, officerScale, "changing the palette should keep the adapter scale on an open Officer window")
+  end)
+
   it("builds a history projection only for the History page", function()
     local _, dibs = setup()
     local frame = dibs.PlayerUI.CreateWindow()
