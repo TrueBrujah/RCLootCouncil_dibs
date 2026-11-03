@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.10"
+Dibs.VERSION = "0.8.11"
 local getAddonMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
 if type(getAddonMetadata) == "function" then
   local ok, buildId = pcall(getAddonMetadata, Dibs.ADDON_NAME, "X-Dibs-Build")

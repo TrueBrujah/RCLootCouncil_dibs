@@ -1,7 +1,27 @@
 # Changelog
 
-## 0.8.10 - 2026-10-17
+## 0.8.11 - 2026-11-03
 
+- (2026-11-03) Raise the addon version to 0.8.11 for the unreleased UI performance,
+  guild-database reuse, and development-build identification work below, which
+  changes addon behavior after the last published 0.8.10 beta (2026-10-18). No
+  SavedVariables schema, protocol, ledger, permission, or governance change; players
+  need no migration and guild members on 0.8.10 remain compatible.
+- (2026-11-03) Keep every guild roster entry in the shared roster snapshot. The
+  snapshot introduced with the UI performance work was built from a table keyed by
+  member, which merged two roster entries with the same name into one row. Dibs
+  Administration therefore stopped marking those players as ambiguous, and its
+  Dibs actions stayed enabled for an identity that could not be resolved. The
+  snapshot now keeps one entry per roster position, ordered by member key and then
+  roster position, restoring the earlier fail-closed behavior; the member-key
+  lookup used for identity resolution is unchanged. No SavedVariables, ledger, or
+  permission rule changes.
+- (2026-11-03) Keep a UI environment adapter's scale hint when the Player window
+  re-renders a page or a palette change restyles an open Officer window. Both
+  paths applied the native Midnight scale and overwrote the adapter value that the
+  window received at creation, so the window could change size on refresh. Both
+  now resolve presentation tokens through the shared adapter path; there is no
+  data, permission, or SavedVariables impact.
 - (2026-11-01) Avoid recounting every ledger transaction when building ledger
   selector labels. The selector needs only ledger metadata, so its cost no
   longer scales with historical transaction volume.
@@ -167,6 +187,9 @@
   permission before applying changes.
 - (2026-11-01) Add opt-in CPU sub-timings for Automatic Dibs row sorting,
   projection, table rendering, and reflow; profiling stays off by default.
+
+## 0.8.10 - 2026-10-17
+
 - (2026-10-18) Make setup warnings actionable: Guided Setup, Guild Setup Checks,
   and Raid Readiness now provide specific EN/FR correction instructions and hover
   help. Their destination pages identify current blockers/warnings, explain what
