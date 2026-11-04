@@ -290,10 +290,23 @@ Describe 'DIBS source-driven documentation foundation' {
   It 'validates the Phase 2 catalog, localized help, and orphan references' {
     $model = Get-DibsDocumentationModel -Root $repositoryRoot
     $summary = Get-DibsValidationSummary $model
-    $model.Concepts.Count | Should Be 26
-    @($model.Concepts | Select-Object -ExpandProperty id -Unique).Count | Should Be 26
+    $model.Concepts.Count | Should Be 29
+    @($model.Concepts | Select-Object -ExpandProperty id -Unique).Count | Should Be 29
     $summary.Errors | Should Be 0
-    $summary.Warnings | Should Be 0
+    $legacyOrphanHelpKeys = @(
+      'UI_HELP_REQUEST_ID',
+      'UI_HELP_SYNC_ADDON',
+      'UI_HELP_SYNC_CATALOG',
+      'UI_HELP_SYNC_GOVERNANCE',
+      'UI_HELP_SYNC_HISTORY',
+      'UI_HELP_SYNC_POLICY',
+      'UI_HELP_SYNC_REQUESTS',
+      'UI_HELP_SYNC_VAULT',
+      'UI_HELP_SYNC_VERSION'
+    )
+    $warningKeys = @($model.Findings | Where-Object Severity -eq 'WARNING' | ForEach-Object ConceptId | Sort-Object)
+    ($warningKeys -join ',') | Should Be (($legacyOrphanHelpKeys | Sort-Object) -join ',')
+    $summary.Warnings | Should Be $legacyOrphanHelpKeys.Count
     foreach ($concept in $model.Concepts) {
       $concept.shortHelp.enUS | Should Not BeNullOrEmpty
       $concept.shortHelp.frFR | Should Not BeNullOrEmpty
