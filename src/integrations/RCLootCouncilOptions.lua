@@ -373,6 +373,7 @@ local RCLC_BUTTON_SET_ALIASES = {
   COSMETIC = "COSMETIC_ITEMS",
   COSMETICITEMS = "COSMETIC_ITEMS",
   RARE = "RARE_ITEMS",
+  SPECIAL = "SPECIAL_EFFECTS_ITEMS",
   SPECIAL_EFFECTS = "SPECIAL_EFFECTS_ITEMS",
   SPECIALEFFECTSITEMS = "SPECIAL_EFFECTS_ITEMS",
 }
@@ -401,7 +402,7 @@ local function canonicalSemanticTypeKey(value)
   if key == "PET" or key == "PETS" then return "PETS" end
   if key == "RECIPE" or key == "RECIPES" or key == "RECIPE_PATTERN" then return "RECIPE" end
   if key == "DECORS" then return "DECOR" end
-  if key == "RARE_ITEMS" or key == "RARE" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or compact == "SPECIALEFFECTSITEMS" then return "OTHER" end
+  if key == "RARE_ITEMS" or key == "RARE" or key == "SPECIAL" or key == "SPECIAL_EFFECTS" or key == "SPECIAL_EFFECTS_ITEMS" or compact == "SPECIALEFFECTSITEMS" then return "OTHER" end
   if key == "TOKEN" or key == "TOKENS" then return "TOKEN" end
   if key == "TOKEN_SET" or key == "TOKEN_SETS" or key == "TOKENSET" then return "TOKEN_SET" end
   if key == "OTHER" or key == "OTHERS" then return "OTHER" end
@@ -1845,12 +1846,35 @@ groups.announcements = { type = "group", name = "Announcements", order = 6, args
 -- The two pages share the same service, but must not share the same option
 -- object: Pre-Dibs hides its duplicate channel controls while Announcements
 -- keeps its own visible copies.
+local ANNOUNCEMENT_SWITCHES = {
+  publicChannel = { kind = "public", order = 0.5, labelKey = "ANNOUNCEMENT_PUBLIC_ENABLED_LABEL",
+    fallback = "Enable public announcements", helpKey = "ANNOUNCEMENT_PUBLIC_ENABLED_HELP" },
+  officerChannel = { kind = "officer", order = 4.9, labelKey = "ANNOUNCEMENT_OFFICER_ENABLED_LABEL",
+    fallback = "Enable officer announcements", helpKey = "ANNOUNCEMENT_OFFICER_ENABLED_HELP" },
+}
 for _, key in ipairs({ "publicChannel", "officerChannel" }) do
   local source = groups.announcements.args[key]
+  local switch = ANNOUNCEMENT_SWITCHES[key]
   local copy = {}
   for field, value in pairs(source) do copy[field] = value end
   copy.hidden = nil
+  copy.disabled = function()
+    return not (Dibs.PreDibs and Dibs.PreDibs.IsAnnouncementEnabled and Dibs.PreDibs.IsAnnouncementEnabled(switch.kind))
+  end
   groups.announcements.args[key] = copy
+  groups.announcements.args[switch.kind .. "Enabled"] = {
+    type = "toggle", order = switch.order, width = "full", refreshOnChange = true,
+    name = helpText[switch.labelKey] or switch.fallback,
+    desc = helpText[switch.helpKey],
+    get = function()
+      return Dibs.PreDibs and Dibs.PreDibs.IsAnnouncementEnabled and Dibs.PreDibs.IsAnnouncementEnabled(switch.kind) or false
+    end,
+    set = function(_, value)
+      if not canEditDibsSettings() then setStatus("Only the guild master or an officer may change Dibs settings.") return end
+      local updated, reason = Dibs.PreDibs.SetAnnouncementEnabled(switch.kind, value == true)
+      if not updated then setStatus(tostring(reason or "ANNOUNCEMENT_UPDATE_FAILED")) end
+    end,
+  }
 end
 
 for index, channelKind in ipairs({ "publicChannel", "officerChannel" }) do

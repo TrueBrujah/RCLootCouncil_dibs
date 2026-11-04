@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Player Documentation Reference
 
-Addon version: 0.8.9
+Addon version: 0.8.10
 
 ## Dibs audit history
 
@@ -92,6 +92,17 @@ Scope: `guild-season` | Audit: `false` | Reason required: `false`
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
+
+## Fix synchronization
+
+- **ID:** `sync.repair`
+- **Category:** `synchronization`
+- **Audience:** gm, officer, player
+
+**English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
+**Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
+
+Scope: `character-local` | Audit: `false` | Reason required: `false`
 
 ## Synchronization
 

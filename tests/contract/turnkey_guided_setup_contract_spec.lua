@@ -120,4 +120,37 @@ describe("Turnkey Guided Setup contract", function()
     local guildDb = _G.RCLootCouncil_dibsDB.guilds and _G.RCLootCouncil_dibsDB.guilds["realm:testguild"]
     assert_true(guildDb == nil or guildDb.settings == nil or guildDb.settings.turnkeyWizardStage == nil)
   end)
+
+  it("replaces generic correction text and does not ask to correct completed results", function()
+    local dibs = load()
+    dibs.Wizard.GetStatus()
+    local before = loader.snapshotProductionState(dibs)
+    local status = dibs.Wizard.GetTurnkeyStatus()
+    for _, result in ipairs(status.verification) do
+      if result.severity == "READY" or result.severity == "OPTIONAL" then
+        assert_nil(result.nextAction, result.id)
+      else
+        assert_true(type(result.nextAction) == "string" and #result.nextAction > 30, result.id)
+        assert_true(result.nextAction ~= dibs.L.WIZARD_CORRECTION_ACTION, result.id)
+      end
+    end
+    assert_equal(dibs.L.SETUP_HELP_LEDGER, byId(status.verification, "installation").nextAction)
+    assert_true(loader.productionStateEquals(dibs, before))
+  end)
+
+  it("distinguishes missing raid context from an in-raid Master Looter issue", function()
+    local dibs = load()
+    local inRaid = false
+    _G.IsInRaid = function() return inRaid end
+    dibs.RCLootCouncil.GetLocalStatus = function()
+      return { availability = "degraded", reasonCode = "RC_MASTER_LOOTER_UNVERIFIABLE",
+        diagnostic = "The current Master Looter could not be verified." }
+    end
+    local result = byId(dibs.Wizard.GetTurnkeyStatus().verification, "rclootcouncil")
+    assert_equal(dibs.L.SETUP_HELP_NO_RAID, result.nextAction)
+    inRaid = true
+    result = byId(dibs.Wizard.GetTurnkeyStatus().verification, "rclootcouncil")
+    assert_equal(dibs.L.SETUP_HELP_MASTER_LOOTER, result.nextAction)
+    assert_equal("integration", result.route)
+  end)
 end)

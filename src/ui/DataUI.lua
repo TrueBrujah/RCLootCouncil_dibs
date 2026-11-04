@@ -221,7 +221,12 @@ local function addBackups(shell, parent)
     gui.AddLabel(shell, previewPanel, "No active data has changed yet.", true)
     local confirmRestore = gui.AddButton(shell, previewPanel, "Confirm restore", function()
       local result, reason = Dibs.Backup.Restore(state.restorePreviewId, true, "confirmed by user", nil)
-      if result then setStatus("Restore completed."); state.restorePreviewId = nil
+      if result then
+        local kept = result.keptLocal or {}
+        if #kept > 0 then
+          setStatus(string.format((Dibs.L or {}).RESTORE_KEPT_SHARED or "Restore completed. Newer guild-synced data was kept (%s); sync will catch up the rest.", table.concat(kept, ", ")))
+        else setStatus("Restore completed.") end
+        state.restorePreviewId = nil
       else setStatus("Restore failed: " .. tostring(reason or "UNKNOWN_ERROR")) end
       UI.Refresh()
     end, 150)

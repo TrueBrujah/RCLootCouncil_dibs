@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Guild Master Documentation Reference
 
-Addon version: 0.8.9
+Addon version: 0.8.10
 
 ## Guild Ledger status
 
@@ -240,6 +240,17 @@ Scope: `guild` | Audit: `false` | Reason required: `false`
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
 
+## Resynchronize guild
+
+- **ID:** `sync.guild.recovery`
+- **Category:** `synchronization`
+- **Audience:** gm, officer
+
+**English:** GM/Officer only. Asks online updated guild clients to announce their available data and request missing revisions. Preserves ledgers, validates existing authority and hashes, and never resolves conflicts by overwriting data. Offline members catch up when they reconnect. Limited to once per minute; unavailable in combat, sandbox and Independent Raid.
+**Francais:** GM/Officier seulement. Demande aux clients de guilde a jour et en ligne d'annoncer leurs donnees disponibles et de demander les revisions manquantes. Preserve les ledgers et valide les droits et empreintes existants, sans ecraser les conflits. Les absents rattrapent a leur reconnexion. Une fois par minute; indisponible en combat, sandbox et raid independant.
+
+Scope: `guild` | Audit: `false` | Reason required: `false`
+
 ## Synchronization peer status
 
 - **ID:** `sync.peer.status`
@@ -261,6 +272,17 @@ Scope: `guild` | Audit: `false` | Reason required: `false`
 **Francais:** Envoie le rappel configure dans le canal du raid actuel. Une autorisation de guilde et un canal disponible sont requis; cela n'enregistre aucun gain et ne modifie pas les Dibs.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
+
+## Fix synchronization
+
+- **ID:** `sync.repair`
+- **Category:** `synchronization`
+- **Audience:** gm, officer, player
+
+**English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
+**Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
+
+Scope: `character-local` | Audit: `false` | Reason required: `false`
 
 ## Synchronization
 

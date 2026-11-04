@@ -1,7 +1,7 @@
 # RCLootCouncil_dibs
 
 Development compatibility baseline: **0.8.x**. Latest published stable release:
-**0.8.9** (published 2026-10-16), matching the version declared by the source.
+**0.8.9** (published 2026-10-16). The source declares **0.8.10** (unreleased).
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -31,7 +31,9 @@ certify 0.8.8 or 0.8.9.
 - Independent seasonal Dibs balances.
 - Configurable allocations by guild rank.
 - Multiple guild ledgers for separate rosters, GM-approved ledger governance,
-  and isolated Independent Raid sessions.
+  a guild active ledger activated and confirmed by GM/Officers in Guild Ledgers
+  (dashboard and status-bar selectors are consultation only), and isolated
+  Independent Raid sessions.
 - Append-only ledger and auditable transaction history.
 - Player Pre-Dib requests with optional raid and Encounter Journal flows.
 - Player and Officer interfaces with shared settings.
@@ -100,19 +102,19 @@ includes its required libraries and declares RCLootCouncil as optional.
 
 ### First-time setup for a GM or Officer
 
-1. Run `/dibs officer` and open **Overview > Guided Setup**. `/dibs options`
+1. Run `/dibs officer` and open **Guild Setup > Guided Setup**. `/dibs options`
    also provides configuration and launch controls.
 2. **Choose** Progression raid, Standard loot, or Custom/advanced. Custom
    preserves existing settings.
 3. **Configure**: inspect the preview before **Apply this setup**. An Officer
    can prepare permitted changes, but GM-only approvals remain pending.
 4. **Verify**: follow each red blocker's correction button. The specialized
-   pages remain under **Guild Rules** (Seasons, Rank Rules, Loot Rules),
-   **System** (Settings, Pre-Dibs Settings, Guild Configuration), and
+   pages remain under **Guild Rules** (Seasons, Rank Rules, Loot Rules,
+   Pre-Dibs Settings), **Guild Setup** (Guild Ledgers), **System** (Settings), and
    **Integrations** (RCLootCouncil). Configuration modes remain `AUTO`,
    `STANDALONE`, and `RCLootCouncil`.
 5. The GM explicitly adopts/publishes guild Loot Rules and approves canonical
-   ledger activation through **System > Guild Configuration**. Reviewing or
+   ledger activation through **Guild Setup > Guild Ledgers**. Reviewing or
    editing a local draft alone does not publish guild authority.
 6. Review **Automatic Dibs** for positive rank-allocation differences; top-ups
    require a reason and confirmation. Demotion never removes assigned Dibs.
@@ -152,12 +154,13 @@ Open `/dibs officer` for the separate, modeless Officer control center:
 
 | Section | Pages |
 | --- | --- |
-| Overview | Dashboard, Guided Setup, Raid Readiness |
+| Overview | Dashboard, Raid Readiness |
+| Guild Setup | Guided Setup, Guild Setup Checks, Guild Ledgers |
 | Dibs | Automatic Dibs, Dibs Administration, History, Statistics |
 | Requests | Requests, Pre-Dib Requests, Pending Awards, Vault Review |
-| Guild Rules | Seasons, Rank Rules, Loot Rules, Announcements, Loot Eligibility |
+| Guild Rules | Seasons, Rank Rules, Loot Rules, Loot Eligibility, Pre-Dibs Settings, Announcements |
 | Integrations | RCLootCouncil, Independent Raid |
-| System | Settings, Pre-Dibs Settings, Modules, Guild Configuration, Synchronization, Diagnostics |
+| System | Settings, Modules, Synchronization, Diagnostics |
 | Developer | Developer, Debug (only when Developer Mode is enabled) |
 
 Labels are localized and optional-module pages may be hidden. The old
@@ -282,6 +285,7 @@ SavedVariables.
 /dibs vault <item link|[Item Name]|itemID> <LFR|Normal|Heroic|Mythic>
 /dibs ledger list
 /dibs ledger set <id>
+/dibs ledger view <id>
 /dibs sync report
 /dibs minimap show|hide
 /dibs minimap scale <50-200>

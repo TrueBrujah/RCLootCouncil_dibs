@@ -298,12 +298,15 @@ describe("MultiLedger lifecycle", function()
     assert_equal("CANNOT_DELETE_DEFAULT", result.reasonCode)
   end)
 
-  it("checks CanBroadcastRaidLedger correctly based on group and rank authority", function()
+  it("checks CanBroadcastRaidLedger correctly based on group and guild officer authority", function()
     local _, dibsSoloMember = loader.load({ wow = { inRaid = false, raidLeader = false, guildLeader = false, guildMembers = { "Member-Realm" }, guildRankIndices = { [1] = 4 }, playerName = "Member-Realm" } })
     assert_false(dibsSoloMember.MultiLedger.CanBroadcastRaidLedger())
 
+    -- Raid leadership alone no longer chooses the ledger: GM/Officers only.
     local _, dibsRaidLeader = loader.load({ wow = { inRaid = true, raidLeader = true, guildLeader = false, guildMembers = { "Member-Realm" }, guildRankIndices = { [1] = 4 }, playerName = "Member-Realm" } })
-    assert_true(dibsRaidLeader.MultiLedger.CanBroadcastRaidLedger())
+    local allowed, reason = dibsRaidLeader.MultiLedger.CanBroadcastRaidLedger()
+    assert_false(allowed)
+    assert_equal("GUILD_OFFICER_REQUIRED", reason)
 
     local _, dibsOfficerInRaid = loader.load({ wow = { inRaid = true, raidLeader = false, guildLeader = false, guildMembers = { "Officer-Realm" }, guildRankIndices = { [1] = 1 }, playerName = "Officer-Realm" } })
     assert_true(dibsOfficerInRaid.MultiLedger.CanBroadcastRaidLedger())

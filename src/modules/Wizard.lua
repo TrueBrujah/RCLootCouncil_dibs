@@ -59,7 +59,7 @@ local STEPS = {
   { id = "sync", label = "Synchronization" },
   { id = "operationalPolicy", label = "Guild Policy" },
   { id = "review", label = "Review" },
-  { id = "readiness", label = "Readiness" },
+  { id = "readiness", label = "Guild Setup Checks" },
 }
 
 local function call(fn, ...)
@@ -119,7 +119,7 @@ local function installationStatus()
 end
 
 local function setupAssistantReport()
-  return Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate() or {
+  return Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate({ scope = "guild" }) or {
     status = "UNAVAILABLE", checks = {}, blockingCount = 0,
   }
 end
@@ -416,7 +416,7 @@ function Wizard.GetStatus(actor)
   local review = reviewStatus(steps)
   local readiness = readinessStatus(report)
   steps[#steps + 1] = { id = "review", label = "Review", status = review.status, summary = review.summary }
-  steps[#steps + 1] = { id = "readiness", label = "Readiness", status = readiness.status, summary = readiness.summary, detail = readiness.report }
+  steps[#steps + 1] = { id = "readiness", label = "Guild Setup Checks", status = readiness.status, summary = readiness.summary, detail = readiness.report }
 
   local installation = installationStatus()
   local overallState
@@ -441,6 +441,10 @@ function Wizard.GetStatus(actor)
   else mode = "EDIT_CONFIGURATION" end
 
   return { steps = steps, overallState = overallState, mode = mode }
+end
+
+function Wizard.GetInitialOperationalPolicyValues()
+  return initialOperationalPolicyValues()
 end
 
 function Wizard.AdoptOperationalPolicy(actor)
@@ -609,7 +613,7 @@ local TURNKEY_ROUTE = {
   seasons = "seasons", rankRules = "ranks", allocationReconciliation = "automaticDibs",
   dibsRules = "lootTypes", preDibs = "preDibs", ledger = "installation",
   rclootcouncil = "integration", sync = "sync", operationalPolicy = "installation",
-  readiness = "setup",
+  readiness = "guildSetup",
 }
 local TURNKEY_CATEGORY = {
   installation = "WIZARD_CATEGORY_FOUNDATION", guild = "WIZARD_CATEGORY_FOUNDATION",
@@ -655,7 +659,9 @@ function Wizard.GetTurnkeyStatus(actor)
           or severity == "WARNING" and text("WIZARD_WARNING_IMPACT")
           or severity == "READY" and text("WIZARD_READY_IMPACT")
           or text("WIZARD_OPTIONAL_IMPACT"),
-        nextAction = TURNKEY_ROUTE[step.id] and text("WIZARD_CORRECTION_ACTION") or nil,
+        nextAction = severity ~= "READY" and severity ~= "OPTIONAL"
+          and Dibs.SetupAssistant.GetGuidance(step.id == "installation" and "ledger" or step.id,
+            type(step.detail) == "table" and step.detail.reasonCode or nil) or nil,
         route = TURNKEY_ROUTE[step.id],
         sourceStatus = step.status,
       }
@@ -670,12 +676,12 @@ function Wizard.GetTurnkeyStatus(actor)
         result.impact = text("WIZARD_SYNC_BLOCKING_IMPACT")
         result.nextAction = text("WIZARD_SYNC_BLOCKING_ACTION")
       end
-      if step.id == "readiness" and type(step.detail) == "table" then
+      if step.id == "readiness" and severity ~= "READY" and type(step.detail) == "table" then
         for _, finding in ipairs(step.detail.checks or {}) do
           if finding.state ~= "ready" and finding.state ~= "skipped" then
             result.explanation = tostring(finding.impact or finding.reasonCode or result.explanation)
             result.impact = tostring(finding.impact or result.impact)
-            result.nextAction = tostring(finding.remediation or result.nextAction or "")
+            result.nextAction = Dibs.SetupAssistant.GetGuidance(finding.id, finding.reasonCode, finding.remediation)
             break
           end
         end

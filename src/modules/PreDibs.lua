@@ -146,6 +146,11 @@ local function activeLedgerId()
     and Dibs.MultiLedger.GetActiveLedgerId() or DEFAULT_LEDGER_ID
 end
 
+local function requireGuildActiveLedger()
+  if not (Dibs.MultiLedger and Dibs.MultiLedger.RequireGuildActiveLedger) then return true end
+  return Dibs.MultiLedger.RequireGuildActiveLedger()
+end
+
 local function isApprovedLedger(ledgerId)
   if type(ledgerId) ~= "string" or ledgerId == "" then return false end
   if ledgerId == DEFAULT_LEDGER_ID then return true end
@@ -583,6 +588,41 @@ function Dibs.PreDibs.SetAnnouncementChannels(publicChannel, officerChannel, act
   return Dibs.PreDibs.GetAnnouncementSettings()
 end
 
+local ANNOUNCEMENT_KINDS = {
+  public = { field = "publicChannel", memory = "preDibLastPublicAnnouncementChannel", default = "GUILD" },
+  officer = { field = "officerChannel", memory = "preDibLastOfficerAnnouncementChannel", default = "OFFICER" },
+}
+
+function Dibs.PreDibs.IsAnnouncementEnabled(kind)
+  local definition = ANNOUNCEMENT_KINDS[kind]
+  if not definition then return false end
+  return Dibs.PreDibs.GetAnnouncementSettings()[definition.field] ~= "NONE"
+end
+
+-- Disabling stores the channel as NONE, so the switch travels through the
+-- existing synchronized announcement policy. The previous channel is kept
+-- locally only to restore the same choice when the switch is enabled again.
+function Dibs.PreDibs.SetAnnouncementEnabled(kind, enabled, actor)
+  local definition = ANNOUNCEMENT_KINDS[kind]
+  if not definition then return nil, "INVALID_ANNOUNCEMENT_KIND" end
+  local settings = Dibs.PreDibs.GetAnnouncementSettings()
+  local current = settings[definition.field]
+  local target
+  if enabled == true then
+    if current ~= "NONE" then return settings end
+    target = normalizeChannel(Dibs.db.settings[definition.memory], definition.default)
+    if target == "NONE" then target = definition.default end
+  else
+    if current == "NONE" then return settings end
+    target = "NONE"
+  end
+  local publicChannel = kind == "public" and target or settings.publicChannel
+  local officerChannel = kind == "officer" and target or settings.officerChannel
+  local updated, reason = Dibs.PreDibs.SetAnnouncementChannels(publicChannel, officerChannel, actor)
+  if updated and target == "NONE" then Dibs.db.settings[definition.memory] = current end
+  return updated, reason
+end
+
 function Dibs.PreDibs.GetAnnouncementTemplates()
   ensureState()
   return {
@@ -608,6 +648,10 @@ function Dibs.PreDibs.SetAnnouncementTemplates(preDibTemplate, reminderTemplate,
 end
 
 function Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId, ledgerId)
+  if ledgerId == nil then
+    local ready, readyReason = requireGuildActiveLedger()
+    if not ready then return nil, readyReason end
+  end
   local store, storeReason = ensureState(ledgerId)
   if not store then return nil, storeReason end
   local enabled, reason = requirePreDibsEnabled()
@@ -656,7 +700,12 @@ end
 ---@doc.label-key DOC_PREDIB_REQUEST_LABEL
 function Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, source, context)
   local targetLedgerId = activeLedgerId()
-  if type(context) == "table" and context.ledgerId ~= nil then targetLedgerId = context.ledgerId end
+  if type(context) == "table" and context.ledgerId ~= nil then
+    targetLedgerId = context.ledgerId
+  else
+    local ready, readyReason = requireGuildActiveLedger()
+    if not ready then return nil, readyReason end
+  end
   local store, storeReason = ensureState(targetLedgerId)
   if not store then return nil, storeReason end
   local enabled, reason = requirePreDibsEnabled()
@@ -882,7 +931,8 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName, targetLedger
     local recipientRole = Dibs.Permissions and Dibs.Permissions.GetGuildRole and Dibs.Permissions.GetGuildRole(nil)
     local senderIsOfficer = senderRole == "gm" or senderRole == "officer"
     local recipientIsOfficer = recipientRole == "gm" or recipientRole == "officer"
-    if not senderIsOfficer or not recipientIsOfficer then return nil, "OWNER_MISMATCH" end
+    local recipientIsOwner = samePlayer(Dibs.GetPlayerName(), incoming.playerName)
+    if not senderIsOfficer or (not recipientIsOfficer and not recipientIsOwner) then return nil, "OWNER_MISMATCH" end
   end
   for _, existing in ipairs(store.requests) do
     if existing.requestId == incoming.requestId then
@@ -967,10 +1017,12 @@ function Dibs.PreDibs.Fulfill(requestId)
   return Dibs.PreDibs.UpdateStatus(requestId, "fulfilled")
 end
 
-function Dibs.PreDibs.GetActiveRequests(playerName)
-  ensureState()
+function Dibs.PreDibs.GetActiveRequests(playerName, ledgerId)
+  local store = ensureState(ledgerId)
+  if ledgerId ~= nil and not store then return {} end
+  local requests = ledgerId ~= nil and store.requests or Dibs.db.preDibs.requests
   local active = {}
-  for _, request in ipairs(Dibs.db.preDibs.requests) do
+  for _, request in ipairs(requests or {}) do
     if request.playerName == (playerName or Dibs.GetPlayerName()) and isRequestActive(request) then
       table.insert(active, request)
     end

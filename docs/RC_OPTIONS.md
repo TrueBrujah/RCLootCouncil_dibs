@@ -6,19 +6,20 @@ The Officer window has grouped navigation, defined in `OfficerUI.lua`:
 
 | Section | Pages |
 | --- | --- |
-| Overview | Dashboard, Guided Setup, Raid Readiness |
+| Overview | Dashboard, Raid Readiness |
+| Guild Setup | Guided Setup, Guild Setup Checks, Guild Ledgers |
 | Dibs | Automatic Dibs, Dibs Administration, History, Statistics |
 | Requests | Requests, Pre-Dib Requests, Pending Awards, Vault Review |
-| Guild Rules | Seasons, Rank Rules, Loot Rules, Announcements, Loot Eligibility |
+| Guild Rules | Seasons, Rank Rules, Loot Rules, Loot Eligibility, Pre-Dibs Settings, Announcements |
 | Integrations | RCLootCouncil, Independent Raid |
-| System | Settings, Pre-Dibs Settings, Modules, Guild Configuration, Synchronization, Diagnostics |
+| System | Settings, Modules, Synchronization, Diagnostics |
 | Developer | Developer, Debug (Developer Mode only) |
 
 Optional-module pages may be hidden, and labels are localized. Specialized
 operational controllers and shared configuration groups delegate to the same
 protected services; not every page is a rendering of AceConfig. Start setup at
-**Overview > Guided Setup**. **Raid Readiness** checks current raid context;
-**System > Guild Configuration** handles historical review and ledger activation.
+**Guild Setup > Guided Setup**. **Raid Readiness** checks current raid context;
+**Guild Setup > Guild Ledgers** handles historical review and ledger activation.
 
 **Requests** is the private GM/Officer report queue (legacy **Review Requests**,
 `/dibs review`). Shared dossiers are writable only by the verified pinned
@@ -125,7 +126,7 @@ unavailable, Draft RC generation reports the family as skipped.
 Button generation is marked unsupported unless the active profile exposes the
 paired `buttons`/`responses` schema and an RC config-refresh hook.
 
-For initial setup, use **Overview > Guided Setup** and its reviewed profiles,
+For initial setup, use **Guild Setup > Guided Setup** and its reviewed profiles,
 not the former **Installation assistant** route. The policy presets provide
 the two starting configurations described above. The adapter refreshes the
 locked Dibs projection when applying a supported configuration. It prepares the Dibs button in

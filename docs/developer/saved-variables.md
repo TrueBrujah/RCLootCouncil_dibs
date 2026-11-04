@@ -95,3 +95,26 @@ separate from `RCLootCouncil_dibsDB`; its bounded validation and production
 isolation are documented in the developer testing and release evidence records.
 
 Backups are bounded snapshots with a configurable retention (default 5, maximum 25). Import/export is versioned and preview-first; applying a package or restoring a snapshot is explicit and audited. No live loot candidates, votes, or item transfers belong in SavedVariables or sync payloads.
+
+Restoring a snapshot never rolls back state shared with the guild. For a `full`
+restore, `governance`, `operationalPolicy` and `seasonCatalog` (with `seasons` and
+`currentSeasonId`) keep the local copy when its revision is higher, or when the
+revision is equal but the hash differs; each ledger in `ledgers` keeps the local copy
+when its `canonical.nextSeq` is higher, or equal with a different root hash or more
+transactions. `sync` state is always kept. A `guild` restore skips `seasons` once a
+catalog revision has been published. The kept parts are returned in
+`preview.keptLocal`, and sync catches up the remaining gap.
+
+## Hidden local factory reset
+
+`/dibs factoryreset` (not listed in `/dibs help`) arms a 60-second window;
+`/dibs factoryreset CONFIRM` then sets `RCLootCouncil_dibsDB`,
+`RCLootCouncil_dibsSandboxDB`, `RCLootCouncil_dibsLocalDB` and the legacy `DibsDB`
+to `nil` (again at `PLAYER_LOGOUT`) and reloads the UI, so the client starts as a
+fresh install. When any guild has Officer backups (`db.backups`), the main root is
+instead a fresh root holding only `preservedBackups[guildKey] = { backups,
+backupRetention }`; on the next load of that guild they are merged back into
+`db.backups` (by `snapshotId`) and removed from `preservedBackups`. It is refused in
+combat, is local only, sends no sync traffic and does not touch RCLootCouncil data or
+other members. Per-character local data of other characters is kept until the reset
+is run on them; later guild sync may restore shared guild ledgers.
