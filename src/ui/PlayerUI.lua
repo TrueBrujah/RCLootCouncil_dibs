@@ -187,13 +187,6 @@ local function submitPublicPreDib(rawItem)
     return nil, "Unable to create pre-dib request."
   end
 
-  if Dibs.PreDibs and Dibs.PreDibs.Create then
-    local request = Dibs.PreDibs.Create(Dibs.GetPlayerName(), itemID, itemName, Dibs.GetCurrentSeasonId())
-    if request then
-      return request, nil
-    end
-  end
-
   return nil, "Pre-dib module unavailable."
 end
 
@@ -381,7 +374,10 @@ function Dibs.PlayerUI.GetSummary(playerName, ledgerId, options)
   local currentPlayer = playerName or Dibs.GetPlayerName()
   local historySummary = Dibs.Ledger and Dibs.Ledger.GetPlayerHistorySummary
     and Dibs.Ledger.GetPlayerHistorySummary(currentPlayer, season and season.id, ledgerId) or nil
-  local canonical = not historySummary and Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
+  -- The history summary is an inexpensive ledger projection, but the Player
+  -- balance shown to the user must come from the canonical state (pending
+  -- reservations affect availability in RC, not the committed balance here).
+  local canonical = Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
     and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, currentPlayer, ledgerId) or nil
   local playerState = not historySummary and Dibs.Ledger and Dibs.Ledger.GetPlayerState
     and Dibs.Ledger.GetPlayerState(currentPlayer, season and season.id, ledgerId) or {}
@@ -477,7 +473,7 @@ function Dibs.PlayerUI.GetSummary(playerName, ledgerId, options)
   local summary = {
     season = season,
     player = currentPlayer,
-    balance = historySummary and historySummary.balance or (canonical and canonical.balance or 0),
+    balance = canonical and canonical.balance or (historySummary and historySummary.balance or 0),
     balanceState = canonical,
     seasonAllocation = historySummary and historySummary.allocation or (tonumber(playerState.allocation) or 0),
     seasonUsed = used,
@@ -548,6 +544,14 @@ function Dibs.PlayerUI.GetStatusPresentation(result)
     explanation = "Guild Dibs is unavailable right now. Try again later or contact an Officer.",
     tone = "warning",
   }
+end
+
+function Dibs.PlayerUI.GetIntegrationState(result)
+  result = type(result) == "table" and result or {}
+  local availability, status = tostring(result.availability or ""), tostring(result.status or "")
+  if availability == "operational" or status == "Ready" then return { status = "Ready" } end
+  if availability == "degraded" or status == "Degraded" then return { status = "Degraded" } end
+  return { status = "Unavailable" }
 end
 
 local function playerRequestHistory(playerName, activeRequests, ledgerId)
@@ -1667,9 +1671,7 @@ local function createLegacyAceWindow()
     end
     local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
     if integration then
-      local integrationState = integration.availability == "operational" or integration.status == "Ready" and { status = "Ready" }
-        or integration.availability == "degraded" and { status = "Degraded" }
-        or { status = "Unavailable" }
+      local integrationState = Dibs.PlayerUI.GetIntegrationState(integration)
       local integrationView = Dibs.PlayerUI.GetStatusPresentation(integrationState)
       local integrationBadge = Dibs.Midnight.AddStatusBadge(shell, tabs, integrationView.tone, "RCLootCouncil: " .. integrationView.label)
       Dibs.AceGUI.AddLabel(shell, tabs, integrationView.explanation, true)
@@ -2529,6 +2531,53 @@ local function createAceWindow()
           }
         end,
       })
+    -- Keep eligibility work confined to the visible My Dibs page. Requests
+    -- and history use the lighter shared view model without this projection.
+    local eligibilitySummary = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
+      and Dibs.CharacterEligibility.GetSummary(Dibs.GetPlayerName(), Dibs.GetCurrentSeasonId()) or nil
+    if eligibilitySummary then
+      Dibs.AceGUI.AddLabel(shell, tabs, "Protected-loot group: " .. tostring(eligibilitySummary.groupId or "Not linked"), true)
+      local probation = eligibilitySummary.probation
+      Dibs.AceGUI.AddLabel(shell, tabs, "Main-change probation: " .. tostring(probation
+        and ("Until " .. tostring(probation.probationEndsAt)) or "None"), true)
+      local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus
+        and Dibs.RCLootCouncil.GetLocalStatus() or nil
+      if integration then
+        local integrationView = Dibs.PlayerUI.GetStatusPresentation(Dibs.PlayerUI.GetIntegrationState(integration))
+        local badge = Dibs.Midnight and Dibs.Midnight.AddStatusBadge
+          and Dibs.Midnight.AddStatusBadge(shell, tabs, integrationView.tone, "RCLootCouncil: " .. integrationView.label)
+        Dibs.AceGUI.AddLabel(shell, tabs, integrationView.explanation, true)
+        if badge then Dibs.AceGUI.AddTooltip(badge, "RCLootCouncil status", helpText.UI_HELP_PLAYER_STATUS) end
+      end
+      local relationshipSection = Dibs.AceGUI.AddSection(shell, tabs, "Main / alt declarations",
+        "Choose a guild character. Officers must approve the declaration before it affects protected-loot priority.")
+      local characterChoices = getGuildCharacterChoices()
+      self.eligibilityCharacter = self.eligibilityCharacter or next(characterChoices)
+      local characterChoice = Dibs.AceGUI.AddDropdown(shell, relationshipSection, "Guild character", characterChoices,
+        function(value) self.eligibilityCharacter = value end, 260)
+      Dibs.AceGUI.SetValue(characterChoice, self.eligibilityCharacter)
+      local declare = Dibs.AceGUI.AddButton(shell, relationshipSection, "Declare alt", function()
+        local alt = self.eligibilityCharacter
+        local relationship = alt and Dibs.CharacterEligibility and Dibs.CharacterEligibility.DeclareRelationship and Dibs.CharacterEligibility.DeclareRelationship({
+          seasonId = eligibilitySummary.seasonId, mainCharacter = Dibs.GetPlayerName(), altCharacter = alt,
+        }) or nil
+        self.eligibilityStatus = relationship and "Declaration submitted for Officer approval." or "Choose a guild character before submitting."
+        self:Refresh()
+      end, 130)
+      local requestMain = Dibs.AceGUI.AddButton(shell, relationshipSection, "Request main change", function()
+        local newMain = self.eligibilityCharacter
+        local request = newMain and Dibs.CharacterEligibility and Dibs.CharacterEligibility.RequestMainChange and Dibs.CharacterEligibility.RequestMainChange({
+          seasonId = eligibilitySummary.seasonId, oldMain = Dibs.GetPlayerName(), newMain = newMain,
+          reason = "Player requested a main-character change",
+        }) or nil
+        self.eligibilityStatus = request and "Main-change request submitted for Officer approval." or "Choose a guild character before submitting."
+        self:Refresh()
+      end, 170)
+      Dibs.AceGUI.SetDisabled(declare, next(characterChoices) == nil)
+      Dibs.AceGUI.SetDisabled(requestMain, next(characterChoices) == nil)
+      Dibs.AceGUI.AddLabel(shell, relationshipSection, self.eligibilityStatus
+        or "Declarations stay pending until an Officer reviews them.", true)
+    end
     Dibs.AceGUI.AddHeader(shell, tabs, view.status.label, view.status.explanation)
     local activeRows, activePage, activePages = {}, 1, 1
     if view.activePreDibPage then

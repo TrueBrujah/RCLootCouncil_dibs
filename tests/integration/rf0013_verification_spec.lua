@@ -22,8 +22,8 @@ local loader = require("helpers.load_addon")
 local function loadActor(playerName, leader, rank, saved)
   local _, dibs = loader.load({ withAce3 = true, savedVariables = saved, wow = {
     playerName = playerName, guildLeader = leader,
-    guildMembers = { "GM-Realm", "Officer-Realm", "Player-Realm" },
-    guildRankIndices = { [1] = 0, [2] = 1, [3] = 4 },
+    guildMembers = { "GM-Realm", "Officer-Realm", "Player-Realm", "Tester-Realm" },
+    guildRankIndices = { [1] = 0, [2] = 1, [3] = 4, [4] = 4 },
     guildName = "RF0013 Test Guild", guildRealm = "TestRealm",
   } })
   dibs.SyncV2.BroadcastCatalogDigest = function() return true, "TEST_SENT" end

@@ -13,6 +13,12 @@ local Sync = Dibs.Sync
 
 local MAJOR, MINOR = 2, 1
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX, MAX_PROTOCOL_MISMATCHES = 256, 8, 16, 8192, 500, 10
+local MAX_OUTER_PACKET_BYTES = 64 * 1024
+local DIGEST_ENTITY_TYPES = {
+  PREDIB_INDEX = true, LEDGER = true, VAULT_INDEX = true, AWARD_RESERVATION = true,
+  GOVERNANCE = true, OPERATIONAL_POLICY = true, LEDGER_CATALOG = true,
+  SEASON_CATALOG = true, AUTHORITY = true,
+}
 local LEDGER_BATCH_SIZE = 4
 local PROPOSAL_RETRY_INTERVAL = 300
 local AWARD_RESERVATION_PAGE_SIZE = 16
@@ -1903,12 +1909,14 @@ function Sync.BuildAwardReservationDigest()
   local records = {}
   local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
   for _, proposal in ipairs(proposals) do
-    if (proposal.type == "AWARD" or proposal.type == "DIB_USED") and proposal.status ~= "COMMITTED" then
+    if (proposal.type == "AWARD" or proposal.type == "DIB_USED")
+      and (proposal.status == "PENDING_RECONCILIATION" or proposal.status == "PENDING") then
       addReservationRecord(records, reservationFromProposal(proposal, "PENDING"))
     end
   end
   local state = ensure()
   for _, reservation in pairs(state.awardReservations) do addReservationRecord(records, reservation) end
+  for _, tombstone in pairs(state.awardReservationTombstones) do addReservationRecord(records, tombstone) end
   local entries = {}
   for _, reservation in pairs(records) do entries[#entries + 1] = reservation end
   table.sort(entries, function(a, b) return a.proposalId < b.proposalId end)
@@ -1955,10 +1963,13 @@ function Sync.ClearAwardReservation(proposalId, commit)
   local transaction = type(commit) == "table" and commit.transaction or nil
   local tombstone = reservation or {
     proposalId = proposalId,
-    playerMemberKey = transaction and transaction.memberKey,
-    actorMemberKey = type(commit) == "table" and commit.coordinator and commit.coordinator.memberKey,
-    seasonId = transaction and transaction.seasonId,
-    amount = math.abs(tonumber(transaction and transaction.amount) or 1),
+    playerMemberKey = transaction and transaction.memberKey or (type(commit) == "table" and commit.playerSnapshot and commit.playerSnapshot.memberKey),
+    actorMemberKey = (type(commit) == "table" and commit.coordinator and commit.coordinator.memberKey)
+      or (type(commit) == "table" and commit.actorSnapshot and commit.actorSnapshot.memberKey),
+    seasonId = (transaction and transaction.seasonId) or (type(commit) == "table" and commit.seasonId)
+      or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()),
+    amount = math.abs(tonumber(transaction and transaction.amount) or tonumber(type(commit) == "table" and commit.amount) or 1),
+    ledgerId = type(commit) == "table" and commit.ledgerId,
   }
   if type(tombstone.playerMemberKey) ~= "string" then return false end
   tombstone = copy(tombstone)
@@ -2393,10 +2404,12 @@ function Sync.Receive(message, sender, channel)
     or message.type == "AWARD_RESERVATION_DIGEST" then
     peer.entities = peer.entities or {}
     local entityType = message.entityType or message.type
-    local entityKey = entityType == "LEDGER" and (entityType .. ":" .. tostring(message.ledgerId or "guild-primary"))
-      or (entityType == "PREDIB_INDEX" and message.ledgerId and (entityType .. ":" .. tostring(message.ledgerId)))
-      or entityType
-    peer.entities[entityKey] = { revision = tonumber(message.revision) or 0, contentHash = message.contentHash, at = peer.at }
+    if DIGEST_ENTITY_TYPES[entityType] then
+      local entityKey = entityType == "LEDGER" and (entityType .. ":" .. tostring(message.ledgerId or "guild-primary"))
+        or (entityType == "PREDIB_INDEX" and message.ledgerId and (entityType .. ":" .. tostring(message.ledgerId)))
+        or entityType
+      peer.entities[entityKey] = { revision = tonumber(message.revision) or 0, contentHash = message.contentHash, at = peer.at }
+    end
   end
   state.peers[resolved.memberKey] = peer
   if message.type == "SYNC_REPAIR_REQUEST" then
@@ -2553,7 +2566,7 @@ function Sync.Receive(message, sender, channel)
         or type(entry.playerMemberKey) ~= "string" or type(entry.actorMemberKey) ~= "string"
         or not finiteInteger(entry.amount) or tonumber(entry.amount) <= 0
         or type(entry.seasonId) ~= "string" or entry.seasonId == ""
-        or entry.state ~= "PENDING" or not finiteInteger(entry.updatedAt)
+        or (entry.state ~= "PENDING" and entry.state ~= "RELEASED") or not finiteInteger(entry.updatedAt)
         or seen[entry.proposalId] then return false, "INVALID_AWARD_RESERVATION_DIGEST" end
       if (entry.awardRef ~= nil and type(entry.awardRef) ~= "string")
         or (entry.evidenceId ~= nil and type(entry.evidenceId) ~= "string")
@@ -2570,7 +2583,17 @@ function Sync.Receive(message, sender, channel)
     end
     for _, entry in ipairs(validated) do
       local tombstone = state.awardReservationTombstones[entry.proposalId]
-      if not tombstone or tonumber(entry.updatedAt) > (tonumber(tombstone.updatedAt) or 0) then
+      if entry.state == "RELEASED" then
+        local existing = state.awardReservations[entry.proposalId]
+        if (not tombstone or tonumber(entry.updatedAt) >= (tonumber(tombstone.updatedAt) or 0))
+          and (not existing or tonumber(entry.updatedAt) >= (tonumber(existing.updatedAt) or 0)) then
+          state.awardReservationTombstones[entry.proposalId] = copy(entry)
+          if existing then
+            state.awardReservations[entry.proposalId] = nil
+            bumpAwardReservationGeneration(existing.playerMemberKey)
+          end
+        end
+      elseif not tombstone or tonumber(entry.updatedAt) > (tonumber(tombstone.updatedAt) or 0) then
         if reservationHasCanonicalCommit(entry) then
           Sync.ClearAwardReservation(entry.proposalId)
         else
@@ -3294,6 +3317,7 @@ end
 
 function Sync.OnAddonMessage(prefix, payload, channel, sender)
   if prefix ~= "DIBS" or type(payload) ~= "string" then return false, "INVALID_PREFIX" end
+  if #payload > MAX_OUTER_PACKET_BYTES then return false, "MESSAGE_TOO_LARGE" end
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
   local message = Dibs.Ace3.Deserialize(payload); if type(message) ~= "table" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
   Sync.TraceIncoming(prefix, channel, sender, message.type, #payload)

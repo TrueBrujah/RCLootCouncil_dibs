@@ -86,7 +86,7 @@ describe("MultiLedger lifecycle", function()
     local activeLedgerId = dibs.MultiLedger.GetActiveLedgerId()
     dibs.GetDB = getDB
     assert_equal("guild-primary", activeLedgerId)
-    assert_equal(2, calls, "one MultiLedger lookup plus one policy read should resolve the active ledger")
+    assert_equal(1, calls, "the resolved database should be reused by the policy read")
   end)
 
   it("allows verified officer to propose a new ledger", function()

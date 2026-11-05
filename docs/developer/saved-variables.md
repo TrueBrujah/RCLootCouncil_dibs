@@ -86,7 +86,7 @@ subtrees are placed in `persistenceRecovery.quarantine` before only the affected
 runtime subtree is rebuilt. A failed staged migration leaves the original
 SavedVariables root unchanged.
 
-Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `preDibs`, `reconciliation`, `characterEligibility`, `governance`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
+Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `ledgerProposals`, `preDibs`, `reconciliation`, `characterEligibility`, `governance`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. `ledgerProposals` stores only pending/approved proposal metadata and references; it is not a transaction ledger. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
 
 B12 adds local preference fields but no guild synchronization fields. Requests, history
 projections, context-menu state, route state, and release evidence remain

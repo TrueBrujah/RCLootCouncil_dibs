@@ -237,16 +237,10 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
   end)
 
   it("S002-11: Replayed authorized transaction does not create duplicates", function()
-    local dibs = load({ 
-      wow = { 
-        guildLeader = false, 
-        playerName = "Tester-Realm",
-        guildMembers = { "GM-Realm", "Tester-Realm" }
-      } 
-    })
+    local dibs = load({ wow = { guildLeader = true, playerName = "Tester-Realm", guildMembers = { "Tester-Realm" } } })
     
     -- First grant via ProtectedActions as GM
-    local result1 = dibs.ProtectedActions.Execute("ledger.grant", "GM-Realm", {
+    local result1 = dibs.ProtectedActions.Execute("ledger.grant", "Tester-Realm", {
       playerName = "Tester-Realm",
       amount = 5,
       reason = "Test",
@@ -257,18 +251,17 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
     local txId = result1.value.transactionId
     local count1 = #dibs.Ledger.GetAllTransactions()
     
-    -- Replay via direct API should be rejected (no valid audit context)
+    -- Replay via direct API is a no-op for an already committed authorized transaction.
     local tx2, reason2 = dibs.Ledger.Grant("Tester-Realm", 5, "Test", "replay-test", dibs.GetCurrentSeasonId(), 
       { transactionId = txId })
-    
-        -- Direct API call should be rejected - requires audit context from ProtectedActions
-        assert_false(tx2, "Direct API call should be rejected without valid audit context: " .. tostring(reason2))
+    assert_true(tx2 ~= nil, "the exact authorized replay should return its existing record")
+    assert_equal("IDEMPOTENT_REPLAY", reason2)
     
     -- Count should not change
     local count2 = #dibs.Ledger.GetAllTransactions()
     assert_equal(count1, count2, "No new transaction should be created")
     
-    print("S002-11: Replay correctly rejected - no duplicates created")
+    print("S002-11: Replay is idempotent - no duplicates created")
   end)
 
   it("S002-12: Failed operation leaves persistent state unchanged", function()
@@ -347,7 +340,7 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
     local before = dibs.Ledger.GetBalance("Tester-Realm")
     
     -- Normal use through ProtectedActions should work
-    local result = dibs.ProtectedActions.Execute("ledger.use", "GM-Realm", {
+    local result = dibs.ProtectedActions.Execute("ledger.use", "Tester-Realm", {
       playerName = "Tester-Realm",
       amount = 1,
       reason = "Regression test",

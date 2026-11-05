@@ -18,6 +18,7 @@ Dibs.Ace3 = Dibs.Ace3 or {}
 
 local Adapter = Dibs.Ace3
 Adapter.handlers = Adapter.handlers or { events = {}, comms = {} }
+local eventCallbacks, eventRegistered = {}, {}
 
 local function getLibrary(name)
   if _G.LibStub == nil then return nil end
@@ -207,13 +208,41 @@ end
 ---@param callback DibsEventCallback Handler invoked for the event.
 ---@return boolean registered
 function Adapter.RegisterEvent(event, callback)
-  if not Adapter.libs.event or type(aceRegisterEvent) ~= "function" then return false end
-  Adapter.handlers.events[event] = callback
-  local ok = pcall(aceRegisterEvent, Adapter, event, function(receivedEvent, ...)
-    local handler = Adapter.handlers.events[receivedEvent]
-    if handler then return handler(receivedEvent, ...) end
-  end)
-  return ok
+  if type(event) ~= "string" or type(callback) ~= "function"
+    or not Adapter.libs.event or type(aceRegisterEvent) ~= "function" then return false end
+
+  local callbacks = eventCallbacks[event]
+  if not callbacks then callbacks = {}; eventCallbacks[event] = callbacks end
+  for _, existing in ipairs(callbacks) do
+    if existing == callback then return true end
+  end
+  callbacks[#callbacks + 1] = callback
+  if eventRegistered[event] then return true end
+
+  local dispatcher = Adapter.handlers.events[event]
+  if type(dispatcher) ~= "function" then
+    dispatcher = function(ownerOrEvent, receivedEvent, ...)
+      local eventName = type(receivedEvent) == "string" and receivedEvent or ownerOrEvent
+      local current = eventCallbacks[eventName]
+      if type(current) ~= "table" then return end
+      for index = 1, #current do
+        current[index](eventName, ...)
+      end
+    end
+    Adapter.handlers.events[event] = dispatcher
+  end
+  local ok = pcall(aceRegisterEvent, Adapter, event, dispatcher)
+  if not ok then
+    for index = #callbacks, 1, -1 do
+      if callbacks[index] == callback then table.remove(callbacks, index); break end
+    end
+    if #callbacks == 0 then
+      eventCallbacks[event], Adapter.handlers.events[event] = nil, nil
+    end
+    return false
+  end
+  eventRegistered[event] = true
+  return true
 end
 
 function Adapter.ScheduleTimer(callback, delay)

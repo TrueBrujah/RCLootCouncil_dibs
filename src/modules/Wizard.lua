@@ -757,13 +757,22 @@ function Wizard.GetTurnkeyStatus(actor, dbOverride)
         result.nextAction = text("WIZARD_SYNC_BLOCKING_ACTION")
       end
       if step.id == "readiness" and severity ~= "READY" and type(step.detail) == "table" then
+        local selectedFinding
         for _, finding in ipairs(step.detail.checks or {}) do
           if finding.state ~= "ready" and finding.state ~= "skipped" then
-            result.explanation = tostring(finding.impact or finding.reasonCode or result.explanation)
-            result.impact = tostring(finding.impact or result.impact)
-            result.nextAction = Dibs.SetupAssistant.GetGuidance(finding.id, finding.reasonCode, finding.remediation)
-            break
+            if finding.required == true then
+              selectedFinding = finding
+              break
+            elseif not selectedFinding then
+              selectedFinding = finding
+            end
           end
+        end
+        if selectedFinding then
+          result.explanation = tostring(selectedFinding.impact or selectedFinding.reasonCode or result.explanation)
+          result.impact = tostring(selectedFinding.impact or result.impact)
+          result.nextAction = Dibs.SetupAssistant.GetGuidance(selectedFinding.id,
+            selectedFinding.reasonCode, selectedFinding.remediation)
         end
       end
       verification[#verification + 1] = result

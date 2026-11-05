@@ -145,12 +145,10 @@ describe("First installation assistant UI", function()
       dibs.SetupAssistant.Evaluate = function()
         return { checks = { { id = "sync_state", state = "degraded", reasonCode = "SYNC_BEHIND" } } }
       end
-      dibs.Wizard.GetTurnkeyStatus = function()
-        return { verification = {
-          { id = "allocationReconciliation", severity = "WARNING", title = "Allocation reconciliation",
-            route = "automaticDibs", explanation = "A member needs allocation.",
-            nextAction = dibs.SetupAssistant.GetGuidance("allocationReconciliation") },
-        } }
+      -- Allocation guidance is derived from the automatic-allocation page's
+      -- already-built rows; rendering it must not run the full wizard again.
+      dibs.OfficerUI.BuildAutomaticAllocationDetails = function()
+        return { rows = { { difference = 1, actionable = true, plainPlayerName = "Member-Realm", rankName = "Member" } } }
       end
       local frame = dibs.OfficerUI.CreateWindow("sync")
       local section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)

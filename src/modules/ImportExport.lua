@@ -203,7 +203,15 @@ function M.GetPayload(scope)
   scope = scope or "local"; local db = Dibs.GetDB(); local realm, character = context()
   if scope == "local" then return { presentation = pick(db.settings or {}, PRESENTATION_KEYS), profile = clone(db.profiles and db.profiles["local"] and db.profiles["local"][characterKey()] or {}) }, realm, character end
   if scope == "guild" then return { settings = pick(db.settings or {}, POLICY_KEYS), rankRules = clone(db.rankRules or {}), seasons = clone(db.seasons or {}), profiles = clone(db.profiles and db.profiles.guild or {}) }, realm, character end
-  if scope == "full" then local payload = clone(db); payload.backups, payload.pendingImports, payload.pendingRestores, payload.auditLog = nil, nil, nil, nil; return payload, realm, character end
+  if scope == "full" then
+    local payload = {}
+    for key, value in pairs(db) do
+      if key ~= "backups" and key ~= "pendingImports" and key ~= "pendingRestores" and key ~= "auditLog" then
+        payload[key] = clone(value)
+      end
+    end
+    return payload, realm, character
+  end
   return nil, nil, nil, "INVALID_SCOPE"
 end
 
@@ -448,7 +456,12 @@ end
 -- Side effects: Applies only a previously validated preview and records audit/safety snapshot data.
 function M.Apply(previewId, confirm, reason, actor)
   local db = Dibs.GetDB(); local pending = db.pendingImports and db.pendingImports[previewId]; if not pending then return nil, "PREVIEW_NOT_FOUND" end
-  if confirm ~= true then pending.preview.decision = "cancelled"; M.RecordAudit("import_cancel", pending.preview.targetScope, true, reason, actor); return pending.preview end
+  if confirm ~= true then
+    pending.preview.decision = "cancelled"
+    db.pendingImports[previewId] = nil
+    M.RecordAudit("import_cancel", pending.preview.targetScope, true, reason, actor)
+    return pending.preview
+  end
   local package, preview = pending.package, pending.preview
   if not roleAllowed(preview.targetScope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   -- Preview can be backed by a decoded envelope or a caller-provided Lua

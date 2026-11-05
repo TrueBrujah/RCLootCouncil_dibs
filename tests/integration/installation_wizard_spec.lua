@@ -10,7 +10,7 @@ local function load(player, guildLeader, saved)
 end
 
 describe("Installation readiness projection", function()
-  it("resolves the active ledger once for the legacy ledger and Pre-Dibs status checks", function()
+  it("scopes legacy status checks to the primary ledger without reading the UI active ledger", function()
     local dibs = load("Tester-Realm", true)
     local resolvedGuildDB = dibs.GetDB()
     local originalActiveLedger = dibs.Ledger.GetActiveLedgerId
@@ -50,8 +50,8 @@ describe("Installation readiness projection", function()
     dibs.Sync.IsSyncBehind = originalSyncBehind
     dibs.Sync.CanEnforceV2 = originalSyncCompatibility
     dibs.HistoricalBaseline.GetInstallationSummary = originalBaselineSummary
-    assert_equal(1, activeReads)
-    assert_equal(resolvedGuildDB, activeDatabase)
+    assert_equal(0, activeReads)
+    assert_nil(activeDatabase)
     assert_equal(resolvedGuildDB, historyDatabase)
     assert_equal(resolvedGuildDB, baselineDatabase)
     assert_equal(resolvedGuildDB, syncBehindDatabase)
@@ -503,14 +503,14 @@ describe("Guild Configuration next steps after activation", function()
   it("shows the viewed ledger contents on the dashboard without activating it", function()
     local dibs, _, target, sends = prepareActivation()
     local requestedLedgers = {}
-    local originalGetTransactions = dibs.Ledger.GetTransactions
-    dibs.Ledger.GetTransactions = function(seasonId, player, ledgerId)
+    local originalGetActivity = dibs.Ledger.GetSeasonActivitySummary
+    dibs.Ledger.GetSeasonActivitySummary = function(seasonId, ledgerId, ...)
       requestedLedgers[#requestedLedgers + 1] = ledgerId or "active"
-      return originalGetTransactions(seasonId, player, ledgerId)
+      return originalGetActivity(seasonId, ledgerId, ...)
     end
     selectDropdown("View ledger", target)
     local projection = dibs.OfficerUI.GetDashboardProjection()
-    dibs.Ledger.GetTransactions = originalGetTransactions
+    dibs.Ledger.GetSeasonActivitySummary = originalGetActivity
     assert_equal(target, projection.viewLedger.id)
     assert_true(projection.viewLedger.readOnly)
     assert_equal(target, requestedLedgers[#requestedLedgers])

@@ -305,6 +305,8 @@ end
 ---@doc.scope guild-season
 ---@doc.audit true
 ---@doc.reason-required true
+---@doc.help-key UI_HELP_LEDGER_OPERATION
+---@doc.label-key DOC_LEDGER_OPERATION_LABEL
 local function executeLedgerOperation(actor, payload, decision)
   if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then
     return buildResult(false, nil, { reasonCode = "FEATURE_DISABLED" }, "Canonical dispute operations are disabled in this release.")

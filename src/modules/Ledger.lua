@@ -1112,14 +1112,23 @@ local function validateCanonicalHistory(ledger)
     end
     local currentLast = lastByEpoch[currentEpoch]
     if currentLast and canonical.rootHash ~= currentLast.commit.commitHash then return false, "CANONICAL_ROOT_MISMATCH" end
-    if not currentLast and canonical.nextSeq ~= 1 then return false, "CANONICAL_SEQUENCE_GAP" end
+    if not currentLast then
+      if canonical.nextSeq ~= 1 then return false, "CANONICAL_SEQUENCE_GAP" end
+      local authorityState = authority()
+      local expectedRoot = authorityRoot(authorityState)
+      if type(expectedRoot) == "string" and expectedRoot ~= "" and canonical.rootHash ~= expectedRoot then
+        return false, "CANONICAL_ROOT_MISMATCH"
+      end
+    end
   end
   return true, nil, entries, legacyUnverifiable
 end
 
 function Ledger.ClassifyCanonicalRecovery(targetLedgerId)
   local _, ledger, lookupReason = recoveryLedger(targetLedgerId)
-  if not ledger then return { classification = "INVALID", reasonCode = lookupReason } end
+  if not ledger then
+    return { classification = lookupReason == "LEDGER_NOT_FOUND" and "UNRECOVERABLE_HISTORY" or "INVALID", reasonCode = lookupReason }
+  end
   local ok, reason, entries, legacyUnverifiable = validateCanonicalHistory(ledger)
   if not ok then
     local classification = reason == "CANONICAL_SEQUENCE_GAP" and "MISSING_SEQUENCE"
@@ -1170,6 +1179,7 @@ function Ledger.RebuildLedgerProjections(targetLedgerId)
   -- under today's identity or hash rules.
   local transactions = copy(ledger.transactions or {})
   local awardTransactions, evidenceTransactions, playerStates, transactionIndex = {}, {}, {}, {}
+  local canonicalTransactions = {}
   for _, item in ipairs(entries or {}) do
     local commit = item.commit
     if commit.recordClass == "LEDGER_OPERATION_COMMIT" then
@@ -1182,9 +1192,21 @@ function Ledger.RebuildLedgerProjections(targetLedgerId)
         end
         transactions[tx.transactionId] = existing or tx
         transactionIndex[tx.transactionId] = item.key
+        canonicalTransactions[tx.transactionId] = true
       end
     elseif commit.recordClass == "AWARD_COMMIT" and type(commit.canonicalTransactionId) == "string" then
-      transactionIndex[commit.canonicalTransactionId] = item.key
+      local txId, committedTx = commit.canonicalTransactionId, commit.transaction
+      if type(committedTx) == "table" and committedTx.transactionId == txId
+        and committedTx.canonicalContentHash == commit.transactionHash
+        and transactionCanonicalHash(committedTx) == commit.transactionHash then
+        local existing = transactions[txId]
+        if existing and existing.canonicalContentHash ~= commit.transactionHash then
+          return { rebuilt = false, reasonCode = "CANONICAL_TRANSACTION_CONFLICT" }
+        end
+        transactions[txId] = existing or copy(committedTx)
+        canonicalTransactions[txId] = true
+        transactionIndex[txId] = item.key
+      end
     end
   end
 
@@ -1226,6 +1248,11 @@ function Ledger.RebuildLedgerProjections(targetLedgerId)
     end
   end
 
+  local legacyRowCount = 0
+  for id in pairs(transactions) do
+    if not canonicalTransactions[id] then legacyRowCount = legacyRowCount + 1 end
+  end
+
   ledger.transactions, ledger.playerStates = transactions, playerStates
   ledger.awardTransactions, ledger.evidenceTransactions = awardTransactions, evidenceTransactions
   ledger.canonical.transactionIndex = transactionIndex
@@ -1233,7 +1260,7 @@ function Ledger.RebuildLedgerProjections(targetLedgerId)
   Ledger.MarkTransactionsChanged(ledger.id)
   return { rebuilt = true,
     reasonCode = legacyUnverifiable and "PROJECTIONS_REBUILT_LEGACY_HASH_UNVERIFIED" or "PROJECTIONS_REBUILT",
-    transactionCount = #transactionIds }
+    transactionCount = #transactionIds, legacyRowCount = legacyRowCount }
 end
 
 ---@param context table Local caller context; it never represents a coordinator or epoch.
@@ -1754,7 +1781,8 @@ function Ledger.GetPendingDibReservations(playerName, seasonId, ledgerId)
     local player = proposal.playerSnapshot
     local proposalType = proposal.type or "AWARD"
     if player and player.memberKey == memberKey and (proposalType == "AWARD" or proposalType == "DIB_USED")
-      and proposal.status ~= "COMMITTED" and (not proposal.seasonId or proposal.seasonId == targetSeason) then
+      and (proposal.status == "PENDING_RECONCILIATION" or proposal.status == "PENDING")
+      and (not proposal.seasonId or proposal.seasonId == targetSeason) then
       local proposalId = proposal.proposalId
       if not proposalId or not seen[proposalId] then
         if inLedger(proposal) then reserved = reserved + math.abs(tonumber(proposal.amount) or 1) end

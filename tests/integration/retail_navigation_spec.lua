@@ -307,12 +307,12 @@ describe("Retail Officer navigation lifecycle", function()
     assert_false(containsText(frame.contentHost, "Target season"))
   end)
 
-  it("lays out Requests and History during their first TreeGroup selection", function()
+  it("lays out Requests and History in the content host during their first TreeGroup selection", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow("overview")
     local layoutCalls = 0
-    local originalDoLayout = frame.aceTabs.DoLayout
-    frame.aceTabs.DoLayout = function(self)
+    local originalDoLayout = frame.contentHost.DoLayout
+    frame.contentHost.DoLayout = function(self)
       layoutCalls = layoutCalls + 1
       if originalDoLayout then originalDoLayout(self) end
     end

@@ -73,6 +73,18 @@ Scope: `guild-season` | Audit: `false` | Reason required: `false`
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
 
+## Canonical ledger correction
+
+- **ID:** `ledger.operation`
+- **Category:** `ledger`
+- **Audience:** gm, officer
+
+**English:** Review and commit a validated canonical ledger correction. The action requires guild authority and a reason.
+**Francais:** Examinez et appliquez une correction canonique validee du ledger. L'action exige une autorite de guilde et une raison.
+
+Scope: `guild-season` | Audit: `true` | Reason required: `true`
+Permission: `ledger.operation`
+
 ## Loot eligibility
 
 - **ID:** `loot.eligibility`

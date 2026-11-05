@@ -2007,14 +2007,11 @@ function Dibs.EncounterJournal.SubmitPreDib(itemID, itemName)
   if Dibs.PreDibs and Dibs.PreDibs.CreatePublic then
     return Dibs.PreDibs.CreatePublic(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, itemID, itemName, Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil, "encounter-journal")
   end
-  if Dibs.PreDibs and Dibs.PreDibs.Create then
-    return Dibs.PreDibs.Create(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, itemID, itemName, Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
-  end
   return nil, "PREDIB_UNAVAILABLE"
 end
 
 do
-  local function handleBootstrapEvent(_, event, loadedAddon)
+  local function handleBootstrapEvent(event, loadedAddon)
     if event == "ADDON_LOADED" and loadedAddon ~= "Blizzard_EncounterJournal" then
       return
     end
@@ -2029,7 +2026,7 @@ do
     end
   end
 
-  local function handleEncounterEvent(_, event, encounterID, encounterName, difficultyID, groupSize, success)
+  local function handleEncounterEvent(event, encounterID, encounterName, difficultyID, groupSize, success)
     local id = tonumber(encounterID)
     if event == "ENCOUNTER_START" and id and id > 0 then
       activeEncounter = {
@@ -2058,9 +2055,9 @@ do
     bootstrap:RegisterEvent("ENCOUNTER_END")
     bootstrap:SetScript("OnEvent", function(frame, event, ...)
       if event == "ENCOUNTER_START" or event == "ENCOUNTER_END" then
-        handleEncounterEvent(frame, event, ...)
+        handleEncounterEvent(event, ...)
       else
-        handleBootstrapEvent(frame, event, ...)
+        handleBootstrapEvent(event, ...)
       end
     end)
   end

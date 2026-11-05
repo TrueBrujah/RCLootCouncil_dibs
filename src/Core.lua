@@ -1974,10 +1974,14 @@ function Dibs.HandleSlashCommand(msg)
     local itemName = table.concat(args, " ", 3)
     local payloadName = itemName ~= "" and itemName or "Item " .. tostring(itemID)
     local request, reason
-    if Dibs.PreDibs and Dibs.PreDibs.CreatePublic and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() then
-      request, reason = Dibs.PreDibs.CreatePublic(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId(), "slash")
+    if Dibs.PreDibs and Dibs.PreDibs.CreatePublic then
+      if Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() then
+        request, reason = Dibs.PreDibs.CreatePublic(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId(), "slash")
+      else
+        reason = "PUBLIC_PRE_DIBS_DISABLED"
+      end
     else
-      request = Dibs.PreDibs.Create(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId())
+      reason = "PREDIB_UNAVAILABLE"
     end
 
     if request then

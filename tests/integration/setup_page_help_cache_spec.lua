@@ -13,13 +13,19 @@ describe("Officer setup page help cache", function()
       return originalEvaluate(...)
     end
 
-    local frame = dibs.OfficerUI.CreateWindow("automaticDibs")
+    -- Ordinary pages use no full setup scan. The first supported guidance
+    -- route builds the report; later routes reuse it until explicit refresh.
+    local frame = dibs.OfficerUI.CreateWindow("settings")
     local afterOpen = evaluations
-    assert_true(afterOpen > 0)
-    frame:ActivateRoute("settings")
-    assert_equal(afterOpen, evaluations)
-
+    assert_equal(0, afterOpen)
+    frame:ActivateRoute("installation")
+    assert_true(evaluations > 0)
+    local afterBuild = evaluations
+    frame:ActivateRoute("ranks")
+    assert_equal(afterBuild, evaluations)
+    frame:ActivateRoute("installation")
+    assert_equal(afterBuild, evaluations)
     frame:Refresh()
-    assert_equal(afterOpen + 1, evaluations)
+    assert_equal(afterBuild + 1, evaluations)
   end)
 end)

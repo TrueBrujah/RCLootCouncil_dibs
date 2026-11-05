@@ -38,6 +38,11 @@ DO NOT EDIT MANUALLY.
 **English:** Your available Dibs are scoped to this guild and season. A qualifying finalized award or authorized adjustment changes the balance.
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
 
+## Canonical ledger correction / Correction canonique du ledger
+
+**English:** Review and commit a validated canonical ledger correction. The action requires guild authority and a reason.
+**Francais:** Examinez et appliquez une correction canonique validee du ledger. L'action exige une autorite de guilde et une raison.
+
 ## Loot eligibility / Eligibilite du butin
 
 **English:** Shows whether a loot category may use Dibs under the active guild policy, and why a category is blocked or needs review.

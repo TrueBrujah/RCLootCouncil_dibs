@@ -283,6 +283,17 @@ local function ensureState(targetLedgerId, bindActive, skipActiveBindingCheck, d
   return store
 end
 
+local function findRequestLedger(root, requestId, targetLedgerId)
+  for ledgerId, store in pairs(type(root) == "table" and type(root.ledgers) == "table" and root.ledgers or {}) do
+    if ledgerId ~= targetLedgerId and type(store) == "table" then
+      for _, request in ipairs(type(store.requests) == "table" and store.requests or {}) do
+        if type(request) == "table" and request.requestId == requestId then return ledgerId end
+      end
+    end
+  end
+  return nil
+end
+
 function Dibs.PreDibs.SetLedgerContext(ledgerId)
   local store, reason = ensureState(ledgerId, true)
   if not store then return false, reason end
@@ -948,6 +959,7 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
   if targetLedgerId == nil then targetLedgerId = DEFAULT_LEDGER_ID end
   local store, storeReason = ensureState(targetLedgerId)
   if not store then return nil, storeReason end
+  if findRequestLedger(Dibs.db.preDibs, incoming.requestId, targetLedgerId) then return nil, "LEDGER_SCOPE_MISMATCH" end
   incoming = copy(incoming)
   incoming.ledgerId = targetLedgerId
   local incomingItemId = type(incoming) == "table" and tonumber(incoming.itemID) or nil
@@ -1012,6 +1024,7 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName, targetLedger
   if ledgerId ~= DEFAULT_LEDGER_ID and incoming.ledgerId ~= ledgerId then return nil, "LEDGER_SCOPE_MISMATCH" end
   local store, storeReason = ensureState(ledgerId)
   if not store then return nil, storeReason end
+  if findRequestLedger(Dibs.db.preDibs, incoming.requestId, ledgerId) then return nil, "LEDGER_SCOPE_MISMATCH" end
   local revision = type(incoming) == "table" and tonumber(incoming.revision) or nil
   local itemID = type(incoming) == "table" and tonumber(incoming.itemID) or nil
   local allowed = incoming and (incoming.status == "pending" or incoming.status == "confirmed" or incoming.status == "cancelled" or incoming.status == "invalidated" or incoming.status == "fulfilled")

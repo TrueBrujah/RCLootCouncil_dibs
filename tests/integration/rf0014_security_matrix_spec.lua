@@ -19,10 +19,18 @@ describe("RF-0014 security verification matrix", function()
     return dibs
   end
 
+  local function establishTesterGroup(dibs)
+    local relationship = assert(dibs.CharacterEligibility.DeclareRelationship({
+      mainCharacterId = "Tester-Realm", altCharacterId = "Officer-Realm",
+    }, "Tester-Realm"))
+    assert(dibs.CharacterEligibility.ReviewRelationship(relationship.relationshipId, "approved", "Tester-Realm"))
+  end
+
   it("refuses a main change requested by a member without the required authority", function()
     local dibs = setup()
+    establishTesterGroup(dibs)
     local request, reason = dibs.CharacterEligibility.RequestMainChange({
-      oldMainId = "Plain-Realm", newMainId = "Officer-Realm", reason = "unauthorized",
+      oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "unauthorized",
     }, "Plain-Realm")
     -- The request itself is a proposal from the player; what matters is that
     -- the approval is refused for a non-admin.
@@ -37,6 +45,7 @@ describe("RF-0014 security verification matrix", function()
 
   it("refuses the approval of a main change by a non-GM", function()
     local dibs = setup()
+    establishTesterGroup(dibs)
     local request = assert(dibs.CharacterEligibility.RequestMainChange({
       oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "role change",
     }, "Tester-Realm"))
@@ -47,6 +56,7 @@ describe("RF-0014 security verification matrix", function()
 
   it("keeps the request pending until it is explicitly approved", function()
     local dibs = setup()
+    establishTesterGroup(dibs)
     local request = assert(dibs.CharacterEligibility.RequestMainChange({
       oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "role change",
     }, "Tester-Realm"))
@@ -58,6 +68,7 @@ describe("RF-0014 security verification matrix", function()
 
   it("keeps a refused main change refused and inactive", function()
     local dibs = setup()
+    establishTesterGroup(dibs)
     local request = assert(dibs.CharacterEligibility.RequestMainChange({
       oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "role change",
     }, "Tester-Realm"))

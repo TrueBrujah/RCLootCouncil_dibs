@@ -78,6 +78,13 @@ describe("Character loot eligibility", function()
   it("blocks main-spec protected loot during the default probation", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local seasonId = dibs.GetCurrentSeasonId()
+    local relationship = dibs.CharacterEligibility.DeclareRelationship({
+      seasonId = seasonId, mainCharacter = "Tester-Realm", altCharacter = "Newmain-Realm",
+    })
+    assert_equal("pending", relationship.status)
+    assert_true(dibs.ProtectedActions.Execute("eligibility.relationship.review", nil, {
+      relationshipId = relationship.relationshipId, status = "approved",
+    }).ok)
     local request = dibs.CharacterEligibility.RequestMainChange({
       seasonId = seasonId, oldMain = "Tester-Realm", newMain = "Newmain-Realm", reason = "role change",
     })
@@ -96,6 +103,13 @@ describe("Character loot eligibility", function()
   it("allows one bounded probation exception and consumes it once", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local seasonId = dibs.GetCurrentSeasonId()
+    local relationship = dibs.CharacterEligibility.DeclareRelationship({
+      seasonId = seasonId, mainCharacter = "Tester-Realm", altCharacter = "Newmain-Realm",
+    })
+    assert_equal("pending", relationship.status)
+    assert_true(dibs.ProtectedActions.Execute("eligibility.relationship.review", nil, {
+      relationshipId = relationship.relationshipId, status = "approved",
+    }).ok)
     local request = dibs.CharacterEligibility.RequestMainChange({
       seasonId = seasonId, oldMain = "Tester-Realm", newMain = "Newmain-Realm", reason = "role change",
     })

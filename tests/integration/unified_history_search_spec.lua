@@ -191,7 +191,7 @@ describe("Unified history search", function()
   it("keeps guild-wide search behind the existing Officer authorization boundary", function()
     local _, dibs = loader.load({
       withAce3 = true,
-      wow = { guildLeader = false, guildMembers = { "Tester-Realm", "Other-Realm" } },
+      wow = { guildLeader = false, guildMembers = { "Tester-Realm", "Other-Realm" }, guildRankIndices = { [1] = 3, [2] = 3 } },
     })
 
     assert_true(dibs.OfficerUI.BuildLedgerDetails(dibs.GetCurrentSeasonId()).hidden)

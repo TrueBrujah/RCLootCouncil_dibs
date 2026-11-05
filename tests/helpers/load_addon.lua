@@ -112,7 +112,12 @@ local function makeAce3()
   end
   local event = { handlers = {} }
   function event:Embed(target)
-    target.RegisterEvent = function(owner, eventName, callback) event.handlers[eventName] = callback return true end
+    target.RegisterEvent = function(owner, eventName, callback)
+      event.handlers[eventName] = function(receivedEvent, ...)
+        return callback(target, receivedEvent, ...)
+      end
+      return true
+    end
   end
   local timer = { scheduled = {} }
   function timer:Embed(target)

@@ -349,8 +349,11 @@ describe("B06 coordinator distributed ledger", function()
   end)
 
   it("keeps enforced cutover across a normal handoff and fences the old coordinator", function()
-    local dibs = activateV2(); local before = dibs.Governance.GetAuthorityState().transition.baselineHash
-    local closure = assert(dibs.Governance.BeginHandoff(nil, { finalSeq = 0, rootHash = before }))
+    local dibs = activateV2()
+    local canonical = dibs.Ledger.GetCanonicalState("guild-primary")
+    local closure = assert(dibs.Governance.BeginHandoff(nil, {
+      finalSeq = (tonumber(canonical.nextSeq) or 1) - 1, rootHash = canonical.rootHash,
+    }))
     local successor = assert(dibs.Identity.CreateSnapshot("Officer-Realm"))
     assert_true(dibs.Governance.Change(nil, { future = { authority = {
       schema = 1, state = "ACTIVE", coordinator = successor, ledgerEpoch = 8, protocolState = "V2_ENFORCED",

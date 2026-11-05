@@ -131,7 +131,7 @@ describe("RF-0031 a terminal proposal releases its Dib reservation", function()
     local digest = dibs.Sync.BuildAwardReservationDigest()
     local broadcast = 0
     for _, record in ipairs(digest.records or {}) do
-      if record.proposalId == proposal.proposalId then broadcast = broadcast + 1 end
+      if record.proposalId == proposal.proposalId and record.state == "PENDING" then broadcast = broadcast + 1 end
     end
     assert_equal(1, broadcast, "the pending proposal was not broadcast")
 
@@ -140,7 +140,7 @@ describe("RF-0031 a terminal proposal releases its Dib reservation", function()
     digest = dibs.Sync.BuildAwardReservationDigest()
     broadcast = 0
     for _, record in ipairs(digest.records or {}) do
-      if record.proposalId == proposal.proposalId then broadcast = broadcast + 1 end
+      if record.proposalId == proposal.proposalId and record.state == "PENDING" then broadcast = broadcast + 1 end
     end
     assert_equal(0, broadcast,
       "a terminal proposal was still broadcast as a pending reservation")

@@ -734,6 +734,14 @@ local function getSelectedSeason(frame, dbOverride)
   return Dibs.Seasons and Dibs.Seasons.GetCurrent and Dibs.Seasons.GetCurrent(dbOverride) or nil
 end
 
+local function getSharedGuildRosterSnapshot()
+  local identity = Dibs.Identity
+  local getRoster = identity and (identity.GetRosterSnapshot or identity.GetRosterMembers)
+  if type(getRoster) ~= "function" then return nil end
+  local ok, roster = pcall(getRoster)
+  return ok and type(roster) == "table" and roster or nil
+end
+
 local function getGuildRankNames()
   local names = {}
 
@@ -745,6 +753,16 @@ local function getGuildRankNames()
         if okName and rankName and rankName ~= "" then
           names[i - 1] = tostring(rankName)
         end
+      end
+    end
+  end
+
+  if next(names) == nil then
+    local roster = getSharedGuildRosterSnapshot()
+    for _, member in ipairs(roster or {}) do
+      local idx, rankName = tonumber(member.rankIndex), member.rankName
+      if idx ~= nil and rankName and rankName ~= "" and names[idx] == nil then
+        names[idx] = tostring(rankName)
       end
     end
   end
@@ -1047,7 +1065,16 @@ local function getGuildRankCount(rankNames, rules, drafts)
   if not count or count < 1 then
     local maximum = -1
     local foundRosterRank = false
-    if type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
+    local roster = getSharedGuildRosterSnapshot()
+    if type(roster) == "table" then
+      for _, member in ipairs(roster) do
+        local rankIndex = tonumber(member.rankIndex)
+        if rankIndex then
+          maximum = math.max(maximum, rankIndex)
+          foundRosterRank = true
+        end
+      end
+    elseif type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
       local guildMemberCount = _G.GetNumGuildMembers()
       for index = 1, (tonumber(guildMemberCount) or 0) do
         local ok, _, _, rankIndex = pcall(_G.GetGuildRosterInfo, index)
@@ -3789,6 +3816,18 @@ local function renderLedgerManagement(shell, parent, frame, dbOverride)
       local pGroup = Dibs.AceGUI.AddInlineGroup(shell, parent)
       Dibs.AceGUI.AddLabel(shell, pGroup, string.format(L.LEDGERS_PROPOSED_BY or "%s (proposed by %s)",
         ledgerDisplayName(l), tostring(l.proposedBy or l.createdBy or "Unknown")), false)
+      local proposal = type(l.proposal) == "table" and l.proposal or nil
+      if proposal then
+        local scope = {}
+        for _, source in ipairs(proposal.discoveredSources or {}) do
+          scope[#scope + 1] = string.format("%s: %s", tostring(source), tostring((proposal.discoveredCounts or {})[source] or 0))
+        end
+        local unreadable = #(proposal.unreadableSources or {}) > 0
+          and table.concat(proposal.unreadableSources, ", ") or "none"
+        Dibs.AceGUI.AddLabel(shell, pGroup, string.format("Review: %s | sources: %s | unreadable: %s | scan: %s",
+          tostring(proposal.purpose or "unknown"), #scope > 0 and table.concat(scope, ", ") or "none", unreadable,
+          proposal.scanComplete == true and "complete" or "incomplete"), true)
+      end
       if isGM then
         Dibs.AceGUI.AddButton(shell, pGroup, L.LEDGERS_APPROVE or "Approve", function()
           local result = Dibs.MultiLedger.ApproveLedger(nil, l.id)
@@ -4043,7 +4082,7 @@ end
 
 local SETUP_HELP_ROUTES = {
   installation = true, settings = true, seasons = true, ranks = true, integration = true,
-  announcements = true, sync = true, lootTypes = true, preDibs = true,
+  announcements = true, sync = true, lootTypes = true, preDibs = true, automaticDibs = true,
 }
 local SETUP_HELP_OPTION_ROUTES = {
   settings = true, ranks = true, integration = true,
@@ -4056,9 +4095,9 @@ local SETUP_ISSUE_ALIASES = {
 local SETUP_ACTION_GUIDANCE = {
   initialize = "ledger", lootRules = "loot_types", policy = "operationalPolicy",
 }
-local function renderSetupPageHelp(shell, parent, frame, dbOverride)
+local function renderSetupPageHelp(shell, parent, frame, dbOverride, supplementalIssues, supplementalOnly)
   local route = frame.activeTab
-  if not SETUP_HELP_ROUTES[route] then return end
+  if not SETUP_HELP_ROUTES[route] then frame.setupGuidanceIssues = nil; return end
   local setupHelpStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local strings = Dibs.L or {}
   local issues, seen = {}, {}
@@ -4071,9 +4110,13 @@ local function renderSetupPageHelp(shell, parent, frame, dbOverride)
   local setupEvaluationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local report = frame.setupGuidanceReport
   if type(report) ~= "table" then
-    report = Dibs.SetupAssistant.Evaluate({ scope = "all", db = dbOverride })
-    frame.setupGuidanceReport = report
-    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    if supplementalOnly then
+      report = { checks = {} }
+    else
+      report = Dibs.SetupAssistant.Evaluate({ scope = "all", db = dbOverride })
+      frame.setupGuidanceReport = report
+    end
+    if not supplementalOnly and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
       Dibs.UIRenderStats.Record("Officer data", "setup-page-help-evaluation", setupEvaluationStartedAt)
     end
   elseif Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
@@ -4089,6 +4132,9 @@ local function renderSetupPageHelp(shell, parent, frame, dbOverride)
         nextAction = Dibs.SetupAssistant.GetGuidance(item.id, item.reasonCode, item.remediation),
       })
     end
+  end
+  for _, issue in ipairs(type(supplementalIssues) == "table" and supplementalIssues or {}) do
+    add(issue)
   end
   table.sort(issues, function(a, b)
     if a.severity ~= b.severity then return a.severity == "BLOCKING" end
@@ -4392,8 +4438,8 @@ local function renderIndependentRaidPage(shell, parent, frame)
     if pointsBox then Dibs.AceGUI.SetText(pointsBox, "1") end
 
     Dibs.AceGUI.AddButton(shell, parent, "Start Independent Session", function()
-      local title = (titleBox and Dibs.AceGUI.GetText(titleBox)) or "PUG Raid"
-      local points = tonumber(pointsBox and Dibs.AceGUI.GetText(pointsBox)) or 1
+      local title = (titleBox and titleBox.GetText and titleBox:GetText()) or "PUG Raid"
+      local points = tonumber(pointsBox and pointsBox.GetText and pointsBox:GetText()) or 1
       local res = Dibs.IndependentRaid.StartSession(title, points)
       if res.ok then
         frame:SetStatus("Independent raid session started.")
@@ -5986,11 +6032,21 @@ local function createAceWindow(initialRoute, deferInitialRender)
       eligibility = "Loot Eligibility", modules = "Modules", developer = "Developer", debug = "Debug",
     }
     routeTitles.setup = (Dibs.L and Dibs.L.DOC_SETUP_ASSISTANT_LABEL) or "Raid Readiness"
+    if SETUP_HELP_OPTION_ROUTES[self.activeTab] and self.activeTab ~= "ranks" and self.activeTab ~= "integration" then
+      -- Keep setup guidance in the route's scroll viewport, outside AceConfig's
+      -- nested option groups, so it cannot distort the content layout.
+      -- Use only a previously cached check here: evaluating readiness during
+      -- a direct Rank Rules open would rescan the full guild roster.
+      renderSetupPageHelp(shell, tabs, self, routeDB, nil, true)
+    end
     if self.activeTab == "statistics" then
       renderStatisticsPage(self, currentId, tabs, routeDB)
       return
     end
     if self.activeTab == "ranks" then
+      -- Rank Rules is a custom page rather than an AceConfig group, so it does
+      -- not receive setup guidance through RenderOptionsGroup's onBeforeRender.
+      renderSetupPageHelp(shell, tabs, self, routeDB)
       local rankStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
       Dibs.AceGUI.AddLabel(shell, tabs, Dibs.OfficerUI.BuildRankCatalogStatus(), true)
       if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
@@ -7107,7 +7163,6 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
     if not optionGroup and self.activeTab ~= "overview" then
       Dibs.AceGUI.AddHeading(shell, tabs, routeTitles[self.activeTab] or "Officer", "Officer controls and current local projection.")
-      if SETUP_HELP_OPTION_ROUTES[self.activeTab] then renderSetupPageHelp(shell, tabs, self, routeDB) end
     end
     if optionGroup and Dibs.AceGUI.RenderOptionsGroup then
       self.lootTypeControls = self.activeTab == "integration" and {} or nil
@@ -7124,7 +7179,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
           scroll = self.activeTab ~= "overview" and not routeNeedsScroll,
           renderGroupTitle = true,
           flattenInlineGroups = not routeNeedsScroll,
-          onBeforeRender = function(target) renderSetupPageHelp(shell, target, self, routeDB) end,
+          onBeforeRender = function(target)
+            if self.activeTab == "integration" then renderSetupPageHelp(shell, target, self, routeDB) end
+          end,
           onRendered = function(target) renderedTarget = target end,
           onChanged = function()
             self:Refresh()
@@ -9491,7 +9548,17 @@ local function createAceWindow(initialRoute, deferInitialRender)
         and Dibs.UIRenderStats.Begin(false)
       self.automaticDibsTablePage = tablePage
       local pageHeader = tablePage.header
-      renderSetupPageHelp(shell, pageHeader, self, routeDB)
+      local allocationGuidance
+      if summary.playersNeedingReconciliation > 0 then
+        local guide = Dibs.SetupAssistant.GetCheckPresentation("allocationReconciliation")
+        allocationGuidance = { {
+          id = "allocationReconciliation", title = (Dibs.L or {})[guide.labelKey] or "Allocation reconciliation",
+          severity = "WARNING", reasonCode = summary.blockedReason or "ALLOCATION_RECONCILIATION_REQUIRED",
+          route = "automaticDibs", explanation = "Some players have an allocation difference to review.",
+          nextAction = Dibs.SetupAssistant.GetGuidance("allocationReconciliation"),
+        } }
+      end
+      renderSetupPageHelp(shell, pageHeader, self, routeDB, allocationGuidance, true)
       Dibs.AceGUI.AddHeading(shell, pageHeader, "Automatic Dibs", "Current rank allocation compared with assigned seasonal allocation.")
       local catalogStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
         and Dibs.UIRenderStats.Begin(false)

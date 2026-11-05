@@ -281,4 +281,18 @@ describe("RF-0013 B1 officer proposal", function()
     for _, ledger in ipairs(ledgers) do if ledger.status == "PROPOSED" then proposed = proposed + 1 end end
     assert_equal(0, proposed, "a refused proposal left a ledger behind")
   end)
+
+  it("B16 refuses approval when discovered history was omitted from the declared scope", function()
+    local officer = loadOfficer()
+    table.insert(officer.GetDB().preDibs.requests, {
+      requestId = "rf0013-omitted-predib", playerName = "Member-Realm", itemID = 19019,
+      status = "requested", seasonId = officer.Seasons.GetCurrent().id, createdAt = 1700000001,
+    })
+    local proposed = officer.MultiLedger.ProposeLedger("Officer-Realm", "Guild Primary", metadata())
+    assert_true(proposed.ok, "the proposal should be persisted for GM review")
+    local gm = loadGM(officer.DeepCopy(_G.RCLootCouncil_dibsDB))
+    local approved = gm.MultiLedger.ApproveLedger("GM-Realm", proposed.ledgerId)
+    assert_false(approved.ok, "the proposal silently omitted existing Pre-Dibs history")
+    assert_equal("PROPOSAL_SOURCE_OMITTED", approved.reasonCode)
+  end)
 end)

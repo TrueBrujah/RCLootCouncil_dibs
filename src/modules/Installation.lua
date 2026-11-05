@@ -75,27 +75,26 @@ local function detectRealLegacyData(resolvedGuildDB)
   local db = type(resolvedGuildDB) == "table" and resolvedGuildDB
     or Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
   local ledgerIdStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-  local targetLedgerId = Dibs.Ledger and Dibs.Ledger.GetActiveLedgerId
-    and Dibs.Ledger.GetActiveLedgerId(db)
-    or Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId(db)
-    or "guild-primary"
+  -- The initial legacy scan is scoped to the primary ledger. UI view/active
+  -- ledger selection must not silently change which history is reconciled.
+  local targetLedgerId = "guild-primary"
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-active-ledger-id", ledgerIdStartedAt)
   end
-  local ledgerStatusRead = false
+  local ledgerStatusRead, ledgerReadable = false, false
   local ledgerStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   if Dibs.Ledger and type(Dibs.Ledger.HasNonAllocationTransactions) == "function" then
     local ok, value = pcall(Dibs.Ledger.HasNonAllocationTransactions, targetLedgerId, db)
     if ok and type(value) == "boolean" then
       hasLedgerHistory = value
-      ledgerStatusRead = true
+      ledgerStatusRead, ledgerReadable = true, true
     end
   end
   if not ledgerStatusRead and Dibs.Ledger and type(Dibs.Ledger.GetNonAllocationTransactionCount) == "function" then
     local ok, count = pcall(Dibs.Ledger.GetNonAllocationTransactionCount, targetLedgerId)
     if ok and tonumber(count) ~= nil then
       hasLedgerHistory = tonumber(count) > 0
-      ledgerStatusRead = true
+      ledgerStatusRead, ledgerReadable = true, true
     end
   end
   if Dibs.Ledger and type(Dibs.Ledger.GetTransactionDiagnostics) == "function" then
@@ -105,13 +104,14 @@ local function detectRealLegacyData(resolvedGuildDB)
         and tonumber(diagnostics.nonAllocationTransactionCount) or nil
       if count ~= nil then
         hasLedgerHistory = count > 0
-        ledgerStatusRead = true
+        ledgerStatusRead, ledgerReadable = true, true
       end
     end
   end
   if not ledgerStatusRead and Dibs.Ledger and type(Dibs.Ledger.GetAllTransactions) == "function" then
     local ok, transactions = pcall(Dibs.Ledger.GetAllTransactions, targetLedgerId)
     if ok and type(transactions) == "table" then
+      ledgerStatusRead, ledgerReadable = true, true
       for _, tx in ipairs(transactions) do
         if tx.type ~= "SEASON_ALLOCATION" then hasLedgerHistory = true break end
       end
@@ -120,21 +120,26 @@ local function detectRealLegacyData(resolvedGuildDB)
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-ledger-count", ledgerStartedAt)
   end
-  local preDibCount = 0
+  local preDibCount, preDibsReadable = 0, false
   local preDibsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   if Dibs.PreDibs and type(Dibs.PreDibs.GetHistoryCount) == "function" then
     local ok, count = pcall(Dibs.PreDibs.GetHistoryCount, targetLedgerId)
-    if ok and tonumber(count) ~= nil then preDibCount = tonumber(count) end
-  elseif Dibs.PreDibs and Dibs.PreDibs.GetHistory then
-    local requests = Dibs.PreDibs.GetHistory()
-    if type(requests) == "table" then preDibCount = #requests end
-  elseif type(db) == "table" and type(db.preDibs) == "table" and type(db.preDibs.requests) == "table" then
-    preDibCount = #db.preDibs.requests
+    if ok and tonumber(count) ~= nil then preDibCount, preDibsReadable = tonumber(count), true end
+  end
+  if not preDibsReadable and Dibs.PreDibs and type(Dibs.PreDibs.GetHistory) == "function" then
+    local ok, requests = pcall(Dibs.PreDibs.GetHistory, targetLedgerId)
+    if ok and type(requests) == "table" then preDibCount, preDibsReadable = #requests, true end
+  end
+  if not preDibsReadable and (not Dibs.PreDibs or type(Dibs.PreDibs.GetHistoryCount) ~= "function"
+    and type(Dibs.PreDibs.GetHistory) ~= "function") and type(db) == "table"
+    and type(db.preDibs) == "table" and type(db.preDibs.requests) == "table" then
+    preDibCount, preDibsReadable = #db.preDibs.requests, true
   end
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-predibs-count", preDibsStartedAt)
   end
-  return hasLedgerHistory or preDibCount > 0, hasLedgerHistory and 1 or 0, preDibCount, targetLedgerId, db
+  return hasLedgerHistory or preDibCount > 0, hasLedgerHistory and 1 or 0, preDibCount, targetLedgerId, db,
+    { ledgerReadable = ledgerReadable, preDibsReadable = preDibsReadable }
 end
 
 ---@param actor string|nil Optional actor override; defaults to the local player.
@@ -204,11 +209,34 @@ function Installation.GetStatus(actor, dbOverride)
   local incompleteSources = baselineSummary.incompleteSources == true
   local baselinePresent = baselineSummary.baselinePresent == true
   local legacyStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-  local hasRealLegacyData, _, _, activeLedgerId, resolvedGuildDB = detectRealLegacyData(statusDB)
+  local hasRealLegacyData, _, detectedPreDibCount, activeLedgerId, resolvedGuildDB, sourceReadability = detectRealLegacyData(statusDB)
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-data-detection", legacyStartedAt)
   end
-  local hasUncollectedEvidence = hasRealLegacyData and evidenceCount == 0
+  local sources = baselineSummary.sources or {}
+  local missingScanSources = {}
+  local ledgerSourceFound, predibsSourceFound = false, false
+  for sourceId, source in pairs(sources) do
+    if type(source) == "table" then
+      if source.sourceType == "LEDGER_TRANSACTION" then ledgerSourceFound = source.complete == true end
+      if source.sourceType == "PREDIB_REQUEST" then predibsSourceFound = source.complete == true end
+    end
+    if type(sourceId) == "string" and baselineSummary.collectionProgress
+      and baselineSummary.collectionProgress[sourceId] then
+      local progress = baselineSummary.collectionProgress[sourceId]
+      if progress.state ~= "COMPLETE" then
+        if sourceId:find(":ledger", 1, true) then ledgerSourceFound = false end
+        if sourceId:find(":predibs", 1, true) then predibsSourceFound = false end
+      end
+    end
+  end
+  if not sourceReadability.ledgerReadable or (hasLedgerHistory and not ledgerSourceFound) then
+    missingScanSources[#missingScanSources + 1] = "ledger"
+  end
+  if not sourceReadability.preDibsReadable or (detectedPreDibCount > 0 and not predibsSourceFound) then
+    missingScanSources[#missingScanSources + 1] = "predibs"
+  end
+  local hasUncollectedEvidence = #missingScanSources > 0 or (hasRealLegacyData and evidenceCount == 0)
   local reconciliationRequired = hasUncollectedEvidence or (evidenceCount > 0 and openFindings > 0)
 
   local identityStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
@@ -264,6 +292,13 @@ function Installation.GetStatus(actor, dbOverride)
       warnings[#warnings + 1] = "GM_CONFIRMATION_PENDING"
     end
   end
+  if hasUncollectedEvidence then
+    local present = false
+    for _, blocker in ipairs(blockers) do
+      if blocker == "LEGACY_EVIDENCE_SCAN_REQUIRED" then present = true; break end
+    end
+    if not present then blockers[#blockers + 1] = "LEGACY_EVIDENCE_SCAN_REQUIRED" end
+  end
 
   local result = {
     state = state,
@@ -276,6 +311,8 @@ function Installation.GetStatus(actor, dbOverride)
       incompleteSources = incompleteSources,
       hasUncollectedEvidence = hasUncollectedEvidence,
       reconciliationRequired = reconciliationRequired,
+      missingScanSources = missingScanSources,
+      sourceReadability = sourceReadability,
     },
     baseline = {
       ready = baselinePresent,
@@ -349,10 +386,19 @@ end
 -- Safe/idempotent: only imports existing local ledger/Pre-Dibs data as
 -- reviewable evidence. It never approves or decides anything.
 local function stageLegacyDiscovery(actor)
-  local hasRealLegacyData, _, _ = detectRealLegacyData()
+  local hasRealLegacyData, _, _, _, _, readability = detectRealLegacyData()
   local baselineState = Dibs.HistoricalBaseline.GetState()
-  local evidenceCount = countTable(baselineState.evidence)
-  if not hasRealLegacyData or evidenceCount > 0 then return true, "NO_ACTION_REQUIRED" end
+  if not hasRealLegacyData then
+    if not readability.ledgerReadable or not readability.preDibsReadable then return false, "LEGACY_SOURCE_READ_FAILED" end
+    return true, "NO_ACTION_REQUIRED"
+  end
+  local summary = Dibs.HistoricalBaseline.GetInstallationSummary()
+  local foundLedger, foundPreDibs = false, false
+  for _, source in pairs(summary.sources or {}) do
+    if source.sourceType == "LEDGER_TRANSACTION" and source.complete == true then foundLedger = true end
+    if source.sourceType == "PREDIB_REQUEST" and source.complete == true then foundPreDibs = true end
+  end
+  if foundLedger and foundPreDibs then return true, "NO_ACTION_REQUIRED" end
   local result, reason = Dibs.HistoricalBaseline.CollectLocalEvidence(actor, "installation-wizard")
   if not result then return false, reason or "LEGACY_EVIDENCE_COLLECTION_FAILED" end
   return true, "COLLECTED"
@@ -365,7 +411,16 @@ local function stageBaseline(actor, options)
   local evidenceCount = countTable(baselineState.evidence)
   if evidenceCount > 0 then
     local findings = Dibs.HistoricalBaseline.GetFindings()
-    if countFindingsOpen(findings) > 0 then return false, "LEGACY_RECONCILIATION_REQUIRED" end
+    local hasUndecidedEvidence = false
+    for evidenceId in pairs(baselineState.evidence or {}) do
+      if not (baselineState.activeDecisionByEvidence or {})[evidenceId] then
+        hasUndecidedEvidence = true
+        break
+      end
+    end
+    if hasUndecidedEvidence or countFindingsOpen(findings) > 0 then
+      return false, "LEGACY_RECONCILIATION_REQUIRED"
+    end
   end
   local acknowledgeIncompleteEvidence = options and options.acknowledgeIncompleteEvidence == true
   local baseline, reason = Dibs.HistoricalBaseline.FinalizeBaseline(actor, { acknowledgeIncompleteEvidence = acknowledgeIncompleteEvidence })
@@ -416,21 +471,38 @@ function Installation.Initialize(actor, options)
     return { ok = true, reasonCode = "ALREADY_INITIALIZED", status = Installation.GetStatus(actor) }
   end
   if not actorIsGM and actorIsOfficer then
-    stageLegacyDiscovery(actor)
-    if Dibs.MultiLedger and type(Dibs.MultiLedger.ProposeLedger) == "function" then
-      local ledgers = Dibs.MultiLedger.GetLedgers()
-      local hasLedger = false
-      for _, l in ipairs(ledgers) do
-        if l.id == "guild-primary" or l.name == "Guild Primary" then
-          hasLedger = true
-          break
-        end
-      end
-      if not hasLedger then
-        Dibs.MultiLedger.ProposeLedger(actor, "Guild Primary")
+    local discoveryOk, discoveryReason = stageLegacyDiscovery(actor)
+    if not discoveryOk then
+      return { ok = false, stage = "legacy", reasonCode = discoveryReason, status = Installation.GetStatus(actor) }
+    end
+    if not (Dibs.MultiLedger and type(Dibs.MultiLedger.ProposeLedger) == "function") then
+      return { ok = false, stage = "proposal", reasonCode = "PROPOSAL_SERVICE_UNAVAILABLE", status = Installation.GetStatus(actor) }
+    end
+    local summary = Dibs.HistoricalBaseline.GetInstallationSummary()
+    local counts, complete = { ledger = 0, predibs = 0 }, true
+    for _, source in pairs(summary.sources or {}) do
+      local key = source.sourceType == "LEDGER_TRANSACTION" and "ledger"
+        or source.sourceType == "PREDIB_REQUEST" and "predibs" or nil
+      if key then
+        counts[key] = math.max(counts[key], tonumber(source.evidenceCount) or 0)
+        if source.complete ~= true then complete = false end
       end
     end
-    return { ok = true, reasonCode = "PROPOSAL_CREATED", status = Installation.GetStatus(actor) }
+    for _, progress in pairs(summary.collectionProgress or {}) do
+      if type(progress) == "table" and progress.state ~= "COMPLETE" then complete = false end
+    end
+    local metadata = {
+      purpose = complete and "GUILD_PRIMARY_MISSING" or "LEGACY_SCAN_INCOMPLETE",
+      discoveredSources = { "ledger", "predibs" }, discoveredCounts = counts,
+      unreadableSources = {}, scanComplete = complete,
+    }
+    local proposal = Dibs.MultiLedger.ProposeLedger(actor, "Guild Primary", metadata)
+    if not proposal or proposal.ok ~= true or type(proposal.proposalId) ~= "string" then
+      return { ok = false, stage = "proposal", reasonCode = proposal and proposal.reasonCode or "PROPOSAL_NOT_PERSISTED",
+        status = Installation.GetStatus(actor) }
+    end
+    return { ok = true, reasonCode = "PROPOSAL_CREATED", proposalId = proposal.proposalId,
+      ledgerId = proposal.ledgerId, status = Installation.GetStatus(actor) }
   end
   local govOk, govReason = stageGovernance(actor)
   if not govOk then return { ok = false, stage = "governance", reasonCode = govReason, status = Installation.GetStatus(actor) } end

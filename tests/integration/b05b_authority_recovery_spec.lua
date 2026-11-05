@@ -39,14 +39,26 @@ describe("B05b fenced authority and recovery", function()
   end)
 
   it("requires the active coordinator closure and exact parent tuple for normal handoff", function()
-    local dibs = load(); activate(dibs)
-    assert_nil(dibs.Governance.BeginHandoff("Officer-Realm", { finalSeq = 2, rootHash = "root-7" }))
-    local closure = assert(dibs.Governance.BeginHandoff("Coordinator-Realm", { finalSeq = 2, rootHash = "root-7" }))
+    local dibs = load(); local approved = activate(dibs)
+    -- This test isolates handoff closure validation. The synthetic local GM
+    -- is not the coordinator, so model the already-completed peer capability check.
+    dibs.Sync.CanEnforceV2 = function() return true, "WRITER_COMPATIBLE" end
+    assert_true(dibs.Governance.EnableV2(nil, { "Coordinator-Realm" }))
+    local canonical = assert(dibs.Ledger.GetCanonicalState("guild-primary"))
+    local finalSeq, rootHash = (tonumber(canonical.nextSeq) or 1) - 1, canonical.rootHash
+    assert_nil(dibs.Governance.BeginHandoff("Officer-Realm", { finalSeq = finalSeq, rootHash = rootHash }))
+    local closure = assert(dibs.Governance.BeginHandoff("Coordinator-Realm", { finalSeq = finalSeq, rootHash = rootHash }))
     assert_equal("HANDOFF_CLOSING", dibs.Governance.GetAuthorityState().state)
     local wrong = authority(dibs, "Officer-Realm", 8, { kind = "NORMAL_HANDOFF", parentClosure = closure, parentClosureHash = "wrong" })
     assert_false(dibs.Governance.Change(nil, { future = { authority = wrong } }))
     local next = authority(dibs, "Officer-Realm", 8, { kind = "NORMAL_HANDOFF", parentClosure = closure, parentClosureHash = closure.closureHash })
-    assert_true(dibs.Governance.Change(nil, { future = { authority = next } }))
+    local adopted, reason = dibs.Governance.Change(nil, { future = { authority = next } })
+    if not adopted then
+      local codes = {}
+      for _, entry in ipairs(dibs.Sync.GetSyncBehindReasons()) do codes[#codes + 1] = entry.code end
+      reason = tostring(reason) .. " (" .. table.concat(codes, ",") .. ")"
+    end
+    assert_true(adopted, tostring(reason))
     assert_equal("ACTIVE", dibs.Governance.GetAuthorityState().state)
     assert_equal(8, dibs.Governance.GetAuthorityState().ledgerEpoch)
   end)

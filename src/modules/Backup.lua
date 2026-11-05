@@ -196,9 +196,14 @@ end
 -- Side effects: Restores a snapshot only after explicit preview and confirmation.
 function M.Restore(previewId, confirm, reason, actor)
   local db = ensure(); local pending = db.pendingRestores and db.pendingRestores[previewId]; if not pending then return nil, "PREVIEW_NOT_FOUND" end
+  if confirm ~= true then
+    pending.preview.decision = "cancelled"
+    db.pendingRestores[previewId] = nil
+    audit("restore_cancel", M.Get(pending.snapshotId), "success", reason, actor)
+    return pending.preview
+  end
   local snapshot = M.Get(pending.snapshotId)
   if not snapshot then return nil, "SNAPSHOT_NOT_FOUND" end
-  if confirm ~= true then pending.preview.decision = "cancelled"; audit("restore_cancel", snapshot, "success", reason, actor); return pending.preview end
   if not authorized(snapshot.scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   local valid, validationReason = validateSnapshot(snapshot); if not valid then return nil, validationReason end
   local safety, safetyReason = M.Create(snapshot.scope, "before-restore:" .. tostring(snapshot.snapshotId), actor); if not safety then return nil, safetyReason end

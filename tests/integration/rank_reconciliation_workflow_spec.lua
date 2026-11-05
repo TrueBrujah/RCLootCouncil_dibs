@@ -443,6 +443,7 @@ describe("Rank allocation reconciliation workflow", function()
       if index == 2 then return "Officer-Realm", "Member", 3 end
       return getRosterInfo(index)
     end
+    dibs.Identity.InvalidateRoster("test roster rank change")
     local result = dibs.Ledger.CommitAwardProposal({ actor = "Tester-Realm" }, proposal.proposalId, {})
     assert_false(result.accepted)
     assert_equal("REQUESTER_AUTHORITY_CHANGED", result.reasonCode)

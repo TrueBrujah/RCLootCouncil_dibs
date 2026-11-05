@@ -15,7 +15,7 @@ Addon version: 0.8.11
 **Francais:** Indique si le registre partage doit etre configure, si les donnees historiques doivent etre examinees, s'il faut une recuperation ou s'il est actif. Son initialisation exige l'autorite du maitre de guilde.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Installation.lua:150](../../src/modules/Installation.lua#L150) - `Installation.GetStatus`
+Source: [src/modules/Installation.lua:155](../../src/modules/Installation.lua#L155) - `Installation.GetStatus`
 
 ## Dibs season
 
@@ -39,7 +39,7 @@ Source: [src/modules/Seasons.lua:190](../../src/modules/Seasons.lua#L190) - `Dib
 **Francais:** Parcours du maitre de guilde pour la configuration de guilde : examinez les donnees Dibs existantes et activez le registre partage de cette guilde. Ouvrir cette page ne l'initialise pas.
 
 Scope: `guild` | Audit: `true` | Reason required: `false`
-Source: [src/modules/Installation.lua:408](../../src/modules/Installation.lua#L408) - `Installation.Initialize`
+Source: [src/modules/Installation.lua:463](../../src/modules/Installation.lua#L463) - `Installation.Initialize`
 
 ## Manual Dibs Adjustment
 
@@ -52,7 +52,7 @@ Source: [src/modules/Installation.lua:408](../../src/modules/Installation.lua#L4
 
 Scope: `guild-season` | Audit: `true` | Reason required: `true`
 Permission: `ledger.adjust`
-Source: [src/modules/ProtectedActions.lua:279](../../src/modules/ProtectedActions.lua#L279) - `executeLedgerAdjust`
+Source: [src/modules/ProtectedActions.lua:282](../../src/modules/ProtectedActions.lua#L282) - `executeLedgerAdjust`
 
 ## Adjustment reason
 
@@ -65,7 +65,7 @@ Source: [src/modules/ProtectedActions.lua:279](../../src/modules/ProtectedAction
 
 Scope: `guild-season` | Audit: `true` | Reason required: `true`
 Permission: `ledger.adjust`
-Source: [src/modules/Ledger.lua:941](../../src/modules/Ledger.lua#L941) - `Ledger.AdminAdjust`
+Source: [src/modules/Ledger.lua:1659](../../src/modules/Ledger.lua#L1659) - `Ledger.AdminAdjust`
 
 ## Dibs audit history
 
@@ -77,7 +77,7 @@ Source: [src/modules/Ledger.lua:941](../../src/modules/Ledger.lua#L941) - `Ledge
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:1492](../../src/modules/Ledger.lua#L1492) - `Ledger.GetHistory`
+Source: [src/modules/Ledger.lua:2211](../../src/modules/Ledger.lua#L2211) - `Ledger.GetHistory`
 
 ## Dib Balance
 
@@ -89,7 +89,20 @@ Source: [src/modules/Ledger.lua:1492](../../src/modules/Ledger.lua#L1492) - `Led
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Ledger.lua:1048](../../src/modules/Ledger.lua#L1048) - `Ledger.GetBalance`
+Source: [src/modules/Ledger.lua:1766](../../src/modules/Ledger.lua#L1766) - `Ledger.GetBalance`
+
+## Canonical ledger correction
+
+- **ID:** `ledger.operation`
+- **Category:** `ledger`
+- **Audience:** gm, officer
+
+**English:** Review and commit a validated canonical ledger correction. The action requires guild authority and a reason.
+**Francais:** Examinez et appliquez une correction canonique validee du ledger. L'action exige une autorite de guilde et une raison.
+
+Scope: `guild-season` | Audit: `true` | Reason required: `true`
+Permission: `ledger.operation`
+Source: [src/modules/ProtectedActions.lua:310](../../src/modules/ProtectedActions.lua#L310) - `executeLedgerOperation`
 
 ## Loot eligibility
 
@@ -101,7 +114,7 @@ Source: [src/modules/Ledger.lua:1048](../../src/modules/Ledger.lua#L1048) - `Led
 **Francais:** Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/ui/OfficerUI.lua:489](../../src/ui/OfficerUI.lua#L489) - `Dibs.OfficerUI.GetEligibilityProjection`
+Source: [src/ui/OfficerUI.lua:546](../../src/ui/OfficerUI.lua#L546) - `Dibs.OfficerUI.GetEligibilityProjection`
 
 ## Request audit timeline
 
@@ -113,7 +126,7 @@ Source: [src/ui/OfficerUI.lua:489](../../src/ui/OfficerUI.lua#L489) - `Dibs.Offi
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Disputes.lua:1390](../../src/modules/Disputes.lua#L1390) - `Disputes.GetTimeline`
+Source: [src/modules/Disputes.lua:1518](../../src/modules/Disputes.lua#L1518) - `Disputes.GetTimeline`
 
 ## Officer review requests
 
@@ -125,7 +138,7 @@ Source: [src/modules/Disputes.lua:1390](../../src/modules/Disputes.lua#L1390) - 
 **Francais:** Affiche les signalements des joueurs et leurs preuves Dibs ou RCLootCouncil. Ouvrir une demande est en lecture seule; les decisions des officiers conservent une raison d'audit.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Disputes.lua:662](../../src/modules/Disputes.lua#L662) - `Disputes.ListForOfficer`
+Source: [src/modules/Disputes.lua:671](../../src/modules/Disputes.lua#L671) - `Disputes.ListForOfficer`
 
 ## Player raid readiness
 
@@ -149,7 +162,7 @@ Source: [src/modules/Readiness.lua:226](../../src/modules/Readiness.lua#L226) - 
 **Francais:** Indique si vos informations Dibs personnelles sont disponibles. Si certaines fonctions sont limitees ou indisponibles, reessayez plus tard ou contactez un officier; RCLootCouncil est optionnel et le mode Standalone peut rester disponible.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/ui/PlayerUI.lua:512](../../src/ui/PlayerUI.lua#L512) - `Dibs.PlayerUI.GetStatusPresentation`
+Source: [src/ui/PlayerUI.lua:508](../../src/ui/PlayerUI.lua#L508) - `Dibs.PlayerUI.GetStatusPresentation`
 
 ## Announcement channels
 
@@ -161,7 +174,7 @@ Source: [src/ui/PlayerUI.lua:512](../../src/ui/PlayerUI.lua#L512) - `Dibs.Player
 **Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:627](../../src/modules/PreDibs.lua#L627) - `Dibs.PreDibs.GetAnnouncementSettings`
+Source: [src/modules/PreDibs.lua:638](../../src/modules/PreDibs.lua#L638) - `Dibs.PreDibs.GetAnnouncementSettings`
 
 ## Encounter Mode
 
@@ -173,7 +186,7 @@ Source: [src/modules/PreDibs.lua:627](../../src/modules/PreDibs.lua#L627) - `Dib
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:605](../../src/modules/PreDibs.lua#L605) - `Dibs.PreDibs.ValidatePublicRequest`
+Source: [src/modules/PreDibs.lua:616](../../src/modules/PreDibs.lua#L616) - `Dibs.PreDibs.ValidatePublicRequest`
 
 ## Pre-Dib Request
 
@@ -185,7 +198,7 @@ Source: [src/modules/PreDibs.lua:605](../../src/modules/PreDibs.lua#L605) - `Dib
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
-Source: [src/modules/PreDibs.lua:790](../../src/modules/PreDibs.lua#L790) - `Dibs.PreDibs.CreatePublic`
+Source: [src/modules/PreDibs.lua:801](../../src/modules/PreDibs.lua#L801) - `Dibs.PreDibs.CreatePublic`
 
 ## Rank Allocation
 
@@ -198,7 +211,7 @@ Source: [src/modules/PreDibs.lua:790](../../src/modules/PreDibs.lua#L790) - `Dib
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
 Permission: `rank.set`
-Source: [src/modules/ProtectedActions.lua:155](../../src/modules/ProtectedActions.lua#L155) - `executeRankSet`
+Source: [src/modules/ProtectedActions.lua:156](../../src/modules/ProtectedActions.lua#L156) - `executeRankSet`
 
 ## Rank Allocation Reconciliation
 
@@ -211,7 +224,7 @@ Source: [src/modules/ProtectedActions.lua:155](../../src/modules/ProtectedAction
 
 Scope: `guild-season` | Audit: `true` | Reason required: `true`
 Permission: `rank.reconcile`
-Source: [src/modules/ProtectedActions.lua:182](../../src/modules/ProtectedActions.lua#L182) - `executeRankReconcile`
+Source: [src/modules/ProtectedActions.lua:183](../../src/modules/ProtectedActions.lua#L183) - `executeRankReconcile`
 
 ## RCLootCouncil history review
 
@@ -259,7 +272,7 @@ Source: [src/ui/SetupAssistant.lua:277](../../src/ui/SetupAssistant.lua#L277) - 
 **Francais:** Examinez les entrees Dibs historiques detectees avant que le maitre de guilde initialise le registre partage. Laissez les preuves incertaines sans decision.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Installation.lua:309](../../src/modules/Installation.lua#L309) - `Installation.GetReconciliationView`
+Source: [src/modules/Installation.lua:346](../../src/modules/Installation.lua#L346) - `Installation.GetReconciliationView`
 
 ## Coordinator
 
@@ -271,7 +284,7 @@ Source: [src/modules/Installation.lua:309](../../src/modules/Installation.lua#L3
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/Governance.lua:525](../../src/modules/Governance.lua#L525) - `Governance.GetAuthorityState`
+Source: [src/modules/Governance.lua:548](../../src/modules/Governance.lua#L548) - `Governance.GetAuthorityState`
 
 ## Resynchronize guild
 
@@ -286,7 +299,7 @@ Source: [src/modules/Governance.lua:525](../../src/modules/Governance.lua#L525) 
 **Reference technique:** Page Synchronisation : Reparer la synchronisation et Verifier de nouveau localement; Reparer le pair ou Resynchroniser la guilde (GM/Officier). Forcer la remise a zero efface seulement un indicateur local.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:492](../../src/modules/SyncV2.lua#L492) - `Sync.RepairGuild`
+Source: [src/modules/SyncV2.lua:498](../../src/modules/SyncV2.lua#L498) - `Sync.RepairGuild`
 
 ## Synchronization peer status
 
@@ -298,7 +311,7 @@ Source: [src/modules/SyncV2.lua:492](../../src/modules/SyncV2.lua#L492) - `Sync.
 **Francais:** L'etat d'un membre depend de sa derniere reponse observee; un joueur absent ou sans reponse peut afficher des donnees de synchronisation anciennes.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:617](../../src/modules/SyncV2.lua#L617) - `Sync.GetPeerStatuses`
+Source: [src/modules/SyncV2.lua:623](../../src/modules/SyncV2.lua#L623) - `Sync.GetPeerStatuses`
 
 ## SyncV2 Protocol State
 
@@ -313,7 +326,7 @@ Source: [src/modules/SyncV2.lua:617](../../src/modules/SyncV2.lua#L617) - `Sync.
 **Reference technique:** SyncV2 peut indiquer LEGACY_LOCAL avant le changement, CUTOVER_PREPARED pendant la preparation de compatibilite des ecrivains, ou V2_ENFORCED apres activation approuvee. ledgerEpoch identifie la generation active du registre canonique; legacyBaselineHash identifie la base historique approuvee.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:1235](../../src/modules/SyncV2.lua#L1235) - `Sync.SetProtocolState`
+Source: [src/modules/SyncV2.lua:1241](../../src/modules/SyncV2.lua#L1241) - `Sync.SetProtocolState`
 
 ## Raid Relay service
 
@@ -352,7 +365,7 @@ Source: [src/modules/RaidRelay.lua:105](../../src/modules/RaidRelay.lua#L105) - 
 **Reference technique:** Page Synchronisation : Reparer la synchronisation et Verifier de nouveau localement; Reparer le pair ou Resynchroniser la guilde (GM/Officier). Forcer la remise a zero efface seulement un indicateur local.
 
 Scope: `character-local` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:3311](../../src/modules/SyncV2.lua#L3311) - `Sync.RequestResync`
+Source: [src/modules/SyncV2.lua:3493](../../src/modules/SyncV2.lua#L3493) - `Sync.RequestResync`
 
 ## Synchronization
 
@@ -364,4 +377,4 @@ Source: [src/modules/SyncV2.lua:3311](../../src/modules/SyncV2.lua#L3311) - `Syn
 **Francais:** Indique si ce client peut echanger l'etat Dibs actuel de la guilde. Un client indisponible ou en retard peut ne pas appliquer les mises a jour canoniques.
 
 Scope: `guild` | Audit: `false` | Reason required: `false`
-Source: [src/modules/SyncV2.lua:532](../../src/modules/SyncV2.lua#L532) - `Sync.GetStatus`
+Source: [src/modules/SyncV2.lua:538](../../src/modules/SyncV2.lua#L538) - `Sync.GetStatus`
