@@ -81,6 +81,44 @@ local function sizeOf(payload)
   end
   return 0
 end
+local function payloadChecksum(payload)
+  local ie = Dibs.ImportExport
+  if type(ie) ~= "table" or type(ie.Encode) ~= "function" or type(ie.Checksum) ~= "function" then return nil end
+  local encoded = ie.Encode(payload)
+  if type(encoded) ~= "string" then return nil end
+  return ie.Checksum(encoded)
+end
+local function validateSnapshot(snapshot)
+  if type(snapshot) ~= "table" or type(snapshot.payload) ~= "table" then return nil, "SNAPSHOT_PAYLOAD_MISSING" end
+  if snapshot.scope ~= "local" and snapshot.scope ~= "guild" and snapshot.scope ~= "full" then return nil, "INVALID_SCOPE" end
+  if snapshot.scope ~= "local" and snapshot.guildScope ~= Dibs.currentGuildKey then return nil, "CROSS_GUILD_RESTORE_BLOCKED" end
+
+  -- Snapshots created before attestations existed remain restorable. When an
+  -- attestation is present, however, every available representation must agree.
+  if snapshot.packageChecksum == nil and snapshot.payloadChecksum == nil then return true end
+  local ie = Dibs.ImportExport
+  if snapshot.packageText ~= nil then
+    if type(snapshot.packageText) ~= "string" or type(ie) ~= "table" or type(ie.Decode) ~= "function" then
+      return nil, "SNAPSHOT_PACKAGE_INVALID"
+    end
+    local package, reason = ie.Decode(snapshot.packageText, { allowOversize = true, allowUnsafe = true })
+    if not package then return nil, reason == "CHECKSUM_MISMATCH" and "SNAPSHOT_CHECKSUM_MISMATCH" or (reason or "SNAPSHOT_PACKAGE_INVALID") end
+    if snapshot.packageChecksum and package.checksum ~= snapshot.packageChecksum then return nil, "SNAPSHOT_CHECKSUM_MISMATCH" end
+    if package.scope ~= snapshot.scope or package.sourceGuild ~= snapshot.guildScope then return nil, "SNAPSHOT_PACKAGE_CONTEXT_MISMATCH" end
+    local attestedPayload = payloadChecksum(package.payload)
+    local currentPayload = payloadChecksum(snapshot.payload)
+    if attestedPayload and currentPayload and attestedPayload ~= currentPayload then return nil, "SNAPSHOT_CHECKSUM_MISMATCH" end
+  elseif snapshot.payloadChecksum == nil then
+    -- packageChecksum alone cannot verify a payload if a legacy snapshot has
+    -- no serialized package; retain compatibility with that format.
+    return true
+  end
+  if snapshot.payloadChecksum then
+    local actual = payloadChecksum(snapshot.payload)
+    if not actual or actual ~= snapshot.payloadChecksum then return nil, "SNAPSHOT_CHECKSUM_MISMATCH" end
+  end
+  return true
+end
 ---@param scope string|nil Snapshot scope.
 ---@param reason string|nil Why the snapshot was created.
 ---@param actor string Officer actor identity.
@@ -92,7 +130,10 @@ function M.Create(scope, reason, actor)
   local db = ensure(); local payload = Dibs.ImportExport and Dibs.ImportExport.GetPayload and Dibs.ImportExport.GetPayload(scope)
   if not payload then return nil, "INVALID_SCOPE" end
   local packageText, package = Dibs.ImportExport.Export(scope, { actor = actor, reason = reason, allowOversize = true }); if not packageText then return nil, package end
-  local snapshot = { snapshotId = Dibs.NewId("snapshot"), scope = scope, guildScope = Dibs.currentGuildKey, characterScope = Dibs.GetPlayerName and Dibs.GetPlayerName() or "UnknownPlayer", schemaVersion = Dibs.ImportExport.SCHEMA_VERSION, addonVersion = Dibs.VERSION, createdAt = time(), createdBy = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), size = #packageText, checksum = package.checksum, retentionState = "active", payload = clone(payload), reason = reason }
+  -- Retain serialized evidence for portable-sized snapshots, but avoid a
+  -- second multi-megabyte copy for local recovery snapshots.
+  local retainedPackageText = #packageText <= Dibs.ImportExport.MAX_PACKAGE_SIZE and packageText or nil
+  local snapshot = { snapshotId = Dibs.NewId("snapshot"), scope = scope, guildScope = Dibs.currentGuildKey, characterScope = Dibs.GetPlayerName and Dibs.GetPlayerName() or "UnknownPlayer", schemaVersion = Dibs.ImportExport.SCHEMA_VERSION, addonVersion = Dibs.VERSION, createdAt = time(), createdBy = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), size = #packageText, checksum = package.checksum, packageChecksum = package.checksum, packageText = retainedPackageText, payloadChecksum = payloadChecksum(payload), retentionState = "active", payload = clone(payload), reason = reason }
   table.insert(db.backups, snapshot); table.sort(db.backups, function(a, b) return (a.createdAt or 0) > (b.createdAt or 0) end)
   local pruned = {}; while #db.backups > db.backupRetention do local old = table.remove(db.backups); old.retentionState = "pruned"; table.insert(pruned, old.snapshotId) end
   audit("backup_create", snapshot, "success", reason, actor); return clone(snapshot), pruned
@@ -142,8 +183,9 @@ end
 function M.PreviewRestore(snapshotId, actor)
   local snapshot = M.Get(snapshotId); if not snapshot then return nil, "SNAPSHOT_NOT_FOUND" end
   if not authorized(snapshot.scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
+  local valid, validationReason = validateSnapshot(snapshot); if not valid then return nil, validationReason end
   local preview = { previewId = Dibs.NewId("restore"), snapshotId = snapshotId, targetScope = snapshot.scope, strategy = "replace", additions = 0, changes = { "declared scope: " .. snapshot.scope }, omissions = {}, conflicts = {}, migrations = {}, sensitiveFields = snapshot.scope == "full" and { "ledger", "player identities" } or {}, expectedLedgerImpact = { replace = snapshot.scope == "full" and 1 or 0 }, createdAt = time(), actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), decision = "pending" }
-  local db = ensure(); db.pendingRestores = db.pendingRestores or {}; db.pendingRestores[preview.previewId] = { preview = preview, snapshot = snapshot }; audit("restore_preview", snapshot, "success", nil, actor); return preview
+  local db = ensure(); db.pendingRestores = db.pendingRestores or {}; db.pendingRestores[preview.previewId] = { preview = preview, snapshotId = snapshotId }; audit("restore_preview", snapshot, "success", nil, actor); return preview
 end
 ---@param previewId string Preview identifier.
 ---@param confirm boolean Explicit confirmation.
@@ -154,8 +196,11 @@ end
 -- Side effects: Restores a snapshot only after explicit preview and confirmation.
 function M.Restore(previewId, confirm, reason, actor)
   local db = ensure(); local pending = db.pendingRestores and db.pendingRestores[previewId]; if not pending then return nil, "PREVIEW_NOT_FOUND" end
-  if confirm ~= true then pending.preview.decision = "cancelled"; audit("restore_cancel", pending.snapshot, "success", reason, actor); return pending.preview end
-  local snapshot = pending.snapshot; if not authorized(snapshot.scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
+  local snapshot = M.Get(pending.snapshotId)
+  if not snapshot then return nil, "SNAPSHOT_NOT_FOUND" end
+  if confirm ~= true then pending.preview.decision = "cancelled"; audit("restore_cancel", snapshot, "success", reason, actor); return pending.preview end
+  if not authorized(snapshot.scope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
+  local valid, validationReason = validateSnapshot(snapshot); if not valid then return nil, validationReason end
   local safety, safetyReason = M.Create(snapshot.scope, "before-restore:" .. tostring(snapshot.snapshotId), actor); if not safety then return nil, safetyReason end
   local payload = snapshot.payload or {}
   local keptLocal = {}

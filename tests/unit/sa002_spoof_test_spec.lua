@@ -2,77 +2,67 @@
 
 local loader = require("helpers.load_addon")
 
-local function load(opts)
-  local _, dibs = loader.load(opts or { wow = { guildLeader = true } })
+local function load(playerName, guildLeader)
+  local _, dibs = loader.load({ wow = {
+    playerName = playerName,
+    guildLeader = guildLeader,
+    guildMembers = { "ActualGM-Realm", "Member-Realm", "Target-Realm" },
+    guildRankIndices = { [1] = 0, [2] = 3, [3] = 3 },
+  } })
   return dibs
 end
 
 describe("SA-002: Direct API actor spoofing", function()
-
   it("S002-A: Direct Ledger.Grant with spoofed actor in audit", function()
-    local dibs = load({ wow = { guildLeader = true } }) -- Current player IS GM
-    
-    -- Call Ledger.Grant with audit pretending to be a different actor
+    local dibs = load("ActualGM-Realm", true)
+    local before = dibs.Ledger.GetBalance("Target-Realm")
     local tx, reason = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "spoof-test", dibs.GetCurrentSeasonId(), {
-      actor = "FakeGM-Realm",  -- Spoofed actor
+      actor = "FakeGM-Realm",
       actorName = "FakeGM-Realm",
       transactionId = "spoof-test-1"
     })
-    
-    if tx then
-      print("VULNERABILITY: Ledger.Grant accepted with spoofed actor: " .. tostring(tx.transactionId))
-      print("Actor in transaction: " .. tostring(tx.actorId))
-    else
-      print("Correctly rejected: " .. tostring(reason))
-    end
+
+    assert_nil(tx, "a caller-supplied fake audit actor authorized the grant")
+    assert_not_nil(reason, "the spoofed actor rejection has no diagnostic")
+    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "a rejected spoof changed the balance")
   end)
 
   it("S002-B: Direct Ledger.Grant with nil audit (defaults to current player)", function()
-    local dibs = load({ wow = { guildLeader = true } }) -- Current player IS GM
-    
-    -- Call without audit - should use current player (GM)
+    local dibs = load("ActualGM-Realm", true)
     local tx, reason = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "direct-test", dibs.GetCurrentSeasonId(), nil)
-    
-    if tx then
-      print("SUCCESS: Ledger.Grant accepted with current GM player: " .. tostring(tx.transactionId))
-    else
-      print("Rejected: " .. tostring(reason))
-    end
+
+    assert_not_nil(tx, tostring(reason))
+    assert_equal(dibs.Permissions.CanonicalPlayerId("ActualGM-Realm"), tx.actorId,
+      "the audit identity did not come from the current actor")
   end)
 
   it("S002-C: Direct Ledger.Grant by regular member (no guildLeader)", function()
-    local dibs = load({ wow = { guildLeader = false } }) -- Current player is NOT GM
-    
+    local dibs = load("Member-Realm", false)
+    local before = dibs.Ledger.GetBalance("Target-Realm")
     local tx, reason = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "direct-test", dibs.GetCurrentSeasonId(), nil)
-    
-    if tx then
-      print("VULNERABILITY: Regular member grant succeeded: " .. tostring(tx.transactionId))
-    else
-      print("Correctly rejected for regular member: " .. tostring(reason))
-    end
+
+    assert_nil(tx, "a guild member granted Dibs without Officer/GM authority")
+    assert_equal("GUILD_ADMIN_REQUIRED", reason)
+    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "a rejected member grant changed the balance")
   end)
 
   it("S002-D: ProtectedActions.Execute by GM", function()
-    local dibs = load({ wow = { guildLeader = true } })
-    
-    local result = dibs.ProtectedActions.Execute("ledger.grant", "GM-Realm", {
+    local dibs = load("ActualGM-Realm", true)
+    local result = dibs.ProtectedActions.Execute("ledger.grant", "ActualGM-Realm", {
       playerName = "Target-Realm",
       amount = 5,
       reason = "Test",
       source = "protected-test",
       seasonId = dibs.GetCurrentSeasonId()
     })
-    
-    if result.ok then
-      print("ProtectedActions GM grant succeeded: " .. tostring(result.value.transactionId))
-    else
-      print("ProtectedActions rejected: " .. tostring(result.decision.reasonCode))
-    end
+
+    assert_true(result.ok, tostring(result.reasonCode))
+    assert_equal(dibs.Permissions.CanonicalPlayerId("ActualGM-Realm"), result.value.actorId)
   end)
 
   it("S002-E: ProtectedActions.Execute by regular member", function()
-    local dibs = load({ wow = { guildLeader = false } })
-    
+    local dibs = load("Member-Realm", false)
+    local before = dibs.Ledger.GetBalance("Target-Realm")
     local result = dibs.ProtectedActions.Execute("ledger.grant", "Member-Realm", {
       playerName = "Target-Realm",
       amount = 5,
@@ -80,34 +70,20 @@ describe("SA-002: Direct API actor spoofing", function()
       source = "protected-test",
       seasonId = dibs.GetCurrentSeasonId()
     })
-    
-    if result.ok then
-      print("ProtectedActions member grant succeeded (unexpected!)")
-    else
-      print("ProtectedActions correctly rejected member: " .. tostring(result.decision.reasonCode))
-    end
+    assert_false(result.ok, "a regular guild member was authorized to grant Dibs")
+    assert_equal("GUILD_ADMIN_REQUIRED", result.reasonCode)
+    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "a rejected member action changed the balance")
   end)
 
-  it("S002-F: Check who is the current player", function()
-    local dibs = load({ wow = { guildLeader = true, playerName = "ActualGM-Realm" } })
-    print("Current player: " .. tostring(dibs.GetPlayerName()))
-    print("IsGuildLeader(): " .. tostring(IsGuildLeader()))
-    print("Dibs.Permissions.IsGM(): " .. tostring(dibs.Permissions.IsGM()))
-  end)
+  it("rejects a ProtectedActions call that supplies a different GM identity", function()
+    local dibs = load("ActualGM-Realm", true)
+    local before = dibs.Ledger.GetBalance("Target-Realm")
+    local result = dibs.ProtectedActions.Execute("ledger.grant", "FakeGM-Realm", {
+      playerName = "Target-Realm", amount = 5, reason = "Test", source = "spoof-test",
+      seasonId = dibs.GetCurrentSeasonId(),
+    })
 
-  it("S002-G: Test isCurrentActor with spoofed actor", function()
-    local dibs = load({ wow = { guildLeader = true, playerName = "ActualGM-Realm" } })
-    
-    -- The isCurrentActor function checks if the supplied actor matches the current player
-    local actorId = dibs.Permissions.CanonicalPlayerId("FakeGM-Realm")
-    print("FakeGM actorId: " .. tostring(actorId))
-    
-    local localId = dibs.Permissions.CanonicalPlayerId(nil)
-    print("Local (current) actorId: " .. tostring(localId))
-    
-    -- Test isCurrentActor logic
-    local same = actorId and localId and string.lower(tostring(actorId)) == string.lower(tostring(localId))
-    print("Same identity: " .. tostring(same))
+    assert_false(result.ok, "a caller-supplied alternate GM name authorized a protected action")
+    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "the rejected spoof changed the balance")
   end)
-
 end)

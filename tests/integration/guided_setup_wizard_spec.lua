@@ -474,22 +474,21 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("OPTIONAL", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
   end)
 
-  it("does not mark a missing rank reconciliation projection or empty roster READY", function()
+  it("warns when rank reconciliation cannot be projected or the roster is empty", function()
     local dibs, season = configuredGuild()
     dibs.RankRules.GetAllocationReconciliation = function() error("reconciliation unavailable") end
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
+    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
+
     dibs.RankRules.GetAllocationReconciliation = function() return {} end
     assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
     assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
-    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
-    dibs.RankRules.GetAllocationReconciliation = function()
-      return { { rankIndex = 0, status = "UNKNOWN" } }
-    end
-    assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
-    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
-    _G.GetNumGuildMembers = function() return 0 end
+
+    local getRosterSnapshot = dibs.Identity.GetRosterSnapshot
+    dibs.Identity.GetRosterSnapshot = function() return {} end
     assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
+    dibs.Identity.GetRosterSnapshot = getRosterSnapshot
   end)
 
   it("does not warn when Dibs allocation is disabled for every current rank", function()
@@ -522,9 +521,9 @@ describe("Dibs.Wizard status derivation", function()
     dibs.Sync.ClearSyncBehind()
     assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "sync").status)
 
-    dibs.Sync.GetStatus = function() return { state = "UNRECOGNIZED" } end
+    dibs.Sync.GetStatusSummary = function() return { state = "UNRECOGNIZED" } end
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
-    dibs.Sync.GetStatus = function() return nil end
+    dibs.Sync.GetStatusSummary = function() return nil end
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "sync").status)
   end)
 

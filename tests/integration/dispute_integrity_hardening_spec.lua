@@ -316,12 +316,18 @@ describe("Dispute center integrity", function()
 
   it("B28 refuses a correction while the release lock is closed", function()
     local dibs = setup()
+    -- The ordinary test fixture is pre-V2, where local ledger corrections
+    -- remain supported. Simulate enforced V2 to exercise the closed release
+    -- gate which forbids a legacy fallback.
+    local priorEnforcement = dibs.Governance.IsV2Enforced
+    dibs.Governance.IsV2Enforced = function() return true end
     local request = assert(dibs.Disputes.CreateReport(fixtures.report("missing_debit")))
     local before = #dibs.Ledger.GetAllTransactions()
     local result, reason = dibs.Disputes.CorrectBalance(request.requestId,
       { confirmed = true, reason = "Confirmed missing award", actor = "Tester-Realm" }, "Tester-Realm")
+    dibs.Governance.IsV2Enforced = priorEnforcement
     assert_nil(result, "a correction was accepted while the release lock is closed")
-    assert_equal("FEATURE_DISABLED", reason)
+    assert_equal("CANONICAL_DISPUTE_OPERATIONS_DISABLED", reason)
     assert_equal(before, #dibs.Ledger.GetAllTransactions(),
       "the refused correction changed the accounting data")
     assert_equal("Open", dibs.Disputes.GetRequest(request.requestId, "Tester-Realm").status)

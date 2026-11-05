@@ -1458,12 +1458,13 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
             end)
             if cell.frame and cell.frame.EnableMouse then cell.frame:EnableMouse(true) end
             if cell.frame and cell.frame.RegisterForClicks then cell.frame:RegisterForClicks("AnyUp") end
-            if options.disableCellTooltips ~= true and type(value) == "string" and value:find("|Hitem:", 1, true) then
-              attachGridScript(cell, "OnEnter", function(frame)
-                showTableCellTooltip(frame, value)
-              end)
-            end
           end
+        end
+        if not header and options.disableCellTooltips ~= true
+          and type(value) == "string" and value:find("|Hitem:", 1, true) then
+          attachGridScript(cell, "OnEnter", function(frame)
+            showTableCellTooltip(frame, value)
+          end)
         end
       end
     end

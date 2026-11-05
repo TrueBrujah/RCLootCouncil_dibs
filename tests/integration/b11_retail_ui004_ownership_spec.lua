@@ -508,11 +508,11 @@ describe("B11 Retail UI-004 ownership", function()
     local _, dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow()
     local expected = {
-      overview = "Officer dashboard", preDibs = "Pre-Dibs", settings = "Settings", lootTypes = "Loot Rules",
+      overview = "Officer dashboard", preDibs = "Pre-Dibs", settings = "Settings",
     }
-    for _, route in ipairs({ "overview", "preDibs", "settings", "lootTypes", "overview" }) do
+    for _, route in ipairs({ "overview", "preDibs", "settings", "overview" }) do
       frame.SelectTab(route)
-      assert_equal(1, countText(frame.contentHost, expected[route]))
+      assert_equal(1, countText(frame.contentHost, expected[route]), route)
       assert_true(countText(frame.contentHost, "Active season request mode") <= 1)
       assert_false(countText(frame.contentHost, "Pre-Dibs") > 1)
     end
@@ -524,7 +524,7 @@ describe("B11 Retail UI-004 ownership", function()
     local expected = {
       overview = "Officer dashboard",
       seasons = "Seasons",
-      ranks = "Rank Rules",
+      ranks = "Rank allocations",
       preDibs = "Pre-Dibs",
       settings = "Settings",
     }
@@ -534,7 +534,7 @@ describe("B11 Retail UI-004 ownership", function()
     }
     for _, route in ipairs({ "overview", "seasons", "ranks", "preDibs", "settings" }) do
       frame.SelectTab(route)
-      assert_equal(1, countText(frame.contentHost, expected[route]))
+      assert_equal(1, countText(frame.contentHost, expected[route]), route)
       for previousRoute, title in pairs(expected) do
         if previousRoute ~= route then assert_equal(0, countText(frame.contentHost, title), previousRoute) end
       end

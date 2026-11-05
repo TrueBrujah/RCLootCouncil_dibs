@@ -26,12 +26,12 @@ local MAX_CACHED_REQUEST_INDEXES = 8
 local requestIndexCache, requestIndexCacheOrder = {}, {}
 local vaultDigestSummaryCache = setmetatable({}, { __mode = "k" })
 local LEDGER_DELETE_RETRY_INTERVAL = 300
-local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, LEDGER_DELETE = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
+local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, LEDGER_DELETE = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, LEDGER_OPERATION_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 TYPES.CHANNEL_TEST, TYPES.CHANNEL_TEST_ACK = true, true
 TYPES.SYNC_REPAIR_REQUEST, TYPES.SYNC_REPAIR_ACK = true, true
 local CHANNEL_TEST_CHANNELS = { GUILD = true, OFFICER = true, RAID = true, PARTY = true, INSTANCE_CHAT = true, WHISPER = true, CHANNEL = true }
-local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, SEASON_CATALOG = true, LEDGER_CATALOG = true, LEDGER_BATCH = true }
-local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true, REQUEST_MESSAGE = true }
+local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, LEDGER_OPERATION_COMMIT = true, SEASON_CATALOG = true, LEDGER_CATALOG = true, LEDGER_BATCH = true }
+local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true, LEDGER_OPERATION_PROPOSAL = true, REQUEST_MESSAGE = true }
 local TRUSTED_RELAY_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, SEASON_CATALOG = true, LEGACY_BASELINE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 local awardReservationGenerations = {}
@@ -100,7 +100,7 @@ local function expectedTransportChannel(message, transfer)
   if message.type == "TRANSFER_ACK" then return detailChannel(message.entityType) end
   if message.type == "VAULT_FETCH" or message.type == "VAULT_DETAIL" or message.type == "VAULT_ACK"
     or message.type == "SYNC_PROBE" or message.type == "SYNC_PROBE_RESPONSE"
-    or message.type == "AWARD_PROPOSAL_ACK" then return "WHISPER" end
+    or message.type == "AWARD_PROPOSAL_ACK" or message.type == "LEDGER_OPERATION_PROPOSAL_ACK" then return "WHISPER" end
   return nil
 end
 local function allowsLegacyWhisper(message, transfer)
@@ -1258,9 +1258,13 @@ end
 function Sync.BuildEnvelope(message)
   local snapshot = localSnapshot(); if not snapshot then return nil, "ROSTER_UNAVAILABLE" end
   message = copy(message or {}); if not TYPES[message.type] then return nil, "INVALID_MESSAGE_TYPE" end
-  message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, guildDetail = true, whisperDetail = true,
+  message.protocol = { major = MAJOR, minor = MINOR,
+    operationProtocolVersion = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true and 1 or 0,
+    capabilities = { digest = true, guildDetail = true, whisperDetail = true,
     requestTombstones = true, ledgerDigestOnly = true, ledgerScopedCommits = true, authoritySignals = true, requestDelivery = true,
-    guildRepair = true } }
+    guildRepair = true, ledgerOperationCommit = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true,
+    ledgerOperationProposal = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true,
+    ledgerOperationProtocol = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true and 1 or 0 } }
   message.messageId = message.messageId or Dibs.NewId("v2msg")
   message.guildKey = Dibs.GetGuildKey(); message.senderNameRealm = snapshot.displayName; message.senderMemberKey = snapshot.memberKey
   message.addonVersion = Dibs.VERSION
@@ -1274,6 +1278,13 @@ function Sync.Send(message, channel, target)
     end
   end
   if type(message) ~= "table" then return false, "INVALID_SYNC_MESSAGE" end
+  if message.type == "TRANSFER_BEGIN" then
+    if not detailChannel(message.entityType) then return false, "UNSUPPORTED_ENTITY" end
+    if (message.entityType == "LEDGER_OPERATION_COMMIT" or message.entityType == "LEDGER_OPERATION_PROPOSAL")
+      and Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then
+      return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED"
+    end
+  end
   if Sync.ContainsForbiddenLiveLootData and Sync.ContainsForbiddenLiveLootData(message) then return false, "FORBIDDEN_LIVE_LOOT_DATA" end
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
   local envelope, reason = Sync.BuildEnvelope(message); if not envelope then return false, reason end
@@ -2010,6 +2021,10 @@ local function validateEnvelope(message, sender)
     rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN")
     return nil, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN"
   end
+  if message.type == "TRANSFER_BEGIN" and message.entityType == "LEDGER_OPERATION_PROPOSAL" and compatible ~= true then
+    rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN")
+    return nil, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN"
+  end
   if compatible == false then
     rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason)
     return nil, compatibilityReason
@@ -2067,7 +2082,9 @@ local function prunePredibPending()
   return next(pending) == nil
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" and entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "LEDGER_OPERATION_COMMIT" and entityType ~= "LEDGER_OPERATION_PROPOSAL" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" and entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+  if (entityType == "LEDGER_OPERATION_COMMIT" or entityType == "LEDGER_OPERATION_PROPOSAL")
+    and Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local channel = detailChannel(entityType)
   if not channel then return false, "UNSUPPORTED_ENTITY" end
@@ -2079,7 +2096,7 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   if #chunks < 1 or #chunks > MAX_CHUNKS then return false, "PAYLOAD_TOO_LARGE" end
   local rawHash = hash(encoded)
   local ledgerId
-  if (entityType == "AWARD_COMMIT" or entityType == "PREDIB_REQUEST") and type(payload) == "table" then
+  if (entityType == "AWARD_COMMIT" or entityType == "LEDGER_OPERATION_COMMIT" or entityType == "PREDIB_REQUEST") and type(payload) == "table" then
     ledgerId = payload.ledgerId
     if ledgerId == nil then ledgerId = "guild-primary" end
   end
@@ -2092,6 +2109,56 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   end
   return Sync.Send({ type = "TRANSFER_END", transferId = transferId, entityType = entityType, entityId = entityId,
     revision = revision, contentHash = contentHash, ledgerId = ledgerId }, channel, recipient)
+end
+
+function Sync.RelayDisputeProposal(proposal)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+  if type(proposal) ~= "table" or proposal.recordClass ~= "LEDGER_OPERATION_PROPOSAL"
+    or type(proposal.proposalId) ~= "string" or proposal.status ~= "PENDING" then
+    return false, "INVALID_DISPUTE_PROPOSAL"
+  end
+  local governance = Dibs.Governance
+  local authority = governance and governance.GetAuthorityState and governance.GetAuthorityState()
+  local localName = Dibs.GetPlayerName and Dibs.GetPlayerName()
+  local localIdentity = localName and Dibs.Identity and Dibs.Identity.CreateSnapshot
+    and Dibs.Identity.CreateSnapshot(localName)
+  local coordinator = authority and authority.coordinator
+  if not authority or authority.state ~= "ACTIVE" or not coordinator then return false, "COORDINATOR_UNKNOWN" end
+  if not localIdentity or localIdentity.memberKey ~= proposal.proposer.memberKey then
+    return false, "PROPOSER_IDENTITY_MISMATCH"
+  end
+  if coordinator.memberKey == localIdentity.memberKey then return false, "COORDINATOR_ALREADY_LOCAL" end
+  if proposal.coordinator.memberKey ~= coordinator.memberKey or proposal.ledgerEpoch ~= authority.ledgerEpoch then
+    return false, "STALE_AUTHORITY"
+  end
+  local _, attemptReason = governance.NoteDisputeProposalRelayAttempt(localName, proposal.proposalId)
+  if attemptReason ~= "RELAY_PENDING" then return false, attemptReason or "RELAY_ATTEMPT_UNAVAILABLE" end
+  return Sync.SendDetail("LEDGER_OPERATION_PROPOSAL", proposal.proposalId, 1,
+    Sync.CalculateContentHash(proposal), proposal, coordinator.displayName)
+end
+
+function Sync.RetryPendingDisputeProposals()
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return 0 end
+  local governance = Dibs.Governance
+  local localName = Dibs.GetPlayerName and Dibs.GetPlayerName()
+  if not governance or type(governance.GetPendingDisputeProposals) ~= "function" or not localName then return 0 end
+  local authority = governance.GetAuthorityState and governance.GetAuthorityState()
+  local localIdentity = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(localName)
+  if not authority or authority.state ~= "ACTIVE" or not authority.coordinator or not localIdentity
+    or authority.coordinator.memberKey == localIdentity.memberKey then return 0 end
+  local pending = governance.GetPendingDisputeProposals(localName)
+  local now, count = time(), 0
+  for _, proposal in ipairs(pending or {}) do
+    local changedCoordinator = proposal.coordinator.memberKey ~= authority.coordinator.memberKey
+      or proposal.ledgerEpoch ~= authority.ledgerEpoch
+    local alreadyAcknowledged = proposal.relayStatus == "RELAY_ACKED" and not changedCoordinator
+    local due = now - (tonumber(proposal.relayAttemptAt) or 0) >= PROPOSAL_RETRY_INTERVAL
+    if not alreadyAcknowledged and (changedCoordinator or due) then
+      local ok = Sync.RelayDisputeProposal(proposal)
+      if ok then count = count + 1 end
+    end
+  end
+  return count
 end
 
 function Sync.GetRequestPeer(target)
@@ -2147,6 +2214,15 @@ function Sync.SendAwardCommit(commit, target)
   if type(commit) ~= "table" or type(commit.commitHash) ~= "string" or not commit.ledgerEpoch or not commit.sequence then return false, "INVALID_AWARD_COMMIT" end
   return Sync.SendDetail("AWARD_COMMIT", tostring(commit.ledgerEpoch) .. ":" .. tostring(commit.sequence), commit.sequence, commit.commitHash, commit, target)
 end
+function Sync.SendOperationCommit(commit, target)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+  if type(commit) ~= "table" or commit.recordClass ~= "LEDGER_OPERATION_COMMIT"
+    or type(commit.commitHash) ~= "string" or not commit.ledgerEpoch or not commit.sequence then
+    return false, "INVALID_OPERATION_COMMIT"
+  end
+  return Sync.SendDetail("LEDGER_OPERATION_COMMIT", tostring(commit.ledgerEpoch) .. ":" .. tostring(commit.sequence),
+    commit.sequence, commit.commitHash, commit, target)
+end
 
 ---@param proposal table Award proposal recorded by a non-coordinator officer.
 ---@return boolean sent Whether the relay attempt was dispatched (not whether it was acknowledged).
@@ -2197,6 +2273,18 @@ function Sync.AnnounceAwardCommit(commit)
     or authority.coordinator.memberKey ~= localMember.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
   return Sync.Send({ type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = commit.ledgerId or "guild-primary", entityId = tostring(commit.ledgerEpoch), revision = commit.sequence,
     contentHash = commit.commitHash, ledgerEpoch = commit.ledgerEpoch, lastSeq = commit.sequence, rootHash = commit.commitHash }, "GUILD")
+end
+function Sync.AnnounceOperationCommit(commit)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  local localMember = localSnapshot()
+  if not authority or authority.state ~= "ACTIVE" or not localMember or not authority.coordinator
+    or authority.coordinator.memberKey ~= localMember.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+  local sent, sendReason = Sync.SendOperationCommit(commit)
+  if not sent then return false, sendReason end
+  return Sync.Send({ type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = commit.ledgerId or "guild-primary",
+    entityId = tostring(commit.ledgerEpoch), revision = commit.sequence, contentHash = commit.commitHash,
+    ledgerEpoch = commit.ledgerEpoch, lastSeq = commit.sequence, rootHash = commit.commitHash }, "GUILD")
 end
 function Sync.AnnounceLedgerDigest(targetLedgerId)
   local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
@@ -2528,6 +2616,19 @@ function Sync.Receive(message, sender, channel)
     end
     if not acknowledged then return false, acknowledgementReason or "PROPOSAL_ACK_UNAVAILABLE" end
     return true, "PROPOSAL_ACK_APPLIED"
+  end
+  if message.type == "LEDGER_OPERATION_PROPOSAL_ACK" then
+    if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+    if type(message.proposalId) ~= "string" or message.proposalId == ""
+      or message.result ~= "RECEIVED" then return false, "INVALID_OPERATION_PROPOSAL_ACK" end
+    local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+    if not authority or authority.state ~= "ACTIVE" or not authority.coordinator
+      or authority.coordinator.memberKey ~= resolved.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+    local localName = Dibs.GetPlayerName and Dibs.GetPlayerName()
+    local acknowledged, acknowledgementReason = Dibs.Governance and Dibs.Governance.AcknowledgeDisputeProposal
+      and Dibs.Governance.AcknowledgeDisputeProposal(localName, message.proposalId, resolved.memberKey)
+    if not acknowledged then return false, acknowledgementReason or "PROPOSAL_ACK_UNAVAILABLE" end
+    return true, "OPERATION_PROPOSAL_ACK_APPLIED"
   end
   if message.type == "VAULT_DIGEST" then
     local entries = message.records or message.entries
@@ -2892,7 +2993,8 @@ function Sync.Receive(message, sender, channel)
         if signal and signal.state ~= "LEGACY_LOCAL" and (localRole() == "gm" or (signal.coordinator and signal.coordinator.memberKey == (localSnapshot() or {}).memberKey)) then
           Sync.SendAuthoritySignal(resolved.displayName)
         end
-      elseif requested.entityType == "AWARD_COMMIT" and Dibs.Ledger and Dibs.Ledger.GetCanonicalCommit then
+      elseif (requested.entityType == "AWARD_COMMIT" or requested.entityType == "LEDGER_OPERATION_COMMIT")
+        and Dibs.Ledger and Dibs.Ledger.GetCanonicalCommit then
         local epoch, sequence = tostring(requested.entityId or ""):match("^(%d+):(%d+)$")
         local ledgerId = requested.ledgerId or "guild-primary"
         local commit = isApprovedLedger(ledgerId) and epoch and sequence
@@ -2900,16 +3002,33 @@ function Sync.Receive(message, sender, channel)
         local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
         local localMember = localSnapshot()
         if commit and authority and authority.state == "ACTIVE" and localMember and authority.coordinator
-          and authority.coordinator.memberKey == localMember.memberKey then Sync.SendAwardCommit(commit, resolved.displayName) end
+          and authority.coordinator.memberKey == localMember.memberKey then
+          if commit.recordClass == "LEDGER_OPERATION_COMMIT" then Sync.SendOperationCommit(commit, resolved.displayName)
+          else Sync.SendAwardCommit(commit, resolved.displayName) end
+        end
       end
     end
     return true, "DETAIL_SENT"
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_BASELINE" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" and message.entityType ~= "AWARD_PROPOSAL" and message.entityType ~= "SEASON_CATALOG" and message.entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_BASELINE" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" and message.entityType ~= "LEDGER_OPERATION_COMMIT" and message.entityType ~= "AWARD_PROPOSAL" and message.entityType ~= "LEDGER_OPERATION_PROPOSAL" and message.entityType ~= "SEASON_CATALOG" and message.entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType == "LEDGER_OPERATION_COMMIT" then
+      local capabilities = message.protocol and message.protocol.capabilities
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+      if type(capabilities) ~= "table" or capabilities.ledgerOperationCommit ~= true
+        or tonumber(message.protocol.operationProtocolVersion) ~= 1
+        or tonumber(capabilities.ledgerOperationProtocol) ~= 1 then return false, "OPERATION_PEER_UNSUPPORTED" end
+    end
+    if message.entityType == "LEDGER_OPERATION_PROPOSAL" then
+      local capabilities = message.protocol and message.protocol.capabilities
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+      if type(capabilities) ~= "table" or capabilities.ledgerOperationProposal ~= true
+        or tonumber(message.protocol.operationProtocolVersion) ~= 1
+        or tonumber(capabilities.ledgerOperationProtocol) ~= 1 then return false, "OPERATION_PEER_UNSUPPORTED" end
+    end
     local transferLedgerId
-    if message.entityType == "AWARD_COMMIT" or message.entityType == "PREDIB_REQUEST" then
+    if message.entityType == "AWARD_COMMIT" or message.entityType == "LEDGER_OPERATION_COMMIT" or message.entityType == "PREDIB_REQUEST" then
       transferLedgerId = message.ledgerId
       if transferLedgerId == nil then transferLedgerId = "guild-primary" end
       if not isApprovedLedger(transferLedgerId) then return false, "LEDGER_NOT_APPROVED" end
@@ -2965,7 +3084,15 @@ function Sync.Receive(message, sender, channel)
       contentHash = message.contentHash, payloadHash = message.payloadHash, chunkCount = message.chunkCount,
       ledgerId = transferLedgerId,
       chunks = {}, receivedChunks = 0, totalBytes = 0, expiresAt = time() + TTL,
-      trustedRelay = trustedRelay, relayChain = relayChain }
+      trustedRelay = trustedRelay, relayChain = relayChain,
+      operationCapability = message.entityType == "LEDGER_OPERATION_COMMIT"
+        and message.protocol.capabilities.ledgerOperationCommit == true or false,
+      operationProtocol = message.entityType == "LEDGER_OPERATION_COMMIT"
+        and tonumber(message.protocol.capabilities.ledgerOperationProtocol) or nil,
+      operationProposalCapability = message.entityType == "LEDGER_OPERATION_PROPOSAL"
+        and message.protocol.capabilities.ledgerOperationProposal == true or false,
+      operationProposalProtocol = message.entityType == "LEDGER_OPERATION_PROPOSAL"
+        and tonumber(message.protocol.capabilities.ledgerOperationProtocol) or nil }
     return true, "TRANSFER_STARTED"
   end
   if message.type == "TRANSFER_CHUNK" then
@@ -2980,7 +3107,7 @@ function Sync.Receive(message, sender, channel)
     local transfer = Dibs.runtime.v2Transfers[message.transferId]; Dibs.runtime.v2Transfers[message.transferId] = nil
     if not transfer or transfer.sender ~= resolved.memberKey then return false, "INVALID_TRANSFER_END" end
     local transferLedgerId = message.ledgerId
-    if transfer.entityType == "AWARD_COMMIT" or transfer.entityType == "PREDIB_REQUEST" then
+    if transfer.entityType == "AWARD_COMMIT" or transfer.entityType == "LEDGER_OPERATION_COMMIT" or transfer.entityType == "PREDIB_REQUEST" then
       if transferLedgerId == nil then transferLedgerId = "guild-primary" end
     end
     if transfer.ledgerId ~= transferLedgerId then
@@ -3098,6 +3225,19 @@ function Sync.Receive(message, sender, channel)
       if applied.accepted and not applied.idempotentReplay then clearResolvedLedgerGap(resolved.displayName, ledgerId) end
       return applied.accepted, applied.reasonCode
     end
+    if transfer.entityType == "LEDGER_OPERATION_COMMIT" and Dibs.Ledger and Dibs.Ledger.ApplyDisputeOperationCommit then
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true
+        or transfer.operationCapability ~= true or transfer.operationProtocol ~= 1 then
+        return false, "OPERATION_PEER_UNSUPPORTED"
+      end
+      if type(payload) ~= "table" or payload.commitHash ~= transfer.contentHash
+        or transfer.entityId ~= tostring(payload.ledgerEpoch) .. ":" .. tostring(payload.sequence) then
+        return false, "CONTENT_HASH_MISMATCH"
+      end
+      local applied = Dibs.Ledger.ApplyDisputeOperationCommit(payload, resolved.displayName, transfer.ledgerId)
+      if applied.accepted and not applied.idempotentReplay then clearResolvedLedgerGap(resolved.displayName, transfer.ledgerId) end
+      return applied.accepted, applied.reasonCode
+    end
     if transfer.entityType == "AWARD_PROPOSAL" and Dibs.Governance and Dibs.Governance.ReceiveRelayedProposal then
       if transfer.entityId ~= payload.proposalId then return false, "ENTITY_IDENTITY_MISMATCH" end
       if Sync.CalculateContentHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
@@ -3121,6 +3261,23 @@ function Sync.Receive(message, sender, channel)
         end
       elseif payload.reconciliation then
         Sync.SendAwardProposalResult(payload.proposalId, "REJECTED", applyReason, resolved.displayName)
+      end
+      return accepted, applyReason
+    end
+    if transfer.entityType == "LEDGER_OPERATION_PROPOSAL" and Dibs.Governance and Dibs.Governance.ReceiveDisputeProposal then
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true
+        or transfer.operationProposalCapability ~= true or transfer.operationProposalProtocol ~= 1 then
+        return false, "OPERATION_PEER_UNSUPPORTED"
+      end
+      if type(payload) ~= "table" or payload.recordClass ~= "LEDGER_OPERATION_PROPOSAL"
+        or transfer.entityId ~= payload.proposalId or payload.status ~= "PENDING"
+        or Sync.CalculateContentHash(payload) ~= transfer.contentHash then
+        return false, "CONTENT_HASH_MISMATCH"
+      end
+      local accepted, applyReason = Dibs.Governance.ReceiveDisputeProposal(payload, resolved.displayName)
+      if accepted then
+        Sync.Send({ type = "LEDGER_OPERATION_PROPOSAL_ACK", proposalId = payload.proposalId,
+          result = "RECEIVED" }, "WHISPER", resolved.displayName)
       end
       return accepted, applyReason
     end
@@ -3229,6 +3386,7 @@ function Sync.OnLifecycle(reason)
   local sendDeferredDetails = function()
     Sync.AnnounceAwardReservationDigest()
     Sync.RetryPendingAwardProposals()
+    Sync.RetryPendingDisputeProposals()
   end
   if reason == "STARTUP" and Dibs.Ace3 and Dibs.Ace3.ScheduleTimer then
     Dibs.Ace3.ScheduleTimer(sendGovernedDigests, 1)

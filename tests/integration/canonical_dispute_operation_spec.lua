@@ -76,6 +76,7 @@ local function enableCanonicalWriter(client)
     if hit then return failure end
     return nil
   end)
+  client.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
   return writer
 end
 
@@ -466,6 +467,21 @@ describe("RF-0012 canonical dispute operation gate", function()
     assertBlocked(result)
     assert_true(clients.DeepEqual(before, capture(coordinator, world)), "blocked protected action changed accounting state")
     assert_true(result.reasonCode ~= "INVALID_ACTION", "protected operation action is not registered")
+  end)
+
+  it("does not fall back to legacy target-transfer writes when V2 operation writes are disabled", function()
+    local world, coordinator = freshClient()
+    local _, request = createTargetCase(coordinator, world)
+    world:ActivateV2()
+    local before = capture(coordinator, world, request.requestId)
+
+    local result, reason = coordinator.dibs.Disputes.Resolve(
+      request.requestId, "correct_target", targetCorrectionOptions(world, request), nil)
+
+    assert_nil(result)
+    assert_equal("CANONICAL_DISPUTE_OPERATIONS_DISABLED", reason)
+    assert_true(clients.DeepEqual(before, capture(coordinator, world, request.requestId)),
+      "disabled V2 correction fell back to per-leg legacy ledger writes")
   end)
 
   it("keeps both transfer legs atomic when the canonical operation is rejected", function()

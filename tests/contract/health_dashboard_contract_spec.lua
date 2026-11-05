@@ -17,7 +17,7 @@ describe("Health dashboard contract", function()
   end)
 
   it("denies the administrative report to a normal player", function()
-    loader.load({ wow = { guildLeader = false, guildRankIndices = { ["Tester-Realm"] = 3 } }, withAce3 = true })
+    loader.load({ wow = { guildLeader = false, guildRankIndices = { [1] = 3 } }, withAce3 = true })
     local report = _G.Dibs.HealthUI.Evaluate()
     assert_equal("DENIED", report.status)
     assert_equal("player", report.role)

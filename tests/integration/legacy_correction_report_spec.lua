@@ -101,6 +101,7 @@ describe("RF-0012 legacy correction reconciliation fixtures", function()
     local correction = addLegacyRow(dibs, "guild-primary", "legacy-local-only-correction", {
       amount = -1,
       type = "DIB_USED",
+      source = "legacy-correction",
     })
     local report = dibs.Disputes.BuildLegacyCorrectionReport("guild-primary")
     local entry = report.entries and report.entries[correction.transactionId]

@@ -6,6 +6,10 @@ on:
       - dev
     paths:
       - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - '.github/workflows/beta-release.yml'
+      - '.github/workflows/package-addon.yml'
       - '.pkgmeta'
       - 'docs/CURSEFORGE-CHANGELOG.txt'
 
@@ -43,12 +47,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test_files="$(find tests -type f -name '*_spec.lua' -print | sort | paste -sd ';' -)"
-          if [[ -z "$test_files" ]]; then
+          mapfile -t test_files < <(find tests -type f -name '*_spec.lua' -print | sort)
+          if [[ ${#test_files[@]} -eq 0 ]]; then
             echo "No test specs found under tests/." >&2
             exit 1
           fi
-          DIBS_TEST_FILES="$test_files" npx --yes --package=fengari-node-cli fengari tests/run.lua
+
+          # Fengari stores Lua state in Node's heap. Running every spec in one
+          # process grows that heap until Node can OOM on the full suite. Use
+          # fresh processes for bounded batches, but run every batch so CI
+          # still reports all failures for the candidate.
+          batch_size=20
+          failed=0
+          batch_count=$(( (${#test_files[@]} + batch_size - 1) / batch_size ))
+          for ((start = 0, batch = 1; start < ${#test_files[@]}; start += batch_size, batch++)); do
+            batch_files=("${test_files[@]:start:batch_size}")
+            batch_paths="$(IFS=';'; printf '%s' "${batch_files[*]}")"
+            echo "Running Fengari test batch $batch/$batch_count (${#batch_files[@]} files)."
+            if ! DIBS_TEST_FILES="$batch_paths" npx --yes --package=fengari-node-cli fengari tests/run.lua; then
+              failed=1
+            fi
+          done
+          exit "$failed"
 
   package:
     name: Build addon package

@@ -17,9 +17,8 @@ describe("ProtectedActions ledger.operation", function()
 
   it("denies ledger.operation when feature is disabled", function()
     local dibs = setup()
-    local settings = dibs.GetLocalSettings()
     dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = false
-    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operationId = "op-1" })
+    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operation = {} })
     assert_equal(false, result.ok)
     assert_equal("FEATURE_DISABLED", result.reasonCode)
   end)
@@ -29,11 +28,12 @@ describe("ProtectedActions ledger.operation", function()
     dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
 
     -- The isolated client replaces only the persistence bridge.
-    dibs.MultiLedger.RecordCanonicalOperation = function()
-      return { transactionId = "tx-1", commitHash = "hash-1" }
+    dibs.Ledger.CommitDisputeOperation = function(_, operation)
+      assert_equal("op-1", operation.operationId)
+      return { accepted = true, reasonCode = "CANONICAL_COMMITTED", value = { transactionId = "tx-1", commitHash = "hash-1" } }
     end
 
-    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operationId = "op-1" })
+    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operation = { operationId = "op-1" } })
     assert_true(result.ok, tostring(result.reasonCode))
     assert_equal("tx-1", result.value.transactionId)
   end)
@@ -43,11 +43,11 @@ describe("ProtectedActions ledger.operation", function()
     dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
 
     -- The bridge reports the real Ledger diagnostic.
-    dibs.MultiLedger.RecordCanonicalOperation = function()
-      return nil, "INSUFFICIENT_BALANCE", { diagnostic = "Ledger Error: Insufficient Balance" }
+    dibs.Ledger.CommitDisputeOperation = function()
+      return { accepted = false, reasonCode = "INSUFFICIENT_BALANCE", diagnostic = "Ledger Error: Insufficient Balance" }
     end
 
-    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operationId = "op-1" })
+    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operation = { operationId = "op-1" } })
     assert_equal(false, result.ok)
     assert_equal("INSUFFICIENT_BALANCE", result.reasonCode)
     assert_equal("Ledger Error: Insufficient Balance", result.diagnostic)
@@ -62,7 +62,7 @@ describe("ProtectedActions ledger.operation", function()
     }, withAce3 = true })
     dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
 
-    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operationId = "op-1" })
+    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operation = { operationId = "op-1" } })
     assert_equal(false, result.ok)
     assert_equal(false, result.decision.allowed)
   end)

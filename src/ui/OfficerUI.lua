@@ -217,6 +217,63 @@ function Dibs.OfficerUI.GetNavigationTree()
   return getOfficerNavigationTree()
 end
 
+function Dibs.OfficerUI.DescribeCorrectionOutcome(outcome)
+  local strings = Dibs.L or {}
+  local labels = {
+    PROPOSED = { strings.DISPUTE_CORRECTION_OUTCOME_PROPOSED or "Proposed", strings.CORRECTION_REASON_PROPOSED or "The correction is awaiting coordinator review; no accounting change is confirmed." },
+    ACCEPTED_IN_SESSION = { strings.DISPUTE_CORRECTION_OUTCOME_ACCEPTED_IN_SESSION or "Accepted in Session", strings.CORRECTION_REASON_ACCEPTED or "Persistence is confirmed only after a later reload observes it." },
+    REPLAYED = { strings.DISPUTE_CORRECTION_OUTCOME_REPLAYED or "Already accepted", strings.CORRECTION_REASON_REPLAYED or "This is an idempotent replay of an existing accepted operation." },
+    REJECTED = { strings.DISPUTE_CORRECTION_OUTCOME_REJECTED or "Rejected", strings.CORRECTION_REASON_REJECTED or "The correction was refused and did not change the ledger." },
+    BLOCKED = { strings.DISPUTE_CORRECTION_OUTCOME_BLOCKED or "Blocked", strings.CORRECTION_REASON_BLOCKED or "The correction could not proceed; review the stated prerequisite or refusal." },
+    RECOVERY_NOT_READY = { strings.DISPUTE_CORRECTION_OUTCOME_RECOVERY_NOT_READY or "Recovery not ready", strings.CORRECTION_REASON_RECOVERY or "The ledger must pass recovery checks before a correction can proceed." },
+    ATTRIBUTION_ONLY = { strings.DISPUTE_CORRECTION_OUTCOME_ATTRIBUTION_ONLY or "Attribution Only", strings.DISPUTE_CORRECTION_REASON_ATTRIBUTION_ONLY or "Attribution was recorded; no balance entry was created." },
+  }
+  local value = labels[tostring(outcome or "")] or {
+    strings.CORRECTION_OUTCOME_UNKNOWN or "Status unavailable",
+    strings.CORRECTION_REASON_UNKNOWN or "The correction outcome is unknown; inspect diagnostics before retrying.",
+  }
+  return value[1], value[2]
+end
+
+function Dibs.OfficerUI.DescribeOperationState(state)
+  local strings = Dibs.L or {}
+  local values = {
+    BEHIND = { strings.DISPUTE_OPERATION_STATE_BEHIND, strings.DISPUTE_OPERATION_STATE_BEHIND_HELP },
+    INCOMPATIBLE = { strings.DISPUTE_OPERATION_STATE_INCOMPATIBLE, strings.DISPUTE_OPERATION_STATE_INCOMPATIBLE_HELP },
+    PROJECTION_INCOMPLETE = { strings.DISPUTE_OPERATION_STATE_PROJECTION_INCOMPLETE, strings.DISPUTE_OPERATION_STATE_PROJECTION_INCOMPLETE_HELP },
+    RECOVERED_AFTER_RELOAD = { strings.DISPUTE_OPERATION_STATE_RECOVERED_AFTER_RELOAD, strings.DISPUTE_OPERATION_STATE_RECOVERED_AFTER_RELOAD_HELP },
+    PERSISTENCE_UNCONFIRMED = { strings.DISPUTE_OPERATION_STATE_PERSISTENCE_UNCONFIRMED, strings.DISPUTE_OPERATION_STATE_PERSISTENCE_UNCONFIRMED_HELP },
+    HISTORY_REPORT = { strings.DISPUTE_OPERATION_STATE_HISTORY_REPORT, strings.DISPUTE_OPERATION_STATE_HISTORY_REPORT_HELP },
+  }
+  local value = values[tostring(state or "")] or { "Status unavailable", "The operation state is unknown; inspect diagnostics." }
+  return value[1] or "Status unavailable", value[2] or "No explanation is available."
+end
+
+function Dibs.OfficerUI.DescribeHistoricalReport(report)
+  report = type(report) == "table" and report or {}
+  local strings = Dibs.L or {}
+  local definitions = {
+    { key = "COMPLETE", label = strings.DISPUTE_OPERATION_STATE_HISTORY_COMPLETE or strings.LEGACY_REPORT_COMPLETE or "Complete", explanation = strings.DISPUTE_OPERATION_STATE_HISTORY_COMPLETE_HELP or strings.LEGACY_REPORT_REASON_COMPLETE or "This is a read-only report: the original and request references are present." },
+    { key = "PARTIAL", label = strings.DISPUTE_OPERATION_STATE_HISTORY_PARTIAL or strings.LEGACY_REPORT_PARTIAL or "Partial", explanation = strings.DISPUTE_OPERATION_STATE_HISTORY_PARTIAL_HELP or strings.LEGACY_REPORT_REASON_PARTIAL or "This is a read-only report: one or more references are missing." },
+    { key = "AMBIGUOUS", label = strings.DISPUTE_OPERATION_STATE_HISTORY_AMBIGUOUS or strings.LEGACY_REPORT_AMBIGUOUS or "Ambiguous", explanation = strings.DISPUTE_OPERATION_STATE_HISTORY_AMBIGUOUS_HELP or strings.LEGACY_REPORT_REASON_AMBIGUOUS or "This is a read-only report: the transaction identity appears in multiple ledgers." },
+    { key = "LOCAL_ONLY", label = strings.DISPUTE_OPERATION_STATE_HISTORY_LOCAL_ONLY or strings.LEGACY_REPORT_LOCAL_ONLY or "Local only", explanation = strings.DISPUTE_OPERATION_STATE_HISTORY_LOCAL_ONLY_HELP or strings.LEGACY_REPORT_REASON_LOCAL_ONLY or "This is a read-only report: this candidate has no canonical original link." },
+    { key = "UNVERIFIABLE", label = strings.DISPUTE_OPERATION_STATE_HISTORY_UNVERIFIABLE or strings.LEGACY_REPORT_UNVERIFIABLE or "Unverifiable", explanation = strings.DISPUTE_OPERATION_STATE_HISTORY_UNVERIFIABLE_HELP or strings.LEGACY_REPORT_REASON_UNVERIFIABLE or "This is a read-only report: available legacy markers cannot prove acceptance." },
+  }
+  local summary = type(report.summary) == "table" and report.summary or {}
+  local summaryKeys = { COMPLETE = "complete", PARTIAL = "partial", AMBIGUOUS = "ambiguous", LOCAL_ONLY = "localOnly", UNVERIFIABLE = "unverifiable" }
+  for _, row in ipairs(definitions) do row.count = math.max(0, math.floor(tonumber(summary[summaryKeys[row.key]]) or 0)) end
+  if type(report.summary) ~= "table" then
+    for _, entry in pairs(type(report.entries) == "table" and report.entries or {}) do
+      if type(entry) == "table" then
+        for _, row in ipairs(definitions) do
+          if entry.classification == row.key then row.count = row.count + 1; break end
+        end
+      end
+    end
+  end
+  return definitions
+end
+
 function Dibs.OfficerUI.GetPresentationRole()
   if Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive()
     and Dibs.DeveloperSandbox.GetStatus then
@@ -5312,6 +5369,9 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if frame.requestSuccess and frame.requestSuccess.requestId == request.requestId then
       local successSection = Dibs.Midnight and Dibs.Midnight.CreatePanel and Dibs.Midnight.CreatePanel(requestDetailShell, requestDetailRoot, "Action applied") or requestDetailRoot
       Dibs.AceGUI.AddHeading(requestDetailShell, successSection, tostring(frame.requestSuccess.action or "Correction applied"), "The canonical service accepted the action.")
+      local outcomeLabel, outcomeReason = Dibs.OfficerUI.DescribeCorrectionOutcome(frame.requestSuccess.outcome)
+      Dibs.AceGUI.AddLabel(requestDetailShell, successSection, "Outcome: " .. tostring(outcomeLabel), true)
+      Dibs.AceGUI.AddLabel(requestDetailShell, successSection, tostring(outcomeReason), true)
       Dibs.AceGUI.AddLabel(requestDetailShell, successSection, "Player: " .. tostring(request.player and request.player.name or request.playerName or "Unavailable"), true)
       Dibs.AceGUI.AddLabel(requestDetailShell, successSection, "Reference: " .. tostring(frame.requestSuccess.reference or "audit event recorded"), true)
       Dibs.AceGUI.AddLabel(requestDetailShell, successSection, "Original history was preserved; the change was appended to the audit trail.", true)

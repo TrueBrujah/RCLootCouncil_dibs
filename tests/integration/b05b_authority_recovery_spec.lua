@@ -77,6 +77,7 @@ describe("B05b fenced authority and recovery", function()
           seasonId = season
         })
         assert_false(result.ok, "Operation should fail when coordinator unavailable")
+        assert_equal("COORDINATOR_UNAVAILABLE", result.reasonCode)
         assert_equal("COORDINATOR_UNAVAILABLE", result.diagnostic)
         assert_equal(before, dibs.Ledger.GetBalance("Player-Realm", season))
         local proposals = dibs.Governance.GetAwardProposals()

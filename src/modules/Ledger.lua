@@ -236,13 +236,493 @@ local function canonicalCommitHash(commit)
   return contentHash(serialized)
 end
 
-local function authority()
+-- RF-0012 operations are immutable intent records. Building and validating one
+-- is deliberately pure: Governance owns stable IDs and persistence, while the
+-- canonical writer is kept behind a separate default-off boundary.
+local DISPUTE_OPERATION_SCHEMA = 1
+local DISPUTE_OPERATION_TYPES = {
+  DISPUTE_BALANCE_CORRECTION = true,
+  DISPUTE_TARGET_TRANSFER = true,
+  DISPUTE_ATTRIBUTION_RESOLUTION = true,
+}
+local DISPUTE_ENTRY_ACTIONS = { DIB_USED = true, DIB_REFUNDED = true, DIB_ADMIN_ADJUSTMENT = true }
+local MAX_DISPUTE_OPERATION_TEXT = 512
+local isApprovedLedger
+local validateSeason
+local authority, v2Enforced, localCoordinator, canonicalStateForAuthority, appendValidated, positionKey
+-- Keep the writer closed unless the release source explicitly enables it.
+-- Tests override this private gate only inside isolated Lua client fixtures.
+local DISPUTE_OPERATION_WRITES_ENABLED = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true
+local function operationReadinessProbe()
+  if _G.Dibs and _G.Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+  if not v2Enforced() then return false, "V2_ENFORCED_REQUIRED" end
+  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return false, "SYNC_BEHIND" end
+  local current = authority()
+  if not current or current.state ~= "ACTIVE" then return false, "COORDINATOR_UNAVAILABLE" end
+  return true
+end
+local function operationFailureProbe() return nil end
+local function operationFailureAt(point)
+  local failure = operationFailureProbe(point)
+  if not failure then return nil end
+  if type(failure) == "table" then return failure.code or "INJECTED_TEST_FAILURE", failure.point or point end
+  return failure, point
+end
+
+local function disputeOperationPayload(operation)
+  if type(operation) ~= "table" then return nil end
+  local payload = {}
+  for key, value in pairs(operation) do
+    if key ~= "payloadHash" then payload[key] = value end
+  end
+  return payload
+end
+
+function Ledger.CalculateDisputeOperationPayloadHash(operation)
+  local payload = disputeOperationPayload(operation)
+  if not payload then return nil, "INVALID_OPERATION" end
+  local serialized, reason = canonicalSerialize(payload)
+  if not serialized then return nil, reason end
+  return contentHash(serialized)
+end
+
+local function getGuildDB()
+  return Dibs.GetDB and Dibs.GetDB() or Dibs.db or _G.DibsDB
+end
+
+local function operationRequest(requestId)
+  local db = getGuildDB()
+  local state = type(db) == "table" and db.disputes
+  local request = type(state) == "table" and type(state.requests) == "table" and state.requests[requestId]
+  if type(request) ~= "table" or request.guildScope ~= (Dibs.GetGuildKey and Dibs.GetGuildKey()) then
+    return nil, "REQUEST_NOT_FOUND"
+  end
+  return request
+end
+
+local function operationLedger(ledgerId)
+  local db = getGuildDB()
+  if type(db) ~= "table" or type(db.ledgers) ~= "table" then return nil end
+  return db.ledgers[ledgerId] or (ledgerId == "guild-primary" and db.ledger or nil)
+end
+
+local function resolveOperationMember(memberKey)
+  if type(memberKey) ~= "string" or memberKey == "" or not Dibs.Identity
+    or type(Dibs.Identity.ResolveRosterMember) ~= "function" then return nil end
+  local resolved = Dibs.Identity.ResolveRosterMember(memberKey)
+  if type(resolved) ~= "table" or resolved.status ~= "RESOLVED" or resolved.memberKey ~= memberKey then return nil end
+  return resolved
+end
+
+local function evidenceBelongsToRequest(request, evidenceId)
+  if evidenceId == false then return true end
+  if type(evidenceId) ~= "string" or evidenceId == "" then return false end
+  for _, evidence in ipairs(request.evidence or {}) do
+    if evidence.evidenceId == evidenceId then return true end
+  end
+  return false
+end
+
+local function operationOriginal(operation, ledger)
+  if operation.originalTransactionId == false then return nil end
+  local tx = ledger and ledger.transactions and ledger.transactions[operation.originalTransactionId]
+  if type(tx) ~= "table" or tx.transactionId ~= operation.originalTransactionId then return nil end
+  return tx
+end
+
+function Ledger.BuildDisputeOperation(intent)
+  if type(intent) ~= "table" then return nil, "INVALID_OPERATION" end
+  local operation = copy(intent)
+  operation.payloadHash = nil
+  local hash, reason = Ledger.CalculateDisputeOperationPayloadHash(operation)
+  if not hash then return nil, reason end
+  operation.payloadHash = hash
+  return operation
+end
+
+function Ledger.ValidateDisputeOperation(operation)
+  if type(operation) ~= "table" then return false, "INVALID_OPERATION" end
+  if operation.schemaVersion ~= DISPUTE_OPERATION_SCHEMA then return false, "UNSUPPORTED_OPERATION_VERSION" end
+  for _, field in ipairs({ "operationId", "guildKey", "ledgerId", "requestId", "reason", "payloadHash" }) do
+    if type(operation[field]) ~= "string" or operation[field] == "" then return false, "INVALID_OPERATION" end
+  end
+  if #operation.operationId > 160 or #operation.requestId > 128 or #operation.reason > MAX_DISPUTE_OPERATION_TEXT then
+    return false, "INVALID_OPERATION"
+  end
+  if not DISPUTE_OPERATION_TYPES[operation.operationType] then return false, "UNSUPPORTED_OPERATION_TYPE" end
+  if operation.guildKey ~= (Dibs.GetGuildKey and Dibs.GetGuildKey()) then return false, "GUILD_SCOPE_MISMATCH" end
+  if not finiteInteger(operation.requestRevision) or operation.requestRevision < 1 then return false, "INVALID_OPERATION" end
+  if not finiteNumber(operation.timestamp) then return false, "INVALID_OPERATION" end
+  if operation.evidenceId ~= false and (type(operation.evidenceId) ~= "string" or operation.evidenceId == "") then return false, "INVALID_OPERATION" end
+  if operation.originalTransactionId ~= false and (type(operation.originalTransactionId) ~= "string" or operation.originalTransactionId == "") then return false, "INVALID_OPERATION" end
+  if type(operation.actor) ~= "table" or type(operation.actor.memberKey) ~= "string"
+    or type(operation.actor.displayName) ~= "string" then
+    return false, "INVALID_ACTOR"
+  end
+  local actor = Dibs.Identity.ResolveRosterMember(operation.actor.displayName)
+  if type(actor) ~= "table" or actor.status ~= "RESOLVED" then return false, "INVALID_ACTOR" end
+  if actor.memberKey ~= operation.actor.memberKey then return false, "INVALID_ACTOR" end
+  local payloadHash, hashReason = Ledger.CalculateDisputeOperationPayloadHash(operation)
+  if not payloadHash or payloadHash ~= operation.payloadHash then return false, hashReason or "HASH_MISMATCH" end
+
+  local db = getGuildDB()
+  if not db or type(db.ledgers) ~= "table" then return false, "LEDGER_NOT_FOUND" end
+  local ledger = operationLedger(operation.ledgerId)
+  if not ledger then return false, "LEDGER_NOT_FOUND" end
+  if not isApprovedLedger(operation.ledgerId) then return false, "LEDGER_NOT_APPROVED" end
+  local request, requestReason = operationRequest(operation.requestId)
+  if not request then return false, requestReason end
+  if tonumber(request.revision) ~= operation.requestRevision then return false, "STALE_DISPUTE_REVISION" end
+  local requestStatus = string.upper(tostring(request.status or ""))
+  if requestStatus == "RESOLVED" or requestStatus == "REJECTED" or requestStatus == "CLOSED" or requestStatus == "ARCHIVED" then
+    return false, "INVALID_DISPUTE_STATE"
+  end
+  if not evidenceBelongsToRequest(request, operation.evidenceId) then return false, "EVIDENCE_NOT_FOUND" end
+
+  local entries = operation.signedEntries
+  if type(entries) ~= "table" then return false, "INVALID_OPERATION" end
+  local entryCount, transactionIds, total = 0, {}, 0
+  for key in pairs(entries) do
+    if not finiteInteger(key) or key < 1 then return false, "INVALID_ENTRY" end
+    entryCount = entryCount + 1
+  end
+  if entryCount ~= #entries then return false, "INVALID_ENTRY" end
+  local original = operationOriginal(operation, ledger)
+  if operation.operationType == "DISPUTE_ATTRIBUTION_RESOLUTION" then
+    if entryCount ~= 0 or operation.originalTransactionId ~= false then return false, "INVALID_ENTRY" end
+  else
+    if not original then return false, "ORIGINAL_TRANSACTION_MISSING" end
+    local originalMember = original.memberKey or original.playerKey
+    local originalAction = original.actionType or original.type
+    local originalAmount = tonumber(original.quantityDelta or original.amount)
+    local seasonOK = validateSeason(original.seasonId)
+    if original.guildKey and original.guildKey ~= operation.guildKey then return false, "ORIGINAL_TRANSACTION_MISMATCH" end
+    if original.ledgerId and original.ledgerId ~= operation.ledgerId then return false, "ORIGINAL_TRANSACTION_MISMATCH" end
+    if not originalMember or not DISPUTE_ENTRY_ACTIONS[originalAction] or not finiteInteger(originalAmount) then
+      return false, "ORIGINAL_TRANSACTION_MISMATCH"
+    end
+    if not seasonOK then return false, "ORIGINAL_TRANSACTION_MISMATCH" end
+    if operation.operationType == "DISPUTE_BALANCE_CORRECTION" and entryCount ~= 1 then return false, "INVALID_ENTRY" end
+    if operation.operationType == "DISPUTE_TARGET_TRANSFER" and entryCount ~= 2 then return false, "INVALID_ENTRY" end
+    for index = 1, entryCount do
+      local entry = entries[index]
+      if type(entry) ~= "table" or entry.entryIndex ~= index or entry.operationId ~= operation.operationId
+        or type(entry.transactionId) ~= "string" or entry.transactionId == "" or #entry.transactionId > 160
+        or transactionIds[entry.transactionId]
+        or entry.guildKey ~= operation.guildKey or entry.ledgerId ~= operation.ledgerId
+        or entry.requestId ~= operation.requestId or entry.requestRevision ~= operation.requestRevision
+        or entry.evidenceId ~= operation.evidenceId or entry.originalTransactionId ~= operation.originalTransactionId
+        or not DISPUTE_ENTRY_ACTIONS[entry.actionType] or not finiteInteger(entry.quantityDelta)
+        or entry.quantityDelta == 0 or math.abs(entry.quantityDelta) > 100000 then return false, "INVALID_ENTRY" end
+      transactionIds[entry.transactionId] = true
+      if not resolveOperationMember(entry.memberKey) then return false, "INVALID_ENTRY_MEMBER" end
+      if not validateSeason(entry.seasonId) then return false, "INVALID_ENTRY_SEASON" end
+      if entry.actionType == "DIB_USED" and entry.quantityDelta >= 0 then return false, "INVALID_ENTRY_SIGN" end
+      if entry.actionType == "DIB_REFUNDED" and entry.quantityDelta <= 0 then return false, "INVALID_ENTRY_SIGN" end
+      if entry.actionType == "DIB_ADMIN_ADJUSTMENT" and entry.quantityDelta == 0 then return false, "INVALID_ENTRY_SIGN" end
+      if operation.operationType == "DISPUTE_BALANCE_CORRECTION" and entry.memberKey ~= originalMember then return false, "ORIGINAL_TRANSACTION_MISMATCH" end
+      if operation.operationType == "DISPUTE_TARGET_TRANSFER" then
+        if index == 1 and (entry.memberKey ~= originalMember or entry.quantityDelta <= 0) then return false, "ORIGINAL_TRANSACTION_MISMATCH" end
+        if index == 2 and (entry.memberKey == originalMember or entry.quantityDelta >= 0) then return false, "INVALID_ENTRY" end
+      end
+      total = total + entry.quantityDelta
+    end
+    if operation.operationType == "DISPUTE_TARGET_TRANSFER" and total ~= 0 then return false, "INVALID_TRANSFER_TOTAL" end
+  end
+  return true
+end
+
+function Ledger.CheckDisputeOperationReplay(operation)
+  if type(operation) ~= "table" then return nil, "INVALID_OPERATION" end
+  local db = getGuildDB()
+  local operationFound, transactionFound
+  for ledgerId, ledger in pairs(type(db) == "table" and db.ledgers or {}) do
+    local commits = ledger.canonical and ledger.canonical.commits or {}
+    for _, commit in pairs(commits) do
+      if type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT" and type(commit.operation) == "table" then
+        local stored = commit.operation
+        if stored.operationId == operation.operationId then
+          local storedPayload = canonicalSerialize(disputeOperationPayload(stored))
+          local candidatePayload = canonicalSerialize(disputeOperationPayload(operation))
+          if stored.guildKey == operation.guildKey and stored.ledgerId == operation.ledgerId
+            and stored.payloadHash == operation.payloadHash
+            and storedPayload ~= nil and storedPayload == candidatePayload
+            and ledgerId == operation.ledgerId then
+            operationFound = true
+          else
+            return { status = "CONFLICT", reasonCode = "OPERATION_ID_CONFLICT" }
+          end
+        end
+        for _, candidateEntry in ipairs(operation.signedEntries or {}) do
+          for _, storedEntry in ipairs(stored.signedEntries or {}) do
+            if stored.operationId ~= operation.operationId and storedEntry.transactionId == candidateEntry.transactionId then
+              transactionFound = true
+            end
+          end
+        end
+      elseif type(commit) == "table" then
+        local txId = commit.canonicalTransactionId or (commit.transaction and commit.transaction.transactionId)
+        for _, entry in ipairs(operation.signedEntries or {}) do
+          if txId == entry.transactionId then transactionFound = true end
+        end
+      end
+    end
+    for transactionId in pairs(ledger.transactions or {}) do
+      for _, entry in ipairs(operation.signedEntries or {}) do
+        if transactionId == entry.transactionId then transactionFound = true end
+      end
+    end
+  end
+  if operationFound then return { status = "REPLAY", reasonCode = "IDEMPOTENT_REPLAY" } end
+  if transactionFound then return { status = "CONFLICT", reasonCode = "TRANSACTION_ID_CONFLICT" } end
+  return { status = "NEW", reasonCode = "NEW_OPERATION" }
+end
+
+local function canonicalOperationCommitHash(record)
+  local basis = {}
+  for key, value in pairs(record or {}) do
+    if key ~= "commitHash" then basis[key] = value end
+  end
+  local serialized, reason = canonicalSerialize(basis)
+  if not serialized then return nil, reason end
+  return contentHash(serialized)
+end
+
+local function operationEntryTransaction(operation, entry, entryIndex)
+  local member = resolveOperationMember(entry.memberKey)
+  if not member then return nil, "INVALID_ENTRY_MEMBER" end
+  local actor = Dibs.Identity.ResolveRosterMember(operation.actor.displayName)
+  local tx = {
+    schema = SCHEMA, recordClass = "LEDGER_TRANSACTION", classification = CLASSIFICATION,
+    transactionId = entry.transactionId, type = entry.actionType, actionType = entry.actionType, action = entry.actionType,
+    memberKey = entry.memberKey, playerKey = entry.memberKey, playerName = member.displayName,
+    identitySnapshot = { memberKey = member.memberKey, displayName = member.displayName },
+    seasonId = entry.seasonId, amount = entry.quantityDelta, quantityDelta = entry.quantityDelta,
+    reason = operation.reason, source = "dispute-operation", evidenceId = entry.evidenceId ~= false and entry.evidenceId or nil,
+    reviewRequestId = operation.requestId, originalTransactionId = entry.originalTransactionId ~= false and entry.originalTransactionId or nil,
+    createdAt = operation.timestamp, timestamp = operation.timestamp, actorId = operation.actor.memberKey,
+    actorSnapshot = { memberKey = operation.actor.memberKey, displayName = operation.actor.displayName,
+      guidWitness = operation.actor.guidWitness },
+    context = { authority = "coordinator", action = "ledger.operation", authorization = "CANONICAL_OPERATION" },
+    debtPolicy = { allowDebt = true, source = "DISPUTE_CORRECTION" },
+    operationId = operation.operationId, entryIndex = entryIndex,
+  }
+  if not actor or actor.memberKey ~= operation.actor.memberKey then return nil, "INVALID_ACTOR" end
+  local hash, reason = transactionCanonicalHash(tx)
+  if not hash then return nil, reason end
+  tx.canonicalContentHash = hash
+  local valid, validationReason = Ledger.ValidateTransaction(tx)
+  if not valid then return nil, validationReason end
+  return tx
+end
+
+local function projectDisputeOperation(commit, ledger)
+  local operation = commit.operation
+  local position = positionKey(commit.ledgerEpoch, commit.sequence)
+  for index, entry in ipairs(operation.signedEntries) do
+    local injected, diagnostic = operationFailureAt("transaction-row:" .. tostring(index))
+    if injected then return false, "PROJECTION_INCOMPLETE", injected, diagnostic end
+    local tx = operationEntryTransaction(operation, entry, index)
+    if not tx then return false, "PROJECTION_INCOMPLETE", "INVALID_ENTRY" end
+    local existing = ledger.transactions[tx.transactionId]
+    if existing then
+      if existing.operationId ~= operation.operationId or existing.canonicalContentHash ~= tx.canonicalContentHash then
+        return false, "HISTORY_CONFLICT", "TRANSACTION_ID_CONFLICT"
+      end
+    else
+      appendValidated(tx, commit.ledgerId)
+    end
+  end
+  local injected, diagnostic = operationFailureAt("transaction-index")
+  if injected then return false, "PROJECTION_INCOMPLETE", injected, diagnostic end
+  for _, entry in ipairs(operation.signedEntries) do
+    local existingPosition = ledger.canonical.transactionIndex[entry.transactionId]
+    if existingPosition and existingPosition ~= position then return false, "HISTORY_CONFLICT", "TRANSACTION_ID_CONFLICT" end
+  end
+  for _, entry in ipairs(operation.signedEntries) do
+    ledger.canonical.transactionIndex[entry.transactionId] = position
+  end
+  local balanceFailure, balanceDiagnostic = operationFailureAt("balance")
+  if balanceFailure then return false, "PROJECTION_INCOMPLETE", balanceFailure, balanceDiagnostic end
+  local state = Dibs.GetDB().disputes
+  state.operationStates = state.operationStates or {}
+  state.operationStates[operation.requestId] = {
+    requestRevision = operation.requestRevision, operationId = operation.operationId,
+    ledgerId = operation.ledgerId, payloadHash = operation.payloadHash, commitPosition = position,
+  }
+  return true
+end
+
+function Ledger.CommitDisputeOperation(context, operation)
+  if operationFailureProbe == nil then
+    return { accepted = false, canonicalAccepted = false, projectionComplete = false, reasonCode = "OPERATION_FAILURE_PROBE_UNAVAILABLE" }
+  end
+  context = type(context) == "table" and context or {}
+  if not DISPUTE_OPERATION_WRITES_ENABLED then
+    return { accepted = false, canonicalAccepted = false, projectionComplete = false,
+      reasonCode = "CANONICAL_DISPUTE_OPERATIONS_DISABLED" }
+  end
+  local ready, readinessReason = operationReadinessProbe()
+  if ready ~= true then return { accepted = false, canonicalAccepted = false, projectionComplete = false,
+    reasonCode = readinessReason or "OPERATION_READINESS_UNKNOWN" } end
+  local failure = operationFailureAt("pre-validation")
+  if failure then return { accepted = false, canonicalAccepted = false, projectionComplete = false, reasonCode = failure } end
+  local valid, validationReason = Ledger.ValidateDisputeOperation(operation)
+  if not valid then return { accepted = false, canonicalAccepted = false, projectionComplete = false,
+    reasonCode = validationReason or "INVALID_OPERATION" } end
+  local replay = Ledger.CheckDisputeOperationReplay(operation)
+  if replay.status == "REPLAY" then
+    local db = getGuildDB(); local ledger = operationLedger(operation.ledgerId)
+    local canonical = ledger and ledger.canonical
+    local stored
+    for _, candidate in pairs(canonical and canonical.commits or {}) do
+      if candidate.recordClass == "LEDGER_OPERATION_COMMIT" and candidate.operation.operationId == operation.operationId then stored = candidate break end
+    end
+    if not stored then return { accepted = false, reasonCode = "HISTORY_CONFLICT" } end
+    local projected, projectReason, failureCode, diagnostic = projectDisputeOperation(stored, ledger)
+    if not projected then return { accepted = false, canonicalAccepted = true, projectionComplete = false,
+      reasonCode = projectReason, diagnostic = diagnostic } end
+    return { accepted = true, idempotentReplay = true, canonicalAccepted = true, projectionComplete = true,
+      reasonCode = "IDEMPOTENT_REPLAY", value = copy(stored) }
+  elseif replay.status == "CONFLICT" then
+    return { accepted = false, canonicalAccepted = false, projectionComplete = false, reasonCode = replay.reasonCode }
+  end
+  local actor, actorReason = localCoordinator(authority(), context.actor or Dibs.GetPlayerName())
+  if not actor then return { accepted = false, canonicalAccepted = false, projectionComplete = false, reasonCode = actorReason } end
+  if actor.memberKey ~= operation.actor.memberKey then
+    local proposal, proposalReason = Dibs.Governance and Dibs.Governance.GetDisputeProposal
+      and Dibs.Governance.GetDisputeProposal(context.proposalId)
+    local currentAuthority = authority()
+    if not proposal or proposalReason or proposal.status ~= "PENDING"
+      or proposal.proposer.memberKey ~= operation.actor.memberKey
+      or proposal.coordinator.memberKey ~= actor.memberKey
+      or proposal.ledgerEpoch ~= currentAuthority.ledgerEpoch
+      or proposal.operation.operationId ~= operation.operationId
+      or proposal.operation.payloadHash ~= operation.payloadHash then
+      return { accepted = false, canonicalAccepted = false, projectionComplete = false,
+        reasonCode = "PROPOSER_NOT_AUTHORIZED" }
+    end
+  end
+  local permission = Dibs.Permissions and Dibs.Permissions.Evaluate and Dibs.Permissions.Evaluate("ledger.adjust", actor.displayName)
+  if not permission or permission.allowed ~= true then return { accepted = false, canonicalAccepted = false,
+    projectionComplete = false, reasonCode = permission and permission.reasonCode or "PERMISSION_DENIED" } end
+  local ledger = operationLedger(operation.ledgerId)
+  local authorityState = authority()
+  local canonical, canonicalReason = canonicalStateForAuthority(ledger, authorityState)
+  if not canonical then return { accepted = false, canonicalAccepted = false, projectionComplete = false,
+    reasonCode = canonicalReason or "COORDINATOR_UNAVAILABLE" } end
+  for _, entry in ipairs(operation.signedEntries) do
+    local tx = operationEntryTransaction(operation, entry, entry.entryIndex)
+    if not tx then return { accepted = false, canonicalAccepted = false, projectionComplete = false, reasonCode = "INVALID_ENTRY" } end
+    if ledger.transactions[entry.transactionId] then return { accepted = false, canonicalAccepted = false,
+      projectionComplete = false, reasonCode = "TRANSACTION_ID_CONFLICT" } end
+  end
+  local preAcceptFailure = operationFailureAt("pre-acceptance")
+  if preAcceptFailure then return { accepted = false, canonicalAccepted = false, projectionComplete = false, reasonCode = preAcceptFailure } end
+  local commit = {
+    schema = 1, recordClass = "LEDGER_OPERATION_COMMIT", protocolVersion = 1,
+    guildKey = operation.guildKey, ledgerId = operation.ledgerId, ledgerEpoch = authorityState.ledgerEpoch,
+    sequence = canonical.nextSeq, previousHash = canonical.rootHash, payloadHash = operation.payloadHash,
+    proposer = copy(operation.actor), coordinator = { memberKey = actor.memberKey, displayName = actor.displayName },
+    operation = copy(operation),
+  }
+  local commitHash, hashReason = canonicalOperationCommitHash(commit)
+  if not commitHash then return { accepted = false, canonicalAccepted = false, projectionComplete = false, reasonCode = hashReason } end
+  commit.commitHash = commitHash
+  local key = positionKey(commit.ledgerEpoch, commit.sequence)
+  canonical.commits[key] = copy(commit)
+  canonical.positions[key] = commit.commitHash
+  canonical.nextSeq, canonical.rootHash = canonical.nextSeq + 1, commit.commitHash
+  local afterAcceptFailure, afterAcceptDiagnostic = operationFailureAt("after-canonical-acceptance")
+  if afterAcceptFailure then return { accepted = false, canonicalAccepted = true, projectionComplete = false,
+    reasonCode = "PROJECTION_INCOMPLETE", diagnostic = afterAcceptDiagnostic, value = copy(commit) } end
+  local projected, projectReason, failureCode, diagnostic = projectDisputeOperation(commit, ledger)
+  if not projected then return { accepted = false, canonicalAccepted = true, projectionComplete = false,
+    reasonCode = projectReason, diagnostic = diagnostic, value = copy(commit) } end
+  if Dibs.Sync and Dibs.Sync.AnnounceOperationCommit then Dibs.Sync.AnnounceOperationCommit(copy(commit)) end
+  return { accepted = true, idempotentReplay = false, canonicalAccepted = true, projectionComplete = true,
+    reasonCode = "CANONICAL_COMMITTED", value = copy(commit) }
+end
+
+function Ledger.ApplyDisputeOperationCommit(commit, sender, targetLedgerId)
+  if not v2Enforced() then return { accepted = false, reasonCode = "V2_ENFORCED_REQUIRED" } end
+  if type(commit) ~= "table" or commit.schema ~= 1 or commit.recordClass ~= "LEDGER_OPERATION_COMMIT"
+    or commit.protocolVersion ~= 1 or commit.guildKey ~= Dibs.GetGuildKey() then
+    return { accepted = false, reasonCode = "INVALID_OPERATION_COMMIT" }
+  end
+  if _G.Dibs and _G.Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then
+    return { accepted = false, reasonCode = "CANONICAL_DISPUTE_OPERATIONS_DISABLED" }
+  end
+  local authorityState = authority()
+  if not authorityState or authorityState.state ~= "ACTIVE" or not authorityState.coordinator
+    or commit.ledgerEpoch ~= authorityState.ledgerEpoch
+    or type(commit.coordinator) ~= "table"
+    or commit.coordinator.memberKey ~= authorityState.coordinator.memberKey then
+    return { accepted = false, reasonCode = "STALE_EPOCH" }
+  end
+  local senderSnapshot, senderReason = Dibs.Identity.CreateSnapshot(sender)
+  if not senderSnapshot then return { accepted = false, reasonCode = senderReason or "INVALID_SENDER" } end
+  if senderSnapshot.memberKey ~= commit.coordinator.memberKey then
+    return { accepted = false, reasonCode = "CURRENT_COORDINATOR_REQUIRED" }
+  end
+  local ledgerId = commit.ledgerId or "guild-primary"
+  if targetLedgerId and targetLedgerId ~= ledgerId then return { accepted = false, reasonCode = "LEDGER_SCOPE_MISMATCH" } end
+  if not isApprovedLedger(ledgerId) then return { accepted = false, reasonCode = "LEDGER_NOT_APPROVED" } end
+  local operation = commit.operation
+  if type(operation) ~= "table" or operation.ledgerId ~= ledgerId or operation.guildKey ~= commit.guildKey
+    or type(operation.actor) ~= "table" or operation.payloadHash ~= commit.payloadHash or type(commit.proposer) ~= "table"
+    or commit.proposer.memberKey ~= operation.actor.memberKey then
+    return { accepted = false, reasonCode = "INVALID_OPERATION_COMMIT" }
+  end
+  local ledger = ensureState(ledgerId)
+  local canonical = ledger.canonical
+  local key = positionKey(commit.ledgerEpoch, commit.sequence)
+  local known = canonical.commits[key]
+  local expectedHash = canonicalOperationCommitHash(commit)
+  if not expectedHash or expectedHash ~= commit.commitHash then return { accepted = false, reasonCode = "COMMIT_HASH_MISMATCH" } end
+  if known then
+    if known.commitHash ~= commit.commitHash then return { accepted = false, reasonCode = "CANONICAL_POSITION_CONFLICT" } end
+    local projected, projectReason = projectDisputeOperation(known, ledger)
+    if not projected then return { accepted = false, canonicalAccepted = true, projectionComplete = false,
+      reasonCode = projectReason or "PROJECTION_INCOMPLETE" } end
+    return { accepted = true, idempotentReplay = true, canonicalAccepted = true,
+      projectionComplete = true, reasonCode = "IDEMPOTENT_REPLAY", value = copy(known) }
+  end
+  local activeCanonical, canonicalReason = canonicalStateForAuthority(ledger, authorityState)
+  if not activeCanonical then return { accepted = false, reasonCode = canonicalReason or "CANONICAL_STATE_UNAVAILABLE" } end
+  if commit.sequence ~= activeCanonical.nextSeq then
+    if commit.sequence > activeCanonical.nextSeq and Dibs.Sync and Dibs.Sync.MarkSyncBehind then Dibs.Sync.MarkSyncBehind("LEDGER_GAP") end
+    return { accepted = false, reasonCode = commit.sequence > activeCanonical.nextSeq and "SYNC_BEHIND" or "STALE_SEQUENCE" }
+  end
+  if commit.previousHash ~= activeCanonical.rootHash then return { accepted = false, reasonCode = "PREVIOUS_HASH_MISMATCH" } end
+  local valid, validationReason = Ledger.ValidateDisputeOperation(operation)
+  if not valid then return { accepted = false, reasonCode = validationReason or "INVALID_OPERATION" } end
+  for _, entry in ipairs(operation.signedEntries) do
+    local existing = ledger.transactions[entry.transactionId]
+    local projected = operationEntryTransaction(operation, entry, entry.entryIndex)
+    if not projected then return { accepted = false, reasonCode = "INVALID_OPERATION_ENTRY" } end
+    if existing and (existing.operationId ~= operation.operationId
+      or existing.canonicalContentHash ~= projected.canonicalContentHash) then
+      return { accepted = false, reasonCode = "TRANSACTION_ID_CONFLICT" }
+    end
+  end
+  activeCanonical.commits[key] = copy(commit)
+  activeCanonical.positions[key] = commit.commitHash
+  activeCanonical.nextSeq, activeCanonical.rootHash = activeCanonical.nextSeq + 1, commit.commitHash
+  local projected, projectReason = projectDisputeOperation(commit, ledger)
+  if not projected then return { accepted = false, canonicalAccepted = true, projectionComplete = false,
+    reasonCode = projectReason or "PROJECTION_INCOMPLETE", value = copy(commit) } end
+  return { accepted = true, idempotentReplay = false, canonicalAccepted = true,
+    projectionComplete = true, reasonCode = "CANONICAL_APPLIED", value = copy(commit) }
+end
+
+authority = function()
   return Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState() or nil
 end
-local function v2Enforced()
+v2Enforced = function()
   return Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced() == true
 end
-local function isApprovedLedger(ledgerId)
+isApprovedLedger = function(ledgerId)
   if type(ledgerId) ~= "string" or ledgerId == "" then return false end
   if ledgerId == "guild-primary" then return true end
   local db = Dibs.GetDB and Dibs.GetDB()
@@ -251,7 +731,7 @@ local function isApprovedLedger(ledgerId)
     and Dibs.Governance and Dibs.Governance.IsLedgerApproved
     and Dibs.Governance.IsLedgerApproved(ledgerId) == true
 end
-local function localCoordinator(authorityState, actor)
+localCoordinator = function(authorityState, actor)
   if not authorityState or authorityState.state ~= "ACTIVE" or type(authorityState.coordinator) ~= "table" then return nil, "COORDINATOR_UNAVAILABLE" end
   if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return nil, "SYNC_BEHIND" end
   if not Dibs.Identity or type(Dibs.Identity.CreateSnapshot) ~= "function" then return nil, "IDENTITY_UNAVAILABLE" end
@@ -270,7 +750,7 @@ local function authorityRoot(authorityState)
   if transition.kind == "NORMAL_HANDOFF" and transition.parentClosure then return transition.parentClosure.rootHash end
   return transition.baselineHash
 end
-local function canonicalStateForAuthority(ledger, authorityState)
+canonicalStateForAuthority = function(ledger, authorityState)
   local canonical = ledger.canonical
   if canonical.epoch == nil then
     local root = authorityRoot(authorityState)
@@ -286,7 +766,7 @@ local function canonicalStateForAuthority(ledger, authorityState)
   canonical.epoch, canonical.nextSeq, canonical.rootHash = authorityState.ledgerEpoch, 1, root
   return canonical
 end
-local function positionKey(epoch, sequence) return tostring(epoch) .. ":" .. tostring(sequence) end
+positionKey = function(epoch, sequence) return tostring(epoch) .. ":" .. tostring(sequence) end
 
 local function sameCanonicalContent(existing, candidate)
   return existing.classification == CLASSIFICATION and type(existing.canonicalContentHash) == "string"
@@ -304,7 +784,7 @@ local function getCurrentBalance(memberKey, seasonId, targetLedgerId)
   return balance
 end
 
-local function validateSeason(seasonId)
+validateSeason = function(seasonId)
   if type(seasonId) ~= "string" or seasonId == "" then return false, "MISSING_SEASON_ID" end
   if not Dibs.Seasons or not Dibs.Seasons.GetById or not Dibs.Seasons.GetById(seasonId) then return false, "SEASON_NOT_FOUND" end
   return true
@@ -531,7 +1011,7 @@ local function buildDetachedTransaction(context, input)
   return tx
 end
 
-local function appendValidated(tx, targetLedgerId)
+appendValidated = function(tx, targetLedgerId)
   local ledger = ensureState(targetLedgerId); ledger.transactions[tx.transactionId] = tx
   if tx.awardRef then ledger.awardTransactions[tx.awardRef] = tx.transactionId end
   if tx.evidenceId then ledger.evidenceTransactions[tx.evidenceId] = tx.transactionId end
@@ -543,6 +1023,217 @@ local function appendValidated(tx, targetLedgerId)
   ledgerTransactionDiagnostics[ledger.id] = nil
   ledgerNonAllocationCounts[ledger.id] = nil
   return tx
+end
+
+local function recoveryLedger(targetLedgerId)
+  local db = getGuildDB()
+  if type(db) ~= "table" then return nil, nil, "LEDGER_NOT_FOUND" end
+  local id = targetLedgerId or Ledger.GetActiveLedgerId(db)
+  local ledger = type(db.ledgers) == "table" and db.ledgers[id]
+    or (id == "guild-primary" and db.ledger or nil)
+  if type(ledger) ~= "table" then return db, nil, "LEDGER_NOT_FOUND" end
+  return db, ledger, nil
+end
+
+local function canonicalEntries(ledger)
+  local canonical = ledger.canonical
+  if type(canonical) ~= "table" or type(canonical.commits) ~= "table" then
+    return nil, "CANONICAL_STATE_INVALID"
+  end
+  local entries = {}
+  for key, commit in pairs(canonical.commits) do
+    if type(commit) ~= "table" then return nil, "CANONICAL_COMMIT_INVALID" end
+    local epoch, sequence = tostring(key):match("^(%d+):(%d+)$")
+    epoch, sequence = tonumber(epoch), tonumber(sequence)
+    if not epoch or not sequence or commit.ledgerEpoch ~= epoch or commit.sequence ~= sequence then
+      return nil, "CANONICAL_POSITION_INVALID"
+    end
+    entries[#entries + 1] = { key = key, epoch = epoch, sequence = sequence, commit = commit }
+  end
+  table.sort(entries, function(a, b)
+    if a.epoch == b.epoch then return a.sequence < b.sequence end
+    return a.epoch < b.epoch
+  end)
+  return entries
+end
+
+local function validateCanonicalHistory(ledger)
+  local canonical = ledger.canonical
+  local entries, reason = canonicalEntries(ledger)
+  if not entries then return false, reason end
+  local lastByEpoch, currentCount, legacyUnverifiable = {}, 0, false
+  local currentEpoch = tonumber(canonical.epoch)
+  for _, item in ipairs(entries) do
+    local commit, key = item.commit, item.key
+    if type(commit.commitHash) ~= "string" or commit.commitHash == ""
+      or canonical.positions[key] ~= commit.commitHash then
+      return false, "CANONICAL_POSITION_MISMATCH"
+    end
+    local previous = lastByEpoch[item.epoch]
+    if previous then
+      if item.sequence ~= previous.sequence + 1 or commit.previousHash ~= previous.commit.commitHash then
+        return false, "CANONICAL_SEQUENCE_GAP"
+      end
+    elseif item.sequence ~= 1 then
+      return false, "CANONICAL_SEQUENCE_GAP"
+    end
+    lastByEpoch[item.epoch] = item
+    if item.epoch == currentEpoch then currentCount = currentCount + 1 end
+
+    if commit.recordClass == "LEDGER_OPERATION_COMMIT" then
+      if type(commit.operation) ~= "table" then return false, "CANONICAL_OPERATION_INVALID" end
+      local hash = canonicalOperationCommitHash(commit)
+      if not hash or hash ~= commit.commitHash then return false, "CANONICAL_COMMIT_HASH_MISMATCH" end
+      local payloadHash = Ledger.CalculateDisputeOperationPayloadHash(commit.operation)
+      if payloadHash ~= commit.operation.payloadHash or payloadHash ~= commit.payloadHash then
+        return false, "CANONICAL_OPERATION_HASH_MISMATCH"
+      end
+      if commit.operation.ledgerId ~= ledger.id or commit.operation.guildKey ~= commit.guildKey then
+        return false, "CANONICAL_OPERATION_SCOPE_MISMATCH"
+      end
+    elseif commit.recordClass == "AWARD_COMMIT" then
+      -- Older commits may predate the current identity snapshot format. Their
+      -- persisted hash remains in the chain, but cannot be re-derived when the
+      -- old transaction lacks fields required by today's serializer.
+      if type(commit.transaction) ~= "table" or type(commit.transaction.identitySnapshot) ~= "table" then
+        legacyUnverifiable = true
+      else
+        local ok, hash = pcall(canonicalCommitHash, commit)
+        if not ok or not hash then legacyUnverifiable = true
+        elseif hash ~= commit.commitHash then return false, "CANONICAL_COMMIT_HASH_MISMATCH" end
+      end
+    else
+      return false, "CANONICAL_COMMIT_CLASS_UNKNOWN"
+    end
+  end
+  if currentEpoch ~= nil then
+    if not finiteInteger(canonical.nextSeq) or canonical.nextSeq ~= currentCount + 1 then
+      return false, "CANONICAL_SEQUENCE_GAP"
+    end
+    local currentLast = lastByEpoch[currentEpoch]
+    if currentLast and canonical.rootHash ~= currentLast.commit.commitHash then return false, "CANONICAL_ROOT_MISMATCH" end
+    if not currentLast and canonical.nextSeq ~= 1 then return false, "CANONICAL_SEQUENCE_GAP" end
+  end
+  return true, nil, entries, legacyUnverifiable
+end
+
+function Ledger.ClassifyCanonicalRecovery(targetLedgerId)
+  local _, ledger, lookupReason = recoveryLedger(targetLedgerId)
+  if not ledger then return { classification = "INVALID", reasonCode = lookupReason } end
+  local ok, reason, entries, legacyUnverifiable = validateCanonicalHistory(ledger)
+  if not ok then
+    local classification = reason == "CANONICAL_SEQUENCE_GAP" and "MISSING_SEQUENCE"
+      or reason == "CANONICAL_ROOT_MISMATCH" and "WRONG_ROOT"
+      or "INVALID_CANONICAL_HISTORY"
+    return { classification = classification, reasonCode = reason }
+  end
+  local canonical = ledger.canonical
+  for _, item in ipairs(entries or {}) do
+    local commit = item.commit
+    if commit.recordClass == "LEDGER_OPERATION_COMMIT" then
+      for index, entry in ipairs(commit.operation.signedEntries or {}) do
+        local expectedPosition = item.key
+        local tx = ledger.transactions and ledger.transactions[entry.transactionId]
+        if not tx then return { classification = "INCOMPLETE_PROJECTION", reasonCode = "CANONICAL_TRANSACTION_MISSING" } end
+        local rebuilt = operationEntryTransaction(commit.operation, entry, index)
+        if not rebuilt or tx.canonicalContentHash ~= rebuilt.canonicalContentHash then
+          return { classification = "INCOMPLETE_PROJECTION", reasonCode = "CANONICAL_TRANSACTION_MISMATCH" }
+        end
+        local indexed = canonical.transactionIndex and canonical.transactionIndex[entry.transactionId]
+        if indexed ~= expectedPosition then return { classification = "INDEX_MISMATCH", reasonCode = "CANONICAL_TRANSACTION_INDEX_MISMATCH" } end
+      end
+    elseif commit.recordClass == "AWARD_COMMIT" then
+      local txId = commit.canonicalTransactionId
+      if type(txId) == "string" then
+        local tx = ledger.transactions and ledger.transactions[txId]
+        if not tx then return { classification = "INCOMPLETE_PROJECTION", reasonCode = "CANONICAL_TRANSACTION_MISSING" } end
+        if (canonical.transactionIndex or {})[txId] ~= item.key then
+          return { classification = "INDEX_MISMATCH", reasonCode = "CANONICAL_TRANSACTION_INDEX_MISMATCH" }
+        end
+      end
+    end
+  end
+  if legacyUnverifiable then
+    return { classification = "LEGACY_UNVERIFIABLE", reasonCode = "LEGACY_COMMIT_HASH_UNVERIFIABLE" }
+  end
+  return { classification = "VALID", reasonCode = "CANONICAL_HISTORY_VALID" }
+end
+
+function Ledger.RebuildLedgerProjections(targetLedgerId)
+  local db, ledger, lookupReason = recoveryLedger(targetLedgerId)
+  if not ledger then return { rebuilt = false, reasonCode = lookupReason } end
+  local valid, reason, entries, legacyUnverifiable = validateCanonicalHistory(ledger)
+  if not valid then return { rebuilt = false, reasonCode = reason } end
+
+  -- Build all derived structures off to the side. Existing rows are retained
+  -- verbatim because legacy transactions are not necessarily reproducible
+  -- under today's identity or hash rules.
+  local transactions = copy(ledger.transactions or {})
+  local awardTransactions, evidenceTransactions, playerStates, transactionIndex = {}, {}, {}, {}
+  for _, item in ipairs(entries or {}) do
+    local commit = item.commit
+    if commit.recordClass == "LEDGER_OPERATION_COMMIT" then
+      for index, entry in ipairs(commit.operation.signedEntries or {}) do
+        local tx, txReason = operationEntryTransaction(commit.operation, entry, index)
+        if not tx then return { rebuilt = false, reasonCode = txReason or "CANONICAL_TRANSACTION_INVALID" } end
+        local existing = transactions[tx.transactionId]
+        if existing and (existing.operationId ~= tx.operationId or existing.canonicalContentHash ~= tx.canonicalContentHash) then
+          return { rebuilt = false, reasonCode = "CANONICAL_TRANSACTION_CONFLICT" }
+        end
+        transactions[tx.transactionId] = existing or tx
+        transactionIndex[tx.transactionId] = item.key
+      end
+    elseif commit.recordClass == "AWARD_COMMIT" and type(commit.canonicalTransactionId) == "string" then
+      transactionIndex[commit.canonicalTransactionId] = item.key
+    end
+  end
+
+  local transactionIds = {}
+  for id in pairs(transactions) do transactionIds[#transactionIds + 1] = id end
+  table.sort(transactionIds, function(a, b)
+    local left, right = transactions[a], transactions[b]
+    local lt, rt = tonumber(left and (left.timestamp or left.createdAt)) or 0, tonumber(right and (right.timestamp or right.createdAt)) or 0
+    if lt == rt then return tostring(a) < tostring(b) end
+    return lt < rt
+  end)
+  for _, id in ipairs(transactionIds) do
+    local tx = transactions[id]
+    if type(tx) == "table" then
+      local memberKey = tx.memberKey or tx.playerKey or normalizeLegacyPlayerKey(tx.playerName)
+      local seasonId = tx.seasonId
+      if type(memberKey) == "string" and memberKey ~= "" and type(seasonId) == "string" and seasonId ~= "" then
+        playerStates[seasonId] = playerStates[seasonId] or {}
+        local state = playerStates[seasonId][memberKey]
+        if not state then state = { allocation = 0, balance = 0, transactions = {} }; playerStates[seasonId][memberKey] = state end
+        state.transactions[#state.transactions + 1] = id
+        local amount = tonumber(tx.quantityDelta or tx.amount) or 0
+        if (tx.actionType or tx.type) == "SEASON_ALLOCATION" then state.allocation = state.allocation + amount end
+        if tx.awardRef then awardTransactions[tx.awardRef] = id end
+        if tx.evidenceId then evidenceTransactions[tx.evidenceId] = id end
+      end
+    end
+  end
+  for seasonId, members in pairs(playerStates) do
+    for memberKey, state in pairs(members) do
+      local balance = tonumber(state.allocation) or 0
+      for _, id in ipairs(state.transactions) do
+        local tx = transactions[id]
+        if (tx.actionType or tx.type) ~= "SEASON_ALLOCATION" then
+          balance = balance + (tonumber(tx.quantityDelta or tx.amount) or 0)
+        end
+      end
+      state.balance = balance
+    end
+  end
+
+  ledger.transactions, ledger.playerStates = transactions, playerStates
+  ledger.awardTransactions, ledger.evidenceTransactions = awardTransactions, evidenceTransactions
+  ledger.canonical.transactionIndex = transactionIndex
+  if ledger.id == (db.activeLedgerId or "guild-primary") then db.ledger = ledger end
+  Ledger.MarkTransactionsChanged(ledger.id)
+  return { rebuilt = true,
+    reasonCode = legacyUnverifiable and "PROJECTIONS_REBUILT_LEGACY_HASH_UNVERIFIED" or "PROJECTIONS_REBUILT",
+    transactionCount = #transactionIds }
 end
 
 ---@param context table Local caller context; it never represents a coordinator or epoch.
@@ -1834,5 +2525,7 @@ function Ledger.GetCanonicalPlayerDibsState(seasonId, playerIdentity, ledgerId)
 end
 function Ledger.CalculateCanonicalContentHash(record) return transactionCanonicalHash(record or {}) end
 function Ledger.CalculateCanonicalCommitHash(record) return canonicalCommitHash(record or {}) end
+function Ledger.GetCanonicalOperationCommitHash(record) return canonicalOperationCommitHash(record or {}) end
+Ledger.ApplyOperationCommit = Ledger.ApplyDisputeOperationCommit
 
 return Ledger

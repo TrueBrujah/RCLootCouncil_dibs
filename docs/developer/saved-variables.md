@@ -62,8 +62,8 @@ dossier or an explicit safe owner body and never apply accounting by themselves.
 
 Legacy flat roots are wrapped into a guild bucket during `Core.lua` initialization.
 Runtime code uses `Dibs.db`; `_G.DibsDB` remains a compatibility alias for the
-active guild bucket. The guild schema currently reports version 7 (the root wrapper remains version 6),
-with versioned reconciliation and character-eligibility sub-stores.
+active guild bucket. The guild schema currently reports version 8 (the root wrapper remains version 6),
+with versioned reconciliation, character-eligibility, and dispute operation-state projections.
 
 Guild `ledgers[ledgerId]` holds each ledger's separate accounting state.
 `activeLedgerId` selects the local active view and `ledger` remains its legacy

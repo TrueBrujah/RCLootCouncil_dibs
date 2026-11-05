@@ -7,7 +7,7 @@ Non-responsibilities: Ledger rules, loot ownership, and UI layout belong to thei
 Dependencies: WoW API; optional Ace3 and RCLootCouncil integrations.
 Blizzard events: ADDON_LOADED, PLAYER_LOGIN, GROUP_ROSTER_UPDATE, PLAYER_ENTERING_WORLD, ZONE_CHANGED_NEW_AREA, PLAYER_REGEN_ENABLED, CHAT_MSG_ADDON.
 Internal events/messages: Routes CHAT_MSG_ADDON to Dibs.Sync; invalidates readiness on roster/zone/combat changes.
-SavedVariables: RCLootCouncil_dibsDB, guild-scoped schema version 6.
+SavedVariables: RCLootCouncil_dibsDB, guild-scoped schema version 8.
 RCLootCouncil: Initializes capability-aware integration when the optional addon is present.
 Combat safety: Defers protected UI work until PLAYER_REGEN_ENABLED.
 Invariants: DIBS-RULE-001, DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-004, DIBS-RULE-009.
@@ -191,7 +191,7 @@ function Dibs.GetCharacterScopeKey(playerName)
 end
 
 local defaultDB = {
-  version = 7,
+  version = 8,
   currentSeasonId = nil,
   seasons = {},
   rankRules = {},
@@ -213,10 +213,11 @@ local defaultDB = {
     vaultConflicts = {},
   },
   disputes = {
-    version = 2,
+    version = 3,
     requests = {},
     order = {},
     corrections = {},
+    operationStates = {},
   },
   reconciliation = {
     version = 1,
@@ -303,7 +304,7 @@ local defaultDB = {
 
 local FLAT_ROOT_MARKERS = { "seasons", "preDibs", "ledger", "permissions", "settings" }
 local ROOT_SCHEMA_VERSION = 6
-local GUILD_SCHEMA_VERSION = 7
+local GUILD_SCHEMA_VERSION = 8
 local RECOVERY_METADATA_VERSION = 1
 local MAX_STARTUP_BACKUPS = 3
 local MAX_QUARANTINE_RECORDS = 25
@@ -505,7 +506,8 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   ensureTable(disputes, "requests", {}, root, changes, scope .. ".disputes.requests")
   ensureTable(disputes, "order", {}, root, changes, scope .. ".disputes.order")
   ensureTable(disputes, "corrections", {}, root, changes, scope .. ".disputes.corrections")
-  disputes.version = math.max(tonumber(disputes.version) or 1, 2)
+  ensureTable(disputes, "operationStates", {}, root, changes, scope .. ".disputes.operationStates")
+  disputes.version = math.max(tonumber(disputes.version) or 1, 3)
 
   local reconciliation = ensureTable(db, "reconciliation", defaultDB.reconciliation, root, changes, scope .. ".reconciliation")
   for _, key in ipairs({ "sessions", "aliases", "aliasHistory", "decisions", "evidence", "evidenceIndex" }) do
@@ -699,6 +701,15 @@ local function migrateGuild(db)
       end
     end
     db.version = 7
+  end
+  if db.version < 8 then
+    db.disputes = db.disputes or { version = 2, requests = {}, order = {}, corrections = {} }
+    db.disputes.requests = db.disputes.requests or {}
+    db.disputes.order = db.disputes.order or {}
+    db.disputes.corrections = db.disputes.corrections or {}
+    db.disputes.operationStates = db.disputes.operationStates or {}
+    db.disputes.version = math.max(tonumber(db.disputes.version) or 2, 3)
+    db.version = 8
   end
 end
 

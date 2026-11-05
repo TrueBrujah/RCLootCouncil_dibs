@@ -264,7 +264,10 @@ function M.load(opts)
   local tocFiles = TOC_FILES
   for _, relative in ipairs(tocFiles) do
     local sourcePath = "src/" .. relative
-    local chunk, err = loadfile(sourcePath)
+    -- Respect an optional sandbox/client environment. Without the explicit
+    -- environment, Lua loads each addon chunk into the host _G, collapsing
+    -- supposedly isolated clients onto one shared addon instance.
+    local chunk, err = loadfile(sourcePath, "t", _G)
     if not chunk then
       error("failed to load " .. sourcePath .. ": " .. tostring(err))
     end

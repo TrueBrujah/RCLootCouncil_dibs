@@ -65,6 +65,7 @@ local ADMIN_ACTIONS = {
   ["ledger.use"] = true,
   ["ledger.refund"] = true,
   ["ledger.adjust"] = true,
+  ["ledger.operation"] = true,
   ["admin.list"] = true,
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,

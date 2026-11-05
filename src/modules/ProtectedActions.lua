@@ -33,6 +33,7 @@ local VALID_ACTIONS = {
   ["ledger.use"] = true,
   ["ledger.refund"] = true,
   ["ledger.adjust"] = true,
+  ["ledger.operation"] = true,
   ["admin.list"] = true,
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,
@@ -254,8 +255,10 @@ local function executeLedgerUse(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.Use then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx = Dibs.Ledger.Use(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.use", actor, payload or {}, decision))
-  return buildResult(tx ~= nil, tx, decision)
+  local tx, reasonCode = Dibs.Ledger.Use(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.use", actor, payload or {}, decision))
+  local result = buildResult(tx ~= nil, tx, decision, reasonCode)
+  if not tx and reasonCode then result.reasonCode = reasonCode end
+  return result
 end
 
 local function executeLedgerRefund(actor, payload, decision)
@@ -292,6 +295,35 @@ local function executeLedgerAdjust(actor, payload, decision)
     return buildResult(false, nil, { reasonCode = reasonCode or "ADJUSTMENT_REJECTED" }, reasonCode or "Dibs adjustment rejected.")
   end
   return buildResult(tx ~= nil, tx, decision)
+end
+
+---@doc.id ledger.operation
+---@doc.category ledger
+---@doc.since 0.9.0
+---@doc.audience officer,gm
+---@doc.permission ledger.operation
+---@doc.scope guild-season
+---@doc.audit true
+---@doc.reason-required true
+local function executeLedgerOperation(actor, payload, decision)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then
+    return buildResult(false, nil, { reasonCode = "FEATURE_DISABLED" }, "Canonical dispute operations are disabled in this release.")
+  end
+  if not Dibs.Ledger or type(Dibs.Ledger.CommitDisputeOperation) ~= "function" then
+    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+  end
+  local operation = payload and payload.operation
+  if type(operation) ~= "table" then
+    return buildResult(false, nil, { reasonCode = "INVALID_OPERATION" }, "A complete canonical operation is required.")
+  end
+  local result = Dibs.Ledger.CommitDisputeOperation({
+    actor = actor, ledgerId = operation.ledgerId, proposalId = payload.proposalId,
+  }, operation)
+  if not result or result.accepted ~= true then
+    local reasonCode = result and result.reasonCode or "OPERATION_REJECTED"
+    return buildResult(false, result, { reasonCode = reasonCode }, result and (result.diagnostic or reasonCode) or reasonCode)
+  end
+  return buildResult(true, result.value, decision)
 end
 
 local function executeAdminList(actor, payload, decision)
@@ -769,6 +801,7 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "ledger.use" then return executeLedgerUse(actor, command, decision) end
   if actionId == "ledger.refund" then return executeLedgerRefund(actor, command, decision) end
   if actionId == "ledger.adjust" then return executeLedgerAdjust(actor, command, decision) end
+  if actionId == "ledger.operation" then return executeLedgerOperation(actor, command, decision) end
   if actionId == "admin.list" then return executeAdminList(actor, command, decision) end
   if actionId == "admin.appoint" then return executeAdminChange(actor, command, true, decision) end
   if actionId == "admin.revoke" then return executeAdminChange(actor, command, false, decision) end

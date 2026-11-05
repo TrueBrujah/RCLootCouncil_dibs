@@ -307,6 +307,28 @@ function MultiLedger.GetLedgerById(ledgerId)
   return copy(db.ledgers[ledgerId])
 end
 
+-- Resolve a dispute reference by its immutable transaction ID across retained
+-- ledgers. A caller supplying an expected ledger gets an explicit scope check;
+-- the active/view ledger is never used as a search hint for the original.
+function MultiLedger.ResolveOriginalTransaction(transactionId, expectedLedgerId, dbOverride)
+  if type(transactionId) ~= "string" or transactionId == "" then return nil, "ORIGINAL_TRANSACTION_NOT_FOUND" end
+  local db = ensureLedgers(dbOverride)
+  if not db then return nil, "DB_UNAVAILABLE" end
+  local matchLedgerId, matchTransaction
+  for ledgerId, ledger in pairs(db.ledgers) do
+    if isLocallyApproved(ledgerId, ledger) then
+      local transaction = ledger.transactions and ledger.transactions[transactionId]
+      if transaction then
+        if matchTransaction then return nil, "ORIGINAL_TRANSACTION_AMBIGUOUS" end
+        matchLedgerId, matchTransaction = ledgerId, transaction
+      end
+    end
+  end
+  if not matchTransaction then return nil, "ORIGINAL_TRANSACTION_NOT_FOUND" end
+  if expectedLedgerId and expectedLedgerId ~= matchLedgerId then return nil, "LEDGER_SCOPE_MISMATCH", matchLedgerId end
+  return { ledgerId = matchLedgerId, transaction = copy(matchTransaction) }, nil
+end
+
 function MultiLedger.SetActiveLedger(arg1, arg2)
   local ledgerId = (arg2 ~= nil and arg2) or arg1
   local db = ensureLedgers()
