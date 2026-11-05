@@ -2,11 +2,11 @@ local clients = require("helpers.request_client_fixture")
 
 describe("Private request delivery between simulated production clients", function()
   local COORDINATOR, PLAYER, OFFICER = "Coordinator-Realm", "Player-Realm", "Officer-Realm"
-  local function setup()
+  local function setup(category)
     local world = clients.new()
     world:Hello(COORDINATOR); world:Hello(PLAYER); world:Hello(OFFICER)
     local dibs = world:Activate(PLAYER)
-    local request = dibs.Disputes.CreateReport({ category = "other", note = "Synthetic player report" })
+    local request = dibs.Disputes.CreateReport({ category = category or "other", note = "Synthetic player report" })
     assert_not_nil(request)
     world:TakePackets()
     world:Advance(61)
@@ -204,13 +204,17 @@ describe("Private request delivery between simulated production clients", functi
   end)
 
   it("allows only one compensation across stale replicas and blocks epoch takeover", function()
-    local world, request, packets = setup()
+    local world, request, packets = setup("missing_debit")
     local coordinator = world:Deliver(COORDINATOR, packets)
     world:Advance(61); coordinator.RequestDelivery.Pump()
     local originalSnapshots = world:TakePackets()
     local replica = world:Deliver(OFFICER, originalSnapshots)
     assert_not_nil(replica.Disputes.GetRequest(request.requestId, nil))
     coordinator = world:Activate(COORDINATOR)
+    local grant = coordinator.ProtectedActions.Execute("ledger.grant", COORDINATOR, {
+      playerName = PLAYER, amount = 1, reason = "Seed missing-debit correction", source = "test",
+    })
+    assert_true(grant.ok, tostring(grant.reasonCode))
     local before = #coordinator.Ledger.GetAllTransactions()
     local correction, reason = coordinator.Disputes.CorrectBalance(request.requestId, { amount = 1, confirmed = true, reason = "Synthetic verified correction" })
     assert_not_nil(correction, tostring(reason))
