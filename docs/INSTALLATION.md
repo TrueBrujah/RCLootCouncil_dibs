@@ -1,6 +1,6 @@
 # RCLootCouncil_dibs — Manual Installation Guide
 
-Published stable version: **0.8.9** (published 2026-10-16). Install the
+Published stable version: **0.8.11**. Install the
 published ZIP below unless you deliberately need a development build.
 The installation screenshots were captured for 0.8.0 and illustrate folder
 placement only, not the current in-game interface.
@@ -9,15 +9,15 @@ Install the same compatible version as the rest of your guild so Dibs features w
 
 ## Download
 
-[Download RCLootCouncil_dibs v0.8.9](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/download/v0.8.9/RCLootCouncil_dibs-v0.8.9.zip)
+[Download RCLootCouncil_dibs v0.8.11](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/download/v0.8.11/RCLootCouncil_dibs-v0.8.11.zip)
 
-**Download version:** 0.8.9
+**Download version:** 0.8.11
 
 Download the stable release ZIP above, not a development build.
 
 ## Quick Install
 
-1. Download the v0.8.9 ZIP.
+1. Download the v0.8.11 ZIP.
 2. In Battle.net, select **World of Warcraft**, click the gear icon beside
 	**Play**, and choose **Show in Explorer**.
 3. Open `_retail_` > `Interface` > `AddOns`.
@@ -25,14 +25,14 @@ Download the stable release ZIP above, not a development build.
 5. Confirm `AddOns\RCLootCouncil_dibs\RCLootCouncil_dibs.toc` is directly
 	inside the addon folder; avoid an extra nested `RCLootCouncil_dibs` folder.
 6. Return to World of Warcraft. If it is already running, run `/reload`.
-7. After the UI reload completes, run `/dibs status` and confirm version `0.8.9`.
+7. After the UI reload completes, run `/dibs status` and confirm version `0.8.11`.
 
 > You do **not** need to completely exit World of Warcraft to install or update
 > RCLootCouncil_dibs. A UI reload is normally sufficient.
 
 ## Step 1 — Download the release
 
-Download the stable v0.8.9 ZIP from the link above.
+Download the stable v0.8.11 ZIP from the link above.
 
 ## Step 2 — Open the WoW installation directory
 
@@ -71,7 +71,7 @@ Path: `World of Warcraft\_retail_\Interface\AddOns`
 
 ## Step 6 — Extract the addon
 
-1. Open the downloaded v0.8.9 ZIP.
+1. Open the downloaded v0.8.11 ZIP.
 2. Extract the folder named `RCLootCouncil_dibs`.
 3. Copy that folder into `World of Warcraft\_retail_\Interface\AddOns\`.
 4. When updating, replace the existing `RCLootCouncil_dibs` folder with this
@@ -100,13 +100,13 @@ If the ZIP creates an extra folder level, open the outer folder and move the inn
 
 ## Updating from an older version
 
-1. Download the v0.8.9 ZIP.
+1. Download the v0.8.11 ZIP.
 2. Replace the existing `Interface\AddOns\RCLootCouncil_dibs` folder with the
 	new version.
 3. Do **not** delete the `WTF` folder or SavedVariables.
 4. If World of Warcraft is already running, return to the game and run
 	`/reload`.
-5. Run `/dibs status` and confirm the loaded version is `0.8.9`.
+5. Run `/dibs status` and confirm the loaded version is `0.8.11`.
 
 Replacing the addon folder does not normally delete Dibs SavedVariables. WoW stores them under `WTF`, not inside `Interface\AddOns`.
 
@@ -128,7 +128,7 @@ After logging in, check the version, then open the Player window:
 /dibs
 ```
 
-`/dibs status` should report version 0.8.9 for the published ZIP. `/dibs`
+`/dibs status` should report version 0.8.11 for the published ZIP. `/dibs`
 opens the Player window; it is not the version-status command. A normal player
 not having Officer access is expected.
 
@@ -159,10 +159,10 @@ enabled in the **AddOns** list, and log back in.
 
 ### “Out of date” or wrong version
 
-- Remove the old addon program files and reinstall the v0.8.9 folder.
+- Remove the old addon program files and reinstall the v0.8.11 folder.
 - Do not delete `WTF` or SavedVariables.
 - If WoW is running, run `/reload`, then check `/dibs status` for version
-	`0.8.9`.
+	`0.8.11`.
 
 ### I installed it under `_classic_`
 

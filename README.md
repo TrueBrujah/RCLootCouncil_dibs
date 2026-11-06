@@ -1,7 +1,7 @@
 # RCLootCouncil_dibs
 
 Development compatibility baseline: **0.8.x**. Latest published stable release:
-**0.8.9** (published 2026-10-16). The source declares **0.8.11** (unreleased).
+**0.8.11**. The source declares **0.8.11**.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -14,17 +14,17 @@ guild Dibs ledger, reservations, permissions, and audit history.
 
 ## Downloads
 
-- [Stable release v0.8.9](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.8.9)
+- [Stable release v0.8.11](https://github.com/TrueBrujah/RCLootCouncil_dibs/releases/tag/v0.8.11)
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
-Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.9 is
+Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.11 is
 the latest stable publication. Development builds use the 0.8.x compatibility
 family and reject 0.7.x peers until they update. These guides describe the
 current source, not proof that every feature has passed Retail validation.
 The [v0.8.0 checklist](B12_Release_Candidate_Checklist.md) and
 [v0.8.0 evidence](docs/audits/DIBS_0.8.0_Release_Candidate_Evidence.md) are
 historical, including their deferred historical-confirmation check; they do not
-certify 0.8.8 or 0.8.9.
+certify v0.8.11.
 
 ## Features
 
@@ -90,9 +90,9 @@ delta, request reference, and canonical event/reference.
 
 See the complete illustrated guide:
 
-[Manual installation guide — published v0.8.9](docs/INSTALLATION.md)
+[Manual installation guide — published v0.8.11](docs/INSTALLATION.md)
 
-For a quick reference, download the stable v0.8.9 ZIP and extract
+For a quick reference, download the stable v0.8.11 ZIP and extract
 `RCLootCouncil_dibs` into `World of Warcraft\_retail_\Interface\AddOns\`.
 Return to WoW and run `/reload`, then verify the addon with `/dibs status`.
 
