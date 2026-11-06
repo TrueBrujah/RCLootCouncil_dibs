@@ -1731,18 +1731,33 @@ local function installForcedDibConfigHook()
   local ml = getRCMLModule(rc)
   local configReady = #collectRCDBs(rc) > 0
   local lifecycleHooked = false
+  local profileRefreshHooked = false
   for _, methodName in ipairs({ "OnInitialize", "OnEnable", "UpdateDB", "OptionsTable" }) do
-    lifecycleHooked = hookForcedDibLifecycle(rc, methodName, rc) or lifecycleHooked
-    lifecycleHooked = hookForcedDibLifecycle(ml, methodName, rc) or lifecycleHooked
+    local rcMethodHooked = hookForcedDibLifecycle(rc, methodName, rc)
+    local mlMethodHooked = hookForcedDibLifecycle(ml, methodName, rc)
+    lifecycleHooked = rcMethodHooked or mlMethodHooked or lifecycleHooked
+    if methodName == "UpdateDB" then
+      profileRefreshHooked = rcMethodHooked or mlMethodHooked or profileRefreshHooked
+    end
   end
 
   ensureForcedDibConfig(rc, false)
   ensureForcedDibOptionsLock(rc)
   deferForcedDibRefresh(rc, true)
-  startForcedConfigWatcher()
   local rcHooked = hookConfigChanged(rc, rc)
   local mlHooked = hookConfigChanged(ml, rc)
   local ready = configReady or lifecycleHooked or rcHooked or mlHooked
+  if configReady and profileRefreshHooked then
+    -- UpdateDB runs when RCLootCouncil switches or resets its profile. Once
+    -- the current database and this lifecycle hook are ready, polling both
+    -- trees 40 times during startup only repeats work already covered here.
+    Dibs.RCLootCouncil.configWatcherActive = false
+    Dibs.RCLootCouncil.configWatcherStopped = true
+  else
+    -- Keep bounded polling only for older forks without a ready DB plus
+    -- lifecycle callbacks.
+    startForcedConfigWatcher()
+  end
   if ready then
     Dibs.RCLootCouncil.forcedConfigHookOwner = rc
     Dibs.RCLootCouncil.forcedConfigHookReady = true
@@ -2135,14 +2150,14 @@ local function applyDibsButtonState(lootFrame)
   applyPreDibLabels(lootFrame, entries, preDibIndex)
 end
 
-local function installLootFrameHook()
+local function installLootFrameHook(skipRefresh)
   if inCombatLockdown() then return Dibs.RCLootCouncil.QueueUIRefresh("loot") end
   if type(hooksecurefunc) ~= "function" then return false end
   local rc = getRC()
   local lootFrame = getLootFrameModule(rc)
   if type(lootFrame) ~= "table" then return false end
   if lootFrame.__dibsButtonHooked then
-    applyDibsButtonState(lootFrame)
+    if skipRefresh ~= true then applyDibsButtonState(lootFrame) end
     return true
   end
   if type(lootFrame.Update) ~= "function" then return false end
@@ -2534,7 +2549,7 @@ local function ensureRuntimeHooks(maxAttempts)
   local function tick()
     attempts = attempts + 1
     local configReady = installForcedDibConfigHook()
-    local lootReady = installLootFrameHook()
+    local lootReady = installLootFrameHook(true)
     local votingReady = installVotingFrameColumns()
     if (configReady and lootReady and votingReady) or attempts >= limit then
       Dibs.RCLootCouncil.runtimeHooksReady = configReady and lootReady and votingReady

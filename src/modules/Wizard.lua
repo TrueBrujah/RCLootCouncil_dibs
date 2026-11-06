@@ -111,15 +111,21 @@ local function profileMatches(profileId)
   return true
 end
 
-local function installationStatus()
-  return Dibs.Installation and Dibs.Installation.GetStatus and Dibs.Installation.GetStatus() or {
+local function installationStatus(dbOverride)
+  if Dibs.Installation and Dibs.Installation.GetStatus then
+    return Dibs.Installation.GetStatus(nil, dbOverride)
+  end
+  return {
     state = "NOT_INITIALIZED", governance = {}, legacy = {}, baseline = {}, coordinator = {},
     compatibility = {}, sync = {}, protocol = {}, technical = {},
   }
 end
 
-local function setupAssistantReport()
-  return Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate and Dibs.SetupAssistant.Evaluate({ scope = "guild" }) or {
+local function setupAssistantReport(dbOverride)
+  -- Wizard has its own Sync step, so avoid Setup Assistant's duplicate optional
+  -- sync probe while retaining its full guild-readiness verdict.
+  return Dibs.SetupAssistant and Dibs.SetupAssistant.Evaluate
+    and Dibs.SetupAssistant.Evaluate({ scope = "guild", includeSyncState = false, db = dbOverride }) or {
     status = "UNAVAILABLE", checks = {}, blockingCount = 0,
   }
 end
@@ -131,8 +137,8 @@ local function findCheck(report, id)
   return nil
 end
 
-local function stepInstallation()
-  local status = installationStatus()
+local function stepInstallation(status)
+  status = status or installationStatus()
   if not status.governance or not status.governance.ready then
     return { status = "ACTION_REQUIRED", summary = "Guild governance needs initialization." }
   end
@@ -153,9 +159,9 @@ local function stepGuild()
   return { status = "READY", summary = "Guild: " .. tostring(guildName) }
 end
 
-local function initialOperationalPolicyValues()
+local function initialOperationalPolicyValues(seasons)
   local preDibModes = {}
-  local seasons = call(Dibs.Seasons and Dibs.Seasons.List, false) or {}
+  seasons = type(seasons) == "table" and seasons or call(Dibs.Seasons and Dibs.Seasons.List, false) or {}
   for _, season in ipairs(seasons) do
     if season.id ~= nil then
       local mode = call(Dibs.PreDibs and Dibs.PreDibs.GetModePolicy, season.id)
@@ -174,13 +180,21 @@ local function initialOperationalPolicyValues()
   }
 end
 
-local function stepOperationalPolicy()
+local function stepOperationalPolicy(_, _, seasons, policySummary, dbOverride)
   local policy = Dibs.OperationalPolicy
-  local state = call(policy and policy.GetState) or {}
+  local state = policySummary
+  if type(state) ~= "table" or type(state.status) ~= "string" then
+    state = call(policy and policy.GetState) or {}
+  end
   if state.status == "POLICY_ADOPTED" then
     return { status = "READY", summary = "Guild Policy is adopted at revision " .. tostring(state.policyRevision) .. "." }
   end
-  local governance = call(Dibs.Governance and Dibs.Governance.GetState) or {}
+  local governanceStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local governance = call(Dibs.Governance and Dibs.Governance.GetInstallationSummary, dbOverride) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "governance-status-summary", governanceStartedAt)
+  end
   if governance.status ~= "GOVERNANCE_ADOPTED" then
     return { status = "BLOCKED", summary = "Initialize Guild Configuration before adopting Guild Policy." }
   end
@@ -190,12 +204,17 @@ local function stepOperationalPolicy()
   return {
     status = "ACTION_REQUIRED",
     summary = "Review the local settings below, then explicitly adopt Guild Policy.",
-    detail = initialOperationalPolicyValues(),
+    detail = initialOperationalPolicyValues(seasons),
   }
 end
 
-local function stepAdministration()
-  local officers = call(Dibs.Permissions and Dibs.Permissions.GetAuthorizedOfficers) or {}
+local function stepAdministration(dbOverride)
+  local officersStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local officers = call(Dibs.Permissions and Dibs.Permissions.GetAuthorizedOfficers, dbOverride) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "authorized-officer-read", officersStartedAt)
+  end
   local gmName, officerCount = nil, 0
   for _, entry in ipairs(officers) do
     if entry.role == "gm" then gmName = entry.playerName else officerCount = officerCount + 1 end
@@ -206,25 +225,25 @@ local function stepAdministration()
   return { status = "READY", summary = string.format("GM: %s | %d officer(s) authorized.", gmName, officerCount) }
 end
 
-local function stepSeasons()
-  local seasons = call(Dibs.Seasons and Dibs.Seasons.List, false) or {}
+local function stepSeasons(_, _, seasons)
+  seasons = type(seasons) == "table" and seasons or call(Dibs.Seasons and Dibs.Seasons.List, false) or {}
   if #seasons == 0 then
     return { status = "ACTION_REQUIRED", summary = "No season configured." }
   end
   return { status = "READY", summary = #seasons .. " season(s) configured." }
 end
 
-local function stepRankRules()
-  local seasonId = call(Dibs.GetCurrentSeasonId)
-  local rows = call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId)
+local function stepRankRules(seasonId, rows, dbOverride, syncBehind)
+  seasonId = seasonId or call(Dibs.GetCurrentSeasonId, dbOverride)
+  rows = rows or call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId, dbOverride)
   if type(rows) ~= "table" then
     return { status = "WARNING", summary = "Guild rank configuration cannot be verified." }
   end
-  local catalog = call(Dibs.Seasons and Dibs.Seasons.GetCatalogState) or {}
+  local catalog = call(Dibs.Seasons and Dibs.Seasons.GetCatalogState, dbOverride) or {}
   local revision = tonumber(catalog.catalogRevision) or 0
-  local record = revision > 0 and call(Dibs.Seasons and Dibs.Seasons.GetCatalogRecord, revision) or nil
+  local record = revision > 0 and call(Dibs.Seasons and Dibs.Seasons.GetCatalogRecord, revision, dbOverride) or nil
   local publishedRules = record and record.rankRules and record.rankRules[tostring(seasonId)]
-  local currentRules = call(Dibs.RankRules and Dibs.RankRules.GetRulesForSeason, seasonId) or {}
+  local currentRules = call(Dibs.RankRules and Dibs.RankRules.GetRulesForSeason, seasonId, dbOverride) or {}
   local currentHash = Dibs.Sync and Dibs.Sync.CalculateContentHash and Dibs.Sync.CalculateContentHash(currentRules)
   local publishedHash = publishedRules and Dibs.Sync and Dibs.Sync.CalculateContentHash
     and Dibs.Sync.CalculateContentHash(publishedRules)
@@ -246,7 +265,10 @@ local function stepRankRules()
   if warning > 0 then
     return { status = "WARNING", summary = "Rank Rules need review: " .. table.concat(affected, ", ") .. ".", rows = rows }
   end
-  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then
+  if syncBehind == nil and Dibs.Sync and Dibs.Sync.IsSyncBehind then
+    syncBehind = Dibs.Sync.IsSyncBehind()
+  end
+  if syncBehind == true then
     return { status = "WARNING", summary = "Rank Rules are published, but SEASON_CATALOG synchronization is behind. Revision " .. tostring(revision) .. ".", rows = rows }
   end
   if #rows == 0 then
@@ -255,30 +277,20 @@ local function stepRankRules()
   return { status = "READY", summary = "Rank Rules are configured and synchronized through SEASON_CATALOG revision " .. tostring(revision) .. ".", rows = rows }
 end
 
-local function stepAllocationReconciliation()
-  local seasonId = call(Dibs.GetCurrentSeasonId)
-  local rows = call(Dibs.RankRules and Dibs.RankRules.GetAllocationReconciliation, seasonId)
-  if type(rows) ~= "table" or #rows == 0 then
-    local rankRows = call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId) or {}
-    local allDisabled = #rankRows > 0
-    for _, row in ipairs(rankRows) do
-      if row.enabled ~= false then allDisabled = false; break end
-    end
-    if allDisabled then
-      return { status = "OPTIONAL", summary = "All current guild ranks have Dibs allocation disabled." }
-    end
+local function stepAllocationReconciliation(rankRows)
+  rankRows = type(rankRows) == "table" and rankRows or {}
+  if #rankRows == 0 then
     return { status = "WARNING", summary = "Member allocation reconciliation cannot be verified from the current roster." }
   end
   local needed, retained = 0, 0
-  local unknown = 0
-  for _, row in ipairs(rows) do
-    local difference = tonumber(row.difference)
-    if difference == nil then unknown = unknown + 1
-    elseif difference > 0 then needed = needed + 1
-    elseif difference < 0 then retained = retained + 1 end
+  local allDisabled = true
+  for _, row in ipairs(rankRows) do
+    if row.enabled ~= false then allDisabled = false end
+    needed = needed + (tonumber(row.pendingReconciliation) or 0)
+    retained = retained + (tonumber(row.surplusMembers) or 0)
   end
-  if unknown > 0 then
-    return { status = "WARNING", summary = "Member allocation reconciliation cannot be verified for " .. tostring(unknown) .. " roster row(s)." }
+  if allDisabled then
+    return { status = "OPTIONAL", summary = "All current guild ranks have Dibs allocation disabled." }
   end
   if needed > 0 then
     return { status = "ACTION_REQUIRED", summary = tostring(needed) .. " players need starting-allocation reconciliation.",
@@ -302,9 +314,13 @@ local function stepDibsRules(report)
   return { status = "WARNING", summary = check.remediation or check.impact or "Loot type rules need review." }
 end
 
-local function stepPreDibs()
-  local seasonId = call(Dibs.GetCurrentSeasonId)
-  local summary = call(Dibs.PreDibs and Dibs.PreDibs.GetStatusSummary, seasonId) or {}
+local function stepPreDibs(_, activeLedgerId, seasonId, policySummary)
+  seasonId = seasonId or call(Dibs.GetCurrentSeasonId)
+  local summaryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local summary = call(Dibs.PreDibs and Dibs.PreDibs.GetStatusSummary, seasonId, activeLedgerId, policySummary) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "predibs-status-summary", summaryStartedAt)
+  end
   if summary.publicEnabled == false then
     return { status = "OPTIONAL", summary = "Public Pre-Dibs is disabled for this guild.", detail = summary }
   end
@@ -316,8 +332,8 @@ local function stepPreDibs()
   }
 end
 
-local function stepLedger()
-  local status = installationStatus()
+local function stepLedger(status)
+  status = status or installationStatus()
   local label = ({
     READY = "Existing — Healthy", RECONCILIATION_REQUIRED = "Existing — Migration Required",
     READY_TO_INITIALIZE = "Not Initialized", NOT_INITIALIZED = "Not Initialized",
@@ -346,9 +362,7 @@ local function stepRCLootCouncil()
   return { status = "OPTIONAL", summary = "RCLootCouncil is not detected; DIBS runs standalone.", detail = status }
 end
 
-local function stepSync()
-  local syncStatus = call(Dibs.Sync and Dibs.Sync.GetStatus)
-  local behind = call(Dibs.Sync and Dibs.Sync.IsSyncBehind)
+local function stepSync(syncStatus, behind)
   if type(syncStatus) ~= "table" or type(syncStatus.state) ~= "string" then
     return { status = "WARNING", summary = "Synchronization status is unavailable." }
   end
@@ -375,21 +389,83 @@ local STEP_STATUS = {
 
 ---@return table steps List of `{ id, label, status, summary }` for every step except review/readiness.
 ---@return table report The underlying `SetupAssistant.Evaluate()` report (reused, not recomputed).
-local function computeSteps()
-  local report = setupAssistantReport()
+local function computeSteps(dbOverride)
+  local installationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local installation, activeLedgerId = installationStatus(dbOverride)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "installation-status", installationStartedAt)
+  end
+  local seasonsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local seasons = call(Dibs.Seasons and Dibs.Seasons.List, false, dbOverride) or {}
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "season-list", seasonsStartedAt)
+  end
+  local assistantStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local report = setupAssistantReport(dbOverride)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "setup-assistant", assistantStartedAt)
+  end
   local steps = {}
+  local seasonId, rankRows = call(Dibs.GetCurrentSeasonId, dbOverride), nil
+  local policySummaryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local policySummary = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetPreDibSummary,
+    seasonId, activeLedgerId, dbOverride)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "operational-policy-summary", policySummaryStartedAt)
+  end
+  local syncStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local getSyncStatus = Dibs.Sync and (Dibs.Sync.GetStatusSummary or Dibs.Sync.GetStatus)
+  local syncStatus = call(getSyncStatus)
+  local syncBehind
+  if type(syncStatus) == "table" and type(syncStatus.syncBehind) == "boolean"
+    and syncStatus.state ~= "SYNC_UNAVAILABLE" then
+    syncBehind = syncStatus.syncBehind
+  else
+    syncBehind = call(Dibs.Sync and Dibs.Sync.IsSyncBehind)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "sync-status", syncStatusStartedAt)
+  end
   for _, definition in ipairs(STEPS) do
     if definition.id == "review" or definition.id == "readiness" then
       -- computed after the loop; needs the other steps' results
+    elseif definition.id == "rankRules" then
+      local rankSummaryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+      rankRows = call(Dibs.RankRules and Dibs.RankRules.GetRankConfigurationSummary, seasonId, dbOverride)
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Wizard data", "rank-configuration-summary", rankSummaryStartedAt)
+      end
+      local computed = stepRankRules(seasonId, rankRows, dbOverride, syncBehind)
+      steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail or computed.rows }
+    elseif definition.id == "allocationReconciliation" then
+      local computed = stepAllocationReconciliation(rankRows)
+      steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail or computed.rows }
     elseif definition.id == "dibsRules" then
       local computed = stepDibsRules(report)
       steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail }
     else
-      local computed = STEP_STATUS[definition.id]()
+      local stepStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+      local computed
+      if definition.id == "preDibs" then
+        -- Keep the season ID distinct from the season list passed to the other steps.
+        computed = STEP_STATUS[definition.id](installation, activeLedgerId, seasonId, policySummary)
+      elseif definition.id == "sync" then
+        computed = STEP_STATUS[definition.id](syncStatus, syncBehind)
+      elseif definition.id == "administration" then
+        computed = STEP_STATUS[definition.id](dbOverride)
+      elseif definition.id == "operationalPolicy" then
+        computed = STEP_STATUS[definition.id](installation, activeLedgerId, seasons, policySummary, dbOverride)
+      else
+        computed = STEP_STATUS[definition.id](installation, activeLedgerId, seasons, policySummary)
+      end
+      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+        Dibs.UIRenderStats.Record("Wizard data", "step-evaluation", stepStartedAt)
+        Dibs.UIRenderStats.Record("Wizard step", definition.id, stepStartedAt)
+      end
       steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail or computed.rows }
     end
   end
-  return steps, report
+  return steps, report, installation
 end
 
 local function reviewStatus(steps)
@@ -411,14 +487,14 @@ end
 
 ---@param actor string|nil Reserved for future actor-scoped projections; unused today.
 ---@return table status `{ steps = {...}, overallState, mode }`.
-function Wizard.GetStatus(actor)
-  local steps, report = computeSteps()
+function Wizard.GetStatus(actor, dbOverride)
+  local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local steps, report, installation = computeSteps(dbOverride)
   local review = reviewStatus(steps)
   local readiness = readinessStatus(report)
   steps[#steps + 1] = { id = "review", label = "Review", status = review.status, summary = review.summary }
   steps[#steps + 1] = { id = "readiness", label = "Guild Setup Checks", status = readiness.status, summary = readiness.summary, detail = readiness.report }
 
-  local installation = installationStatus()
   local overallState
   if not installation.governance or not installation.governance.ready then
     overallState = "NEW_INSTALLATION"
@@ -440,7 +516,11 @@ function Wizard.GetStatus(actor)
   elseif overallState == "READY_FOR_RAID" then mode = "REVIEW_CONFIGURATION"
   else mode = "EDIT_CONFIGURATION" end
 
-  return { steps = steps, overallState = overallState, mode = mode }
+  local status = { steps = steps, overallState = overallState, mode = mode }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "status", renderStartedAt)
+  end
+  return status, installation
 end
 
 function Wizard.GetInitialOperationalPolicyValues()
@@ -634,9 +714,9 @@ local function turnkeySeverity(step)
   return "WARNING"
 end
 
-function Wizard.GetTurnkeyStatus(actor)
-  local legacy = Wizard.GetStatus(actor)
-  local install = installationStatus()
+function Wizard.GetTurnkeyStatus(actor, dbOverride)
+  local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local legacy, install = Wizard.GetStatus(actor, dbOverride)
   local syncBlocking = install.sync and install.sync.behind == true
     and not (install.protocol and install.protocol.active == true)
   local verification, primaryIssueId, hasBlocking, hasWarning = {}, nil, false, false
@@ -677,13 +757,22 @@ function Wizard.GetTurnkeyStatus(actor)
         result.nextAction = text("WIZARD_SYNC_BLOCKING_ACTION")
       end
       if step.id == "readiness" and severity ~= "READY" and type(step.detail) == "table" then
+        local selectedFinding
         for _, finding in ipairs(step.detail.checks or {}) do
           if finding.state ~= "ready" and finding.state ~= "skipped" then
-            result.explanation = tostring(finding.impact or finding.reasonCode or result.explanation)
-            result.impact = tostring(finding.impact or result.impact)
-            result.nextAction = Dibs.SetupAssistant.GetGuidance(finding.id, finding.reasonCode, finding.remediation)
-            break
+            if finding.required == true then
+              selectedFinding = finding
+              break
+            elseif not selectedFinding then
+              selectedFinding = finding
+            end
           end
+        end
+        if selectedFinding then
+          result.explanation = tostring(selectedFinding.impact or selectedFinding.reasonCode or result.explanation)
+          result.impact = tostring(selectedFinding.impact or result.impact)
+          result.nextAction = Dibs.SetupAssistant.GetGuidance(selectedFinding.id,
+            selectedFinding.reasonCode, selectedFinding.remediation)
         end
       end
       verification[#verification + 1] = result
@@ -715,7 +804,7 @@ function Wizard.GetTurnkeyStatus(actor)
   local overallState = hasBlocking and "BLOCKED"
     or hasWarning and "PARTIALLY_CONFIGURED"
     or "READY_FOR_RAID"
-  return {
+  local result = {
     currentStage = Wizard.GetCurrentStage(),
     selectedProfileId = Wizard.GetSelectedProfileId(),
     stages = {
@@ -728,6 +817,10 @@ function Wizard.GetTurnkeyStatus(actor)
     overallState = overallState,
     mode = legacy.mode,
   }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Wizard data", "turnkey-status", renderStartedAt)
+  end
+  return result
 end
 
 function Wizard.GetSteps()

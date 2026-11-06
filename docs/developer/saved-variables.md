@@ -62,8 +62,8 @@ dossier or an explicit safe owner body and never apply accounting by themselves.
 
 Legacy flat roots are wrapped into a guild bucket during `Core.lua` initialization.
 Runtime code uses `Dibs.db`; `_G.DibsDB` remains a compatibility alias for the
-active guild bucket. The guild schema currently reports version 7 (the root wrapper remains version 6),
-with versioned reconciliation and character-eligibility sub-stores.
+active guild bucket. The guild schema currently reports version 8 (the root wrapper remains version 6),
+with versioned reconciliation, character-eligibility, and dispute operation-state projections.
 
 Guild `ledgers[ledgerId]` holds each ledger's separate accounting state.
 `activeLedgerId` selects the local active view and `ledger` remains its legacy
@@ -86,7 +86,7 @@ subtrees are placed in `persistenceRecovery.quarantine` before only the affected
 runtime subtree is rebuilt. A failed staged migration leaves the original
 SavedVariables root unchanged.
 
-Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `preDibs`, `reconciliation`, `characterEligibility`, `governance`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
+Persisted names include `RCLootCouncil_dibsDB`, `guilds`, `persistenceRecovery`, `currentSeasonId`, `rankRules`, `ledger`, `ledgerProposals`, `preDibs`, `reconciliation`, `characterEligibility`, `governance`, `profiles`, `backups`, `backupRetention`, `pendingRestores`, `pendingImports`, `auditLog`, `sync`, and `settings`. `ledgerProposals` stores only pending/approved proposal metadata and references; it is not a transaction ledger. They are compatibility surfaces. A rename requires a migration, a version bump, tests for old data, and a documented alias. Do not rename them for style alone.
 
 B12 adds local preference fields but no guild synchronization fields. Requests, history
 projections, context-menu state, route state, and release evidence remain

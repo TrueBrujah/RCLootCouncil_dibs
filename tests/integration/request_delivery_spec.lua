@@ -2,11 +2,11 @@ local clients = require("helpers.request_client_fixture")
 
 describe("Private request delivery between simulated production clients", function()
   local COORDINATOR, PLAYER, OFFICER = "Coordinator-Realm", "Player-Realm", "Officer-Realm"
-  local function setup()
+  local function setup(category)
     local world = clients.new()
     world:Hello(COORDINATOR); world:Hello(PLAYER); world:Hello(OFFICER)
     local dibs = world:Activate(PLAYER)
-    local request = dibs.Disputes.CreateReport({ category = "other", note = "Synthetic player report" })
+    local request = dibs.Disputes.CreateReport({ category = category or "other", note = "Synthetic player report" })
     assert_not_nil(request)
     world:TakePackets()
     world:Advance(61)
@@ -59,6 +59,44 @@ describe("Private request delivery between simulated production clients", functi
     dibs.RequestDelivery.Pump()
     assert_equal(0, #world:TakePackets())
     assert_equal("REQUEST_PEER_UNSUPPORTED", dibs.RequestDelivery.GetStatus(request.requestId).reason)
+  end)
+
+  it("lets Player UI refresh pending delivery without scanning all reminders", function()
+    local world = clients.new()
+    local dibs = world:Activate(PLAYER)
+    local original = dibs.RequestDelivery.CheckReminders
+    local originalDebugProfileStop = _G.debugprofilestop
+    local profileTicks = 0
+    local scans = 0
+    _G.debugprofilestop = function()
+      profileTicks = profileTicks + 1
+      return profileTicks
+    end
+    dibs.RequestDelivery.CheckReminders = function(...)
+      scans = scans + 1
+      return original(...)
+    end
+
+    dibs.UIRenderStats.Reset()
+    dibs.UIRenderStats.SetEnabled(true)
+    dibs.RequestDelivery.Pump(true)
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = originalDebugProfileStop
+    assert_equal(0, scans)
+    local measured = {}
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "RequestDelivery data" then measured[entry.page] = true end
+    end
+    assert_true(measured["pump-enabled-check"])
+    assert_true(measured["pump-enabled-developer-mode"])
+    assert_true(measured["pump-enabled-independent-raid"])
+    assert_true(measured["pump-enabled-module-policy"])
+    assert_true(measured["pump-coordinator-resolution"])
+    assert_true(measured["pump-snapshot-refresh"])
+    assert_true(measured["pump-pending-outbox"])
+    dibs.RequestDelivery.Pump()
+    assert_equal(1, scans)
+    dibs.RequestDelivery.CheckReminders = original
   end)
 
   it("sends safe owner state and private officer replicas, then delivers the owner reply", function()
@@ -166,13 +204,17 @@ describe("Private request delivery between simulated production clients", functi
   end)
 
   it("allows only one compensation across stale replicas and blocks epoch takeover", function()
-    local world, request, packets = setup()
+    local world, request, packets = setup("missing_debit")
     local coordinator = world:Deliver(COORDINATOR, packets)
     world:Advance(61); coordinator.RequestDelivery.Pump()
     local originalSnapshots = world:TakePackets()
     local replica = world:Deliver(OFFICER, originalSnapshots)
     assert_not_nil(replica.Disputes.GetRequest(request.requestId, nil))
     coordinator = world:Activate(COORDINATOR)
+    local grant = coordinator.ProtectedActions.Execute("ledger.grant", COORDINATOR, {
+      playerName = PLAYER, amount = 1, reason = "Seed missing-debit correction", source = "test",
+    })
+    assert_true(grant.ok, tostring(grant.reasonCode))
     local before = #coordinator.Ledger.GetAllTransactions()
     local correction, reason = coordinator.Disputes.CorrectBalance(request.requestId, { amount = 1, confirmed = true, reason = "Synthetic verified correction" })
     assert_not_nil(correction, tostring(reason))

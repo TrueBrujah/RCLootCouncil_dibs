@@ -124,8 +124,9 @@ as the provider, command, UI projection, reconciliation, and refresh boundary.
 ### Phase 1: Midnight foundation and local persistence
 
 Add shared Midnight tokens/components, optional presentation probes, native media fallback,
-LibWindow restoration, local presentation persistence, and dirty/coalesced refresh behavior.
-Keep AceConfig simple and route complex views through Dibs-owned components.
+LibWindow restoration, local presentation persistence including the built-in palette choice,
+and dirty/coalesced refresh behavior. Keep AceConfig simple and route complex views through
+Dibs-owned components.
 
 ### Phase 2: Provider-isolated sandbox
 

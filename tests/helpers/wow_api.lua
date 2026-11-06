@@ -213,6 +213,7 @@ function M.install(opts)
     local frame = makeFrame()
     frame.kind, frame.name, frame.parent, frame.template = kind, name, parent, template
     table.insert(frames, frame)
+    _G.__dibsFrameCreations = _G.__dibsFrameCreations or {}
     table.insert(_G.__dibsFrameCreations, frame)
     return frame
   end

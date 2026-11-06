@@ -206,6 +206,36 @@ describe("Guild-authoritative Loot Rules", function()
     assert_equal("LOCAL_LEGACY_ONLY", target.LootRules.GetStatus().status)
   end)
 
+  it("uses a compact copied catalog snapshot for read-only Loot Rules status", function()
+    local gm = load("GameMaster-Realm")
+    adoptPolicy(gm)
+    assert_true(gm.LootRules.Adopt())
+
+    local snapshot, reason, revision = gm.Seasons.GetGuildLootRulesSnapshot()
+    assert_not_nil(snapshot, tostring(reason))
+    assert_equal(1, revision)
+    local expected = snapshot.types.TOKEN.adventureGuide
+    snapshot.types.TOKEN.adventureGuide = not expected
+    assert_equal(expected, gm.Seasons.GetGuildLootRulesSnapshot().types.TOKEN.adventureGuide,
+      "the compact projection must not expose mutable SavedVariables")
+
+    local originalGetCatalogRecord = gm.Seasons.GetCatalogRecord
+    local originalGetDB = gm.GetDB
+    local originalSyncSummary = gm.Sync.GetStatusSummary
+    gm.Seasons.GetCatalogRecord = function() error("status should not copy the full catalog record") end
+    gm.GetDB = function() error("current-guild status should reuse the resolved guild DB") end
+    gm.Sync.GetStatusSummary = function() return { state = "SYNC_READY" } end
+
+    local ok, status = pcall(gm.LootRules.GetStatus)
+
+    gm.Seasons.GetCatalogRecord = originalGetCatalogRecord
+    gm.GetDB = originalGetDB
+    gm.Sync.GetStatusSummary = originalSyncSummary
+    assert_true(ok, tostring(status))
+    assert_equal("GUILD_LOOT_RULES_READY", status.status)
+    assert_equal(1, status.catalogRevision)
+  end)
+
   it("LRA20 distinguishes all six authority and synchronization readiness states", function()
     local gm = load("GameMaster-Realm")
     local function assertReadinessStatus(expected)
@@ -234,16 +264,15 @@ describe("Guild-authoritative Loot Rules", function()
     assert_equal("GUILD_LOOT_RULES_READY", status.status)
     assertReadinessStatus(status.status)
 
-    gm.Sync.GetStatus = function()
-      return { state = "SYNC_BEHIND", reason = "SEASON_CATALOG_PARENT_MISSING" }
+    gm.Sync.GetStatusSummary = function()
+      return { state = "SYNC_BEHIND", syncBehind = true, reason = "SEASON_CATALOG_PARENT_MISSING" }
     end
     status = gm.LootRules.GetStatus()
     assert_equal("GUILD_LOOT_RULES_SYNC_BEHIND", status.status)
     assertReadinessStatus(status.status)
 
-    gm.Sync.GetStatus = function() return { state = "SYNC_READY" } end
-    gm.Sync.GetSynchronizationStatus = function()
-      return { lastAddonVersionMismatch = { reasonCode = "ADDON_UPDATE_REQUIRED" } }
+    gm.Sync.GetStatusSummary = function()
+      return { state = "SYNC_READY", lastAddonVersionMismatchReasonCode = "ADDON_UPDATE_REQUIRED" }
     end
     status = gm.LootRules.GetStatus()
     assert_equal("GUILD_LOOT_RULES_INCOMPATIBLE", status.status)
@@ -254,6 +283,7 @@ describe("Guild-authoritative Loot Rules", function()
 
     local legacyClient = load("Player-Realm")
     legacyClient.db.settings.dibAllowedTypes = { TOKEN = false }
+    legacyClient.Sync.GetStatusSummary = nil
     legacyClient.Sync.GetSynchronizationStatus = function()
       return { lastAddonVersionMismatch = { reasonCode = "ADDON_UPDATE_REQUIRED" } }
     end

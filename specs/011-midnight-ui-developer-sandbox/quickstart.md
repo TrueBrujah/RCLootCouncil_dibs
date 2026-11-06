@@ -30,24 +30,26 @@ rather than weakening existing production tests.
 
 1. Load without RCLootCouncil and without LibStub; verify native Midnight fallback and
    standalone Dibs operation.
-2. Verify Developer Mode is disabled by default; `/dibs dev on`, `/dibs dev status`, and
+2. In Player Preferences, choose each built-in color palette; verify the Player window
+   recolors after selection and that the setting remains character-local.
+3. Verify Developer Mode is disabled by default; `/dibs dev on`, `/dibs dev status`, and
    `/dibs dev off` change only local developer state.
-3. Clone production data into the separate sandbox store, enter with PLAYER, OFFICER, and
+4. Clone production data into the separate sandbox store, enter with PLAYER, OFFICER, and
    GUILD_MASTER simulations, and assert production ledger, policy, coordinator, recovery,
    and SavedVariables snapshots remain byte-equivalent.
-4. Attempt provider mixing, invalid schema, future schema, malformed clone, and sandbox
+5. Attempt provider mixing, invalid schema, future schema, malformed clone, and sandbox
    mutation after exit; verify fail-closed results and unchanged production state.
-5. Reload after sandbox activity; verify production provider and real authority are active,
+6. Reload after sandbox activity; verify production provider and real authority are active,
    simulated authority is absent, and sandbox data is still available for explicit re-entry.
-6. Exercise all required scenarios and assert no addon messages, fake global events, live
+7. Exercise all required scenarios and assert no addon messages, fake global events, live
    loot events, or RCLootCouncil history/evidence writes are emitted.
-7. Build player and officer projections for empty, degraded, blocked, large, and normal
+8. Build player and officer projections for empty, degraded, blocked, large, and normal
    states; verify role-scoped visibility, readable primary status, and secondary menus.
-8. Search, review, confirm, reject, stale, and ambiguous reconciliation candidates; verify
+9. Search, review, confirm, reject, stale, and ambiguous reconciliation candidates; verify
    the existing protected service path and immutable evidence behavior.
-9. Invalidate a window repeatedly and assert one coalesced refresh; enter combat during
+10. Invalidate a window repeatedly and assert one coalesced refresh; enter combat during
    creation/refresh and verify the existing post-combat deferral.
-10. Render long labels and tables at minimum, typical, and wide sizes; assert no overlap,
+11. Render long labels and tables at minimum, typical, and wide sizes; assert no overlap,
     clipped primary controls, or competing scroll owners through the UI fixture model.
 
 Relevant design details are in [data-model.md](data-model.md) and
@@ -59,8 +61,8 @@ Relevant design details are in [data-model.md](data-model.md) and
    complete native Midnight presentation.
 2. Repeat with each available supported UI environment. Confirm only presentation hints
    change and disable/throw the adapter to verify native fallback.
-3. Move and scale windows, reload, and confirm LibWindow restoration and local presentation
-   persistence without any guild-policy or sync changes.
+3. Move and scale windows, choose a color palette, reload, and confirm the selection and
+   LibWindow restoration persist without any guild-policy or sync changes.
 4. Enable Developer Mode, enter the sandbox, select simulated role/coordinator states,
    exercise fault scenarios, and confirm the persistent warning identifies sandbox mode.
 5. Exit and reload. Confirm production provider, real GM/Officer authority, and production

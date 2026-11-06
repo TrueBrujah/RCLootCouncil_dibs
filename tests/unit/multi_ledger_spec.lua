@@ -28,6 +28,67 @@ describe("MultiLedger lifecycle", function()
     assert_true(ledgers[1].isDefault)
   end)
 
+  it("can omit transaction counts for ledger selectors while preserving the full listing default", function()
+    local dibs = loadGM()
+    local primary = dibs.GetDB().ledgers["guild-primary"]
+    primary.transactions = { first = {}, second = {} }
+
+    local full = dibs.MultiLedger.GetLedgers()
+    local selector = dibs.MultiLedger.GetLedgers({ includeTransactionCount = false })
+
+    assert_equal(2, full[1].transactionCount)
+    assert_nil(selector[1].transactionCount)
+    assert_equal(full[1].id, selector[1].id)
+    assert_equal(full[1].name, selector[1].name)
+    assert_equal(full[1].status, selector[1].status)
+  end)
+
+  it("reuses transaction counts until the ledger data revision changes", function()
+    local dibs = loadGM()
+    local primary = dibs.GetDB().ledgers["guild-primary"]
+    primary.transactions = { first = {}, second = {} }
+
+    local originalPairs = pairs
+    local transactionScans = 0
+    _G.pairs = function(value)
+      if value == primary.transactions then transactionScans = transactionScans + 1 end
+      return originalPairs(value)
+    end
+    local first = dibs.MultiLedger.GetLedgers()
+    local second = dibs.MultiLedger.GetLedgers()
+    _G.pairs = originalPairs
+
+    assert_equal(2, first[1].transactionCount)
+    assert_equal(2, second[1].transactionCount)
+    assert_equal(1, transactionScans)
+
+    primary.transactions.third = {}
+    dibs.Ledger.MarkTransactionsChanged("guild-primary")
+    _G.pairs = function(value)
+      if value == primary.transactions then transactionScans = transactionScans + 1 end
+      return originalPairs(value)
+    end
+    local afterMutation = dibs.MultiLedger.GetLedgers()
+    _G.pairs = originalPairs
+    assert_equal(3, afterMutation[1].transactionCount)
+    assert_equal(2, transactionScans)
+  end)
+
+  it("resolves the active ledger without a second MultiLedger DB lookup", function()
+    local dibs = loadGM()
+    local getDB = dibs.GetDB
+    local calls = 0
+    dibs.GetDB = function(...)
+      calls = calls + 1
+      return getDB(...)
+    end
+
+    local activeLedgerId = dibs.MultiLedger.GetActiveLedgerId()
+    dibs.GetDB = getDB
+    assert_equal("guild-primary", activeLedgerId)
+    assert_equal(1, calls, "the resolved database should be reused by the policy read")
+  end)
+
   it("allows verified officer to propose a new ledger", function()
     local dibs = loadOfficer()
     local result = dibs.MultiLedger.ProposeLedger("Officer-Realm", "Roster Alts")

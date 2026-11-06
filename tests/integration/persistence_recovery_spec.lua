@@ -28,7 +28,7 @@ end
 local function currentRoot(guild)
   return {
     schemaVersion = 6,
-    guilds = { ["realm:testguild"] = guild or legacyGuild(7) },
+    guilds = { ["realm:testguild"] = guild or legacyGuild(8) },
     persistenceRecovery = { version = 1, backups = {}, quarantine = {}, nextBackupId = 1 },
   }
 end
@@ -55,14 +55,44 @@ describe("SavedVariables validation and recovery", function()
   end)
 
   it("migrates every supported historical guild schema deterministically", function()
-    for version = 1, 6 do
+    for version = 1, 7 do
       local _, dibs = loader.load({ savedVariables = legacyGuild(version) })
       local db = dibs.GetDB()
-      assert_equal(7, db.version, "schema " .. tostring(version))
+      assert_equal(8, db.version, "schema " .. tostring(version))
       assert_equal("legacy-tx-1", db.ledger.transactions["legacy-tx-1"].transactionId)
       assert_equal("legacy-request-1", db.preDibs.requests[1].requestId)
+      assert_equal(3, db.disputes.version)
+      assert_not_nil(db.disputes.operationStates)
       assert_equal("MIGRATABLE", dibs.GetPersistenceStatus().state)
     end
+  end)
+
+  it("adds the dispute operation projection without rewriting schema-7 history", function()
+    local source = legacyGuild(7)
+    source.disputes = {
+      version = 2,
+      requests = { { requestId = "old-request" } },
+      order = { "old-request" },
+      corrections = { oldCorrection = { correctionKey = "legacy-key", status = "APPLIED" } },
+    }
+    source.ledger.canonical = {
+      schema = 1, epoch = 4, nextSeq = 3, rootHash = "root-2",
+      commits = { ["4:1"] = { commitHash = "commit-1" }, ["4:2"] = { commitHash = "commit-2" } },
+      positions = { ["4:1"] = "commit-1", ["4:2"] = "commit-2" },
+      transactionIndex = { ["legacy-tx-1"] = "4:1" },
+    }
+    local _, dibs = loader.load({ savedVariables = source })
+    local db = dibs.GetDB()
+
+    assert_equal(8, db.version)
+    assert_equal(3, db.disputes.version)
+    assert_equal("legacy-key", db.disputes.corrections.oldCorrection.correctionKey)
+    assert_equal("commit-1", db.ledger.canonical.commits["4:1"].commitHash)
+    assert_equal("commit-2", db.ledger.canonical.commits["4:2"].commitHash)
+    assert_equal("root-2", db.ledger.canonical.rootHash)
+    assert_equal(3, db.ledger.canonical.nextSeq)
+    assert_equal("4:1", db.ledger.canonical.transactionIndex["legacy-tx-1"])
+    assert_not_nil(db.disputes.operationStates)
   end)
 
   it("recovers a wrong-type root by preserving it in bounded recovery evidence", function()
@@ -134,6 +164,37 @@ describe("SavedVariables validation and recovery", function()
     assert_true(status.diagnostic:find("update RCLootCouncil_dibs", 1, true) ~= nil)
     assert_equal(source, _G.RCLootCouncil_dibsDB)
     assert_equal(999, _G.RCLootCouncil_dibsDB.schemaVersion)
+  end)
+
+  it("avoids recopying the root for a future guild schema while remaining read-only", function()
+    local source = currentRoot(legacyGuild(9))
+    local _, dibs = loader.load({ savedVariables = source })
+    assert_equal("FUTURE_UNSUPPORTED", dibs.GetPersistenceStatus().state)
+    assert_true(dibs.GetPersistenceStatus().readOnly)
+
+    local originalDebugProfileStop = _G.debugprofilestop
+    local profileTicks = 0
+    _G.debugprofilestop = function()
+      profileTicks = profileTicks + 1
+      return profileTicks
+    end
+    dibs.UIRenderStats.Reset()
+    dibs.UIRenderStats.SetEnabled(true)
+    dibs.GetDB()
+    dibs.GetDB()
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = originalDebugProfileStop
+
+    local measured = {}
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "Core data" then measured[entry.page] = entry.count end
+    end
+    assert_equal(2, measured["get-db-future-guild-schema"])
+    assert_nil(measured["get-db-root-copy"], "future-schema checks should not clone the full root")
+    assert_equal(source, _G.RCLootCouncil_dibsDB)
+    assert_equal(9, source.guilds["realm:testguild"].version)
+    assert_equal("FUTURE_UNSUPPORTED", dibs.GetPersistenceStatus().state)
+    assert_true(dibs.GetPersistenceStatus().readOnly)
   end)
 
   it("is idempotent after a completed migration and keeps one startup backup", function()

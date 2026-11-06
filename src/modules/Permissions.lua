@@ -65,6 +65,7 @@ local ADMIN_ACTIONS = {
   ["ledger.use"] = true,
   ["ledger.refund"] = true,
   ["ledger.adjust"] = true,
+  ["ledger.operation"] = true,
   ["admin.list"] = true,
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,
@@ -113,17 +114,48 @@ local function isCurrentActor(actor, actorId)
   return normalizeName(suppliedName) ~= nil and sameIdentity(normalizeName(suppliedName), normalizeName(currentName))
 end
 
-local function getConfiguredOfficerLimit()
-  local db = Dibs.GetDB and Dibs.GetDB() or {}
-  local settings = db.settings or {}
+local function getConfiguredOfficerLimit(settings)
+  if type(settings) ~= "table" then
+    local db = Dibs.GetDB and Dibs.GetDB() or {}
+    settings = db.settings or {}
+  end
   local limit = tonumber(settings.officerMaxRankIndex)
   if limit == nil then limit = 1 end
   return math.min(9, math.max(0, math.floor(limit)))
 end
 
-local function rankIsOfficer(rankIndex)
-  local db = Dibs.GetDB and Dibs.GetDB() or {}
-  local settings = db.settings or {}
+local function getRosterRankIndex(actor)
+  local identity = Dibs.Identity
+  if identity and type(identity.ResolveRosterMember) == "function" then
+    local ok, member = pcall(identity.ResolveRosterMember, actor)
+    if ok and type(member) == "table" and member.status ~= "ROSTER_UNAVAILABLE" then
+      if member.status == "RESOLVED" then return tonumber(member.rankIndex) end
+      return nil
+    end
+  end
+
+  -- Compatibility fallback for early initialization or integrations without
+  -- the indexed Identity service. Normal page refreshes use its roster cache.
+  local actorId = Dibs.Permissions.CanonicalPlayerId(actor)
+  if not actorId or type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then
+    return nil
+  end
+  local okCount, memberCount = pcall(GetNumGuildMembers, true)
+  if not okCount then return nil end
+  for index = 1, tonumber(memberCount) or 0 do
+    local ok, name, _, rankIndex = pcall(GetGuildRosterInfo, index)
+    if ok and name and sameIdentity(normalizeName(name), actorId) then
+      return tonumber(rankIndex)
+    end
+  end
+  return nil
+end
+
+local function rankIsOfficer(rankIndex, settings)
+  if type(settings) ~= "table" then
+    local db = Dibs.GetDB and Dibs.GetDB() or {}
+    settings = db.settings or {}
+  end
   local configured = settings.officerRankIndices
   if type(configured) == "table" and next(configured) ~= nil then
     return configured[tostring(rankIndex)] == true or configured[rankIndex] == true
@@ -133,21 +165,12 @@ end
 
 local function rosterRole(actor)
   local actorId = Dibs.Permissions.CanonicalPlayerId(actor)
-  if not actorId or type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then
-    return nil, nil
-  end
-  local okCount, memberCount = pcall(GetNumGuildMembers, true)
-  if not okCount then return nil, nil end
-  for index = 1, tonumber(memberCount) or 0 do
-    local ok, name, _, rankIndex = pcall(GetGuildRosterInfo, index)
-    if ok and name and sameIdentity(normalizeName(name), actorId) then
-      rankIndex = tonumber(rankIndex)
-      if rankIndex == 0 then return "gm", rankIndex end
-      if rankIsOfficer(rankIndex) then return "officer", rankIndex end
-      return "player", rankIndex
-    end
-  end
-  return nil, nil
+  if not actorId then return nil, nil end
+  local rankIndex = getRosterRankIndex(actor)
+  if rankIndex == nil then return nil, nil end
+  if rankIndex == 0 then return "gm", rankIndex end
+  if rankIsOfficer(rankIndex) then return "officer", rankIndex end
+  return "player", rankIndex
 end
 
 function Dibs.Permissions.GetGuildRole(actor)
@@ -172,35 +195,54 @@ function Dibs.Permissions.IsOfficer()
     return true
   end
 
-  if type(GetNumGuildMembers) == "function" and type(GetGuildRosterInfo) == "function" then
-    local playerName = normalizeName(Dibs.GetPlayerName and Dibs.GetPlayerName() or "")
-    local okCount, memberCount = pcall(GetNumGuildMembers, true)
-    memberCount = okCount and tonumber(memberCount) or 0
-    for index = 1, memberCount do
-      local name, _, rankIndex = GetGuildRosterInfo(index)
-      if sameIdentity(normalizeName(name), playerName) then
-        return rankIsOfficer(rankIndex)
-      end
-    end
-  end
-  return false
+  return rankIsOfficer(getRosterRankIndex(nil))
 end
 
 -- Read-only roster enumeration reusing the existing rank-threshold check;
 -- introduces no second authorization model.
-function Dibs.Permissions.GetAuthorizedOfficers()
+function Dibs.Permissions.GetAuthorizedOfficers(dbOverride)
   local results = {}
-  if type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then return results end
-  local okCount, memberCount = pcall(GetNumGuildMembers, true)
-  if not okCount then return results end
-  for index = 1, tonumber(memberCount) or 0 do
-    local ok, name, _, rankIndex = pcall(GetGuildRosterInfo, index)
-    if ok and type(name) == "string" and name ~= "" then
-      local normalizedRank = tonumber(rankIndex)
-      if normalizedRank == 0 then
-        results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "gm" }
-      elseif rankIsOfficer(normalizedRank) then
-        results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "officer" }
+  local db = type(dbOverride) == "table" and dbOverride or (Dibs.GetDB and Dibs.GetDB() or {})
+  local settings = db.settings or {}
+  local members
+  local identity = Dibs.Identity
+  local getRoster = identity and (identity.GetRosterSnapshot or identity.GetRosterMembers)
+  if type(getRoster) == "function" then
+    local ok, roster = pcall(getRoster)
+    if ok and type(roster) == "table" then members = roster end
+  end
+  local configuredRanks = settings.officerRankIndices
+  local officerLimit = getConfiguredOfficerLimit(settings)
+  local function isAuthorizedOfficerRank(rankIndex)
+    if type(configuredRanks) == "table" and next(configuredRanks) ~= nil then
+      return configuredRanks[tostring(rankIndex)] == true or configuredRanks[rankIndex] == true
+    end
+    return tonumber(rankIndex) ~= nil and tonumber(rankIndex) > 0 and tonumber(rankIndex) <= officerLimit
+  end
+  if members then
+    for _, member in ipairs(members) do
+      local name, normalizedRank = member.displayName, tonumber(member.rankIndex)
+      if type(name) == "string" and name ~= "" then
+        if normalizedRank == 0 then
+          results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "gm" }
+        elseif isAuthorizedOfficerRank(normalizedRank) then
+          results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "officer" }
+        end
+      end
+    end
+  else
+    if type(GetNumGuildMembers) ~= "function" or type(GetGuildRosterInfo) ~= "function" then return results end
+    local okCount, memberCount = pcall(GetNumGuildMembers, true)
+    if not okCount then return results end
+    for index = 1, tonumber(memberCount) or 0 do
+      local ok, name, _, rankIndex = pcall(GetGuildRosterInfo, index)
+      if ok and type(name) == "string" and name ~= "" then
+        local normalizedRank = tonumber(rankIndex)
+        if normalizedRank == 0 then
+          results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "gm" }
+        elseif isAuthorizedOfficerRank(normalizedRank) then
+          results[#results + 1] = { playerName = name, rankIndex = normalizedRank, role = "officer" }
+        end
       end
     end
   end

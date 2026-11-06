@@ -15,7 +15,12 @@ describe("B12b targeted page cleanup", function()
     assert_equal(1, #empty.lines)
     assert_equal("No pre-Dibs for this season.", empty.lines[1])
 
-    local _, player = loader.load({ wow = { guildLeader = false, guildRank = 0 } })
+    local _, player = loader.load({ wow = {
+      guildLeader = false,
+      playerName = "Player-Realm",
+      guildMembers = { "Tester-Realm", "Player-Realm" },
+      guildRankIndices = { 0, 3 },
+    } })
     local denied = player.OfficerUI.GetPagedView("players", player.GetCurrentSeasonId(), 1, 8)
     assert_equal("Players", denied.title)
     assert_equal("Officer access required.", denied.lines[1])

@@ -24,11 +24,18 @@ describe("B11c Player UI", function()
   it("keeps the balance in the Player window instead of echoing it to chat", function()
     local _, dibs = setup()
     for index = #(_G.__dibsMessages or {}), 1, -1 do _G.__dibsMessages[index] = nil end
+    local original, summaryCalls = dibs.PlayerUI.GetSummary, 0
+    dibs.PlayerUI.GetSummary = function(...)
+      summaryCalls = summaryCalls + 1
+      return original(...)
+    end
 
-    local summary = dibs.PlayerUI.Show()
+    local frame = dibs.PlayerUI.Show()
 
-    assert_not_nil(summary)
+    assert_equal(_G.DibsPlayerFrame, frame)
+    assert_equal(1, summaryCalls, "opening should render the initial player summary only once")
     assert_equal(0, #(_G.__dibsMessages or {}))
+    dibs.PlayerUI.GetSummary = original
   end)
 
   it("exposes the player views and a diagnostics entry", function()
@@ -47,6 +54,478 @@ describe("B11c Player UI", function()
     assert_equal("vault", navigation[4].value)
     assert_equal("preferences", navigation[5].value)
     assert_equal("diagnostics", navigation[6].value)
+  end)
+
+  it("skips unused Vault and eligibility projections when building the My Dibs view", function()
+    local _, dibs = setup()
+    local originalAcquisitions = dibs.PreDibs.GetAcquisitionsForPlayer
+    local originalEligibility = dibs.CharacterEligibility.GetSummary
+    local originalModePolicy = dibs.PreDibs.GetModePolicy
+    local acquisitionsCalls, eligibilityCalls, modePolicyCalls = 0, 0, 0
+    dibs.PreDibs.GetAcquisitionsForPlayer = function(...)
+      acquisitionsCalls = acquisitionsCalls + 1
+      return originalAcquisitions(...)
+    end
+    dibs.CharacterEligibility.GetSummary = function(...)
+      eligibilityCalls = eligibilityCalls + 1
+      return originalEligibility(...)
+    end
+    dibs.PreDibs.GetModePolicy = function(...)
+      modePolicyCalls = modePolicyCalls + 1
+      return originalModePolicy(...)
+    end
+
+    local completeSummary = dibs.PlayerUI.GetSummary()
+    assert_true(acquisitionsCalls > 0, "other summary consumers should retain full Vault data by default")
+    assert_true(eligibilityCalls > 0, "other summary consumers should retain eligibility data by default")
+    assert_true(modePolicyCalls > 0, "other summary consumers should retain mode policy by default")
+
+    acquisitionsCalls, eligibilityCalls, modePolicyCalls = 0, 0, 0
+    local view = dibs.PlayerUI.GetViewModel(nil, nil, nil, { includeHistory = false })
+    assert_true(type(view) == "table")
+    assert_equal(0, acquisitionsCalls, "My Dibs must not project Great Vault acquisitions it does not display")
+    assert_equal(0, eligibilityCalls, "My Dibs must not build character eligibility data it does not display")
+    assert_equal(0, modePolicyCalls, "My Dibs must not build mode-policy details it does not display")
+
+    dibs.PreDibs.GetAcquisitionsForPlayer = originalAcquisitions
+    dibs.CharacterEligibility.GetSummary = originalEligibility
+    dibs.PreDibs.GetModePolicy = originalModePolicy
+  end)
+
+  it("skips unrelated request, Vault, eligibility, and policy projections for report/history summaries", function()
+    local _, dibs = setup()
+    local preDibs = dibs.PreDibs
+    local original = {
+      requestSummary = preDibs.GetPlayerSeasonRequestSummary,
+      activeRequests = preDibs.GetActiveRequests,
+      requestHistory = preDibs.GetRequestsForPlayer,
+      acquisitions = preDibs.GetAcquisitionsForPlayer,
+      eligibility = dibs.CharacterEligibility.GetSummary,
+      modePolicy = preDibs.GetModePolicy,
+    }
+    local function unexpected() error("unused Player summary projection was requested") end
+    preDibs.GetPlayerSeasonRequestSummary = unexpected
+    preDibs.GetActiveRequests = unexpected
+    preDibs.GetRequestsForPlayer = unexpected
+    preDibs.GetAcquisitionsForPlayer = unexpected
+    dibs.CharacterEligibility.GetSummary = unexpected
+    preDibs.GetModePolicy = unexpected
+
+    local summary = dibs.PlayerUI.GetSummary(nil, nil, {
+      includeRequests = false, includeAcquisitions = false,
+      includeEligibility = false, includeModePolicy = false,
+    })
+    assert_equal(0, #summary.activePreDibs)
+    assert_equal(0, #summary.wonPreDibs)
+
+    preDibs.GetPlayerSeasonRequestSummary = original.requestSummary
+    preDibs.GetActiveRequests = original.activeRequests
+    preDibs.GetRequestsForPlayer = original.requestHistory
+    preDibs.GetAcquisitionsForPlayer = original.acquisitions
+    dibs.CharacterEligibility.GetSummary = original.eligibility
+    preDibs.GetModePolicy = original.modePolicy
+  end)
+
+  it("does not pump request delivery during redraw and pumps after a successful report action", function()
+    local _, dibs = setup({
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Officer-Realm" } },
+    })
+    local frame = dibs.PlayerUI.Show()
+    local originalPump, pumpCalls = dibs.RequestDelivery.Pump, 0
+    dibs.RequestDelivery.Pump = function() pumpCalls = pumpCalls + 1; return true end
+
+    frame.SelectTab("requests")
+    assert_equal(0, pumpCalls, "page rendering must not process the delivery outbox")
+    frame.disputeNote = "UI delivery scheduling test"
+    assert_not_nil(frame.disputeSubmitButton)
+    frame.disputeSubmitButton.callbacks.OnClick(frame.disputeSubmitButton, "OnClick")
+
+    dibs.RequestDelivery.Pump = originalPump
+    assert_equal(1, pumpCalls, "an explicit successful report action should request immediate delivery")
+  end)
+
+  it("reuses the revisioned Pre-Dibs player index and invalidates it after a history change", function()
+    local _, dibs = setup()
+    local history = dibs.PreDibs.GetHistory()
+    history[#history + 1] = { requestId = "player-index-1", playerName = "Tester-Realm", status = "pending", createdAt = 10 }
+    dibs.PreDibs.MarkHistoryChanged()
+    local first = dibs.PreDibs.GetRequestsForPlayer("Tester-Realm")
+    assert_equal(1, #first)
+    assert_equal("player-index-1", first[1].requestId)
+    assert_equal(first, dibs.PreDibs.GetRequestsForPlayer("tester-realm"),
+      "same-identity player history reads should share the revisioned index")
+    local firstSummary = dibs.PreDibs.GetPlayerSeasonRequestSummary("Tester-Realm", nil)
+    assert_equal(1, #firstSummary.active)
+    assert_equal(0, #firstSummary.fulfilled)
+    assert_equal(firstSummary, dibs.PreDibs.GetPlayerSeasonRequestSummary("tester-realm", nil),
+      "season request projections should reuse the revisioned summary")
+
+    history[#history + 1] = { requestId = "player-index-2", playerName = "Tester-Realm", status = "fulfilled", createdAt = 20 }
+    dibs.PreDibs.MarkHistoryChanged()
+    local updated = dibs.PreDibs.GetRequestsForPlayer("Tester-Realm")
+    assert_equal(2, #updated)
+    assert_equal("player-index-2", updated[2].requestId)
+    local recent = dibs.PreDibs.GetRecentRequestsForPlayer("Tester-Realm")
+    assert_equal("player-index-2", recent[1].requestId,
+      "the UI index should return the newest request first")
+    assert_equal("player-index-1", recent[2].requestId)
+    assert_equal(recent, dibs.PreDibs.GetRecentRequestsForPlayer("tester-realm"),
+      "recent history ordering should be shared from the revisioned cache")
+    local updatedSummary = dibs.PreDibs.GetPlayerSeasonRequestSummary("Tester-Realm", nil)
+    assert_equal(1, #updatedSummary.active)
+    assert_equal(1, #updatedSummary.fulfilled)
+    local originalSeasonSummary, summaryReads = dibs.PreDibs.GetPlayerSeasonRequestSummary, 0
+    dibs.PreDibs.GetPlayerSeasonRequestSummary = function(...)
+      summaryReads = summaryReads + 1
+      return originalSeasonSummary(...)
+    end
+    local firstPlayerSummary, secondPlayerSummary = dibs.PlayerUI.GetSummary(), dibs.PlayerUI.GetSummary()
+    assert_equal(1, summaryReads, "unchanged Player renders should reuse the revision-keyed Pre-Dibs summary")
+    assert_equal(firstPlayerSummary.activePreDibs, secondPlayerSummary.activePreDibs,
+      "Player summary should retain the revisioned active-list identity for page-cache reuse")
+    assert_equal(firstPlayerSummary.wonPreDibs, secondPlayerSummary.wonPreDibs,
+      "Player summary should retain the revisioned fulfilled-list identity for page-cache reuse")
+    history[#history + 1] = { requestId = "player-index-3", playerName = "Tester-Realm", status = "cancelled", createdAt = 30 }
+    dibs.PreDibs.MarkHistoryChanged()
+    dibs.PlayerUI.GetSummary()
+    assert_equal(2, summaryReads, "a history revision should invalidate the Player summary cache")
+    local revisedRequestSummary = originalSeasonSummary("Tester-Realm", nil)
+    assert_equal(1, #revisedRequestSummary.pastRequests)
+    assert_equal("player-index-3", revisedRequestSummary.pastRequests[1].requestId)
+    dibs.PreDibs.GetPlayerSeasonRequestSummary = originalSeasonSummary
+  end)
+
+  it("builds only the requested past Pre-Dibs page while preserving the total", function()
+    local _, dibs = setup()
+    local originalSummary = dibs.PlayerUI.GetSummary
+    local originalRecent = dibs.PreDibs.GetRecentRequestsForPlayer
+    local summaryFixture = {
+      player = "Tester-Realm", season = { id = "season-current", name = "Season" },
+      activePreDibs = { { requestId = "past-page-1", seasonId = "season-current" } },
+      wonPreDibs = { { requestId = "past-page-2", seasonId = "season-current" } },
+      balance = 0, seasonAllocation = 0, seasonUsed = 0,
+    }
+    dibs.PlayerUI.GetSummary = function() return summaryFixture end
+    local requests = {}
+    for index = 25, 1, -1 do
+      requests[#requests + 1] = {
+        requestId = "past-page-" .. index, playerName = "Tester-Realm", createdAt = index,
+        itemName = "Item " .. index, status = index == 1 and "pending" or index == 2 and "fulfilled" or "cancelled",
+      }
+    end
+    dibs.PreDibs.GetRecentRequestsForPlayer = function() return requests end
+
+    local view = dibs.PlayerUI.GetViewModel(nil, nil, nil, {
+      includeHistory = false, pagePreDibHistory = 2,
+    })
+    assert_equal(23, view.pastPreDibPage.count)
+    assert_equal(3, view.pastPreDibPage.pages)
+    assert_equal(2, view.pastPreDibPage.page)
+    assert_equal(10, #view.pastPreDibPage.rows)
+    assert_equal(15, view.pastPreDibPage.rows[1].createdAt)
+    assert_equal(6, view.pastPreDibPage.rows[10].createdAt)
+    assert_equal(0, #view.requests, "paged UI should not materialize the complete request projection")
+    local repeated = dibs.PlayerUI.GetViewModel(nil, nil, nil, {
+      includeHistory = false, pagePreDibHistory = 2,
+    })
+    assert_equal(view.pastPreDibPage, repeated.pastPreDibPage,
+      "the same unchanged player page should reuse its bounded row projection")
+
+    dibs.PlayerUI.GetSummary = originalSummary
+    dibs.PreDibs.GetRecentRequestsForPlayer = originalRecent
+  end)
+
+  it("projects only the visible active and fulfilled Pre-Dibs rows", function()
+    local _, dibs = setup()
+    local originalSummary = dibs.PlayerUI.GetSummary
+    local summaryFixture = {
+      player = "Tester-Realm", season = { id = "season-current", name = "Season" },
+      activePreDibs = {}, wonPreDibs = {}, balance = 0, seasonAllocation = 0, seasonUsed = 0,
+    }
+    for index = 1, 25 do
+      summaryFixture.activePreDibs[index] = {
+        requestId = "active-" .. index, status = "pending", createdAt = index,
+      }
+      summaryFixture.wonPreDibs[index] = {
+        requestId = "fulfilled-" .. index, status = "fulfilled", fulfilledAt = index,
+      }
+    end
+    dibs.PlayerUI.GetSummary = function() return summaryFixture end
+
+    local view = dibs.PlayerUI.GetViewModel(nil, nil, nil, {
+      includeHistory = false, pagePreDibHistory = 1,
+      pageActivePreDibs = 2, pageWonPreDibs = 3,
+    })
+    assert_equal(25, view.activePreDibPage.count)
+    assert_equal(3, view.activePreDibPage.pages)
+    assert_equal(2, view.activePreDibPage.page)
+    assert_equal(10, #view.activePreDibs)
+    assert_equal("active-11", view.activePreDibs[1].requestId)
+    assert_equal(25, view.wonPreDibPage.count)
+    assert_equal(3, view.wonPreDibPage.pages)
+    assert_equal(3, view.wonPreDibPage.page)
+    assert_equal(5, #view.wonPreDibs)
+    assert_equal("fulfilled-21", view.wonPreDibs[1].requestId)
+    assert_equal(25, view.pendingRequests)
+
+    dibs.PlayerUI.GetSummary = originalSummary
+  end)
+
+  it("uses bounded past Pre-Dibs projection for the rendered My Dibs page", function()
+    local _, dibs = setup()
+    local originalGetViewModel = dibs.PlayerUI.GetViewModel
+    local renderedView
+    dibs.PlayerUI.GetViewModel = function(...)
+      renderedView = originalGetViewModel(...)
+      return renderedView
+    end
+
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame:Refresh()
+    assert_not_nil(renderedView)
+    assert_not_nil(renderedView.pastPreDibPage,
+      "initial My Dibs render should request page one instead of the full history projection")
+    assert_equal(0, #renderedView.requests)
+  end)
+
+  it("mounts a non-empty content root for each Player navigation route", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    local roots = {}
+    for _, route in ipairs({ "my-dibs", "requests", "history" }) do
+      frame.SelectTab(route)
+      assert_equal(1, #(frame.contentHost.children or {}), route .. " should mount one page root")
+      local pageRoot = frame.contentHost.children[1]
+      assert_true(#(pageRoot.children or {}) > 0, route .. " should render controls into the page root")
+      roots[route] = pageRoot
+    end
+    assert_true(roots["my-dibs"] ~= roots.requests and roots.requests ~= roots.history,
+      "route transitions should replace the mounted page root")
+  end)
+
+  it("mounts Great Vault, Preferences, and Diagnostics table pages directly in the content host", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    for _, route in ipairs({ "vault", "preferences", "diagnostics" }) do
+      frame.SelectTab(route)
+      assert_equal(1, #(frame.contentHost.children or {}), route .. " should mount one page root")
+      local pageRoot = frame.contentHost.children[1]
+      if route == "vault" then assert_equal(frame.vaultTablePage.root, pageRoot) end
+      if route == "diagnostics" then assert_equal(frame.diagnosticsTablePage.root, pageRoot) end
+      assert_true(#(pageRoot.children or {}) > 0, route .. " should render into its own page root")
+    end
+  end)
+
+  it("saves a selected color theme from Player Preferences and refreshes the UI", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("preferences")
+    local selector = frame.themeSelector
+    assert_not_nil(selector)
+    assert_equal("MIDNIGHT", selector.value)
+    assert_equal("Fel Green", selector.list.FEL_GREEN)
+
+    selector.callbacks.OnValueChanged(selector, "OnValueChanged", "FEL_GREEN")
+
+    assert_equal("FEL_GREEN", dibs.Midnight.GetTokens().theme)
+    assert_equal("FEL_GREEN", _G.RCLootCouncil_dibsLocalDB.presentation.profile.theme)
+    assert_not_nil(frame.themeSelector, "refresh should keep the theme selector on Preferences")
+    assert_equal(0.025, frame.dibsAceGUIShell.frame._backdropColor[1],
+      "the refreshed Player window should use the selected palette surface")
+  end)
+
+  it("keeps adapter-provided scale when restyling the Player window and an open Officer window", function()
+    local _, dibs = setup()
+    assert_true(dibs.EnvironmentAdapters.Register("ELVUI", function()
+      return "available", { scale = 1.2 }, "AVAILABLE"
+    end))
+    local frame = dibs.PlayerUI.CreateWindow()
+    local playerScale
+    frame.dibsAceGUIShell.frame.SetScale = function(_, value) playerScale = value end
+    frame.SelectTab("preferences")
+    assert_equal(1.2, playerScale, "rendering a Player page should keep the adapter scale hint")
+
+    local officerScale
+    _G.DibsOfficerFrame = {
+      dibsAceGUIShell = { _dibsActive = true, frame = { SetScale = function(_, value) officerScale = value end } },
+      Refresh = function() end,
+    }
+    local selector = frame.themeSelector
+    selector.callbacks.OnValueChanged(selector, "OnValueChanged", "FEL_GREEN")
+    _G.DibsOfficerFrame = nil
+    assert_equal(1.2, officerScale, "changing the palette should keep the adapter scale on an open Officer window")
+  end)
+
+  it("builds a history projection only for the History page", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    local originalFull, originalHistory = dibs.PlayerUI.GetViewModel, dibs.PlayerUI.GetHistoryViewModel
+    local fullCalls, historyCalls, includeHistory = 0, 0, nil
+    dibs.PlayerUI.GetViewModel = function(...)
+      fullCalls = fullCalls + 1
+      local options = select(4, ...)
+      includeHistory = options and options.includeHistory
+      return originalFull(...)
+    end
+    dibs.PlayerUI.GetHistoryViewModel = function(...)
+      historyCalls = historyCalls + 1
+      return originalHistory(...)
+    end
+
+    frame.SelectTab("diagnostics")
+    assert_equal(0, fullCalls, "diagnostics should not project the player's full ledger history")
+    frame.SelectTab("requests")
+    assert_equal(0, fullCalls, "the request page should not project unrelated history and vault data")
+    frame.SelectTab("history")
+    assert_equal(0, fullCalls, "History should not build the unrelated overview model")
+    assert_equal(1, historyCalls, "History should project its ledger rows once when selected")
+    frame.SelectTab("my-dibs")
+    assert_equal(1, fullCalls, "My Dibs should build its summary model")
+    assert_equal(false, includeHistory, "My Dibs should not project hidden History rows")
+    dibs.PlayerUI.GetViewModel = originalFull
+    dibs.PlayerUI.GetHistoryViewModel = originalHistory
+  end)
+
+  it("uses bounded history access on My Dibs, Reports, and History", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    local originalHistory, fullHistoryReads = dibs.Ledger.GetHistory, 0
+    local originalSummary, summaryReads = dibs.Ledger.GetPlayerHistorySummary, 0
+    local originalPage, pageReads = dibs.Ledger.GetHistoryPage, 0
+    local originalChoices, choiceReads = dibs.Ledger.GetRecentHistoryChoices, 0
+    local originalRequests, requestReads = dibs.Disputes.ListForPlayer, 0
+    dibs.Ledger.GetHistory = function(...)
+      fullHistoryReads = fullHistoryReads + 1
+      return originalHistory(...)
+    end
+    dibs.Ledger.GetPlayerHistorySummary = function(...)
+      summaryReads = summaryReads + 1
+      return originalSummary(...)
+    end
+    dibs.Ledger.GetHistoryPage = function(...)
+      pageReads = pageReads + 1
+      return originalPage(...)
+    end
+    dibs.Ledger.GetRecentHistoryChoices = function(...)
+      choiceReads = choiceReads + 1
+      return originalChoices(...)
+    end
+    dibs.Disputes.ListForPlayer = function(...)
+      requestReads = requestReads + 1
+      return originalRequests(...)
+    end
+    for _, route in ipairs({ "my-dibs", "requests", "history" }) do
+      fullHistoryReads, summaryReads, pageReads, choiceReads, requestReads = 0, 0, 0, 0, 0
+      frame.SelectTab(route)
+      assert_equal(0, fullHistoryReads, route .. " should not copy the full player history")
+      if route == "history" then
+        assert_equal(1, pageReads, "History should request one visible page")
+        assert_equal(0, summaryReads, "History should not compute an unrelated summary")
+      elseif route == "my-dibs" then
+        assert_equal(1, summaryReads, route .. " should use the cached history summary")
+      end
+      if route == "requests" then
+        assert_equal(1, choiceReads, "Reports should request only recent lightweight transaction choices")
+        assert_equal(0, pageReads, "Reports should not deep-copy full history transactions")
+        assert_equal(0, summaryReads, "Reports should get the count with the recent transaction choices")
+        assert_equal(1, requestReads, "Reports should not query the review-request list twice")
+      end
+    end
+    dibs.Ledger.GetHistory = originalHistory
+    dibs.Ledger.GetPlayerHistorySummary = originalSummary
+    dibs.Ledger.GetHistoryPage = originalPage
+    dibs.Ledger.GetRecentHistoryChoices = originalChoices
+    dibs.Disputes.ListForPlayer = originalRequests
+  end)
+
+  it("bounds Player table widgets when personal histories grow", function()
+    local _, dibs = setup()
+    local frame = dibs.PlayerUI.CreateWindow()
+    local originalAddTable, originalAddDropdown = dibs.AceGUI.AddTable, dibs.AceGUI.AddDropdown
+    local originalFull, originalHistory = dibs.PlayerUI.GetViewModel, dibs.PlayerUI.GetHistoryViewModel
+    local originalLedgerHistory, originalLedgerPage = dibs.Ledger.GetHistory, dibs.Ledger.GetHistoryPage
+    local originalHistoryChoices = dibs.Ledger.GetRecentHistoryChoices
+    local originalLedgerSummary, originalRequests = dibs.Ledger.GetPlayerHistorySummary, dibs.Disputes.ListForPlayer
+    local largestTable, reportDropdownCount = 0, nil
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, ...)
+      largestTable = math.max(largestTable, #(rows or {}))
+      return originalAddTable(shell, parent, columns, rows, ...)
+    end
+    dibs.AceGUI.AddDropdown = function(shell, parent, label, values, ...)
+      if label == ((dibs.L or {}).PLAYER_REPORT_TRANSACTION or "Related ledger entry (optional)") then
+        local count = 0
+        for _ in pairs(values or {}) do count = count + 1 end
+        reportDropdownCount = count
+      end
+      return originalAddDropdown(shell, parent, label, values, ...)
+    end
+    dibs.PlayerUI.GetViewModel = function()
+      local active, won, past = {}, {}, {}
+      for index = 1, 120 do
+        active[index] = { requestId = "active-" .. index, date = "today", item = "Item", status = "Pending" }
+        won[index] = { requestId = "won-" .. index, date = "today", item = "Item", status = "Won" }
+        past[index] = { requestId = "past-" .. index, createdAt = index, item = "Item", status = "Cancelled" }
+      end
+      return { seasonAllocation = 0, seasonUsed = 0, balance = 0, seasonName = "Season",
+        status = { label = "Ready", explanation = "Ready" }, activePreDibs = active, wonPreDibs = won,
+        requests = past, empty = {} }
+    end
+    dibs.PlayerUI.GetHistoryViewModel = function()
+      local history = {}
+      for index = 1, 500 do
+        history[index] = { date = "today", item = "Item", action = "AWARD", result = "Recorded",
+          balanceImpact = "+1", transactionId = tostring(index) }
+      end
+      return { history = history, empty = {} }
+    end
+    dibs.Ledger.GetHistory = function()
+      local history = {}
+      for index = 1, 500 do
+        history[index] = { transactionId = tostring(index), createdAt = index, type = "AWARD", amount = 1 }
+      end
+      return history
+    end
+    dibs.Ledger.GetPlayerHistorySummary = function()
+      return { count = 500, seasonUsed = 0, balance = 0, allocation = 0 }
+    end
+    dibs.Ledger.GetHistoryPage = function(_, _, _, page, pageSize)
+      local history, total = {}, 500
+      local first = ((page or 1) - 1) * (pageSize or 20) + 1
+      for index = first, math.min(total, first + (pageSize or 20) - 1) do
+        history[#history + 1] = { transactionId = tostring(index), createdAt = index, type = "AWARD", amount = 1 }
+      end
+      return history, total, page or 1
+    end
+    dibs.Ledger.GetRecentHistoryChoices = function(_, _, _, pageSize)
+      local choices = {}
+      for index = 1, math.min(pageSize or 50, 50) do
+        choices[index] = { transactionId = tostring(index), createdAt = index, type = "AWARD", amount = 1 }
+      end
+      return choices, 500
+    end
+    dibs.Disputes.ListForPlayer = function()
+      local requests = {}
+      for index = 1, 120 do
+        requests[index] = { requestId = "report-" .. index, createdAt = index, status = "Open", category = "other" }
+      end
+      return requests
+    end
+
+    for _, route in ipairs({ "my-dibs", "requests", "history" }) do
+      largestTable, reportDropdownCount = 0, nil
+      frame.SelectTab(route)
+      assert_true(largestTable <= (route == "requests" and 15 or 20),
+        route .. " created an unbounded table with " .. largestTable .. " visible rows")
+      if route == "requests" then
+        assert_true(reportDropdownCount <= 51,
+          "Reports should cap its entry dropdown and let the user refine the search")
+      end
+    end
+    dibs.AceGUI.AddTable, dibs.AceGUI.AddDropdown = originalAddTable, originalAddDropdown
+    dibs.PlayerUI.GetViewModel, dibs.PlayerUI.GetHistoryViewModel = originalFull, originalHistory
+    dibs.Ledger.GetHistory, dibs.Ledger.GetHistoryPage = originalLedgerHistory, originalLedgerPage
+    dibs.Ledger.GetRecentHistoryChoices = originalHistoryChoices
+    dibs.Ledger.GetPlayerHistorySummary, dibs.Disputes.ListForPlayer = originalLedgerSummary, originalRequests
   end)
 
   it("lets a player enable diagnostics and run a sync channel test", function()
@@ -358,6 +837,9 @@ describe("B11c Player UI", function()
     local _, dibs = setup({ wow = { playerName = "Tester-Realm", guildMembers = { "Tester-Realm" } } })
     local season = { id = "season-current", name = "Midnight S1" }
     dibs.Seasons.GetCurrent = function() return season end
+    dibs.Ledger.GetPlayerHistorySummary = function()
+      return { count = 3, seasonUsed = 2, balance = 3, allocation = 5 }
+    end
     dibs.Ledger.GetCanonicalPlayerDibsState = function() return { available = true, balance = 3, availableBalance = 3 } end
     dibs.Ledger.GetPlayerState = function() return { allocation = 5, balance = 3 } end
     dibs.Ledger.GetHistory = function()
@@ -373,12 +855,28 @@ describe("B11c Player UI", function()
         { requestId = "active-old", playerName = "Tester-Realm", itemName = "Old item", seasonId = "season-old", status = "pending", createdAt = 100 },
       }
     end
-    dibs.PreDibs.GetHistory = function()
+    dibs.PreDibs.GetPlayerSeasonRequestSummary = function()
       return {
+        active = {
+          { requestId = "active-current", playerName = "Tester-Realm", itemName = "Current item", seasonId = "season-current", status = "confirmed", createdAt = 200 },
+        },
+        fulfilled = {
+          { requestId = "won-current", playerName = "Tester-Realm", itemName = "Won item", seasonId = "season-current", status = "fulfilled", fulfilledAt = 300 },
+        },
+      }
+    end
+    local playerRequestFixture = {
         { requestId = "won-current", playerName = "Tester-Realm", itemName = "Won item", seasonId = "season-current", status = "fulfilled", fulfilledAt = 300 },
         { requestId = "won-old", playerName = "Tester-Realm", itemName = "Old win", seasonId = "season-old", status = "fulfilled", fulfilledAt = 200 },
         { requestId = "other-player", playerName = "Other-Realm", itemName = "Private win", seasonId = "season-current", status = "fulfilled", fulfilledAt = 400 },
       }
+    dibs.PreDibs.GetHistory = function() return playerRequestFixture end
+    dibs.PreDibs.GetRequestsForPlayer = function(playerName)
+      local result = {}
+      for _, request in ipairs(playerRequestFixture) do
+        if string.lower(request.playerName) == string.lower(playerName) then result[#result + 1] = request end
+      end
+      return result
     end
     dibs.PreDibs.GetAcquisitionsForPlayer = function() return {} end
 

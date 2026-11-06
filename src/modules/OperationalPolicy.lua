@@ -15,21 +15,35 @@ local SCHEMA, GENESIS_HASH = 1, "GENESIS"
 local VALID_MODES = { WILD_OPEN = true, ENCOUNTER = true }
 local VALID_ANNOUNCE_CHANNELS = { NONE = true, GUILD = true, OFFICER = true, RAID = true, RAID_WARNING = true, RAID_DIBS = true, PARTY = true, INSTANCE_CHAT = true, SAY = true, YELL = true }
 local CORE_MODULE_DEFINITIONS = {
-  { key = "ledger", label = "Ledger", core = true, alwaysEnabled = true },
-  { key = "identity", label = "Canonical Identity / Name-Realm", core = true, alwaysEnabled = true },
-  { key = "governance", label = "Governance", core = true, alwaysEnabled = true },
-  { key = "protectedActions", label = "ProtectedActions", core = true, alwaysEnabled = true },
-  { key = "syncV2", label = "SyncV2", core = true, alwaysEnabled = true },
-  { key = "coordinatorRecovery", label = "Coordinator / Recovery", core = true, alwaysEnabled = true },
-  { key = "persistenceValidation", label = "Persistence validation", core = true, alwaysEnabled = true },
+  { key = "ledger", label = "Ledger", core = true, alwaysEnabled = true, description = "Core ledger accounting and entry persistence", category = "core" },
+  { key = "identity", label = "Canonical Identity / Name-Realm", core = true, alwaysEnabled = true, description = "Canonical character identity resolution", category = "core" },
+  { key = "governance", label = "Governance", core = true, alwaysEnabled = true, description = "Guild governance and policy adoption", category = "core" },
+  { key = "protectedActions", label = "ProtectedActions", core = true, alwaysEnabled = true, description = "Protected action execution framework", category = "core" },
+  { key = "syncV2", label = "SyncV2", core = true, alwaysEnabled = true, description = "State synchronization protocol", category = "core" },
+  { key = "coordinatorRecovery", label = "Coordinator / Recovery", core = true, alwaysEnabled = true, description = "Coordinator election and disaster recovery", category = "core" },
+  { key = "persistenceValidation", label = "Persistence validation", core = true, alwaysEnabled = true, description = "SavedVariables integrity validation", category = "core" },
+  { key = "rankRules", label = "Rank Rules", core = true, alwaysEnabled = true, description = "Rank-based allocation rules and expected allocation resolution", category = "core" },
 }
 local MODULE_DEFINITIONS = {
-  { key = "preDibs", label = "Pre-Dibs" },
-  { key = "requests", label = "Requests" },
-  { key = "rclootcouncil", label = "RCLootCouncil" },
-  { key = "announcements", label = "Announcements" },
-  { key = "lootEligibility", label = "Loot Eligibility" },
-  { key = "historicalReconciliation", label = "Historical Reconciliation", requires = "rclootcouncil" },
+  { key = "preDibs", label = "Pre-Dibs", description = "Early expression of interest before loot drops", category = "loot" },
+  { key = "requests", label = "Requests", description = "Formal loot request workflow with officer review", category = "loot" },
+  { key = "rclootcouncil", label = "RCLootCouncil", description = "Integration with RCLootCouncil for council voting", category = "integration" },
+  { key = "announcements", label = "Announcements", description = "Automated loot and award announcements", category = "communication" },
+  { key = "lootEligibility", label = "Loot Eligibility", description = "Eligibility rules for loot distribution", category = "loot" },
+  { key = "historicalReconciliation", label = "Historical Reconciliation", description = "Import and reconcile historical loot data", category = "admin", requires = "rclootcouncil" },
+  { key = "greatVault", label = "Great Vault", description = "Record and track Great Vault reward claims as Pre-Dibs evidence", category = "integration" },
+  { key = "encounterJournal", label = "Encounter Journal", description = "Pre-Dib directly from the Adventure Guide encounter journal", category = "integration" },
+  { key = "raidPrompts", label = "Raid Prompts", description = "Encounter-based Pre-Dib prompts during raid encounters", category = "loot" },
+  { key = "notifications", label = "Notifications", description = "Per-character idempotent notification delivery for loot events", category = "communication" },
+  { key = "independentRaid", label = "Independent Raid", description = "Local-only raid sessions for ad-hoc and community raids", category = "loot" },
+  { key = "lootRules", label = "Loot Rules", description = "Guild-authoritative loot rule configuration and publication", category = "rules" },
+  { key = "readiness", label = "Readiness", description = "Runtime safety guard for live award processing context freshness", category = "admin" },
+  { key = "dryRun", label = "Dry Run", description = "Simulated award validation without committing mutations", category = "admin" },
+  { key = "auditExport", label = "Audit Export", description = "Bounded anonymous audit report generation for support and review", category = "data" },
+  { key = "historyFilters", label = "History Filters", description = "Client-side history filtering and projection preferences", category = "data" },
+  { key = "profiles", label = "Profiles", description = "Named configuration profiles for guild and local settings", category = "data" },
+  { key = "backup", label = "Backup", description = "Bounded recovery snapshots before restore and import operations", category = "data" },
+  { key = "importExport", label = "Import / Export", description = "Portable package encoding, validation, preview, and application", category = "data" },
 }
 local MODULE_KEYS = {}
 for _, definition in ipairs(MODULE_DEFINITIONS) do MODULE_KEYS[definition.key] = true end
@@ -40,6 +54,11 @@ local function defaultModules()
   return modules
 end
 
+local function getStoredModules()
+  local values = Policy.GetValues()
+  return values and values.modules or {}
+end
+
 local function copy(value) return Dibs.DeepCopy and Dibs.DeepCopy(value) or value end
 local function integer(value) return type(value) == "number" and value == math.floor(value) end
 
@@ -47,8 +66,8 @@ local function defaultState()
   return { schema = SCHEMA, status = "POLICY_UNINITIALIZED", policyRevision = 0, hash = GENESIS_HASH, records = {}, auditLog = {}, conflicts = {} }
 end
 
-local function ensureState()
-  local db = Dibs.GetDB()
+local function ensureState(dbOverride)
+  local db = dbOverride or Dibs.GetDB()
   if type(db.operationalPolicy) ~= "table" then db.operationalPolicy = defaultState() end
   local state = db.operationalPolicy
   if state.schema ~= SCHEMA then state.schema = SCHEMA end
@@ -94,15 +113,22 @@ local function normalizedValues(values)
       result.announcementChannels = { publicChannel = publicChannel, officerChannel = officerChannel }
     elseif key == "modules" then
       if type(value) ~= "table" then return nil, "INVALID_MODULE_POLICY" end
-      local modules = defaultModules()
-      for moduleKey, enabled in pairs(value) do
-        if not MODULE_KEYS[moduleKey] or type(enabled) ~= "boolean" then return nil, "INVALID_MODULE_POLICY" end
-        modules[moduleKey] = enabled
-      end
-      if modules.historicalReconciliation and not modules.rclootcouncil then
-        return nil, "MODULE_DEPENDENCY_RCLootCouncil"
-      end
-      result.modules = modules
+          local modules = {}
+          -- Validate each module key and type; allow unknown future features for forward compatibility
+          for moduleKey, enabled in pairs(value) do
+            if type(enabled) ~= "boolean" then return nil, "INVALID_MODULE_POLICY" end
+            modules[moduleKey] = enabled
+          end
+          -- Check dependencies using effective state (merge with defaults for validation only)
+          local effectiveModules = defaultModules()
+          for moduleKey, enabled in pairs(modules) do
+            effectiveModules[moduleKey] = enabled
+          end
+          if effectiveModules.historicalReconciliation and not effectiveModules.rclootcouncil then
+            return nil, "MODULE_DEPENDENCY_RCLootCouncil"
+          end
+          -- Return the sparse input (explicit decisions only), not the merged effective state
+          result.modules = copy(modules)
     elseif key == "activeLedgerId" then
       if type(value) ~= "string" or #value < 1 or #value > 64 or not value:match("^[%w%-_:%.]+$") then
         return nil, "INVALID_ACTIVE_LEDGER"
@@ -206,39 +232,92 @@ end
 
 function Policy.CalculateContentHash(record) return canonicalHash(record or {}) end
 function Policy.GetState() return copy(ensureState()) end
-function Policy.GetCurrentRecord()
-  local state = ensureState(); return copy(state.records[tostring(state.policyRevision)])
+
+-- Digest consumers need only these scalar fields, not a copy of policy history.
+function Policy.GetDigestSummary()
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  local db = Dibs.db
+  local state = type(db) == "table" and db.operationalPolicy or nil
+  local validStatus = type(state) == "table"
+    and (state.status == "POLICY_UNINITIALIZED" or state.status == "POLICY_ADOPTED")
+  if not (guildKey and Dibs.currentGuildKey == guildKey and type(state) == "table"
+      and state.schema == SCHEMA and validStatus and integer(state.policyRevision) and state.policyRevision >= 0
+      and type(state.hash) == "string" and state.hash ~= ""
+      and type(state.records) == "table" and type(state.auditLog) == "table"
+      and type(state.conflicts) == "table") then
+    state = ensureState()
+  end
+  return { policyRevision = state.policyRevision, hash = state.hash }
 end
-function Policy.GetRecord(revision)
-  return copy(ensureState().records[tostring(revision)])
+
+-- Compact read model for Pre-Dibs summaries. Avoid copying the complete
+-- policy record twice when the Wizard needs only one mode and one flag.
+function Policy.GetPreDibSummary(seasonId, ledgerId, dbOverride)
+  local state = ensureState(dbOverride)
+  local summary = {
+    adopted = state.status == "POLICY_ADOPTED",
+    status = state.status,
+    policyRevision = state.policyRevision,
+  }
+  if not summary.adopted then return summary end
+  local record = state.records[tostring(state.policyRevision)]
+  local values = type(record) == "table" and record.values or nil
+  if type(values) ~= "table" then return summary end
+  local modes = values.preDibModes
+  local selectedLedger = ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+    and Dibs.MultiLedger.GetActiveLedgerId(dbOverride)) or "guild-primary"
+  local mode = type(modes) == "table" and modes[tostring(selectedLedger) .. ":" .. tostring(seasonId)] or nil
+  if not mode and selectedLedger == "guild-primary" and type(modes) == "table" then
+    mode = modes[tostring(seasonId)]
+  end
+  summary.mode = mode
+  summary.publicEnabled = values.allowPublicPreDibs
+  return summary
 end
-function Policy.IsAdopted() return ensureState().status == "POLICY_ADOPTED" end
-function Policy.GetValues()
-  local record = Policy.GetCurrentRecord(); return record and copy(record.values) or nil
+function Policy.GetCurrentRecord(dbOverride)
+  local state = ensureState(dbOverride); return copy(state.records[tostring(state.policyRevision)])
+end
+function Policy.GetRecord(revision, dbOverride)
+  return copy(ensureState(dbOverride).records[tostring(revision)])
+end
+function Policy.IsAdopted(db) return ensureState(db).status == "POLICY_ADOPTED" end
+function Policy.GetValues(dbOverride)
+  local record = Policy.GetCurrentRecord(dbOverride); return record and copy(record.values) or nil
+end
+function Policy.GetStoredModuleValues()
+  local values = Policy.GetValues()
+  if not values or not values.modules then return {} end
+  return copy(values.modules)
 end
 local function preDibModeKey(seasonId, ledgerId)
   local selectedLedger = ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
     and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
   return tostring(selectedLedger) .. ":" .. tostring(seasonId)
 end
-function Policy.GetPreDibMode(seasonId, ledgerId)
-  local values = Policy.GetValues()
+function Policy.GetPreDibMode(seasonId, ledgerId, dbOverride)
+  local values = Policy.GetValues(dbOverride)
   local modes = values and values.preDibModes
   if not modes then return nil end
-  local scoped = modes[preDibModeKey(seasonId, ledgerId)]
+  local selectedLedgerId = ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+    and Dibs.MultiLedger.GetActiveLedgerId(dbOverride)) or "guild-primary"
+  local scoped = modes[preDibModeKey(seasonId, selectedLedgerId)]
   if scoped then return scoped end
-  if (ledgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
-    and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary") == "guild-primary" then
+  if selectedLedgerId == "guild-primary" then
     return modes[tostring(seasonId)]
   end
   return nil
 end
-function Policy.GetPublicPreDibsEnabled()
-  local values = Policy.GetValues(); return values and values.allowPublicPreDibs
+function Policy.GetPublicPreDibsEnabled(dbOverride)
+  local values = Policy.GetValues(dbOverride); return values and values.allowPublicPreDibs
 end
-function Policy.GetAnnouncementChannels()
-  local values = Policy.GetValues()
-  return values and values.announcementChannels and copy(values.announcementChannels) or nil
+function Policy.GetAnnouncementChannels(db)
+  local state = ensureState(db)
+  if state.status ~= "POLICY_ADOPTED" then return nil end
+  local record = state.records[tostring(state.policyRevision)]
+  local channels = type(record) == "table" and type(record.values) == "table"
+    and record.values.announcementChannels or nil
+  if type(channels) ~= "table" then return nil end
+  return { publicChannel = channels.publicChannel, officerChannel = channels.officerChannel }
 end
 function Policy.GetModuleDefinitions() return copy(MODULE_DEFINITIONS) end
 function Policy.GetCoreModuleDefinitions() return copy(CORE_MODULE_DEFINITIONS) end
@@ -248,20 +327,36 @@ function Policy.GetModuleDefinition(moduleKey)
   end
   return nil
 end
-function Policy.GetModuleValues()
-  local values = Policy.GetValues() or {}
-  local modules = values.modules or defaultModules()
-  return copy(modules)
+function Policy.GetModuleValues(dbOverride)
+  -- The UI needs one small map, not a deep copy of the complete policy
+  -- record, audit fields, and unrelated settings.
+  local state = ensureState(dbOverride)
+  local record = state.records[tostring(state.policyRevision)]
+  local values = type(record) == "table" and record.values or nil
+  local storedModules = type(values) == "table" and values.modules or nil
+  local modules = defaultModules()
+  if type(storedModules) == "table" then
+    for moduleKey, enabled in pairs(storedModules) do
+      modules[moduleKey] = enabled
+    end
+  end
+  return modules
 end
-function Policy.IsModuleEnabled(moduleKey)
+function Policy.IsModuleEnabled(moduleKey, dbOverride)
   if not MODULE_KEYS[moduleKey] then return false, "UNKNOWN_MODULE" end
-  return Policy.GetModuleValues()[moduleKey] == true
+  local state = ensureState(dbOverride)
+  local record = state.records[tostring(state.policyRevision)]
+  local storedModules = type(record) == "table" and type(record.values) == "table"
+    and record.values.modules or nil
+  local enabled
+  if type(storedModules) == "table" then enabled = storedModules[moduleKey] end
+  return enabled == nil or enabled == true
 end
-function Policy.GetModuleStatus(moduleKey)
+function Policy.GetModuleStatus(moduleKey, dbOverride)
   local definition = Policy.GetModuleDefinition(moduleKey)
   if not definition then return { key = moduleKey, enabled = false, reasonCode = "UNKNOWN_MODULE" } end
-  local enabled = Policy.IsModuleEnabled(moduleKey) == true
-  if enabled and definition.requires and Policy.IsModuleEnabled(definition.requires) ~= true then enabled = false end
+  local enabled = Policy.IsModuleEnabled(moduleKey, dbOverride) == true
+  if enabled and definition.requires and Policy.IsModuleEnabled(definition.requires, dbOverride) ~= true then enabled = false end
   local reasonCodes = { preDibs = "MODULE_DISABLED_PRE_DIBS" }
   return {
     key = definition.key, label = definition.label, enabled = enabled,
@@ -269,8 +364,8 @@ function Policy.GetModuleStatus(moduleKey)
     requires = definition.requires,
   }
 end
-function Policy.RequireModuleEnabled(moduleKey)
-  local status = Policy.GetModuleStatus(moduleKey)
+function Policy.RequireModuleEnabled(moduleKey, dbOverride)
+  local status = Policy.GetModuleStatus(moduleKey, dbOverride)
   if status.enabled then return true end
   return false, status.reasonCode, (status.label or tostring(moduleKey)) .. " is disabled by the Guild Master."
 end
@@ -292,7 +387,7 @@ local MODULE_MANAGEMENT_MESSAGES = {
   MIXED_PROVIDER_REJECTED = "Module management is unavailable while the developer sandbox is active.",
 }
 
-local function moduleManagementStatus(actor)
+local function moduleManagementStatus(actor, dbOverride)
   local result = {
     governanceInitialized = false,
     governanceActive = false,
@@ -300,39 +395,51 @@ local function moduleManagementStatus(actor)
     canonicalPlayer = nil,
     governanceGM = nil,
     gmIdentityMatch = false,
-    operationalPolicyReady = ensureState().status == "POLICY_ADOPTED",
+    operationalPolicyReady = ensureState(dbOverride).status == "POLICY_ADOPTED",
     production = not (Dibs.DeveloperSandbox and Dibs.DeveloperSandbox.IsActive and Dibs.DeveloperSandbox.IsActive()),
     canManageModules = false,
     blockingReason = nil,
   }
-  local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
-  local governanceRecord = Dibs.Governance and Dibs.Governance.GetCurrentRecord and Dibs.Governance.GetCurrentRecord() or nil
-  result.governanceInitialized = governanceState.status == "GOVERNANCE_ADOPTED"
-  result.governanceRevision = tonumber(governanceState.revision) or 0
-  result.governanceGM = governanceRecord and (governanceRecord.authorNameRealm or governanceRecord.authorSnapshot and governanceRecord.authorSnapshot.displayName) or nil
-  result.governanceActive = result.governanceInitialized and governanceRecord ~= nil
-    and governanceRecord.contentHash == governanceState.hash
+  local governanceSummary = Dibs.Governance and Dibs.Governance.GetModuleManagementSummary
+    and Dibs.Governance.GetModuleManagementSummary(dbOverride) or nil
+  if not governanceSummary then
+    local governanceState = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
+    local governanceRecord = Dibs.Governance and Dibs.Governance.GetCurrentRecord and Dibs.Governance.GetCurrentRecord() or nil
+    governanceSummary = {
+      status = governanceState.status, revision = governanceState.revision, hash = governanceState.hash,
+      contentHash = governanceRecord and governanceRecord.contentHash,
+      authorNameRealm = governanceRecord and governanceRecord.authorNameRealm,
+      authorMemberKey = governanceRecord and governanceRecord.authorMemberKey,
+      authorDisplayName = governanceRecord and governanceRecord.authorSnapshot and governanceRecord.authorSnapshot.displayName,
+    }
+  end
+  result.governanceInitialized = governanceSummary.status == "GOVERNANCE_ADOPTED"
+  result.governanceRevision = tonumber(governanceSummary.revision) or 0
+  result.governanceGM = governanceSummary.authorNameRealm or governanceSummary.authorDisplayName
+  result.governanceActive = result.governanceInitialized and governanceSummary.contentHash ~= nil
+    and governanceSummary.contentHash == governanceSummary.hash
   if not result.production then result.blockingReason = "MIXED_PROVIDER_REJECTED"; return result end
   if not result.governanceActive then result.blockingReason = result.governanceInitialized and "POLICY_UNINITIALIZED" or "POLICY_UNINITIALIZED"; return result end
 
   local snapshot, identityReason = currentMember(actor)
   if snapshot then result.canonicalPlayer = snapshot.displayName end
   if not snapshot then result.blockingReason = identityReason or "IDENTITY_UNAVAILABLE"; return result end
-  result.gmIdentityMatch = governanceRecord.authorMemberKey == snapshot.memberKey
+  result.gmIdentityMatch = governanceSummary.authorMemberKey == snapshot.memberKey
   local gm, gmReason = isCurrentGM(snapshot)
   if not gm then result.blockingReason = gmReason or "CURRENT_GUILD_MASTER_REQUIRED"; return result end
   local localSnapshot, localReason = requireLocalActor(snapshot)
   if not localSnapshot then result.blockingReason = localReason; return result end
-  if result.operationalPolicyReady then
-    local authorized, authorizationReason = writerAuthorized(actor)
-    if not authorized then result.blockingReason = authorizationReason or "POLICY_WRITER_REQUIRED"; return result end
-  end
+  -- This diagnostics path has already verified active governance, the current
+  -- actor as Guild Master, and that the actor is local. For this state,
+  -- writerAuthorized would repeat the same governance copies and roster checks;
+  -- mutation entry points still perform their own authorization immediately
+  -- before writing.
   result.canManageModules = true
   return result
 end
 
-function Policy.GetModuleManagementDiagnostics(actor)
-  local result = moduleManagementStatus(actor)
+function Policy.GetModuleManagementDiagnostics(actor, dbOverride)
+  local result = moduleManagementStatus(actor, dbOverride)
   result.blockingMessage = result.blockingReason and MODULE_MANAGEMENT_MESSAGES[result.blockingReason] or nil
   return result
 end
@@ -343,30 +450,30 @@ function Policy.CanChangeModules(actor)
 end
 function Policy.ChangeModules(patch, actor, reason)
   if type(patch) ~= "table" then return false, "INVALID_MODULE_POLICY" end
-  local modules = Policy.GetModuleValues()
+  local storedModules = getStoredModules()
   for moduleKey, enabled in pairs(patch) do
     if not MODULE_KEYS[moduleKey] or type(enabled) ~= "boolean" then return false, "INVALID_MODULE_POLICY" end
-    modules[moduleKey] = enabled
+    storedModules[moduleKey] = enabled
   end
-  local values, valuesReason = normalizedValues({ modules = modules })
+  local values, valuesReason = normalizedValues({ modules = storedModules })
   if not values then return false, valuesReason end
   local state = ensureState()
   if state.status == "POLICY_UNINITIALIZED" then
-    local record, recordReason = createRecord(actor, { modules = modules }, 1, 0, GENESIS_HASH, "MODULE_ENABLEMENT", reason, false)
+    local record, recordReason = createRecord(actor, { modules = storedModules }, 1, 0, GENESIS_HASH, "MODULE_ENABLEMENT", reason, false)
     if not record then return false, recordReason end
     local oldModules, changes = defaultModules(), {}
     for _, definition in ipairs(MODULE_DEFINITIONS) do
-      if oldModules[definition.key] ~= modules[definition.key] then
-        table.insert(changes, { moduleId = definition.key, oldState = oldModules[definition.key] == true, newState = modules[definition.key] == true })
+      if oldModules[definition.key] ~= storedModules[definition.key] then
+        table.insert(changes, { moduleId = definition.key, oldState = oldModules[definition.key] == true, newState = storedModules[definition.key] == true })
       end
     end
-    record.audit.moduleChanges = { old = oldModules, new = copy(modules), changes = changes }
+    record.audit.moduleChanges = { old = oldModules, new = copy(storedModules), changes = changes }
     record.contentHash = canonicalHash(record)
     local applied, applyReason = Policy.ApplyRecord(record, actor)
     if applied and Dibs.Sync and Dibs.Sync.AnnounceOperationalPolicy then Dibs.Sync.AnnounceOperationalPolicy() end
     return applied, applyReason, applied and record or nil
   end
-  return Policy.Change(actor, { modules = modules }, reason or "MODULE_ENABLEMENT")
+  return Policy.Change(actor, { modules = storedModules }, reason or "MODULE_ENABLEMENT")
 end
 function Policy.CanWrite(actor)
   local snapshot, reason = writerAuthorized(actor); return snapshot ~= nil, reason
@@ -472,8 +579,8 @@ function Policy.SetAnnouncementChannels(publicChannel, officerChannel, actor)
   return Policy.Change(actor, { announcementChannels = { publicChannel = publicValue, officerChannel = officerValue } }, "ANNOUNCEMENT_CHANNELS")
 end
 -- Read without copying: MultiLedger consults this on every active-ledger lookup.
-function Policy.GetActiveLedgerId()
-  local state = ensureState()
+function Policy.GetActiveLedgerId(dbOverride)
+  local state = ensureState(dbOverride)
   local record = state.records[tostring(state.policyRevision)]
   local value = record and record.values and record.values.activeLedgerId
   return type(value) == "string" and value ~= "" and value or nil

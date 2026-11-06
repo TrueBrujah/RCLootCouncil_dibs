@@ -191,7 +191,7 @@ describe("Unified history search", function()
   it("keeps guild-wide search behind the existing Officer authorization boundary", function()
     local _, dibs = loader.load({
       withAce3 = true,
-      wow = { guildLeader = false, guildMembers = { "Tester-Realm", "Other-Realm" } },
+      wow = { guildLeader = false, guildMembers = { "Tester-Realm", "Other-Realm" }, guildRankIndices = { [1] = 3, [2] = 3 } },
     })
 
     assert_true(dibs.OfficerUI.BuildLedgerDetails(dibs.GetCurrentSeasonId()).hidden)
@@ -219,8 +219,18 @@ describe("Unified history search", function()
       }
     end
 
+    local originalVaultReview = dibs.OfficerUI.BuildVaultAcquisitionReview
+    local vaultReviewCalls = 0
+    dibs.OfficerUI.BuildVaultAcquisitionReview = function(...)
+      vaultReviewCalls = vaultReviewCalls + 1
+      return originalVaultReview(...)
+    end
+
     local frame = dibs.OfficerUI.CreateWindow()
+    local beforeVaultRoute = vaultReviewCalls
     frame:ActivateRoute("vault")
+    assert_equal(beforeVaultRoute + 1, vaultReviewCalls,
+      "Vault page should share one filtered projection between the table and review dropdown")
     frame.historyFilters = { query = "Wanted", source = "NO_MATCH" }
     frame:Refresh()
     assert_not_nil(frame.historyFilterClearFields.source)
@@ -229,6 +239,7 @@ describe("Unified history search", function()
     assert_equal("", frame.historyFilters.source or "")
     assert_equal("Wanted", frame.historyFilters.query)
     assert_equal(1, frame.ledgerPage)
+    dibs.OfficerUI.BuildVaultAcquisitionReview = originalVaultReview
     assert_equal(1, #dibs.OfficerUI.BuildVaultAcquisitionReview(frame.historyFilters).rows)
   end)
 end)

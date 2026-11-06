@@ -7,11 +7,11 @@ local DEFAULT_WOW = {
   guildRankIndices = { [1] = 0, [2] = 1, [3] = 3, [4] = 3 },
 }
 
-local function setup(wow, enableV2)
+local function setup(wow, enableV2, withAce3)
   local options = {}
   for key, value in pairs(DEFAULT_WOW) do options[key] = value end
   for key, value in pairs(wow or {}) do options[key] = value end
-  local _, dibs = loader.load({ wow = options })
+  local _, dibs = loader.load({ wow = options, withAce3 = withAce3 == true })
   if enableV2 ~= false then
     assert_true(dibs.Governance.AdoptInitial(nil, { reason = "rank reconciliation workflow test" }))
     local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
@@ -78,6 +78,61 @@ describe("Rank allocation reconciliation workflow", function()
     assert_equal(2, row.difference)
     assert_equal("REQUIRE_CONFIRMATION", dibs.RankRules.GetRankReconciliationBehavior(row.difference))
     assert_equal("Reconciliation required", row.action)
+  end)
+
+  it("reuses the resolved rank when calculating a reconciliation snapshot allocation", function()
+    local dibs = setup()
+    local seasonId = dibs.GetCurrentSeasonId()
+    setRule(dibs, 3, 2)
+    local originalGetAllocationForPlayer = dibs.RankRules.GetAllocationForPlayer
+    local allocationForPlayerCalls = 0
+    dibs.RankRules.GetAllocationForPlayer = function(...)
+      allocationForPlayerCalls = allocationForPlayerCalls + 1
+      return originalGetAllocationForPlayer(...)
+    end
+
+    local row = rowFor(dibs, seasonId, "Alice-Realm")
+
+    dibs.RankRules.GetAllocationForPlayer = originalGetAllocationForPlayer
+    assert_equal(2, row.expected)
+    assert_equal(0, allocationForPlayerCalls,
+      "snapshot allocation should reuse its rank instead of rescanning the guild roster")
+  end)
+
+  it("reads only compact governance and policy revisions for reconciliation snapshots", function()
+    local dibs = setup()
+    local seasonId = dibs.GetCurrentSeasonId()
+    setRule(dibs, 3, 2)
+    local preview = rowFor(dibs, seasonId, "Alice-Realm").reconciliationSnapshot
+    local originalGovernanceState = dibs.Governance.GetState
+    local originalPolicyState = dibs.OperationalPolicy.GetState
+    dibs.Governance.GetState = function() error("snapshot must not copy full governance history") end
+    dibs.OperationalPolicy.GetState = function() error("snapshot must not copy full policy history") end
+
+    local snapshot, reason = dibs.Ledger.GetRankReconciliationSnapshot("Alice-Realm", seasonId)
+
+    dibs.Governance.GetState = originalGovernanceState
+    dibs.OperationalPolicy.GetState = originalPolicyState
+    assert_not_nil(snapshot, tostring(reason))
+    assert_equal(preview.governanceRevision, snapshot.governanceRevision)
+    assert_equal(preview.operationalPolicyRevision, snapshot.operationalPolicyRevision)
+  end)
+
+  it("checks V2 enforcement from the resolved guild state without re-running database resolution", function()
+    local dibs = setup()
+    local originalGetDB = dibs.GetDB
+    local getDBCalls = 0
+    dibs.GetDB = function()
+      getDBCalls = getDBCalls + 1
+      error("warm V2 checks should reuse the resolved governance state")
+    end
+
+    local ok, enforced = pcall(dibs.Governance.IsV2Enforced)
+
+    dibs.GetDB = originalGetDB
+    assert_true(ok, tostring(enforced))
+    assert_true(enforced)
+    assert_equal(0, getDBCalls)
   end)
 
   it("binds the preview to identity, rank, catalog, governance, policy, and coordinator state", function()
@@ -388,6 +443,7 @@ describe("Rank allocation reconciliation workflow", function()
       if index == 2 then return "Officer-Realm", "Member", 3 end
       return getRosterInfo(index)
     end
+    dibs.Identity.InvalidateRoster("test roster rank change")
     local result = dibs.Ledger.CommitAwardProposal({ actor = "Tester-Realm" }, proposal.proposalId, {})
     assert_false(result.accepted)
     assert_equal("REQUESTER_AUTHORITY_CHANGED", result.reasonCode)
@@ -415,6 +471,59 @@ describe("Rank allocation reconciliation workflow", function()
     assert_equal(1, report.skipped)
     assert_equal(1, dibs.Ledger.GetPlayerState("Alice-Realm", seasonId).allocation)
     assert_equal(0, dibs.Ledger.GetPlayerState("Bob-Realm", seasonId).allocation)
+  end)
+
+  it("defers Automatic Dibs snapshots until visible rows or an explicit bulk action need them", function()
+    local dibs = setup({
+      guildMembers = { "Tester-Realm", "Alice-Realm", "Bob-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 3, [3] = 3 },
+    }, false)
+    local seasonId = dibs.GetCurrentSeasonId()
+    setRule(dibs, 0, 0)
+    setRule(dibs, 3, 1)
+    local original, snapshotCalls = dibs.Ledger.GetRankReconciliationSnapshot, 0
+    dibs.Ledger.GetRankReconciliationSnapshot = function(...)
+      snapshotCalls = snapshotCalls + 1
+      return original(...)
+    end
+
+    local details = dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId, { deferSnapshots = true })
+    local positiveRows = 0
+    for _, row in ipairs(details.rows) do
+      if row.difference > 0 then
+        positiveRows = positiveRows + 1
+        assert_true(row.snapshotDeferred)
+        assert_nil(row.reconciliationSnapshot)
+      end
+    end
+    assert_equal(2, positiveRows)
+    assert_equal(0, snapshotCalls, "the initial projection should not build off-page snapshots")
+
+    local report = dibs.OfficerUI.ReconcileAllAllocations(seasonId, "Bulk reconciliation", details.rows)
+    assert_equal(2, snapshotCalls, "explicit bulk confirmation should build one snapshot per positive row")
+    assert_equal(2, report.failed)
+    dibs.Ledger.GetRankReconciliationSnapshot = original
+  end)
+
+  it("builds rank snapshots only for the visible Automatic Dibs page", function()
+    local members, ranks = { "Tester-Realm" }, { [1] = 0 }
+    for index = 2, 26 do
+      members[index], ranks[index] = "Member" .. index .. "-Realm", 3
+    end
+    local dibs = setup({ guildMembers = members, guildRankIndices = ranks }, true, true)
+    setRule(dibs, 0, 0)
+    setRule(dibs, 3, 1)
+
+    local original, snapshotCalls = dibs.Ledger.GetRankReconciliationSnapshot, 0
+    dibs.Ledger.GetRankReconciliationSnapshot = function(...)
+      snapshotCalls = snapshotCalls + 1
+      return original(...)
+    end
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    frame:ActivateRoute("automaticDibs")
+    assert_equal("automaticDibs", frame.activeTab)
+    assert_equal(10, snapshotCalls, "the default page should validate only its visible rows")
+    dibs.Ledger.GetRankReconciliationSnapshot = original
   end)
 
   it("reports each failed Reconcile All row and continues processing", function()

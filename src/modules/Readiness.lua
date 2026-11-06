@@ -40,9 +40,9 @@ end
 
 ---@param fn function|nil
 ---@return table|nil result
-local function safeTableCall(fn)
+local function safeTableCall(fn, ...)
   if type(fn) ~= "function" then return nil end
-  local result = { pcall(fn) }
+  local result = { pcall(fn, ...) }
   if result[1] == true and type(result[2]) == "table" then
     return result[2]
   end
@@ -60,6 +60,18 @@ end
 local function isOfficer()
   local role = localRole()
   return role == "gm" or role == "officer"
+end
+
+-- Read-only readiness checks may reuse the already-resolved active guild DB.
+-- Match the live guild key before trusting Dibs.db; all malformed/unresolved
+-- cases continue through the public accessors that perform normal repair.
+local function resolvedGuildDB(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.db
+  local guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or nil
+  if guildKey and Dibs.currentGuildKey == guildKey and type(db) == "table" then
+    return db
+  end
+  return nil
 end
 
 local function addReason(result, code)
@@ -83,14 +95,28 @@ local function addProbe(result, name, state, reasonCode, impact, remediation, re
   return probe
 end
 
-local function currentSeason()
+local function currentSeason(dbOverride)
+  local db = resolvedGuildDB(dbOverride)
+  if db and type(db.seasons) == "table" then
+    local season = db.currentSeasonId and db.seasons[db.currentSeasonId] or nil
+    if type(season) == "table" and not season.isArchived then return season end
+  end
   if not Dibs.Seasons or type(Dibs.Seasons.GetCurrent) ~= "function" then return nil end
-  local ok, season = safeCall(Dibs.Seasons.GetCurrent)
+  local ok, season = safeCall(Dibs.Seasons.GetCurrent, dbOverride)
   if ok and type(season) == "table" and not season.isArchived then return season end
   return nil
 end
 
-local function currentMode()
+local function currentMode(dbOverride)
+  local db = resolvedGuildDB(dbOverride)
+  if db and type(db.settings) == "table" then
+    local mode = string.upper(tostring(db.settings.installationMode or "AUTO"))
+    if mode == "RCLOOTCOUNCIL" then mode = "RCLootCouncil" end
+    if mode ~= "AUTO" and mode ~= "STANDALONE" and mode ~= "RCLootCouncil" then
+      mode = "AUTO"
+    end
+    return mode
+  end
   if Dibs.Permissions and type(Dibs.Permissions.GetInstallationMode) == "function" then
     local ok, mode = safeCall(Dibs.Permissions.GetInstallationMode)
     if ok then return tostring(mode or "AUTO") end
@@ -199,14 +225,34 @@ end
 ---@doc.label-key DOC_PLAYER_READINESS_LABEL
 function Readiness.Evaluate(options)
   options = type(options) == "table" and options or {}
+  local inputStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
   local checkedAt = now()
-  local season = currentSeason()
-  local mode = currentMode()
+  local seasonStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+  local season = currentSeason(options.db)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "current-season", seasonStartedAt)
+  end
+  local modeStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+  local mode = currentMode(options.db)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "installation-mode", modeStartedAt)
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "evaluation-input-state", inputStartedAt)
+  end
+  local contextStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local context = groupContext()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "group-context", contextStartedAt)
+  end
   ---@type table
   local rcStatus = { status = "absent", reasonCode = "RC_ABSENT" }
   if Dibs.RCLootCouncil and type(Dibs.RCLootCouncil.GetLocalStatus) == "function" then
+    local rcStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
     local currentStatus = safeTableCall(Dibs.RCLootCouncil.GetLocalStatus)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Readiness data", "rclootcouncil-status", rcStartedAt)
+    end
     if currentStatus then
       rcStatus = currentStatus
     else
@@ -214,7 +260,16 @@ function Readiness.Evaluate(options)
     end
   end
   ---@type table|nil
+  local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local projection = projectionSummary()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "rc-projection", projectionStartedAt)
+  end
+  local fingerprintStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+  local fingerprint = fingerprintFor(mode, season, rcStatus, projection, context)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "fingerprint", fingerprintStartedAt)
+  end
   local result = {
     checkedAt = checkedAt,
     timestamp = checkedAt,
@@ -239,13 +294,18 @@ function Readiness.Evaluate(options)
       observedVersion = rcStatus.observedVersion,
       capabilities = rcStatus.capabilities or {},
     },
-    fingerprint = fingerprintFor(mode, season, rcStatus, projection, context),
+    fingerprint = fingerprint,
     freshnessMarker = checkedAt,
     simulationCount = 0,
   }
 
+  local probesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin(false)
+  local lootRulesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local lootRulesStatus = Dibs.LootRules and type(Dibs.LootRules.GetStatus) == "function"
-    and safeTableCall(Dibs.LootRules.GetStatus) or nil
+    and safeTableCall(Dibs.LootRules.GetStatus, options.db) or nil
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "guild-loot-rules", lootRulesStartedAt)
+  end
   local lootStatus = lootRulesStatus and lootRulesStatus.status or "UNAVAILABLE"
   result.guildLootRulesStatus = lootStatus
   local lootState = lootStatus == "GUILD_LOOT_RULES_READY" and "ready"
@@ -280,7 +340,12 @@ function Readiness.Evaluate(options)
     addProbe(result, "season", "ready", nil, "Active season is available.", "No action required.", true)
   end
 
-  local rules = Dibs.RankRules and type(Dibs.RankRules.GetRulesForSeason) == "function" and Dibs.RankRules.GetRulesForSeason(season and season.id) or nil
+  local rulesStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+  local rules = Dibs.RankRules and type(Dibs.RankRules.GetRulesForSeason) == "function"
+    and Dibs.RankRules.GetRulesForSeason(season and season.id, options.db) or nil
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "rank-rules", rulesStartedAt)
+  end
   local hasRules = type(rules) == "table" and next(rules) ~= nil
   if not hasRules then
     result.standaloneStatus = "Blocked"
@@ -397,6 +462,9 @@ function Readiness.Evaluate(options)
   else
     result.impact = "Expected raid or optional integration context is unavailable; local administration remains available."
   end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Readiness data", "probe-composition", probesStartedAt)
+  end
   return result
 end
 
@@ -468,8 +536,8 @@ function Readiness.CanProcessLiveAward()
   -- A missing raid context or absent optional channel is expected outside a
   -- live session and must not break existing local RC callback tests. The RC
   -- callback itself still performs the final item/winner/identity checks.
-  if result.integrationStatus == "Ready" then return true, result end
-  return true, result
+  if result.integrationStatus == "Unavailable" then return true, result end
+  return result.liveConsumptionAllowed == true, result
 end
 
 local function statusLine(label, value)

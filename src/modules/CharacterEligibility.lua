@@ -76,8 +76,8 @@ local function sameIdentity(first, second)
   return a ~= nil and b ~= nil and lower(a) == lower(b)
 end
 
-local function ensureState()
-  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+local function ensureState(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or (Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {}))
   db.characterEligibility = db.characterEligibility or {}
   local state = db.characterEligibility
   state.version = tonumber(state.version) or 1
@@ -193,8 +193,8 @@ local function sanitizePolicy(input, seasonId)
   return policy
 end
 
-function Eligibility.GetPolicy(seasonId, family)
-  local state = ensureState()
+function Eligibility.GetPolicy(seasonId, family, dbOverride)
+  local state = ensureState(dbOverride)
   local targetSeason = currentSeason(seasonId)
   local key = normalizeFamily(family)
   if not targetSeason or not key or key == "CATALYST" then return nil end
@@ -286,6 +286,10 @@ function Eligibility.DeclareRelationship(input, actor)
   local alt = actorId(options.altCharacterId or options.altCharacter or options.alt)
   if not main or not alt or main == alt then return nil, "INVALID_RELATIONSHIP" end
   if options.playerName and not sameIdentity(declaringActor, options.playerName) then return nil, "OWNER_MISMATCH" end
+  local playerGroupId = Eligibility.GetPlayerGroup(main, targetSeason)
+  if playerGroupId == "character:" .. tostring(main) then
+    playerGroupId = "group:" .. tostring(main)
+  end
   local state = ensureState()
   for _, relationshipId in ipairs(state.relationshipOrder) do
     local existing = state.relationships[relationshipId]
@@ -298,7 +302,7 @@ function Eligibility.DeclareRelationship(input, actor)
     seasonId = targetSeason, guildKey = Dibs.GetGuildKey and Dibs.GetGuildKey() or "unknown",
     mainCharacterId = main, mainCharacterName = displayName(options.mainCharacter or options.main),
     altCharacterId = alt, altCharacterName = displayName(options.altCharacter or options.alt),
-    playerGroupId = options.playerGroupId or ("group:" .. tostring(main)), status = "pending",
+    playerGroupId = playerGroupId, status = "pending",
     declaredBy = actorId(declaringActor), declaredAt = now(), reason = options.reason,
   }
   state.relationships[relationship.relationshipId] = relationship
@@ -331,11 +335,11 @@ end
 Eligibility.ApproveRelationship = function(id, actor) return Eligibility.ReviewRelationship(id, "approved", actor) end
 Eligibility.RejectRelationship = function(id, actor, reason) return Eligibility.ReviewRelationship(id, "rejected", actor, reason) end
 
-function Eligibility.ListRelationships(actor, seasonId)
+function Eligibility.ListRelationships(actor, seasonId, dbOverride)
   if not Dibs.Permissions or not Dibs.Permissions.GetGuildRole then return {} end
   local role = Dibs.Permissions.GetGuildRole(actor)
   if role ~= "gm" and role ~= "officer" then return {}, "GUILD_ADMIN_REQUIRED" end
-  local state, result = ensureState(), {}
+  local state, result = ensureState(dbOverride), {}
   local targetSeason = currentSeason(seasonId)
   for _, relationshipId in ipairs(state.relationshipOrder) do
     local relationship = state.relationships[relationshipId]
@@ -345,11 +349,11 @@ function Eligibility.ListRelationships(actor, seasonId)
   return result
 end
 
-function Eligibility.ListMainChanges(actor, seasonId)
+function Eligibility.ListMainChanges(actor, seasonId, dbOverride)
   if not Dibs.Permissions or not Dibs.Permissions.GetGuildRole then return {} end
   local role = Dibs.Permissions.GetGuildRole(actor)
   if role ~= "gm" and role ~= "officer" then return {}, "GUILD_ADMIN_REQUIRED" end
-  local state, result = ensureState(), {}
+  local state, result = ensureState(dbOverride), {}
   local targetSeason = currentSeason(seasonId)
   for _, changeId in ipairs(state.mainChangeOrder) do
     local change = state.mainChanges[changeId]
@@ -379,6 +383,9 @@ function Eligibility.RequestMainChange(input, actor)
   local newMain = actorId(options.newMainId or options.newMain)
   if not oldMain or not newMain or oldMain == newMain then return nil, "INVALID_MAIN_CHANGE" end
   local group = Eligibility.GetPlayerGroup(oldMain, targetSeason)
+  if Eligibility.GetPlayerGroup(newMain, targetSeason) ~= group then
+    return nil, "MAIN_CHANGE_GROUP_MISMATCH"
+  end
   local state = ensureState()
   for _, changeId in ipairs(state.mainChangeOrder) do
     local existing = state.mainChanges[changeId]
@@ -407,6 +414,11 @@ function Eligibility.ApproveMainChange(changeId, options, actor)
   if not change then return nil, "MAIN_CHANGE_NOT_FOUND" end
   local settings = type(options) == "table" and options or {}
   if change.status == "approved" and settings.force ~= true then return copy(change) end
+  local oldGroup = Eligibility.GetPlayerGroup(change.oldMainId, change.seasonId)
+  local newGroup = Eligibility.GetPlayerGroup(change.newMainId, change.seasonId)
+  if not oldGroup or oldGroup ~= newGroup or change.playerGroupId ~= oldGroup then
+    return nil, "MAIN_CHANGE_GROUP_MISMATCH"
+  end
   local effectiveAt = tonumber(settings.effectiveAt) or now()
   local duration = tonumber(settings.probationDuration) or 14 * 24 * 60 * 60
   duration = math.max(0, math.min(365 * 24 * 60 * 60, math.floor(duration)))
@@ -695,7 +707,7 @@ function Eligibility.RecordAcquisition(record, actor, internal)
     itemName = input.itemName, difficulty = normalizeDifficulty(input.difficulty), slot = input.slot,
     tokenGroup = input.tokenGroup and string.upper(trim(input.tokenGroup)) or (input.classTokenGroup and string.upper(trim(input.classTokenGroup)) or nil), classID = input.classID,
     upgradeTrack = input.upgradeTrack or input.track, characterId = input.characterId or actorId(characterName),
-    characterName = displayName(characterName), playerGroupId = input.playerGroupId or Eligibility.GetPlayerGroup(characterName, targetSeason),
+    characterName = displayName(characterName), playerGroupId = Eligibility.GetPlayerGroup(characterName, targetSeason),
     source = input.source or (internal and "rclootcouncil" or "officer"), awardRef = input.awardRef,
     evidenceId = input.evidenceId, acquiredAt = tonumber(input.acquiredAt) or now(), actorId = actorId(actor) or (internal and "rclootcouncil" or "unknown"),
     reason = input.reason or "Confirmed protected-loot acquisition",

@@ -29,7 +29,7 @@ describe("Anonymous audit export contract", function()
   end)
 
   it("requires guild administration and does not echo a supplied season identifier", function()
-    local _, playerDibs = loader.load({ wow = { guildLeader = false }, withAce3 = true })
+    local _, playerDibs = loader.load({ wow = { guildLeader = false, guildRankIndices = { [1] = 3 } }, withAce3 = true })
     local denied, deniedReason = playerDibs.AuditExport.BuildReport()
     assert_nil(denied)
     assert_equal("GUILD_ADMIN_REQUIRED", deniedReason)

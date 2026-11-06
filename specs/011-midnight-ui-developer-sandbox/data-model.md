@@ -12,14 +12,14 @@ Local immutable/default presentation values used by Dibs-owned components.
 
 | Field | Meaning | Validation |
 | --- | --- | --- |
-| `theme` | Primary theme identifier | Always `MIDNIGHT`; no external replacement themes |
-| `colors` | Semantic and surface colors | Includes PRIMARY, TEXT, TEXT_MUTED, SUCCESS, WARNING, DANGER, INFO |
+| `theme` | Selected Dibs palette identifier | Allowlisted built-in palette; defaults to `MIDNIGHT`; never an external replacement theme |
+| `colors` | Semantic and surface colors | Selected palette includes PRIMARY, TEXT, TEXT_MUTED, SUCCESS, WARNING, DANGER, INFO |
 | `typography` | Font family, sizes, line heights | Shared-media font with native fallback; readable minimums |
 | `spacing` | Padding, gaps, row heights | Stable dimensions for supported window sizes |
 | `surfaces` | Panels, borders, status bars, textures | Shared-media values with native fallback |
 | `density` | Compact/comfortable presentation hint | Local-only, bounded values |
 | `scale` | Local UI scale | Positive bounded value; never synchronized |
-| `contrast` | Normal or high-contrast Midnight adjustment | Does not create a second theme |
+| `contrast` | Normal or high-contrast adjustment to the selected palette | Does not create a separate design system |
 
 ## UI Environment Adapter Snapshot
 

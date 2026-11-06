@@ -12,6 +12,63 @@ describe("Raid readiness", function()
     return dibs, rc
   end
 
+  it("reuses the validated active guild database for readiness season and mode reads", function()
+    local dibs = setup({ guildLeader = true })
+    dibs.GetDB()
+    local previousRC = dibs.RCLootCouncil
+    dibs.RCLootCouncil = nil
+    local expected = dibs.Readiness.ComputeFingerprint()
+    local originalSeason = dibs.Seasons.GetCurrent
+    local originalMode = dibs.Permissions.GetInstallationMode
+    dibs.Seasons.GetCurrent = function() error("validated current season should use the resolved DB") end
+    dibs.Permissions.GetInstallationMode = function() error("validated installation mode should use the resolved DB") end
+
+    local ok, actual = pcall(dibs.Readiness.ComputeFingerprint)
+
+    dibs.Seasons.GetCurrent = originalSeason
+    dibs.Permissions.GetInstallationMode = originalMode
+    dibs.RCLootCouncil = previousRC
+    assert_true(ok, tostring(actual))
+    assert_equal(expected, actual)
+
+    local resolvedGuildKey = dibs.currentGuildKey
+    dibs.currentGuildKey = "different-guild"
+    dibs.RCLootCouncil = nil
+    dibs.Seasons.GetCurrent = function() return { id = "fallback-season", isArchived = false } end
+    dibs.Permissions.GetInstallationMode = function() return "STANDALONE" end
+    local fallbackFingerprint = dibs.Readiness.ComputeFingerprint()
+    dibs.currentGuildKey = resolvedGuildKey
+    dibs.Seasons.GetCurrent = originalSeason
+    dibs.Permissions.GetInstallationMode = originalMode
+    dibs.RCLootCouncil = previousRC
+    assert_true(fallbackFingerprint:find("fallback-season|active|STANDALONE|", 1, true) == 1,
+      "unresolved guild identity should use the existing public accessors")
+  end)
+
+  it("reuses an explicit guild DB for readiness evaluation rule lookups", function()
+    local dibs = setup({ guildLeader = true })
+    local db = dibs.GetDB()
+    local originalSeason = dibs.Seasons.GetCurrent
+    local originalMode = dibs.Permissions.GetInstallationMode
+    local originalGetRules = dibs.RankRules.GetRulesForSeason
+    local observedRulesDB
+    dibs.Seasons.GetCurrent = function() error("explicit DB should supply the active season") end
+    dibs.Permissions.GetInstallationMode = function() error("explicit DB should supply installation mode") end
+    dibs.RankRules.GetRulesForSeason = function(seasonId, dbOverride)
+      observedRulesDB = dbOverride
+      return originalGetRules(seasonId, dbOverride)
+    end
+
+    local ok, report = pcall(dibs.Readiness.Evaluate, { allowPlayer = true, db = db })
+
+    dibs.Seasons.GetCurrent = originalSeason
+    dibs.Permissions.GetInstallationMode = originalMode
+    dibs.RankRules.GetRulesForSeason = originalGetRules
+    assert_true(ok, tostring(report))
+    assert_not_nil(report)
+    assert_equal(db, observedRulesDB)
+  end)
+
   it("keeps standalone administration ready and marks no-group integration unavailable", function()
     local dibs = setup({ guildLeader = true, inRaid = false })
     local result = dibs.Readiness.Run()

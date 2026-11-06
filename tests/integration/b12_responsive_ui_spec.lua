@@ -56,6 +56,137 @@ describe("B12b responsive page contract", function()
     assert_true(overflow == true or widths[1] + widths[2] + widths[3] <= 300)
   end)
 
+  it("skips the second fluid-width layout pass when no action column expands", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 no-op table width pass", 640, 360)
+    local originalAllocate = dibs.AceGUI.AllocateFluidColumnWidths
+    local allocationCalls = 0
+    dibs.AceGUI.AllocateFluidColumnWidths = function(...)
+      allocationCalls = allocationCalls + 1
+      return originalAllocate(...)
+    end
+
+    dibs.AceGUI.AddTable(shell, shell.window, {
+      { title = "Player", width = 180, minWidth = 120, weight = 1 },
+      { title = "Status", width = 120, minWidth = 90, weight = 1 },
+    }, { { "Member", "Ready" } }, 120, nil, {
+      noScrolling = true, fluidColumns = true, widthHint = 500,
+      allowTableSort = false, disableCellTooltips = true,
+    })
+    dibs.AceGUI.AllocateFluidColumnWidths = originalAllocate
+
+    assert_equal(1, allocationCalls, "unchanged initial widths should not trigger another table-wide DoLayout")
+  end)
+
+  it("reflows fluid columns when an action label promotes its column width", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 promoted action width", 640, 360)
+    local originalAllocate = dibs.AceGUI.AllocateFluidColumnWidths
+    local allocationCalls = 0
+    dibs.AceGUI.AllocateFluidColumnWidths = function(...)
+      allocationCalls = allocationCalls + 1
+      return originalAllocate(...)
+    end
+
+    dibs.AceGUI.AddTable(shell, shell.window, {
+      { title = "Player", width = 180, minWidth = 120, weight = 1 },
+      { title = "Action", width = 48, minWidth = 48, fixed = true, action = true },
+    }, { { "Member", "" } }, 120, function()
+      return { text = "A deliberately wide action label", callback = function() end }
+    end, {
+      noScrolling = true, fluidColumns = true, widthHint = 500,
+      allowTableSort = false, disableCellTooltips = true,
+    })
+    dibs.AceGUI.AllocateFluidColumnWidths = originalAllocate
+
+    assert_equal(2, allocationCalls, "expanded action widths must still cause a table-wide layout pass")
+  end)
+
+  it("resolves presentation tokens once per layout batch and refreshes them for the next batch", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 batched presentation tokens", 640, 360)
+    local originalResolveTokens = dibs.EnvironmentAdapters.ResolveTokens
+    local resolveCalls = 0
+    dibs.EnvironmentAdapters.ResolveTokens = function(...)
+      resolveCalls = resolveCalls + 1
+      return originalResolveTokens(...)
+    end
+
+    local firstBatch = dibs.AceGUI.BeginLayoutBatch(shell.window)
+    dibs.AceGUI.AddTable(shell, shell.window, {
+      { title = "Player", width = 180 }, { title = "Status", width = 120 },
+    }, { { "Member 1", "Ready" }, { "Member 2", "Ready" } }, 120, nil, {
+      noScrolling = true, allowTableSort = false, disableCellTooltips = true,
+    })
+    dibs.AceGUI.EndLayoutBatch(firstBatch)
+    assert_equal(1, resolveCalls, "all widgets in one page batch should share the resolved theme tokens")
+
+    local secondBatch = dibs.AceGUI.BeginLayoutBatch(shell.window)
+    dibs.AceGUI.AddLabel(shell, shell.window, "Next page", false)
+    dibs.AceGUI.EndLayoutBatch(secondBatch)
+    dibs.EnvironmentAdapters.ResolveTokens = originalResolveTokens
+
+    assert_equal(2, resolveCalls, "a new render batch should pick up the current presentation profile")
+  end)
+
+  it("avoids row click scripts and selection textures for static tables", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 static table", 640, 360)
+    local parent = shell.window
+    dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Name", width = 180 }, { title = "Value", width = 180 },
+    }, { { "Member", "Ready" } }, 120, nil, {
+      noScrolling = true, allowTableSort = false, disableCellTooltips = true,
+    })
+    local row
+    for _, child in ipairs(parent.children) do
+      if child._dibsDataGridRow then row = child break end
+    end
+    assert_not_nil(row)
+    assert_nil(row._dibsGridSelectionTexture)
+    assert_nil(row.children[1].frame._scripts.OnMouseUp)
+  end)
+
+  it("keeps table tooltips for truncated or explicitly described cells only when requested", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 selective table tooltips", 640, 360)
+    local parent = shell.window
+    dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Visible", width = 180 },
+      { title = "Truncated", width = 56 },
+      { title = "Help", width = 100, tooltip = "Column description." },
+    }, { { "Ready", "A long value that needs truncation", "Value" } }, 120, nil, {
+      noScrolling = true, allowTableSort = false, tooltipOnlyWhenTruncated = true,
+    })
+    local row
+    for _, child in ipairs(parent.children) do
+      if child._dibsDataGridRow then row = child break end
+    end
+    assert_not_nil(row)
+    assert_nil(row.children[1]._dibsTooltipAttachment)
+    assert_not_nil(row.children[2]._dibsTooltipAttachment)
+    assert_not_nil(row.children[3]._dibsTooltipAttachment)
+  end)
+
+  it("keeps selectable rows interactive when a row callback is provided", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    local shell = dibs.AceGUI.CreateWindow("B12 selectable table", 640, 360)
+    local parent = shell.window
+    dibs.AceGUI.AddTable(shell, parent, {
+      { title = "Name", width = 180 }, { title = "Value", width = 180 },
+    }, { { "Member", "Ready" } }, 120, nil, {
+      noScrolling = true, allowTableSort = false, disableCellTooltips = true,
+      onRowClick = function() end,
+    })
+    local row
+    for _, child in ipairs(parent.children) do
+      if child._dibsDataGridRow then row = child break end
+    end
+    assert_not_nil(row)
+    assert_not_nil(row._dibsGridSelectionTexture)
+    assert_not_nil(row.children[1].frame._scripts.OnMouseUp)
+  end)
+
   it("keeps long labels inspectable and status meaning independent of color", function()
     local _, dibs = loader.load({ withAce3 = true })
     local visible, truncated, full = dibs.Midnight.Truncate("Historical award recipient mismatch", 18)

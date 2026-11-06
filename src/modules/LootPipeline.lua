@@ -178,16 +178,11 @@ function Dibs.LootPipeline.RequestDibFromContext(context)
     return nil, "REQUEST_FAILED"
   end
 
-  if Dibs.PreDibs and Dibs.PreDibs.CreatePublic and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() then
-    return Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, context.source or "loot-pipeline", context)
-  end
-
-  if Dibs.PreDibs and Dibs.PreDibs.Create then
-    local request = Dibs.PreDibs.Create(playerName, itemID, itemName, seasonId)
-    if request then
-      return request, nil
+  if Dibs.PreDibs and Dibs.PreDibs.CreatePublic then
+    if not (Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled()) then
+      return nil, "PUBLIC_PRE_DIBS_DISABLED"
     end
-    return nil, "REQUEST_FAILED"
+    return Dibs.PreDibs.CreatePublic(playerName, itemID, itemName, seasonId, context.source or "loot-pipeline", context)
   end
 
   return nil, "PREDIB_UNAVAILABLE"

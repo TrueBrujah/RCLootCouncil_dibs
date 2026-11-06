@@ -8,10 +8,31 @@ local cursor = 0
 
 local function copy(value) return Dibs.DeepCopy(value) end
 local function scope() return tostring(Dibs.GetGuildKey()) end
-local function enabled()
-  return not (Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled())
-    and not (Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive and Dibs.IndependentRaid.IsSessionActive())
-    and (not Dibs.OperationalPolicy or Dibs.OperationalPolicy.IsModuleEnabled("requests") == true)
+local function beginPumpTiming()
+  local stats = Dibs.UIRenderStats
+  return stats and stats.Begin and stats.Begin(false) or nil
+end
+local function recordPumpTiming(page, startedAt)
+  local stats = Dibs.UIRenderStats
+  if stats and stats.Record then stats.Record("RequestDelivery data", page, startedAt) end
+end
+local function enabled(trackPump, requestsModuleEnabled, dbOverride)
+  local startedAt = trackPump and beginPumpTiming() or nil
+  local isolated = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() == true
+  if trackPump then recordPumpTiming("pump-enabled-developer-mode", startedAt) end
+  if isolated then return false end
+
+  startedAt = trackPump and beginPumpTiming() or nil
+  isolated = Dibs.IndependentRaid and Dibs.IndependentRaid.IsSessionActive
+    and Dibs.IndependentRaid.IsSessionActive(dbOverride) == true
+  if trackPump then recordPumpTiming("pump-enabled-independent-raid", startedAt) end
+  if isolated then return false end
+
+  startedAt = trackPump and beginPumpTiming() or nil
+  local policyEnabled = requestsModuleEnabled == true or not Dibs.OperationalPolicy
+    or Dibs.OperationalPolicy.IsModuleEnabled("requests", dbOverride) == true
+  if trackPump then recordPumpTiming("pump-enabled-module-policy", startedAt) end
+  return policyEnabled
 end
 local function member(name)
   local result = Dibs.Identity and Dibs.Identity.ResolveRosterMember(name)
@@ -25,12 +46,12 @@ local function state()
   root.requestDelivery[scope()] = root.requestDelivery[scope()] or { pending = {}, statuses = {}, reminders = {} }
   return root.requestDelivery[scope()]
 end
-local function requests()
-  local db = Dibs.GetDB()
+local function requests(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB()
   return db.disputes and db.disputes.requests or {}
 end
-local function authority()
-  local current = Dibs.Governance and Dibs.Governance.GetAuthorityState()
+local function authority(dbOverride)
+  local current = Dibs.Governance and Dibs.Governance.GetAuthorityState(dbOverride)
   if not current or current.state ~= "ACTIVE" or not current.coordinator then return nil end
   if type(current.ledgerEpoch) ~= "number" or current.ledgerEpoch < 1
     or current.ledgerEpoch ~= math.floor(current.ledgerEpoch) or current.ledgerEpoch == math.huge then return nil end
@@ -365,18 +386,27 @@ function Delivery.CheckReminders()
   end
 end
 
-function Delivery.Pump()
-  if not enabled() then return false, "REQUEST_CONTEXT_ISOLATED" end
-  Delivery.CheckReminders()
-  local current, actor = authority(), localMember()
+function Delivery.Pump(skipReminderScan, requestsModuleEnabled, dbOverride)
+  local phaseStartedAt = beginPumpTiming()
+  local deliveryEnabled = enabled(true, requestsModuleEnabled, dbOverride)
+  recordPumpTiming("pump-enabled-check", phaseStartedAt)
+  if not deliveryEnabled then return false, "REQUEST_CONTEXT_ISOLATED" end
+  if skipReminderScan ~= true then Delivery.CheckReminders() end
+  phaseStartedAt = beginPumpTiming()
+  local current, actor = authority(dbOverride), localMember()
+  recordPumpTiming("pump-coordinator-resolution", phaseStartedAt)
+  phaseStartedAt = beginPumpTiming()
   if current and actor and current.memberKey == actor.memberKey then
-    local order = Dibs.GetDB().disputes.order
+    local requestDB = type(dbOverride) == "table" and dbOverride or Dibs.GetDB()
+    local order = requestDB.disputes.order
     for _ = 1, math.min(8, #order) do
       cursor = cursor % #order + 1
-      local request = requests()[order[cursor]]
+      local request = requests(requestDB)[order[cursor]]
       if request then Delivery.OnChanged(request) end
     end
   end
+  recordPumpTiming("pump-snapshot-refresh", phaseStartedAt)
+  phaseStartedAt = beginPumpTiming()
   local sentCount = 0
   for _, pending in pairs(state().pending) do
     if sentCount >= 4 then break end
@@ -417,6 +447,7 @@ function Delivery.Pump()
       pending.nextAttemptAt = time() + RETRY_SECONDS
     end
   end
+  recordPumpTiming("pump-pending-outbox", phaseStartedAt)
   return true
 end
 

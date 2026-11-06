@@ -9,6 +9,7 @@ local TOC_FILES = {
   "modules/Identity.lua",
   "modules/Governance.lua",
   "modules/OperationalPolicy.lua",
+  "modules/FeatureRegistry.lua",
   "modules/Seasons.lua",
   "modules/LootRules.lua",
   "modules/RankRules.lua",
@@ -49,6 +50,7 @@ local TOC_FILES = {
   "ui/EnvironmentAdapters.lua",
   "ui/WindowState.lua",
   "ui/AceGUI.lua",
+  "ui/PerfUI.lua",
   "ui/SetupAssistant.lua",
   "ui/HealthUI.lua",
   "ui/DeveloperUI.lua",
@@ -110,7 +112,12 @@ local function makeAce3()
   end
   local event = { handlers = {} }
   function event:Embed(target)
-    target.RegisterEvent = function(owner, eventName, callback) event.handlers[eventName] = callback return true end
+    target.RegisterEvent = function(owner, eventName, callback)
+      event.handlers[eventName] = function(receivedEvent, ...)
+        return callback(target, receivedEvent, ...)
+      end
+      return true
+    end
   end
   local timer = { scheduled = {} }
   function timer:Embed(target)
@@ -262,7 +269,10 @@ function M.load(opts)
   local tocFiles = TOC_FILES
   for _, relative in ipairs(tocFiles) do
     local sourcePath = "src/" .. relative
-    local chunk, err = loadfile(sourcePath)
+    -- Respect an optional sandbox/client environment. Without the explicit
+    -- environment, Lua loads each addon chunk into the host _G, collapsing
+    -- supposedly isolated clients onto one shared addon instance.
+    local chunk, err = loadfile(sourcePath, "t", _G)
     if not chunk then
       error("failed to load " .. sourcePath .. ": " .. tostring(err))
     end

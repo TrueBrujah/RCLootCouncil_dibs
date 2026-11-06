@@ -7,7 +7,7 @@ Non-responsibilities: Ledger rules, loot ownership, and UI layout belong to thei
 Dependencies: WoW API; optional Ace3 and RCLootCouncil integrations.
 Blizzard events: ADDON_LOADED, PLAYER_LOGIN, GROUP_ROSTER_UPDATE, PLAYER_ENTERING_WORLD, ZONE_CHANGED_NEW_AREA, PLAYER_REGEN_ENABLED, CHAT_MSG_ADDON.
 Internal events/messages: Routes CHAT_MSG_ADDON to Dibs.Sync; invalidates readiness on roster/zone/combat changes.
-SavedVariables: RCLootCouncil_dibsDB, guild-scoped schema version 6.
+SavedVariables: RCLootCouncil_dibsDB, guild-scoped schema version 8.
 RCLootCouncil: Initializes capability-aware integration when the optional addon is present.
 Combat safety: Defers protected UI work until PLAYER_REGEN_ENABLED.
 Invariants: DIBS-RULE-001, DIBS-RULE-002, DIBS-RULE-003, DIBS-RULE-004, DIBS-RULE-009.
@@ -74,7 +74,14 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.10"
+Dibs.VERSION = "0.8.11"
+local getAddonMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
+if type(getAddonMetadata) == "function" then
+  local ok, buildId = pcall(getAddonMetadata, Dibs.ADDON_NAME, "X-Dibs-Build")
+  if ok and type(buildId) == "string" and buildId ~= "" and buildId ~= "source" then
+    Dibs.BUILD_ID = buildId
+  end
+end
 Dibs.ICON_TEXTURE = "Interface\\AddOns\\RCLootCouncil_dibs\\media\\RCLootCouncil_Dibs_Logo"
 Dibs.PROTOCOL_VERSION = 1
 Dibs.DEFAULT_DIBS_PER_RANK = 1
@@ -184,7 +191,7 @@ function Dibs.GetCharacterScopeKey(playerName)
 end
 
 local defaultDB = {
-  version = 7,
+  version = 8,
   currentSeasonId = nil,
   seasons = {},
   rankRules = {},
@@ -206,10 +213,11 @@ local defaultDB = {
     vaultConflicts = {},
   },
   disputes = {
-    version = 2,
+    version = 3,
     requests = {},
     order = {},
     corrections = {},
+    operationStates = {},
   },
   reconciliation = {
     version = 1,
@@ -296,7 +304,7 @@ local defaultDB = {
 
 local FLAT_ROOT_MARKERS = { "seasons", "preDibs", "ledger", "permissions", "settings" }
 local ROOT_SCHEMA_VERSION = 6
-local GUILD_SCHEMA_VERSION = 7
+local GUILD_SCHEMA_VERSION = 8
 local RECOVERY_METADATA_VERSION = 1
 local MAX_STARTUP_BACKUPS = 3
 local MAX_QUARANTINE_RECORDS = 25
@@ -498,7 +506,8 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   ensureTable(disputes, "requests", {}, root, changes, scope .. ".disputes.requests")
   ensureTable(disputes, "order", {}, root, changes, scope .. ".disputes.order")
   ensureTable(disputes, "corrections", {}, root, changes, scope .. ".disputes.corrections")
-  disputes.version = math.max(tonumber(disputes.version) or 1, 2)
+  ensureTable(disputes, "operationStates", {}, root, changes, scope .. ".disputes.operationStates")
+  disputes.version = math.max(tonumber(disputes.version) or 1, 3)
 
   local reconciliation = ensureTable(db, "reconciliation", defaultDB.reconciliation, root, changes, scope .. ".reconciliation")
   for _, key in ipairs({ "sessions", "aliases", "aliasHistory", "decisions", "evidence", "evidenceIndex" }) do
@@ -693,6 +702,15 @@ local function migrateGuild(db)
     end
     db.version = 7
   end
+  if db.version < 8 then
+    db.disputes = db.disputes or { version = 2, requests = {}, order = {}, corrections = {} }
+    db.disputes.requests = db.disputes.requests or {}
+    db.disputes.order = db.disputes.order or {}
+    db.disputes.corrections = db.disputes.corrections or {}
+    db.disputes.operationStates = db.disputes.operationStates or {}
+    db.disputes.version = math.max(tonumber(db.disputes.version) or 2, 3)
+    db.version = 8
+  end
 end
 
 Dibs.Persistence.MigrateGuild = Dibs.Persistence.MigrateGuild or migrateGuild
@@ -713,11 +731,15 @@ local function setReadOnlyRecovery(source, state, diagnostic)
 end
 
 local function isReadyRoot(root, guildKey)
-  if type(root) ~= "table" or root.schemaVersion ~= ROOT_SCHEMA_VERSION or type(root.guilds) ~= "table" or type(root.persistenceRecovery) ~= "table" then return false end
+  if type(root) ~= "table" then return false, "root-type" end
+  if root.schemaVersion ~= ROOT_SCHEMA_VERSION then return false, "root-schema" end
+  if type(root.guilds) ~= "table" then return false, "guild-map-type" end
+  if type(root.persistenceRecovery) ~= "table" then return false, "recovery-metadata-type" end
   local db = root.guilds[guildKey]
-  if type(db) ~= "table" or db.version ~= GUILD_SCHEMA_VERSION then return false end
+  if type(db) ~= "table" then return false, "guild-entry-type" end
+  if db.version ~= GUILD_SCHEMA_VERSION then return false, "guild-schema" end
   for _, key in ipairs({ "seasons", "rankRules", "ledger", "permissions", "preDibs", "disputes", "reconciliation", "characterEligibility", "governance", "backups", "auditLog", "sync", "settings" }) do
-    if type(db[key]) ~= "table" then return false end
+    if type(db[key]) ~= "table" then return false, "guild-subtree-" .. key end
   end
   return true
 end
@@ -747,12 +769,30 @@ end
 
 local function ensureDB()
   local dbName = Dibs.SAVED_VARIABLE_NAME or "RCLootCouncil_dibsDB"
+  local renderStats = Dibs.UIRenderStats
+  local guildKeyStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   local guildKey = Dibs.GetGuildKey()
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-guild-key", guildKeyStartedAt)
+  end
   Dibs.currentGuildKey = guildKey
   local source = _G[dbName]
   if source == nil and type(_G.DibsDB) == "table" then source = _G.DibsDB end
 
-  if Dibs._persistenceSource == source and isReadyRoot(source, guildKey) then
+  local readyCheckStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
+  local sourceMatches = Dibs._persistenceSource == source
+  local rootReady, rootFailureReason = false, "source-identity"
+  if sourceMatches then rootReady, rootFailureReason = isReadyRoot(source, guildKey) end
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-ready-root-check", readyCheckStartedAt)
+    if rootReady then
+      renderStats.Record("Core data", "get-db-fast-path-hit", readyCheckStartedAt)
+    else
+      renderStats.Record("Core data", "get-db-fast-path-miss", readyCheckStartedAt)
+      renderStats.Record("Core data", "get-db-fast-path-miss-" .. tostring(rootFailureReason or "unknown"), readyCheckStartedAt)
+    end
+  end
+  if rootReady then
     Dibs.db = source.guilds[guildKey]
     Dibs.persistenceStatus = Dibs.persistenceStatus or persistenceStatus("VALID", nil, false)
     _G.DibsDB = Dibs.db
@@ -764,8 +804,22 @@ local function ensureDB()
     return
   end
 
+  -- Detect an unsupported guild schema before cloning the full SavedVariables
+  -- root. Keep the same read-only fallback as the staged validation below.
+  local sourceGuild = type(source) == "table" and type(source.guilds) == "table"
+    and source.guilds[guildKey] or nil
+  if sourceMatches and rootFailureReason == "guild-schema" and type(sourceGuild) == "table"
+    and isWholeNumber(sourceGuild.version) and sourceGuild.version > GUILD_SCHEMA_VERSION then
+    if renderStats and renderStats.Record then
+      renderStats.Record("Core data", "get-db-future-guild-schema", readyCheckStartedAt)
+    end
+    setReadOnlyRecovery(source, "FUTURE_UNSUPPORTED", "Guild database version " .. tostring(sourceGuild.version) .. " is newer than supported version " .. tostring(GUILD_SCHEMA_VERSION) .. "; update RCLootCouncil_dibs before modifying data.")
+    return
+  end
+
   local changes = { changed = false, migration = false, recovery = false, needsBackup = false }
   local staged
+  local sourceCopyStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   if source == nil then
     staged = newRoot()
     changes.changed = true
@@ -774,6 +828,9 @@ local function ensureDB()
     quarantine(staged, changes, "root", "EXPECTED_TABLE", source)
   else
     staged = deepcopy(source)
+  end
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-root-copy", sourceCopyStartedAt)
   end
 
   if isFlatLegacyRoot(staged) then
@@ -850,7 +907,11 @@ local function ensureDB()
     end
   end
 
+  local subtreeValidationStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   validateGuildSubtrees(db, staged, changes, guildKey)
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-subtree-validation", subtreeValidationStartedAt)
+  end
   if changes.migration then
     local ok, migrationError = pcall(Dibs.Persistence.MigrateGuild, db)
     if not ok then
@@ -858,7 +919,11 @@ local function ensureDB()
       return
     end
   end
+  local defaultsStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   mergeDefaults(db, defaultDB)
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-merge-defaults", defaultsStartedAt)
+  end
   adoptPreservedBackups(staged, db, guildKey, changes)
 
   if changes.needsBackup and source ~= nil then addStartupBackup(staged, source, changes.recovery and "recovery" or "migration") end
@@ -881,10 +946,19 @@ end
 
 ---@return DibsGuildDB db Active guild-scoped database after migration/defaulting.
 function Dibs.GetDB()
+  local renderStats = Dibs.UIRenderStats
+  local ensureStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
   ensureDB()
+  if renderStats and renderStats.Record then
+    renderStats.Record("Core data", "get-db-ensure", ensureStartedAt)
+  end
 
   if Dibs.DeveloperSandboxStore and Dibs.DeveloperSandboxStore.Initialize then
+    local sandboxStartedAt = renderStats and renderStats.Begin and renderStats.Begin(false)
     Dibs.DeveloperSandboxStore.Initialize()
+    if renderStats and renderStats.Record then
+      renderStats.Record("Core data", "get-db-sandbox-store", sandboxStartedAt)
+    end
   end
   return Dibs.db
 end
@@ -1114,12 +1188,19 @@ function Dibs.NewId(prefix)
 end
 
 ---@return string|nil seasonId Active season identifier, if configured.
-function Dibs.GetCurrentSeasonId()
-  ensureDB()
-  if Dibs.db.currentSeasonId and Dibs.db.currentSeasonId ~= "" then
-    return Dibs.db.currentSeasonId
+function Dibs.GetCurrentSeasonId(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or nil
+  if not db then
+    ensureDB()
+    db = Dibs.db
+  end
+  if db.currentSeasonId and db.currentSeasonId ~= "" then
+    return db.currentSeasonId
   end
 
+  -- Preserve the legacy default-season initialization path, which may mutate
+  -- the active SavedVariables database when no current season has been set.
+  if dbOverride then ensureDB(); db = Dibs.db end
   if Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault then
     local season = Dibs.Seasons.GetOrCreateDefault()
     if season then
@@ -1127,7 +1208,7 @@ function Dibs.GetCurrentSeasonId()
     end
   end
 
-  return Dibs.db.currentSeasonId
+  return db and db.currentSeasonId
 end
 
 ---@return string playerName Canonical local player name/GUID representation.
@@ -1276,6 +1357,143 @@ function Dibs.GetFrameworkStatus()
     " | Timer=" .. enabled("timer")
 end
 
+-- Opt-in, session-only UI render timing. This stays idle unless explicitly
+-- enabled with `/dibs perf on`; it never copies addon data or writes SavedVariables.
+-- Leave room for counters from Player and Officer routes in the same session.
+-- A single profiling session can visit many pages with nested measurements.
+-- Keep the session bounded, but leave enough room that later routes are not
+-- silently omitted after a few large pages have been opened.
+local UI_RENDER_STATS_MAX_PAGES = 512
+local uiRenderStats = { enabled = false, pages = {}, pageCount = 0, droppedPageCount = 0 }
+Dibs.UIRenderStats = Dibs.UIRenderStats or {}
+function Dibs.UIRenderStats.SetEnabled(enabled)
+  uiRenderStats.enabled = enabled == true
+  return uiRenderStats.enabled
+end
+function Dibs.UIRenderStats.IsEnabled()
+  return uiRenderStats.enabled == true
+end
+local function getLuaHeapKB()
+  local collect = _G.collectgarbage
+  if type(collect) ~= "function" then return nil end
+  local ok, value = pcall(collect, "count")
+  return ok and type(value) == "number" and value or nil
+end
+function Dibs.UIRenderStats.Begin(trackHeap)
+  if not uiRenderStats.enabled then return nil end
+  local timer = _G.debugprofilestop
+  if type(timer) ~= "function" then return nil end
+  local heapKB
+  if trackHeap ~= false then heapKB = getLuaHeapKB() end
+  return { startedAt = timer(), heapKB = heapKB }
+end
+function Dibs.UIRenderStats.Record(kind, page, startedAt)
+  if not uiRenderStats.enabled then return false end
+  local startTime = type(startedAt) == "table" and startedAt.startedAt or startedAt
+  if type(startTime) ~= "number" then return false end
+  local timer = _G.debugprofilestop
+  if type(timer) ~= "function" then return false end
+  local elapsed = math.max(0, timer() - startTime)
+  local heapDeltaKB
+  if type(startedAt) == "table" and type(startedAt.heapKB) == "number" then
+    local endHeapKB = getLuaHeapKB()
+    if type(endHeapKB) == "number" then heapDeltaKB = endHeapKB - startedAt.heapKB end
+  end
+  local key = tostring(kind or "UI") .. ":" .. tostring(page or "unknown")
+  local entry = uiRenderStats.pages[key]
+  if not entry then
+    if uiRenderStats.pageCount >= UI_RENDER_STATS_MAX_PAGES then
+      uiRenderStats.droppedPageCount = uiRenderStats.droppedPageCount + 1
+      return false
+    end
+    entry = {
+      kind = tostring(kind or "UI"), page = tostring(page or "unknown"),
+      count = 0, totalMs = 0, maxMs = 0,
+    }
+    uiRenderStats.pages[key] = entry
+    uiRenderStats.pageCount = uiRenderStats.pageCount + 1
+  end
+  entry.count = entry.count + 1
+  entry.totalMs = entry.totalMs + elapsed
+  entry.lastMs = elapsed
+  if elapsed > entry.maxMs then entry.maxMs = elapsed end
+  if type(heapDeltaKB) == "number" then
+    entry.heapSampleCount = (entry.heapSampleCount or 0) + 1
+    entry.heapDeltaTotalKB = (entry.heapDeltaTotalKB or 0) + heapDeltaKB
+    entry.heapDeltaLastKB = heapDeltaKB
+    if entry.heapDeltaMaxKB == nil or heapDeltaKB > entry.heapDeltaMaxKB then
+      entry.heapDeltaMaxKB = heapDeltaKB
+    end
+  end
+  return true
+end
+function Dibs.UIRenderStats.GetReport()
+  local entries = {}
+  for _, entry in pairs(uiRenderStats.pages) do
+    entries[#entries + 1] = {
+      kind = entry.kind, page = entry.page, count = entry.count,
+      lastMs = entry.lastMs or 0, maxMs = entry.maxMs, totalMs = entry.totalMs,
+      averageMs = entry.count > 0 and entry.totalMs / entry.count or 0,
+      heapSampleCount = entry.heapSampleCount or 0,
+      heapDeltaLastKB = entry.heapDeltaLastKB,
+      heapDeltaMaxKB = entry.heapDeltaMaxKB,
+      heapDeltaTotalKB = entry.heapDeltaTotalKB or 0,
+      heapDeltaAverageKB = (entry.heapSampleCount or 0) > 0
+        and entry.heapDeltaTotalKB / entry.heapSampleCount or 0,
+    }
+  end
+  table.sort(entries, function(a, b)
+    if a.maxMs == b.maxMs then return a.kind .. a.page < b.kind .. b.page end
+    return a.maxMs > b.maxMs
+  end)
+  return {
+    enabled = uiRenderStats.enabled == true,
+    pages = entries,
+    droppedPageCount = uiRenderStats.droppedPageCount,
+    maxPages = UI_RENDER_STATS_MAX_PAGES,
+  }
+end
+function Dibs.UIRenderStats.Reset()
+  uiRenderStats.pages, uiRenderStats.pageCount, uiRenderStats.droppedPageCount = {}, 0, 0
+end
+function Dibs.UIRenderStats.FormatReport(filter)
+  local report = Dibs.UIRenderStats.GetReport()
+  local needle = type(filter) == "string" and string.lower(filter) or ""
+  local pages = {}
+  for _, row in ipairs(report.pages) do
+    local label = string.lower(row.kind .. " " .. row.page)
+    if needle == "" or label:find(needle, 1, true) then pages[#pages + 1] = row end
+  end
+  if #pages == 0 then
+    if needle ~= "" and #report.pages > 0 then
+      return "No UI render timings match '" .. tostring(filter) .. "'."
+    end
+    return report.enabled and "UI render timing is on; no pages recorded yet."
+      or "No UI render timings recorded. Use /dibs perf on, then open or refresh pages."
+  end
+  local lines = {
+    "Dibs UI render time (ms; current session):",
+    "Lua heap ΔKB is global net change during each sample; GC noise applies, not addon attribution or allocation volume.",
+  }
+  if report.droppedPageCount > 0 then
+    lines[#lines + 1] = string.format(
+      "Warning: %d new timing counters were omitted after the %d-counter session limit.",
+      report.droppedPageCount, report.maxPages)
+  end
+  for index = 1, math.min(20, #pages) do
+    local row = pages[index]
+    local line = string.format("%s / %s: count=%d last=%.2f avg=%.2f max=%.2f total=%.2f",
+      row.kind, row.page, row.count, row.lastMs, row.averageMs, row.maxMs, row.totalMs)
+    if row.heapSampleCount > 0 then
+      line = line .. string.format(" | Lua heap ΔKB last=%.2f avg=%.2f max=%.2f net=%.2f",
+        row.heapDeltaLastKB, row.heapDeltaAverageKB, row.heapDeltaMaxKB, row.heapDeltaTotalKB)
+    end
+    lines[#lines + 1] = line
+  end
+  lines[#lines + 1] = "Timing uses debugprofilestop; it excludes later asynchronous work."
+  return table.concat(lines, "\n")
+end
+
 function Dibs.ApplyDefaultRules()
   ensureDB()
   local season = Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault()
@@ -1391,6 +1609,11 @@ function Dibs.HandleSlashCommand(msg)
     return
   end
 
+  if string.lower(action) == "build" then
+    Dibs.Message("Dibs " .. tostring(Dibs.VERSION or "unknown") .. " | Build " .. tostring(Dibs.BUILD_ID or "not stamped; use scripts/deploy.ps1"))
+    return
+  end
+
   if action == "debug" then
     local module = string.lower(args[2] or "all")
     if module == "logs" then
@@ -1422,6 +1645,32 @@ function Dibs.HandleSlashCommand(msg)
       Dibs.Message("Only the guild master or an officer may change Dibs settings (" .. tostring(reason) .. ").")
     else
       Dibs.Message("Debug level " .. module .. " = " .. tostring(applied))
+    end
+    return
+  end
+
+  if string.lower(action) == "perf" then
+    local mode = string.lower(args[2] or "report")
+    if mode == "on" then
+      if type(_G.debugprofilestop) ~= "function" then
+        Dibs.Message("UI render timing is unavailable: WoW did not expose debugprofilestop().")
+        return
+      end
+      Dibs.UIRenderStats.SetEnabled(true)
+      Dibs.Message("UI render timing enabled for this session. Open or refresh the pages, then use /dibs perf report.")
+    elseif mode == "off" then
+      Dibs.UIRenderStats.SetEnabled(false)
+      Dibs.Message("UI render timing disabled. Use /dibs perf report to view the measurements collected so far.")
+    elseif mode == "reset" or mode == "clear" then
+      Dibs.UIRenderStats.Reset()
+      Dibs.Message("UI render timings cleared.")
+    elseif mode == "window" or mode == "ui" or mode == "open" then
+      local shell = Dibs.PerfUI and Dibs.PerfUI.Open and Dibs.PerfUI.Open()
+      if not shell then Dibs.Message("Performance report window is unavailable.") end
+    elseif mode == "report" then
+      for line in Dibs.UIRenderStats.FormatReport(args[3]):gmatch("[^\n]+") do Dibs.Message(line) end
+    else
+      Dibs.Message("Usage: /dibs perf window|on|off|report [filter]|reset")
     end
     return
   end
@@ -1502,7 +1751,7 @@ function Dibs.HandleSlashCommand(msg)
     Dibs.Message(help.SLASH_HELP_STATUS or "Checks: status | readiness | dryrun <item> <winner> <response> <status> [session] | sync probe|report <player> | sync repair <player|guild>")
     Dibs.Message(help.SLASH_HELP_ADMIN or "Administration (GM/Officer): grant/use <player> <amount> | admin list|add|remove <Name-Realm> | mode <AUTO|STANDALONE|RCLootCouncil> | predibmode <mode>")
     Dibs.Message(help.SLASH_HELP_DATA or "Data: data | backup | profiles | import | export")
-    Dibs.Message(help.SLASH_HELP_DEBUG or "Diagnostics: debug <module|all> 0-5 | debug report|rc|logs | ejdebug | ejsub ... | announce debug on|off|scan | rcopts")
+    Dibs.Message(help.SLASH_HELP_DEBUG or "Diagnostics: debug <module|all> 0-5 | debug report|rc|logs | perf window|on|off|report|reset | ejdebug | ejsub ... | announce debug on|off|scan | rcopts")
     Dibs.Message(help.SLASH_HELP_DEVELOPER or "Developer Mode only: dev on|off|status | testitem <itemID>")
     return
   end
@@ -1725,10 +1974,14 @@ function Dibs.HandleSlashCommand(msg)
     local itemName = table.concat(args, " ", 3)
     local payloadName = itemName ~= "" and itemName or "Item " .. tostring(itemID)
     local request, reason
-    if Dibs.PreDibs and Dibs.PreDibs.CreatePublic and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() then
-      request, reason = Dibs.PreDibs.CreatePublic(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId(), "slash")
+    if Dibs.PreDibs and Dibs.PreDibs.CreatePublic then
+      if Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() then
+        request, reason = Dibs.PreDibs.CreatePublic(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId(), "slash")
+      else
+        reason = "PUBLIC_PRE_DIBS_DISABLED"
+      end
     else
-      request = Dibs.PreDibs.Create(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId())
+      reason = "PREDIB_UNAVAILABLE"
     end
 
     if request then
@@ -2165,7 +2418,7 @@ local function registerOptionalCapabilities()
     return Dibs.PlayerUI and Dibs.PlayerUI.CreateWindow and Dibs.PlayerUI.CreateWindow() or false
   end })
   capabilities.Register("officer_ui", { dependency = "Dibs UI", initialize = function()
-    return Dibs.OfficerUI and Dibs.OfficerUI.CreateWindow and Dibs.OfficerUI.CreateWindow() or false
+    return Dibs.OfficerUI and Dibs.OfficerUI.CreateWindow and Dibs.OfficerUI.CreateWindow(nil, true) or false
   end })
   capabilities.Register("rclootcouncil", { dependency = "RCLootCouncil", retryEvents = { "RCLootCouncil_LOADED", "PLAYER_ENTERING_WORLD" }, initialize = function()
     local ok = Dibs.RCLootCouncil and Dibs.RCLootCouncil.Initialize and Dibs.RCLootCouncil.Initialize()

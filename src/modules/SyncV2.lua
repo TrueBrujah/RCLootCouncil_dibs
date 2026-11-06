@@ -13,6 +13,12 @@ local Sync = Dibs.Sync
 
 local MAJOR, MINOR = 2, 1
 local MAX_MESSAGES, MAX_TRANSFERS, MAX_CHUNKS, MAX_BYTES, MAX_INDEX, MAX_PROTOCOL_MISMATCHES = 256, 8, 16, 8192, 500, 10
+local MAX_OUTER_PACKET_BYTES = 64 * 1024
+local DIGEST_ENTITY_TYPES = {
+  PREDIB_INDEX = true, LEDGER = true, VAULT_INDEX = true, AWARD_RESERVATION = true,
+  GOVERNANCE = true, OPERATIONAL_POLICY = true, LEDGER_CATALOG = true,
+  SEASON_CATALOG = true, AUTHORITY = true,
+}
 local LEDGER_BATCH_SIZE = 4
 local PROPOSAL_RETRY_INTERVAL = 300
 local AWARD_RESERVATION_PAGE_SIZE = 16
@@ -22,17 +28,31 @@ local CHANNEL_TEST_PENDING_LIMIT = 16
 local CHANNEL_TEST_RESPONSE_TTL = 120
 local CHANNEL_TEST_PEER_WINDOW, CHANNEL_TEST_PEER_LIMIT = 60, 6
 local TTL, HEARTBEAT, MAX_VAULT_RETRIES = 300, 60, 3
+local MAX_CACHED_REQUEST_INDEXES = 8
+local requestIndexCache, requestIndexCacheOrder = {}, {}
+local vaultDigestSummaryCache = setmetatable({}, { __mode = "k" })
 local LEDGER_DELETE_RETRY_INTERVAL = 300
-local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, LEDGER_DELETE = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
+local TYPES = { HELLO = true, DIGEST = true, DETAIL_FETCH = true, TRANSFER_BEGIN = true, TRANSFER_CHUNK = true, TRANSFER_END = true, TRANSFER_ACK = true, LEDGER_DIGEST = true, LEDGER_DELETE = true, VAULT_DIGEST = true, AWARD_RESERVATION_DIGEST = true, VAULT_FETCH = true, VAULT_DETAIL = true, VAULT_ACK = true, AWARD_PROPOSAL_ACK = true, LEDGER_OPERATION_PROPOSAL_ACK = true, SYNC_PROBE = true, SYNC_PROBE_RESPONSE = true }
 TYPES.CHANNEL_TEST, TYPES.CHANNEL_TEST_ACK = true, true
 TYPES.SYNC_REPAIR_REQUEST, TYPES.SYNC_REPAIR_ACK = true, true
 local CHANNEL_TEST_CHANNELS = { GUILD = true, OFFICER = true, RAID = true, PARTY = true, INSTANCE_CHAT = true, WHISPER = true, CHANNEL = true }
-local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, SEASON_CATALOG = true, LEDGER_CATALOG = true, LEDGER_BATCH = true }
-local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true, REQUEST_MESSAGE = true }
+local GUILD_DETAIL_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, LEGACY_BASELINE = true, AUTHORITY_SIGNAL = true, AWARD_COMMIT = true, LEDGER_OPERATION_COMMIT = true, SEASON_CATALOG = true, LEDGER_CATALOG = true, LEDGER_BATCH = true }
+local WHISPER_DETAIL_ENTITIES = { PREDIB_REQUEST = true, VAULT_DETAIL = true, LEGACY_RECOVERY_PACKAGE = true, AUTHORITY_ORPHAN = true, AWARD_PROPOSAL = true, LEDGER_OPERATION_PROPOSAL = true, REQUEST_MESSAGE = true }
 local TRUSTED_RELAY_ENTITIES = { GOVERNANCE = true, OPERATIONAL_POLICY = true, SEASON_CATALOG = true, LEGACY_BASELINE = true }
 local TERMINAL = { cancelled = true, invalidated = true, fulfilled = true }
 local awardReservationGenerations = {}
 local boundMap
+
+local function rememberRequestIndexCache(ledgerId, entry)
+  if requestIndexCache[ledgerId] == nil then
+    if #requestIndexCacheOrder >= MAX_CACHED_REQUEST_INDEXES then
+      local expired = table.remove(requestIndexCacheOrder, 1)
+      requestIndexCache[expired] = nil
+    end
+    requestIndexCacheOrder[#requestIndexCacheOrder + 1] = ledgerId
+  end
+  requestIndexCache[ledgerId] = entry
+end
 
 local function bumpAwardReservationGeneration(memberKey)
   if type(memberKey) == "string" then
@@ -86,7 +106,7 @@ local function expectedTransportChannel(message, transfer)
   if message.type == "TRANSFER_ACK" then return detailChannel(message.entityType) end
   if message.type == "VAULT_FETCH" or message.type == "VAULT_DETAIL" or message.type == "VAULT_ACK"
     or message.type == "SYNC_PROBE" or message.type == "SYNC_PROBE_RESPONSE"
-    or message.type == "AWARD_PROPOSAL_ACK" then return "WHISPER" end
+    or message.type == "AWARD_PROPOSAL_ACK" or message.type == "LEDGER_OPERATION_PROPOSAL_ACK" then return "WHISPER" end
   return nil
 end
 local function allowsLegacyWhisper(message, transfer)
@@ -103,8 +123,9 @@ local function allowsLegacyWhisper(message, transfer)
   return false
 end
 
-local function ensure()
-  local db = Dibs.GetDB()
+local function ensure(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB()
+  Dibs.db = db
   db.sync = db.sync or {}
   local state = db.sync
   state.v2 = state.v2 or { schema = 1, protocolState = "LEGACY_LOCAL", requestIndex = {}, tombstones = {}, replay = {}, peers = {} }
@@ -120,6 +141,19 @@ local function ensure()
   state.v2.predibPending = state.v2.predibPending or {}
   Dibs.runtime = Dibs.runtime or {}; Dibs.runtime.v2Transfers = Dibs.runtime.v2Transfers or {}
   return state.v2
+end
+
+-- Read the already-resolved active guild store on hot UI paths. Fall back to
+-- ensure() whenever the current guild scope or Sync store is not established.
+local function statusReadState()
+  local currentGuildKey = type(Dibs.GetGuildKey) == "function" and Dibs.GetGuildKey() or nil
+  local db = Dibs.db
+  local sync = type(db) == "table" and db.sync
+  local state = type(sync) == "table" and sync.v2
+  if currentGuildKey and Dibs.currentGuildKey == currentGuildKey and type(state) == "table" then
+    return state
+  end
+  return ensure()
 end
 
 local function trustedDigestKey(entityType, revision, contentHash)
@@ -267,22 +301,47 @@ local function clearAddonVersionMismatch(sender)
     if string.lower(tostring(mismatches[index].sender or "")) == normalized then table.remove(mismatches, index) end
   end
 end
-local function localSyncDigests()
+local function beginPeerStatusTiming()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.IsEnabled and Dibs.UIRenderStats.IsEnabled()
+    and type(_G.debugprofilestop) == "function" then
+    return _G.debugprofilestop()
+  end
+end
+local function recordPeerStatusTiming(name, startedAt)
+  if startedAt and Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Sync data", name, startedAt)
+  end
+end
+local function localSyncDigests(dbOverride)
   local digests = {}
-  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
+  local stateStartedAt = beginPeerStatusTiming()
+  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogSummary and Dibs.Seasons.GetCatalogSummary()
+    or (Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState()) or {}
   digests.SEASON_CATALOG = { revision = tonumber(catalog.catalogRevision) or 0, contentHash = catalog.hash }
-  local policy = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState() or {}
+  local policy = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetDigestSummary and Dibs.OperationalPolicy.GetDigestSummary()
+    or (Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetState and Dibs.OperationalPolicy.GetState()) or {}
   digests.OPERATIONAL_POLICY = { revision = tonumber(policy.policyRevision) or 0, contentHash = policy.hash }
+  recordPeerStatusTiming("local-catalog-policy", stateStartedAt)
+  local activeLedgerStartedAt = beginPeerStatusTiming()
   local activeLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
-    and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
-  local manifest = Sync.BuildManifest and Sync.BuildManifest(activeLedgerId) or {}
+    and Dibs.MultiLedger.GetActiveLedgerId(dbOverride) or "guild-primary"
+  recordPeerStatusTiming("local-active-ledger-id", activeLedgerStartedAt)
+  local requestStartedAt = beginPeerStatusTiming()
+  local manifest = Sync.GetManifestDigestSummary and Sync.GetManifestDigestSummary(activeLedgerId)
+    or (Sync.BuildManifest and Sync.BuildManifest(activeLedgerId)) or {}
   local predibKey = activeLedgerId == "guild-primary" and "PREDIB_INDEX"
     or ("PREDIB_INDEX:" .. tostring(activeLedgerId))
   digests[predibKey] = { revision = tonumber(manifest.revision) or 0, contentHash = manifest.contentHash }
-  local vault = Sync.BuildVaultDigest and Sync.BuildVaultDigest() or {}
+  recordPeerStatusTiming("local-request-digest", requestStartedAt)
+  local vaultStartedAt = beginPeerStatusTiming()
+  local vault = Sync.GetVaultDigestSummary and Sync.GetVaultDigestSummary()
+    or (Sync.BuildVaultDigest and Sync.BuildVaultDigest()) or {}
   digests.VAULT_INDEX = { revision = tonumber(vault.revision) or 0, contentHash = vault.contentHash }
-  local ledger = Sync.BuildLedgerDigest and Sync.BuildLedgerDigest() or {}
+  recordPeerStatusTiming("local-vault-digest", vaultStartedAt)
+  local ledgerStartedAt = beginPeerStatusTiming()
+  local ledger = Sync.BuildLedgerDigest and Sync.BuildLedgerDigest(activeLedgerId, dbOverride) or {}
   digests.LEDGER = { revision = tonumber(ledger.revision) or 0, contentHash = ledger.contentHash }
+  recordPeerStatusTiming("local-ledger-digest", ledgerStartedAt)
   return digests
 end
 local function requestProjection(request)
@@ -477,26 +536,81 @@ end
 ---@doc.help-key UI_HELP_SYNC_STATUS
 ---@doc.label-key DOC_SYNC_STATUS_LABEL
 function Sync.GetStatus()
+  local stateStartedAt = beginPeerStatusTiming()
   local state = ensure()
-  if not transportReady() or Sync.transportRegistered ~= true then return { state = "SYNC_UNAVAILABLE", protocolState = state.protocolState } end
-  return { state = state.status or "SYNC_READY", protocolState = state.protocolState, syncBehind = state.syncBehind == true, reason = state.reason,
-    reasons = Sync.GetSyncBehindReasons and Sync.GetSyncBehindReasons() or {} }
+  local ready = transportReady() and Sync.transportRegistered == true
+  local reasonStartedAt = beginPeerStatusTiming()
+  local reasons = ready and Sync.GetSyncBehindReasons and Sync.GetSyncBehindReasons() or {}
+  recordPeerStatusTiming("status-behind-reasons", reasonStartedAt)
+  local result
+  if not ready then
+    result = { state = "SYNC_UNAVAILABLE", protocolState = state.protocolState }
+  else
+    result = { state = state.status or "SYNC_READY", protocolState = state.protocolState,
+      syncBehind = state.syncBehind == true, reason = state.reason, reasons = reasons }
+  end
+  recordPeerStatusTiming("status-projection", stateStartedAt)
+  return result
 end
-function Sync.GetSynchronizationStatus()
-  local governance = Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState() or {}
-  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState() or {}
-  local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
-  local pending = 0
-  for _, proposal in ipairs(proposals) do if proposal.status ~= "COMMITTED" then pending = pending + 1 end end
-  local mismatches = ensure().protocolMismatches
-  return {
+-- Compact status projection for read-only gates that need only scalar state.
+-- Avoid copying mismatch details or constructing the described reason list.
+function Sync.GetStatusSummary()
+  local stateStartedAt = beginPeerStatusTiming()
+  local readStartedAt = beginPeerStatusTiming()
+  local state = statusReadState()
+  recordPeerStatusTiming("status-summary-state-read", readStartedAt)
+  local projectionStartedAt = beginPeerStatusTiming()
+  local mismatches = type(state.addonVersionMismatches) == "table" and state.addonVersionMismatches or nil
+  local mismatch = mismatches and mismatches[#mismatches]
+  local ready = transportReady() and Sync.transportRegistered == true
+  local result = {
+    state = ready and (state.status or "SYNC_READY") or "SYNC_UNAVAILABLE",
+    protocolState = state.protocolState,
+    syncBehind = ready and state.syncBehind == true or false,
+    reason = ready and state.reason or nil,
+    lastAddonVersionMismatchReasonCode = mismatch and mismatch.reasonCode or nil,
+  }
+  recordPeerStatusTiming("status-summary-projection", projectionStartedAt)
+  recordPeerStatusTiming("status-summary", stateStartedAt)
+  return result
+end
+function Sync.GetSynchronizationStatus(dbOverride)
+  local renderStartedAt = beginPeerStatusTiming()
+  local governanceStartedAt = beginPeerStatusTiming()
+  local governance = Dibs.Governance and Dibs.Governance.GetSynchronizationSummary
+    and Dibs.Governance.GetSynchronizationSummary()
+    or (Dibs.Governance and Dibs.Governance.GetState and Dibs.Governance.GetState()) or {}
+  recordPeerStatusTiming("synchronization-governance", governanceStartedAt)
+  local catalogStartedAt = beginPeerStatusTiming()
+  local catalog = Dibs.Seasons and Dibs.Seasons.GetCatalogSummary and Dibs.Seasons.GetCatalogSummary()
+    or (Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogState()) or {}
+  recordPeerStatusTiming("synchronization-catalog", catalogStartedAt)
+  local pending = tonumber(governance.pendingAwardProposals)
+  if pending == nil then
+    pending = 0
+    local proposalsStartedAt = beginPeerStatusTiming()
+    local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
+    for _, proposal in ipairs(proposals) do if proposal.status ~= "COMMITTED" then pending = pending + 1 end end
+    recordPeerStatusTiming("synchronization-proposals", proposalsStartedAt)
+  end
+  local mismatchStartedAt = beginPeerStatusTiming()
+  local syncState = statusReadState()
+  local mismatches = type(syncState.protocolMismatches) == "table" and syncState.protocolMismatches or {}
+  local lastProtocolMismatch = copy(mismatches[#mismatches])
+  local versionMismatches = type(syncState.addonVersionMismatches) == "table" and syncState.addonVersionMismatches or {}
+  local lastAddonVersionMismatch = copy(versionMismatches[#versionMismatches])
+  recordPeerStatusTiming("synchronization-mismatches", mismatchStartedAt)
+  local result = {
     governanceAdopted = governance.status == "GOVERNANCE_ADOPTED",
-    operationalPolicyAdopted = Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted and Dibs.OperationalPolicy.IsAdopted() == true,
+    operationalPolicyAdopted = Dibs.OperationalPolicy and Dibs.OperationalPolicy.IsAdopted
+      and Dibs.OperationalPolicy.IsAdopted(dbOverride) == true,
     seasonCatalogRevision = tonumber(catalog.catalogRevision) or 0,
     pendingAwardProposals = pending,
-    lastProtocolMismatch = copy(mismatches[#mismatches]),
-    lastAddonVersionMismatch = copy(ensure().addonVersionMismatches[#ensure().addonVersionMismatches]),
+    lastProtocolMismatch = lastProtocolMismatch,
+    lastAddonVersionMismatch = lastAddonVersionMismatch,
   }
+  recordPeerStatusTiming("synchronization-status", renderStartedAt)
+  return result
 end
 ---@doc.id sync.peer.status
 ---@doc.category synchronization
@@ -506,8 +620,10 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_SYNC_PEER
 ---@doc.label-key DOC_SYNC_PEER_STATUS_LABEL
-function Sync.GetPeerStatuses(rosterScope)
+function Sync.GetPeerStatuses(rosterScope, options)
   local state, rows, now = ensure(), {}, time()
+  local rosterStartedAt = beginPeerStatusTiming()
+  options = type(options) == "table" and options or nil
   local roster = {}
   local groupCount = type(GetNumGroupMembers) == "function" and tonumber(GetNumGroupMembers()) or 0
   local inRaid = type(IsInRaid) == "function" and IsInRaid() == true
@@ -546,19 +662,99 @@ function Sync.GetPeerStatuses(rosterScope)
       end
     end
   elseif useGuild and type(GetNumGuildMembers) == "function" and type(GetGuildRosterInfo) == "function" then
-    local okCount, memberCount = pcall(GetNumGuildMembers, true)
-    if not okCount then return rows end
-    for index = 1, tonumber(memberCount) or 0 do
-      local ok, name, _, rankIndex, _, _, _, _, _, online = pcall(GetGuildRosterInfo, index)
-      if ok and type(name) == "string" and name ~= "" then
-        roster[#roster + 1] = { name = name, online = online == true or online == 1 or online == "1", rankIndex = rankIndex }
+    local rosterCached = false
+    local identity = Dibs.Identity
+    local getRoster = identity and (identity.GetRosterSnapshot or identity.GetRosterMembers)
+    if type(getRoster) == "function" then
+      local ok, members = pcall(getRoster)
+      if ok and type(members) == "table" then
+        rosterCached = true
+        roster = members
+      end
+    end
+    if not rosterCached then
+      local okCount, memberCount = pcall(GetNumGuildMembers, true)
+      if not okCount then return rows end
+      for index = 1, tonumber(memberCount) or 0 do
+        local ok, name, _, rankIndex, _, _, _, _, _, online = pcall(GetGuildRosterInfo, index)
+        if ok and type(name) == "string" and name ~= "" then
+          roster[#roster + 1] = { name = name, online = online == true or online == 1 or online == "1", rankIndex = rankIndex }
+        end
       end
     end
   end
+  recordPeerStatusTiming("peer-roster-source", rosterStartedAt)
+  local pageInfo
+  local filteringStartedAt = beginPeerStatusTiming()
+  if options then
+    local query = string.lower(tostring(options.query or ""))
+    local candidates = {}
+    for _, entry in ipairs(roster) do
+      local name = tostring(entry.name or entry.displayName or "")
+      local rankName = tostring(entry.rankName or "")
+      if name ~= "" and (query == "" or string.find(string.lower(name), query, 1, true)
+        or string.find(string.lower(rankName), query, 1, true)) then
+        local memberKey = entry.memberKey or string.lower(name)
+        local peer = state.peers[memberKey]
+        local lastSeen = peer and tonumber(peer.lastSeenAt or peer.at) or 0
+        local detected = lastSeen > 0 and now - lastSeen <= (HEARTBEAT * 3)
+        candidates[#candidates + 1] = {
+          entry = entry,
+          sortName = string.lower(tostring(entry.displayName or name)),
+          online = entry.online == true or detected,
+        }
+      end
+    end
+    table.sort(candidates, function(first, second)
+      if first.online ~= second.online then return first.online end
+      return first.sortName < second.sortName
+    end)
+    local totalMatches = #candidates
+    local pageSize = math.max(5, math.min(50, math.floor(tonumber(options.pageSize) or 20)))
+    local totalPages = math.max(1, math.ceil(totalMatches / pageSize))
+    local page = math.max(1, math.min(totalPages, math.floor(tonumber(options.page) or 1)))
+    local firstIndex = (page - 1) * pageSize + 1
+    roster = {}
+    for index = firstIndex, math.min(totalMatches, firstIndex + pageSize - 1) do
+      roster[#roster + 1] = candidates[index].entry
+    end
+    pageInfo = { page = page, pageSize = pageSize, totalMatches = totalMatches, totalPages = totalPages }
+  end
+  recordPeerStatusTiming("peer-filter-sort-page", filteringStartedAt)
+  -- These local projections can hash or copy ledger-sized data. Build them
+  -- once per roster render, not once for every guild or group member.
+  local digestStartedAt = beginPeerStatusTiming()
+  local localDigests = #roster > 0 and localSyncDigests(options and options.db) or {}
+  local memberSnapshotStartedAt = beginPeerStatusTiming()
+  local localMember = #roster > 0 and (localSnapshot() or {}) or {}
+  recordPeerStatusTiming("local-member-snapshot", memberSnapshotStartedAt)
+  local baselineHashStartedAt = beginPeerStatusTiming()
+  local localBaselineHash
+  if #roster > 0 and Dibs.HistoricalBaseline then
+    if Dibs.HistoricalBaseline.GetBaselineHash then
+      localBaselineHash = Dibs.HistoricalBaseline.GetBaselineHash(options and options.db)
+    elseif Dibs.HistoricalBaseline.GetBaseline then
+      local localBaseline = Dibs.HistoricalBaseline.GetBaseline()
+      localBaselineHash = localBaseline and localBaseline.legacyBaselineHash
+    end
+  end
+  recordPeerStatusTiming("local-baseline-hash", baselineHashStartedAt)
+  local activeLedgerStartedAt = beginPeerStatusTiming()
+  local activeLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+    and Dibs.MultiLedger.GetActiveLedgerId(options and options.db) or "guild-primary"
+  recordPeerStatusTiming("peer-active-ledger-id", activeLedgerStartedAt)
+  local predibKey = activeLedgerId == "guild-primary" and "PREDIB_INDEX"
+    or ("PREDIB_INDEX:" .. tostring(activeLedgerId))
+  recordPeerStatusTiming("local-digest-projection", digestStartedAt)
+  local projectionStartedAt = beginPeerStatusTiming()
   for _, rosterEntry in ipairs(roster) do
-    local name, online, rankIndex = rosterEntry.name, rosterEntry.online, rosterEntry.rankIndex
+    local name = rosterEntry.name or rosterEntry.displayName
+    local online, rankIndex = rosterEntry.online, rosterEntry.rankIndex
     if type(name) == "string" and name ~= "" then
-      local resolved = member(name)
+      -- The shared guild-roster snapshot already carries canonical identity
+      -- fields. Reuse them instead of resolving every visible row again.
+      local resolved = type(rosterEntry.memberKey) == "string" and rosterEntry.memberKey ~= ""
+        and rosterEntry or member(name)
       local memberKey = resolved and resolved.memberKey or string.lower(name)
       local peer = state.peers[memberKey]
       local lastSeen = peer and tonumber(peer.lastSeenAt or peer.at) or 0
@@ -569,7 +765,6 @@ function Sync.GetPeerStatuses(rosterScope)
       if peer and peer.addonVersion then compatibility, compatibilityReason = Sync.GetAddonVersionCompatibility(peer.addonVersion) end
       local syncStatus = "Unknown"
       local compared, behind, localBehind = 0, false, false
-      local localDigests = localSyncDigests()
       for entityType, localDigest in pairs(localDigests) do
         local remoteDigest = peer and peer.entities and peer.entities[entityType]
         if remoteDigest then
@@ -587,20 +782,14 @@ function Sync.GetPeerStatuses(rosterScope)
       local remoteCatalog = peer and peer.entities and peer.entities.SEASON_CATALOG or {}
       local remotePolicy = peer and peer.entities and peer.entities.OPERATIONAL_POLICY or {}
       local remoteGovernance = peer and peer.entities and peer.entities.GOVERNANCE or {}
-      local activeLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
-        and Dibs.MultiLedger.GetActiveLedgerId() or "guild-primary"
-      local predibKey = activeLedgerId == "guild-primary" and "PREDIB_INDEX"
-        or ("PREDIB_INDEX:" .. tostring(activeLedgerId))
       local remotePredib = peer and peer.entities and peer.entities[predibKey] or {}
       local remoteVault = peer and peer.entities and peer.entities.VAULT_INDEX or {}
       local remoteLedger = peer and peer.entities and peer.entities.LEDGER or {}
-      local localMember = localSnapshot() or {}
       local isLocalMember = memberKey == localMember.memberKey
         or string.lower(tostring(resolved and resolved.displayName or name)) == string.lower(tostring(localMember.displayName or ""))
-      local localBaseline = Dibs.HistoricalBaseline and Dibs.HistoricalBaseline.GetBaseline and Dibs.HistoricalBaseline.GetBaseline() or {}
       local baselineStatus = "Unknown"
       if isLocalMember then
-        baselineStatus = localBaseline.legacyBaselineHash and "Present" or "Missing"
+        baselineStatus = localBaselineHash and "Present" or "Missing"
       elseif peer and peer.baselineHash then
         baselineStatus = "Present"
       elseif peer and peer.transferAck and peer.transferAck.result == "APPLIED" then
@@ -643,11 +832,14 @@ function Sync.GetPeerStatuses(rosterScope)
       }
     end
   end
+  recordPeerStatusTiming("peer-row-projection", projectionStartedAt)
+  local sortingStartedAt = beginPeerStatusTiming()
   table.sort(rows, function(a, b)
     if a.online ~= b.online then return a.online end
     return string.lower(a.playerName) < string.lower(b.playerName)
   end)
-  return rows
+  recordPeerStatusTiming("peer-row-sort", sortingStartedAt)
+  return rows, pageInfo or { page = 1, pageSize = #rows, totalMatches = #rows, totalPages = 1 }
 end
 local SYNC_BEHIND_REASON_TEXT = {
   LEDGER_GAP = "Guild ledger commits are missing on this client.",
@@ -688,7 +880,7 @@ local function latestBehindReason(reasons)
   end
   return latestCode
 end
-function Sync.IsSyncBehind() return ensure().syncBehind == true end
+function Sync.IsSyncBehind(dbOverride) return ensure(dbOverride).syncBehind == true end
 function Sync.MarkSyncBehind(reason)
   local state = ensure(); local code = reason or "SYNC_BEHIND"
   local reasons = behindReasons(state)
@@ -1052,11 +1244,11 @@ function Sync.SetProtocolState(state, governanceApproved)
   if state ~= "LEGACY_LOCAL" and state ~= "CUTOVER_PREPARED" and state ~= "V2_ENFORCED" then return false, "INVALID_PROTOCOL_STATE" end
   ensure().protocolState = state; return true, state
 end
-function Sync.CanEnforceV2(writers)
+function Sync.CanEnforceV2(writers, dbOverride)
   local localMember = localSnapshot(); if not localMember then return false, "ROSTER_UNAVAILABLE" end
   writers = writers or { localMember.displayName }
   if type(writers) ~= "table" or #writers < 1 or #writers > 32 then return false, "WRITER_COMPATIBILITY_REQUIRED" end
-  local state = ensure()
+  local state = ensure(dbOverride)
   for _, writer in ipairs(writers) do
     local resolved, reason = member(writer); if not resolved then return false, reason end
     if resolved.memberKey ~= localMember.memberKey then
@@ -1072,9 +1264,13 @@ end
 function Sync.BuildEnvelope(message)
   local snapshot = localSnapshot(); if not snapshot then return nil, "ROSTER_UNAVAILABLE" end
   message = copy(message or {}); if not TYPES[message.type] then return nil, "INVALID_MESSAGE_TYPE" end
-  message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, guildDetail = true, whisperDetail = true,
+  message.protocol = { major = MAJOR, minor = MINOR,
+    operationProtocolVersion = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true and 1 or 0,
+    capabilities = { digest = true, guildDetail = true, whisperDetail = true,
     requestTombstones = true, ledgerDigestOnly = true, ledgerScopedCommits = true, authoritySignals = true, requestDelivery = true,
-    guildRepair = true } }
+    guildRepair = true, ledgerOperationCommit = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true,
+    ledgerOperationProposal = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true,
+    ledgerOperationProtocol = Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED == true and 1 or 0 } }
   message.messageId = message.messageId or Dibs.NewId("v2msg")
   message.guildKey = Dibs.GetGuildKey(); message.senderNameRealm = snapshot.displayName; message.senderMemberKey = snapshot.memberKey
   message.addonVersion = Dibs.VERSION
@@ -1088,6 +1284,13 @@ function Sync.Send(message, channel, target)
     end
   end
   if type(message) ~= "table" then return false, "INVALID_SYNC_MESSAGE" end
+  if message.type == "TRANSFER_BEGIN" then
+    if not detailChannel(message.entityType) then return false, "UNSUPPORTED_ENTITY" end
+    if (message.entityType == "LEDGER_OPERATION_COMMIT" or message.entityType == "LEDGER_OPERATION_PROPOSAL")
+      and Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then
+      return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED"
+    end
+  end
   if Sync.ContainsForbiddenLiveLootData and Sync.ContainsForbiddenLiveLootData(message) then return false, "FORBIDDEN_LIVE_LOOT_DATA" end
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
   local envelope, reason = Sync.BuildEnvelope(message); if not envelope then return false, reason end
@@ -1353,19 +1556,25 @@ end
 local function requestScopeKey(ledgerId, requestId)
   return tostring(ledgerId or "guild-primary") .. "|" .. tostring(requestId)
 end
-function Sync.BuildRequestIndex(ledgerId)
+local function buildRequestIndex(ledgerId, copyCachedIndex)
   local targetLedgerId = ledgerId
   if targetLedgerId == nil then
     targetLedgerId = (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
       and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
   end
   if not isApprovedLedger(targetLedgerId) then return nil, "LEDGER_NOT_APPROVED" end
+  local historyRevision = Dibs.PreDibs and Dibs.PreDibs.GetHistoryRevision
+    and Dibs.PreDibs.GetHistoryRevision(targetLedgerId)
   local state = ensure(); local index, tombstones = {}, {}
   local records, historyReason = {}, nil
   if Dibs.PreDibs and Dibs.PreDibs.GetHistory then
     records, historyReason = Dibs.PreDibs.GetHistory(targetLedgerId)
   end
   if not records then return nil, historyReason or "PREDIB_HISTORY_UNAVAILABLE" end
+  local cached = requestIndexCache[targetLedgerId]
+  if historyRevision ~= nil and cached and cached.revision == historyRevision and cached.records == records then
+    return copyCachedIndex and copy(cached.index) or cached.index
+  end
   for _, request in ipairs(records) do
     local projection = requestProjection(request); projection.contentHash = requestHash(request); projection.terminal = TERMINAL[request.status] == true
     index[#index + 1] = projection
@@ -1385,7 +1594,17 @@ function Sync.BuildRequestIndex(ledgerId)
   end
   boundMap(state.requestIndex, MAX_INDEX)
   boundMap(state.tombstones, MAX_INDEX)
+  if historyRevision ~= nil then
+    rememberRequestIndexCache(targetLedgerId, {
+      revision = historyRevision, records = records, index = index, contentHash = hash(index),
+    })
+  else
+    requestIndexCache[targetLedgerId] = nil
+  end
   return index
+end
+function Sync.BuildRequestIndex(ledgerId)
+  return buildRequestIndex(ledgerId, true)
 end
 function Sync.BuildManifest(ledgerId)
   local targetLedgerId = ledgerId
@@ -1395,11 +1614,39 @@ function Sync.BuildManifest(ledgerId)
   end
   local index, reason = Sync.BuildRequestIndex(targetLedgerId)
   if not index then return nil, reason end
+  local cached = requestIndexCache[targetLedgerId]
+  local historyRevision = Dibs.PreDibs and Dibs.PreDibs.GetHistoryRevision
+    and Dibs.PreDibs.GetHistoryRevision(targetLedgerId)
   local manifest = { type = "DIGEST", entityType = "PREDIB_INDEX",
     entityId = targetLedgerId == "guild-primary" and "current" or targetLedgerId,
-    revision = 1, contentHash = hash(index), index = index, protocolState = Sync.GetProtocolState() }
+    revision = 1,
+    contentHash = cached and cached.revision == historyRevision and cached.contentHash or hash(index),
+    index = index, protocolState = Sync.GetProtocolState() }
   if targetLedgerId ~= "guild-primary" then manifest.ledgerId = targetLedgerId end
   return manifest
+end
+-- Synchronization status pages need only the compact revision and hash. Avoid
+-- copying the full cached request index just to read those two scalar fields.
+function Sync.GetManifestDigestSummary(ledgerId)
+  local targetLedgerId = ledgerId
+  if targetLedgerId == nil then
+    targetLedgerId = (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
+      and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
+  end
+  if not isApprovedLedger(targetLedgerId) then return nil, "LEDGER_NOT_APPROVED" end
+  local historyRevision = Dibs.PreDibs and Dibs.PreDibs.GetHistoryRevisionFast
+    and Dibs.PreDibs.GetHistoryRevisionFast(targetLedgerId)
+  local cached = requestIndexCache[targetLedgerId]
+  if historyRevision ~= nil and cached and cached.revision == historyRevision then
+    return { revision = 1, contentHash = cached.contentHash }
+  end
+  local index, reason = buildRequestIndex(targetLedgerId, false)
+  if not index then return nil, reason end
+  cached = requestIndexCache[targetLedgerId]
+  return {
+    revision = 1,
+    contentHash = cached and cached.contentHash or hash(index),
+  }
 end
 function Sync.AnnounceRequestIndex(ledgerId)
   local manifest, reason = Sync.BuildManifest(ledgerId)
@@ -1418,12 +1665,27 @@ function Sync.AnnounceAllRequestIndexes()
   end
   return sentAny, sentAny and nil or "NO_APPROVED_LEDGERS"
 end
-function Sync.BuildLedgerDigest(targetLedgerId)
-  local ledgerId = targetLedgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId()) or "guild-primary"
-  if not (Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()) then
-    return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = Dibs.GetCurrentSeasonId() or "none", revision = 0, contentHash = "LOCAL_ONLY" }
+function Sync.BuildLedgerDigest(targetLedgerId, dbOverride)
+  local ledgerId = targetLedgerId or (Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId and Dibs.MultiLedger.GetActiveLedgerId(dbOverride)) or "guild-primary"
+  local authorityStartedAt = beginPeerStatusTiming()
+  local authorityDigest = Dibs.Governance and Dibs.Governance.GetAuthorityDigestState
+    and Dibs.Governance.GetAuthorityDigestState() or nil
+  recordPeerStatusTiming("ledger-digest-authority", authorityStartedAt)
+  local isV2Enforced = authorityDigest and authorityDigest.protocolState ~= nil
+    and authorityDigest.protocolState == "V2_ENFORCED"
+  if isV2Enforced == nil then
+    isV2Enforced = Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced()
   end
-  local state = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState(ledgerId) or {}
+  if not isV2Enforced then
+    local seasonStartedAt = beginPeerStatusTiming()
+    local seasonId = Dibs.GetCurrentSeasonId(dbOverride) or "none"
+    recordPeerStatusTiming("ledger-digest-current-season", seasonStartedAt)
+    return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = seasonId, revision = 0, contentHash = "LOCAL_ONLY" }
+  end
+  local getDigestState = Dibs.Ledger and (Dibs.Ledger.GetCanonicalDigestState or Dibs.Ledger.GetCanonicalState)
+  local canonicalStartedAt = beginPeerStatusTiming()
+  local state = getDigestState and getDigestState(ledgerId, authorityDigest) or {}
+  recordPeerStatusTiming("ledger-digest-canonical-state", canonicalStartedAt)
   if not state then return nil, "LEDGER_NOT_APPROVED" end
   return { type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = ledgerId, entityId = tostring(state.epoch or "none"), revision = tonumber(state.nextSeq or 1) - 1,
     contentHash = state.rootHash or "UNINITIALIZED", ledgerEpoch = state.epoch, lastSeq = tonumber(state.nextSeq or 1) - 1, rootHash = state.rootHash }
@@ -1547,8 +1809,22 @@ local function vaultProjection(record)
   return projection
 end
 
+local function vaultHashProjection(record)
+  -- The digest hashes a player-safe projection only. Do not deep-copy the
+  -- evidence tree just to discard it immediately afterward; the serializer
+  -- reads the retained values without mutating them.
+  local projection = {}
+  for key, value in pairs(record or {}) do
+    if key ~= "evidence" and key ~= "originalEvidence" and key ~= "review"
+      and key ~= "syncState" then
+      projection[key] = value
+    end
+  end
+  return projection
+end
+
 local function vaultHash(record)
-  return hash(vaultProjection(record))
+  return hash(vaultHashProjection(record))
 end
 
 function Sync.BuildVaultDigest()
@@ -1567,6 +1843,36 @@ function Sync.BuildVaultDigest()
   while #entries > MAX_INDEX do table.remove(entries) end
   return { type = "VAULT_DIGEST", entityType = "VAULT_INDEX", entityId = "current", revision = 1,
     contentHash = hash(entries), records = entries, entries = entries }
+end
+
+-- Status projections need only the digest scalars, not the full bounded
+-- acquisition payload. Cache that summary until Pre-Dibs reports a mutation.
+function Sync.GetVaultDigestSummary()
+  local summaryStartedAt = beginPeerStatusTiming()
+  local records, revision
+  if Dibs.PreDibs and type(Dibs.PreDibs.GetAcquisitionsSnapshotFast) == "function" then
+    records, revision = Dibs.PreDibs.GetAcquisitionsSnapshotFast()
+  else
+    records = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitions
+      and Dibs.PreDibs.GetAcquisitions() or {}
+    revision = Dibs.PreDibs and Dibs.PreDibs.GetAcquisitionsRevision
+      and Dibs.PreDibs.GetAcquisitionsRevision() or 0
+  end
+  records, revision = records or {}, revision or 0
+  local cached = vaultDigestSummaryCache[records]
+  if cached and cached.revision == revision then
+    recordPeerStatusTiming("vault-digest-cache-hit", summaryStartedAt)
+    return cached.summary
+  end
+  local digest = Sync.BuildVaultDigest()
+  if type(digest) ~= "table" then
+    recordPeerStatusTiming("vault-digest-cache-miss", summaryStartedAt)
+    return digest
+  end
+  local summary = { revision = digest.revision, contentHash = digest.contentHash }
+  vaultDigestSummaryCache[records] = { revision = revision, summary = summary }
+  recordPeerStatusTiming("vault-digest-cache-miss", summaryStartedAt)
+  return summary
 end
 
 local function reservationFromProposal(proposal, reservationState)
@@ -1603,12 +1909,14 @@ function Sync.BuildAwardReservationDigest()
   local records = {}
   local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
   for _, proposal in ipairs(proposals) do
-    if (proposal.type == "AWARD" or proposal.type == "DIB_USED") and proposal.status ~= "COMMITTED" then
+    if (proposal.type == "AWARD" or proposal.type == "DIB_USED")
+      and (proposal.status == "PENDING_RECONCILIATION" or proposal.status == "PENDING") then
       addReservationRecord(records, reservationFromProposal(proposal, "PENDING"))
     end
   end
   local state = ensure()
   for _, reservation in pairs(state.awardReservations) do addReservationRecord(records, reservation) end
+  for _, tombstone in pairs(state.awardReservationTombstones) do addReservationRecord(records, tombstone) end
   local entries = {}
   for _, reservation in pairs(records) do entries[#entries + 1] = reservation end
   table.sort(entries, function(a, b) return a.proposalId < b.proposalId end)
@@ -1655,10 +1963,13 @@ function Sync.ClearAwardReservation(proposalId, commit)
   local transaction = type(commit) == "table" and commit.transaction or nil
   local tombstone = reservation or {
     proposalId = proposalId,
-    playerMemberKey = transaction and transaction.memberKey,
-    actorMemberKey = type(commit) == "table" and commit.coordinator and commit.coordinator.memberKey,
-    seasonId = transaction and transaction.seasonId,
-    amount = math.abs(tonumber(transaction and transaction.amount) or 1),
+    playerMemberKey = transaction and transaction.memberKey or (type(commit) == "table" and commit.playerSnapshot and commit.playerSnapshot.memberKey),
+    actorMemberKey = (type(commit) == "table" and commit.coordinator and commit.coordinator.memberKey)
+      or (type(commit) == "table" and commit.actorSnapshot and commit.actorSnapshot.memberKey),
+    seasonId = (transaction and transaction.seasonId) or (type(commit) == "table" and commit.seasonId)
+      or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()),
+    amount = math.abs(tonumber(transaction and transaction.amount) or tonumber(type(commit) == "table" and commit.amount) or 1),
+    ledgerId = type(commit) == "table" and commit.ledgerId,
   }
   if type(tombstone.playerMemberKey) ~= "string" then return false end
   tombstone = copy(tombstone)
@@ -1721,6 +2032,10 @@ local function validateEnvelope(message, sender)
     rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN")
     return nil, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN"
   end
+  if message.type == "TRANSFER_BEGIN" and message.entityType == "LEDGER_OPERATION_PROPOSAL" and compatible ~= true then
+    rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN")
+    return nil, compatibilityReason or "REMOTE_ADDON_VERSION_UNKNOWN"
+  end
   if compatible == false then
     rememberAddonVersionMismatch(resolved.displayName, message.addonVersion, compatibilityReason)
     return nil, compatibilityReason
@@ -1736,6 +2051,9 @@ local function markReplay(resolved, id)
 end
 local function localRequest(id, ledgerId)
   local targetLedgerId = ledgerId or "guild-primary"
+  if Dibs.PreDibs and Dibs.PreDibs.GetRequestById then
+    return Dibs.PreDibs.GetRequestById(id, targetLedgerId)
+  end
   for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory
     and Dibs.PreDibs.GetHistory(targetLedgerId) or {}) do
     if request.requestId == id then return request end
@@ -1775,7 +2093,9 @@ local function prunePredibPending()
   return next(pending) == nil
 end
 function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, target)
-  if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" and entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+  if entityType ~= "PREDIB_REQUEST" and entityType ~= "VAULT_DETAIL" and entityType ~= "GOVERNANCE" and entityType ~= "OPERATIONAL_POLICY" and entityType ~= "LEGACY_BASELINE" and entityType ~= "LEGACY_RECOVERY_PACKAGE" and entityType ~= "AUTHORITY_SIGNAL" and entityType ~= "AUTHORITY_ORPHAN" and entityType ~= "AWARD_COMMIT" and entityType ~= "LEDGER_OPERATION_COMMIT" and entityType ~= "LEDGER_OPERATION_PROPOSAL" and entityType ~= "AWARD_PROPOSAL" and entityType ~= "SEASON_CATALOG" and entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+  if (entityType == "LEDGER_OPERATION_COMMIT" or entityType == "LEDGER_OPERATION_PROPOSAL")
+    and Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
   if not transportReady() then return false, "SYNC_UNAVAILABLE" end
   local channel = detailChannel(entityType)
   if not channel then return false, "UNSUPPORTED_ENTITY" end
@@ -1787,7 +2107,7 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   if #chunks < 1 or #chunks > MAX_CHUNKS then return false, "PAYLOAD_TOO_LARGE" end
   local rawHash = hash(encoded)
   local ledgerId
-  if (entityType == "AWARD_COMMIT" or entityType == "PREDIB_REQUEST") and type(payload) == "table" then
+  if (entityType == "AWARD_COMMIT" or entityType == "LEDGER_OPERATION_COMMIT" or entityType == "PREDIB_REQUEST") and type(payload) == "table" then
     ledgerId = payload.ledgerId
     if ledgerId == nil then ledgerId = "guild-primary" end
   end
@@ -1800,6 +2120,56 @@ function Sync.SendDetail(entityType, entityId, revision, contentHash, payload, t
   end
   return Sync.Send({ type = "TRANSFER_END", transferId = transferId, entityType = entityType, entityId = entityId,
     revision = revision, contentHash = contentHash, ledgerId = ledgerId }, channel, recipient)
+end
+
+function Sync.RelayDisputeProposal(proposal)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+  if type(proposal) ~= "table" or proposal.recordClass ~= "LEDGER_OPERATION_PROPOSAL"
+    or type(proposal.proposalId) ~= "string" or proposal.status ~= "PENDING" then
+    return false, "INVALID_DISPUTE_PROPOSAL"
+  end
+  local governance = Dibs.Governance
+  local authority = governance and governance.GetAuthorityState and governance.GetAuthorityState()
+  local localName = Dibs.GetPlayerName and Dibs.GetPlayerName()
+  local localIdentity = localName and Dibs.Identity and Dibs.Identity.CreateSnapshot
+    and Dibs.Identity.CreateSnapshot(localName)
+  local coordinator = authority and authority.coordinator
+  if not authority or authority.state ~= "ACTIVE" or not coordinator then return false, "COORDINATOR_UNKNOWN" end
+  if not localIdentity or localIdentity.memberKey ~= proposal.proposer.memberKey then
+    return false, "PROPOSER_IDENTITY_MISMATCH"
+  end
+  if coordinator.memberKey == localIdentity.memberKey then return false, "COORDINATOR_ALREADY_LOCAL" end
+  if proposal.coordinator.memberKey ~= coordinator.memberKey or proposal.ledgerEpoch ~= authority.ledgerEpoch then
+    return false, "STALE_AUTHORITY"
+  end
+  local _, attemptReason = governance.NoteDisputeProposalRelayAttempt(localName, proposal.proposalId)
+  if attemptReason ~= "RELAY_PENDING" then return false, attemptReason or "RELAY_ATTEMPT_UNAVAILABLE" end
+  return Sync.SendDetail("LEDGER_OPERATION_PROPOSAL", proposal.proposalId, 1,
+    Sync.CalculateContentHash(proposal), proposal, coordinator.displayName)
+end
+
+function Sync.RetryPendingDisputeProposals()
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return 0 end
+  local governance = Dibs.Governance
+  local localName = Dibs.GetPlayerName and Dibs.GetPlayerName()
+  if not governance or type(governance.GetPendingDisputeProposals) ~= "function" or not localName then return 0 end
+  local authority = governance.GetAuthorityState and governance.GetAuthorityState()
+  local localIdentity = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(localName)
+  if not authority or authority.state ~= "ACTIVE" or not authority.coordinator or not localIdentity
+    or authority.coordinator.memberKey == localIdentity.memberKey then return 0 end
+  local pending = governance.GetPendingDisputeProposals(localName)
+  local now, count = time(), 0
+  for _, proposal in ipairs(pending or {}) do
+    local changedCoordinator = proposal.coordinator.memberKey ~= authority.coordinator.memberKey
+      or proposal.ledgerEpoch ~= authority.ledgerEpoch
+    local alreadyAcknowledged = proposal.relayStatus == "RELAY_ACKED" and not changedCoordinator
+    local due = now - (tonumber(proposal.relayAttemptAt) or 0) >= PROPOSAL_RETRY_INTERVAL
+    if not alreadyAcknowledged and (changedCoordinator or due) then
+      local ok = Sync.RelayDisputeProposal(proposal)
+      if ok then count = count + 1 end
+    end
+  end
+  return count
 end
 
 function Sync.GetRequestPeer(target)
@@ -1855,6 +2225,15 @@ function Sync.SendAwardCommit(commit, target)
   if type(commit) ~= "table" or type(commit.commitHash) ~= "string" or not commit.ledgerEpoch or not commit.sequence then return false, "INVALID_AWARD_COMMIT" end
   return Sync.SendDetail("AWARD_COMMIT", tostring(commit.ledgerEpoch) .. ":" .. tostring(commit.sequence), commit.sequence, commit.commitHash, commit, target)
 end
+function Sync.SendOperationCommit(commit, target)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+  if type(commit) ~= "table" or commit.recordClass ~= "LEDGER_OPERATION_COMMIT"
+    or type(commit.commitHash) ~= "string" or not commit.ledgerEpoch or not commit.sequence then
+    return false, "INVALID_OPERATION_COMMIT"
+  end
+  return Sync.SendDetail("LEDGER_OPERATION_COMMIT", tostring(commit.ledgerEpoch) .. ":" .. tostring(commit.sequence),
+    commit.sequence, commit.commitHash, commit, target)
+end
 
 ---@param proposal table Award proposal recorded by a non-coordinator officer.
 ---@return boolean sent Whether the relay attempt was dispatched (not whether it was acknowledged).
@@ -1905,6 +2284,18 @@ function Sync.AnnounceAwardCommit(commit)
     or authority.coordinator.memberKey ~= localMember.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
   return Sync.Send({ type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = commit.ledgerId or "guild-primary", entityId = tostring(commit.ledgerEpoch), revision = commit.sequence,
     contentHash = commit.commitHash, ledgerEpoch = commit.ledgerEpoch, lastSeq = commit.sequence, rootHash = commit.commitHash }, "GUILD")
+end
+function Sync.AnnounceOperationCommit(commit)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  local localMember = localSnapshot()
+  if not authority or authority.state ~= "ACTIVE" or not localMember or not authority.coordinator
+    or authority.coordinator.memberKey ~= localMember.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+  local sent, sendReason = Sync.SendOperationCommit(commit)
+  if not sent then return false, sendReason end
+  return Sync.Send({ type = "LEDGER_DIGEST", entityType = "LEDGER", ledgerId = commit.ledgerId or "guild-primary",
+    entityId = tostring(commit.ledgerEpoch), revision = commit.sequence, contentHash = commit.commitHash,
+    ledgerEpoch = commit.ledgerEpoch, lastSeq = commit.sequence, rootHash = commit.commitHash }, "GUILD")
 end
 function Sync.AnnounceLedgerDigest(targetLedgerId)
   local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
@@ -2013,10 +2404,12 @@ function Sync.Receive(message, sender, channel)
     or message.type == "AWARD_RESERVATION_DIGEST" then
     peer.entities = peer.entities or {}
     local entityType = message.entityType or message.type
-    local entityKey = entityType == "LEDGER" and (entityType .. ":" .. tostring(message.ledgerId or "guild-primary"))
-      or (entityType == "PREDIB_INDEX" and message.ledgerId and (entityType .. ":" .. tostring(message.ledgerId)))
-      or entityType
-    peer.entities[entityKey] = { revision = tonumber(message.revision) or 0, contentHash = message.contentHash, at = peer.at }
+    if DIGEST_ENTITY_TYPES[entityType] then
+      local entityKey = entityType == "LEDGER" and (entityType .. ":" .. tostring(message.ledgerId or "guild-primary"))
+        or (entityType == "PREDIB_INDEX" and message.ledgerId and (entityType .. ":" .. tostring(message.ledgerId)))
+        or entityType
+      peer.entities[entityKey] = { revision = tonumber(message.revision) or 0, contentHash = message.contentHash, at = peer.at }
+    end
   end
   state.peers[resolved.memberKey] = peer
   if message.type == "SYNC_REPAIR_REQUEST" then
@@ -2173,7 +2566,7 @@ function Sync.Receive(message, sender, channel)
         or type(entry.playerMemberKey) ~= "string" or type(entry.actorMemberKey) ~= "string"
         or not finiteInteger(entry.amount) or tonumber(entry.amount) <= 0
         or type(entry.seasonId) ~= "string" or entry.seasonId == ""
-        or entry.state ~= "PENDING" or not finiteInteger(entry.updatedAt)
+        or (entry.state ~= "PENDING" and entry.state ~= "RELEASED") or not finiteInteger(entry.updatedAt)
         or seen[entry.proposalId] then return false, "INVALID_AWARD_RESERVATION_DIGEST" end
       if (entry.awardRef ~= nil and type(entry.awardRef) ~= "string")
         or (entry.evidenceId ~= nil and type(entry.evidenceId) ~= "string")
@@ -2190,7 +2583,17 @@ function Sync.Receive(message, sender, channel)
     end
     for _, entry in ipairs(validated) do
       local tombstone = state.awardReservationTombstones[entry.proposalId]
-      if not tombstone or tonumber(entry.updatedAt) > (tonumber(tombstone.updatedAt) or 0) then
+      if entry.state == "RELEASED" then
+        local existing = state.awardReservations[entry.proposalId]
+        if (not tombstone or tonumber(entry.updatedAt) >= (tonumber(tombstone.updatedAt) or 0))
+          and (not existing or tonumber(entry.updatedAt) >= (tonumber(existing.updatedAt) or 0)) then
+          state.awardReservationTombstones[entry.proposalId] = copy(entry)
+          if existing then
+            state.awardReservations[entry.proposalId] = nil
+            bumpAwardReservationGeneration(existing.playerMemberKey)
+          end
+        end
+      elseif not tombstone or tonumber(entry.updatedAt) > (tonumber(tombstone.updatedAt) or 0) then
         if reservationHasCanonicalCommit(entry) then
           Sync.ClearAwardReservation(entry.proposalId)
         else
@@ -2236,6 +2639,19 @@ function Sync.Receive(message, sender, channel)
     end
     if not acknowledged then return false, acknowledgementReason or "PROPOSAL_ACK_UNAVAILABLE" end
     return true, "PROPOSAL_ACK_APPLIED"
+  end
+  if message.type == "LEDGER_OPERATION_PROPOSAL_ACK" then
+    if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+    if type(message.proposalId) ~= "string" or message.proposalId == ""
+      or message.result ~= "RECEIVED" then return false, "INVALID_OPERATION_PROPOSAL_ACK" end
+    local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+    if not authority or authority.state ~= "ACTIVE" or not authority.coordinator
+      or authority.coordinator.memberKey ~= resolved.memberKey then return false, "CURRENT_COORDINATOR_REQUIRED" end
+    local localName = Dibs.GetPlayerName and Dibs.GetPlayerName()
+    local acknowledged, acknowledgementReason = Dibs.Governance and Dibs.Governance.AcknowledgeDisputeProposal
+      and Dibs.Governance.AcknowledgeDisputeProposal(localName, message.proposalId, resolved.memberKey)
+    if not acknowledged then return false, acknowledgementReason or "PROPOSAL_ACK_UNAVAILABLE" end
+    return true, "OPERATION_PROPOSAL_ACK_APPLIED"
   end
   if message.type == "VAULT_DIGEST" then
     local entries = message.records or message.entries
@@ -2508,7 +2924,21 @@ function Sync.Receive(message, sender, channel)
       if type(entry) ~= "table" or type(entry.requestId) ~= "string" or not finiteInteger(entry.revision)
         or type(entry.contentHash) ~= "string" or (entry.ledgerId ~= nil and entry.ledgerId ~= ledgerId)
         or (ledgerId ~= "guild-primary" and entry.ledgerId ~= ledgerId) then return false, "INVALID_DIGEST" end
-      local current = localRequest(entry.requestId, ledgerId)
+    end
+    local requestsById = Dibs.PreDibs and Dibs.PreDibs.GetHistoryLookup
+      and Dibs.PreDibs.GetHistoryLookup(ledgerId) or nil
+    if type(requestsById) ~= "table" then
+      requestsById = {}
+      for _, request in ipairs(Dibs.PreDibs and Dibs.PreDibs.GetHistory
+        and Dibs.PreDibs.GetHistory(ledgerId) or {}) do
+        if type(request) == "table" and type(request.requestId) == "string"
+          and requestsById[request.requestId] == nil then
+          requestsById[request.requestId] = request
+        end
+      end
+    end
+    for _, entry in ipairs(message.index) do
+      local current = requestsById[entry.requestId]
       local currentRevision = current and (tonumber(current.revision) or 1) or 0
       if tonumber(entry.revision) > currentRevision then
         -- Only fetch details this sender will serve and this client will accept
@@ -2586,7 +3016,8 @@ function Sync.Receive(message, sender, channel)
         if signal and signal.state ~= "LEGACY_LOCAL" and (localRole() == "gm" or (signal.coordinator and signal.coordinator.memberKey == (localSnapshot() or {}).memberKey)) then
           Sync.SendAuthoritySignal(resolved.displayName)
         end
-      elseif requested.entityType == "AWARD_COMMIT" and Dibs.Ledger and Dibs.Ledger.GetCanonicalCommit then
+      elseif (requested.entityType == "AWARD_COMMIT" or requested.entityType == "LEDGER_OPERATION_COMMIT")
+        and Dibs.Ledger and Dibs.Ledger.GetCanonicalCommit then
         local epoch, sequence = tostring(requested.entityId or ""):match("^(%d+):(%d+)$")
         local ledgerId = requested.ledgerId or "guild-primary"
         local commit = isApprovedLedger(ledgerId) and epoch and sequence
@@ -2594,16 +3025,33 @@ function Sync.Receive(message, sender, channel)
         local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
         local localMember = localSnapshot()
         if commit and authority and authority.state == "ACTIVE" and localMember and authority.coordinator
-          and authority.coordinator.memberKey == localMember.memberKey then Sync.SendAwardCommit(commit, resolved.displayName) end
+          and authority.coordinator.memberKey == localMember.memberKey then
+          if commit.recordClass == "LEDGER_OPERATION_COMMIT" then Sync.SendOperationCommit(commit, resolved.displayName)
+          else Sync.SendAwardCommit(commit, resolved.displayName) end
+        end
       end
     end
     return true, "DETAIL_SENT"
   end
   if message.type == "TRANSFER_BEGIN" then
     if type(message.transferId) ~= "string" or #message.transferId > 128 or type(message.entityType) ~= "string" or type(message.entityId) ~= "string" or not finiteInteger(message.revision) or not finiteInteger(message.chunkCount) or message.chunkCount < 1 or message.chunkCount > MAX_CHUNKS or type(message.contentHash) ~= "string" or type(message.payloadHash) ~= "string" then return false, "INVALID_TRANSFER_BEGIN" end
-    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_BASELINE" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" and message.entityType ~= "AWARD_PROPOSAL" and message.entityType ~= "SEASON_CATALOG" and message.entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType ~= "PREDIB_REQUEST" and message.entityType ~= "VAULT_DETAIL" and message.entityType ~= "GOVERNANCE" and message.entityType ~= "OPERATIONAL_POLICY" and message.entityType ~= "LEGACY_BASELINE" and message.entityType ~= "LEGACY_RECOVERY_PACKAGE" and message.entityType ~= "AUTHORITY_SIGNAL" and message.entityType ~= "AUTHORITY_ORPHAN" and message.entityType ~= "AWARD_COMMIT" and message.entityType ~= "LEDGER_OPERATION_COMMIT" and message.entityType ~= "AWARD_PROPOSAL" and message.entityType ~= "LEDGER_OPERATION_PROPOSAL" and message.entityType ~= "SEASON_CATALOG" and message.entityType ~= "REQUEST_MESSAGE" then return false, "UNSUPPORTED_ENTITY" end
+    if message.entityType == "LEDGER_OPERATION_COMMIT" then
+      local capabilities = message.protocol and message.protocol.capabilities
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+      if type(capabilities) ~= "table" or capabilities.ledgerOperationCommit ~= true
+        or tonumber(message.protocol.operationProtocolVersion) ~= 1
+        or tonumber(capabilities.ledgerOperationProtocol) ~= 1 then return false, "OPERATION_PEER_UNSUPPORTED" end
+    end
+    if message.entityType == "LEDGER_OPERATION_PROPOSAL" then
+      local capabilities = message.protocol and message.protocol.capabilities
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED" end
+      if type(capabilities) ~= "table" or capabilities.ledgerOperationProposal ~= true
+        or tonumber(message.protocol.operationProtocolVersion) ~= 1
+        or tonumber(capabilities.ledgerOperationProtocol) ~= 1 then return false, "OPERATION_PEER_UNSUPPORTED" end
+    end
     local transferLedgerId
-    if message.entityType == "AWARD_COMMIT" or message.entityType == "PREDIB_REQUEST" then
+    if message.entityType == "AWARD_COMMIT" or message.entityType == "LEDGER_OPERATION_COMMIT" or message.entityType == "PREDIB_REQUEST" then
       transferLedgerId = message.ledgerId
       if transferLedgerId == nil then transferLedgerId = "guild-primary" end
       if not isApprovedLedger(transferLedgerId) then return false, "LEDGER_NOT_APPROVED" end
@@ -2659,7 +3107,15 @@ function Sync.Receive(message, sender, channel)
       contentHash = message.contentHash, payloadHash = message.payloadHash, chunkCount = message.chunkCount,
       ledgerId = transferLedgerId,
       chunks = {}, receivedChunks = 0, totalBytes = 0, expiresAt = time() + TTL,
-      trustedRelay = trustedRelay, relayChain = relayChain }
+      trustedRelay = trustedRelay, relayChain = relayChain,
+      operationCapability = message.entityType == "LEDGER_OPERATION_COMMIT"
+        and message.protocol.capabilities.ledgerOperationCommit == true or false,
+      operationProtocol = message.entityType == "LEDGER_OPERATION_COMMIT"
+        and tonumber(message.protocol.capabilities.ledgerOperationProtocol) or nil,
+      operationProposalCapability = message.entityType == "LEDGER_OPERATION_PROPOSAL"
+        and message.protocol.capabilities.ledgerOperationProposal == true or false,
+      operationProposalProtocol = message.entityType == "LEDGER_OPERATION_PROPOSAL"
+        and tonumber(message.protocol.capabilities.ledgerOperationProtocol) or nil }
     return true, "TRANSFER_STARTED"
   end
   if message.type == "TRANSFER_CHUNK" then
@@ -2674,7 +3130,7 @@ function Sync.Receive(message, sender, channel)
     local transfer = Dibs.runtime.v2Transfers[message.transferId]; Dibs.runtime.v2Transfers[message.transferId] = nil
     if not transfer or transfer.sender ~= resolved.memberKey then return false, "INVALID_TRANSFER_END" end
     local transferLedgerId = message.ledgerId
-    if transfer.entityType == "AWARD_COMMIT" or transfer.entityType == "PREDIB_REQUEST" then
+    if transfer.entityType == "AWARD_COMMIT" or transfer.entityType == "LEDGER_OPERATION_COMMIT" or transfer.entityType == "PREDIB_REQUEST" then
       if transferLedgerId == nil then transferLedgerId = "guild-primary" end
     end
     if transfer.ledgerId ~= transferLedgerId then
@@ -2792,6 +3248,19 @@ function Sync.Receive(message, sender, channel)
       if applied.accepted and not applied.idempotentReplay then clearResolvedLedgerGap(resolved.displayName, ledgerId) end
       return applied.accepted, applied.reasonCode
     end
+    if transfer.entityType == "LEDGER_OPERATION_COMMIT" and Dibs.Ledger and Dibs.Ledger.ApplyDisputeOperationCommit then
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true
+        or transfer.operationCapability ~= true or transfer.operationProtocol ~= 1 then
+        return false, "OPERATION_PEER_UNSUPPORTED"
+      end
+      if type(payload) ~= "table" or payload.commitHash ~= transfer.contentHash
+        or transfer.entityId ~= tostring(payload.ledgerEpoch) .. ":" .. tostring(payload.sequence) then
+        return false, "CONTENT_HASH_MISMATCH"
+      end
+      local applied = Dibs.Ledger.ApplyDisputeOperationCommit(payload, resolved.displayName, transfer.ledgerId)
+      if applied.accepted and not applied.idempotentReplay then clearResolvedLedgerGap(resolved.displayName, transfer.ledgerId) end
+      return applied.accepted, applied.reasonCode
+    end
     if transfer.entityType == "AWARD_PROPOSAL" and Dibs.Governance and Dibs.Governance.ReceiveRelayedProposal then
       if transfer.entityId ~= payload.proposalId then return false, "ENTITY_IDENTITY_MISMATCH" end
       if Sync.CalculateContentHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
@@ -2818,6 +3287,23 @@ function Sync.Receive(message, sender, channel)
       end
       return accepted, applyReason
     end
+    if transfer.entityType == "LEDGER_OPERATION_PROPOSAL" and Dibs.Governance and Dibs.Governance.ReceiveDisputeProposal then
+      if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true
+        or transfer.operationProposalCapability ~= true or transfer.operationProposalProtocol ~= 1 then
+        return false, "OPERATION_PEER_UNSUPPORTED"
+      end
+      if type(payload) ~= "table" or payload.recordClass ~= "LEDGER_OPERATION_PROPOSAL"
+        or transfer.entityId ~= payload.proposalId or payload.status ~= "PENDING"
+        or Sync.CalculateContentHash(payload) ~= transfer.contentHash then
+        return false, "CONTENT_HASH_MISMATCH"
+      end
+      local accepted, applyReason = Dibs.Governance.ReceiveDisputeProposal(payload, resolved.displayName)
+      if accepted then
+        Sync.Send({ type = "LEDGER_OPERATION_PROPOSAL_ACK", proposalId = payload.proposalId,
+          result = "RECEIVED" }, "WHISPER", resolved.displayName)
+      end
+      return accepted, applyReason
+    end
     if transfer.entityType == "REQUEST_MESSAGE" and Dibs.RequestDelivery then
       if type(payload) ~= "table" or transfer.entityId ~= payload.operationId
         or Sync.CalculateContentHash(payload) ~= transfer.contentHash then return false, "CONTENT_HASH_MISMATCH" end
@@ -2831,6 +3317,7 @@ end
 
 function Sync.OnAddonMessage(prefix, payload, channel, sender)
   if prefix ~= "DIBS" or type(payload) ~= "string" then return false, "INVALID_PREFIX" end
+  if #payload > MAX_OUTER_PACKET_BYTES then return false, "MESSAGE_TOO_LARGE" end
   if not transportReady() then status("SYNC_UNAVAILABLE"); return false, "SYNC_UNAVAILABLE" end
   local message = Dibs.Ace3.Deserialize(payload); if type(message) ~= "table" then return false, "PROTOCOL_LEGACY_READ_ONLY" end
   Sync.TraceIncoming(prefix, channel, sender, message.type, #payload)
@@ -2923,6 +3410,7 @@ function Sync.OnLifecycle(reason)
   local sendDeferredDetails = function()
     Sync.AnnounceAwardReservationDigest()
     Sync.RetryPendingAwardProposals()
+    Sync.RetryPendingDisputeProposals()
   end
   if reason == "STARTUP" and Dibs.Ace3 and Dibs.Ace3.ScheduleTimer then
     Dibs.Ace3.ScheduleTimer(sendGovernedDigests, 1)

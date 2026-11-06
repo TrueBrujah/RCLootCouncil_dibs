@@ -10,6 +10,8 @@ permissions:
 
 jobs:
   release:
+    # Bare -dev tags are source checkpoints; dev-beta tags are distributable Betas.
+    if: ${{ !endsWith(github.ref_name, '-dev') }}
     name: Publish tagged WoW addon release
     runs-on: ubuntu-latest
     permissions:
@@ -34,11 +36,11 @@ jobs:
             echo "TOC version $version is not semantic X.Y.Z" >&2
             exit 1
           fi
-          if [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-(beta|rc)\.([1-9][0-9]*))?$ ]]; then
+          if [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-(dev-beta|beta|rc)\.([1-9][0-9]*))?$ ]]; then
             tag_version="${BASH_REMATCH[1]}"
             tag_channel="${BASH_REMATCH[3]:-}"
           else
-            echo "Tag $tag must be v<VERSION>, v<VERSION>-beta.<N>, or v<VERSION>-rc.<N>" >&2
+            echo "Tag $tag must be v<VERSION>, v<VERSION>-beta.<N>, v<VERSION>-dev-beta.<N>, or v<VERSION>-rc.<N>" >&2
             exit 1
           fi
           if [[ "$tag_version" != "$version" ]]; then

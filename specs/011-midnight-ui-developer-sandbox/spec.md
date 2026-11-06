@@ -56,7 +56,10 @@ produce usable windows in all three cases.
 3. **Given** a presentation adapter is absent, unsupported, or raises an error,
    **when** the window is created or refreshed, **then** Midnight native fallback is
    restored without changing Dibs policy, ledger, sync, or authority state.
-4. **Given** a secondary action is available on a player, item, request, season, or
+4. **Given** the player selects a built-in Dibs color palette in Player Preferences,
+   **when** the UI refreshes or is reopened, **then** it applies and retains that choice
+   locally for the character.
+5. **Given** a secondary action is available on a player, item, request, season, or
    history row, **when** the user opens its context menu, **then** the menu shows the
    secondary action while every critical primary action remains visible in the page.
 
@@ -262,8 +265,9 @@ modal dialogs, and high-contrast presentation hints.
 
 #### B11a - Midnight UI Foundation
 
-- **FR-001**: The system MUST provide one primary visual theme named Midnight; it MUST
-  not create separate ElvUI, Tukui, or other replacement themes.
+- **FR-001**: The system MUST provide one Dibs-owned visual design system named Midnight
+  with selectable built-in color palettes; palette selection MUST NOT create separate
+  UI frameworks or ElvUI, Tukui, or other replacement themes.
 - **FR-002**: The system MUST centralize colors, semantic status colors, fonts, font
   sizes, spacing, padding, row heights, borders, surfaces, component sizing, scale,
   and density as reusable presentation tokens.
@@ -281,6 +285,9 @@ modal dialogs, and high-contrast presentation hints.
 - **FR-007**: All appearance settings and UI environment hints MUST remain local
   presentation state and MUST NOT enter guild policy, ledger, sync, governance,
   identity, or reconciliation state.
+- **FR-007a**: Player Preferences MUST allow selecting a known built-in palette; the
+  character-local selection MUST persist across refresh and reload, and an unknown saved
+  palette MUST fall back to Midnight.
 - **FR-008**: Secondary actions MAY be exposed through the existing context-menu
   facility for players, items, requests, Pre-Dibs, seasons, and history rows, but
   critical primary actions MUST remain visible outside context menus.

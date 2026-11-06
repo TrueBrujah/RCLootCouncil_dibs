@@ -63,7 +63,7 @@ describe("Synchronization repair", function()
   end)
 
   it("denies force-clear for a non-administrator", function()
-    local _, dibs = loader.load({ wow = { guildLeader = false, guildRankIndices = { ["Tester-Realm"] = 3 } }, withAce3 = true })
+    local _, dibs = loader.load({ wow = { guildLeader = false, guildRankIndices = { [1] = 3 } }, withAce3 = true })
     dibs.Sync.MarkSyncBehind("CANONICAL_ROOT_CONFLICT")
     local ok, reason = dibs.Sync.ForceClearSyncBehind(nil, "SYNC_STATE_STUCK")
     assert_false(ok)

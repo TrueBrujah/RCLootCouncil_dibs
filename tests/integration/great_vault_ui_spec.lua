@@ -122,13 +122,18 @@ describe("Great Vault UI acceptance", function()
     frame:Show()
     frame:Refresh()
     assert_equal(1, calls)
-    finish({ itemName = "Loaded Ring", itemLink = "|Hitem:159459|h[Loaded Ring]|h" })
+    finish({
+      itemName = "Loaded Ring", itemLink = "|Hitem:159459|h[Loaded Ring]|h",
+      itemData = { detail = "not needed by this page" },
+    })
     local foundLoaded, foundExact = false, false
     for _, row in ipairs(captured) do
       if row[2]:find("Loaded Ring", 1, true) then foundLoaded = true end
       if row[2] == exactLink then foundExact = true end
     end
     assert_true(foundLoaded and foundExact)
+    assert_equal("Loaded Ring", frame.vaultItemCache["159459"].itemName)
+    assert_nil(frame.vaultItemCache["159459"].item)
     assert_equal(1, calls)
   end)
 
@@ -361,15 +366,18 @@ describe("Great Vault UI acceptance", function()
     local page = dibs.OfficerUI.GetPagedView("vault", nil, 1, 1)
     assert_equal(2, page.totalCount)
     assert_equal(2, page.totalPages)
+    assert_equal(2, #page.sourceRows, "the paged projection should retain the already-built filtered records for review controls")
     assert_true(page.lines[1]:find("New Item", 1, true) ~= nil)
     assert_true(page.lines[1]:find("2026", 1, true) ~= nil)
 
     local filtered = dibs.OfficerUI.GetPagedView("vault", nil, 1, 8, "Old Item")
     assert_equal(1, filtered.totalCount)
+    assert_equal(1, #filtered.sourceRows)
     assert_true(filtered.lines[1]:find("Old Item", 1, true) ~= nil)
 
     local empty = dibs.OfficerUI.GetPagedView("vault", nil, 1, 8, "missing")
     assert_equal(0, empty.totalCount)
+    assert_equal(0, #empty.sourceRows)
     assert_equal(dibs.L.HISTORY_FILTER_NO_RESULTS, empty.lines[1])
   end)
 

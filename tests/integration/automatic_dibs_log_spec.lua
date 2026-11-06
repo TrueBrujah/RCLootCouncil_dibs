@@ -17,15 +17,23 @@ describe("Automatic Dibs Officer log", function()
     })
     local seasonId = dibs.GetCurrentSeasonId()
 
-    local automatic = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Promotion to Member", {
-      action = "rank.reconcile", actor = "Tester-Realm", source = "automatic_rank_assignment",
+    local automatic, automaticReason = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Promotion to Member", {
+        action = "ledger.adjust", actor = "Tester-Realm", actorId = "tester-realm", source = "automatic_rank_assignment",
       rankIndex = 3, rankName = "Member",
     })
-    assert_not_nil(automatic)
-    local manual = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Officer correction", {
-      action = "rank.reconcile", actor = "Tester-Realm", source = "rank_reconciliation",
-    })
-    assert_not_nil(manual)
+      print("DEBUG automatic:", automatic, "reason:", automaticReason)
+      if not automatic then
+        local manual2 = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Officer correction", {
+          action = "ledger.adjust", actor = "Tester-Realm", actorId = "tester-realm", source = "rank_reconciliation",
+        })
+        print("DEBUG manual:", manual2)
+      end
+      assert_not_nil(automatic)
+      local manual, manualReason = dibs.Ledger.RegisterSeasonAllocation("Alice-Realm", seasonId, 1, "Officer correction", {
+        action = "ledger.adjust", actor = "Tester-Realm", actorId = "tester-realm", source = "rank_reconciliation",
+      })
+      print("DEBUG manual:", manual, "reason:", manualReason)
+      assert_not_nil(manual)
 
     local details = dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId)
     assert_equal(2, #details.allocations)
@@ -38,6 +46,199 @@ describe("Automatic Dibs Officer log", function()
     assert_equal(2, page.totalCount)
     assert_equal(2, #page.rows)
     assert_true(page.rows[1].playerName ~= nil)
+  end)
+
+  it("skips transaction-balance scans on the Automatic Dibs page", function()
+    local _, dibs = loader.load({
+      withAce3 = true,
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 } },
+    })
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    frame.dibsAceGUIShell.window.SetStatusText = function() end
+    local original = dibs.RankRules.GetAllocationReconciliation
+    local originalGetDB = dibs.GetDB
+    local observedOptions
+    local observedContext
+    dibs.RankRules.GetAllocationReconciliation = function(seasonId, members, options, resolvedContext)
+      observedOptions = options
+      observedContext = resolvedContext
+      assert_true(type(resolvedContext) == "table", "Automatic Dibs should pass a route database context")
+      assert_equal(originalGetDB(), resolvedContext.db,
+        "Automatic Dibs should reuse the guild DB resolved for the shell status")
+      dibs.GetDB = function() error("allocation projection must reuse its route DB") end
+      local ok, result = pcall(original, seasonId, members, options, resolvedContext)
+      dibs.GetDB = originalGetDB
+      assert_true(ok, tostring(result))
+      return result
+    end
+
+    frame:ActivateRoute("automaticDibs")
+
+    assert_true(type(observedOptions) == "table")
+    assert_equal(false, observedOptions.includeBalance,
+      "the UI needs allocations only; history balances are not displayed on this page")
+    assert_equal(originalGetDB(), observedContext.db)
+    dibs.RankRules.GetAllocationReconciliation = original
+  end)
+
+  it("uses the compact season catalog summary for allocation details", function()
+    local _, dibs = loader.load({
+      wow = {
+        guildLeader = true,
+        guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 },
+      },
+    })
+    local seasonId = dibs.GetCurrentSeasonId()
+    local originalGetCatalogSummary = dibs.Seasons.GetCatalogSummary
+    local originalGetCatalogState = dibs.Seasons.GetCatalogState
+    dibs.Seasons.GetCatalogSummary = function()
+      return { catalogRevision = 42, hash = "catalog-summary-test" }
+    end
+    dibs.Seasons.GetCatalogState = function() error("full season catalog copy is not needed") end
+
+    local details = dibs.OfficerUI.BuildAutomaticAllocationDetails(seasonId, { deferSnapshots = true })
+
+    dibs.Seasons.GetCatalogSummary = originalGetCatalogSummary
+    dibs.Seasons.GetCatalogState = originalGetCatalogState
+    assert_equal(42, details.seasonCatalogRevision)
+    assert_equal("catalog-summary-test", details.rows[1].seasonCatalogHash)
+  end)
+
+  it("uses the compact catalog summary to build rank catalog status", function()
+    local _, dibs = loader.load({})
+    local originalGetCatalogSummary = dibs.Seasons.GetCatalogSummary
+    local originalGetCatalogState = dibs.Seasons.GetCatalogState
+    local originalGetCatalogRecord = dibs.Seasons.GetCatalogRecord
+    local originalIsSyncBehind = dibs.Sync.IsSyncBehind
+    dibs.Seasons.GetCatalogSummary = function()
+      return { catalogRevision = 7, hash = "published-catalog" }
+    end
+    dibs.Seasons.GetCatalogState = function() error("full catalog copy is not needed for status") end
+    dibs.Seasons.GetCatalogRecord = function(revision)
+      assert_equal(7, revision)
+      return { revision = revision }
+    end
+    dibs.Sync.IsSyncBehind = function() return false end
+
+    local status = dibs.OfficerUI.BuildRankCatalogStatus()
+
+    dibs.Seasons.GetCatalogSummary = originalGetCatalogSummary
+    dibs.Seasons.GetCatalogState = originalGetCatalogState
+    dibs.Seasons.GetCatalogRecord = originalGetCatalogRecord
+    dibs.Sync.IsSyncBehind = originalIsSyncBehind
+    assert_equal("Guild configuration: Synchronized.\nCatalog revision: 7", status)
+  end)
+
+  it("records Automatic Dibs route timings for a section-qualified navigation value", function()
+    local _, dibs = loader.load({
+      withAce3 = true,
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 } },
+    })
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    dibs.UIRenderStats.Reset()
+    local originalDebugProfileStop = _G.debugprofilestop
+    local profileTicks = 0
+    _G.debugprofilestop = function()
+      profileTicks = profileTicks + 1
+      return profileTicks
+    end
+    dibs.UIRenderStats.SetEnabled(true)
+
+    frame:ActivateRoute("section_dibs" .. string.char(1) .. "automaticDibs")
+
+    dibs.UIRenderStats.SetEnabled(false)
+    _G.debugprofilestop = originalDebugProfileStop
+    assert_equal("automaticDibs", frame.activeTab)
+    local recorded = {}
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "Officer data" then recorded[entry.page] = true end
+    end
+    assert_true(recorded["automatic-dibs-route-preflight"])
+    assert_true(recorded["automatic-dibs-route-resolution"])
+    assert_true(recorded["automatic-dibs-content-clear"])
+    assert_true(recorded["automatic-dibs-page-scaffold"])
+    assert_true(recorded["automatic-dibs-table-page-create"])
+    assert_true(recorded["automatic-dibs-page-header"])
+    assert_true(recorded["automatic-dibs-rank-catalog-status"])
+    assert_true(recorded["automatic-dibs-search-controls"])
+    assert_true(recorded["automatic-dibs-status-filter"])
+    assert_true(recorded["automatic-dibs-reconciliation-controls"])
+    assert_true(recorded["automatic-dibs-header-controls"])
+    assert_true(recorded["automatic-dibs-table-setup"])
+    assert_true(recorded["automatic-dibs-route-tree-selection"])
+    assert_true(recorded["automatic-dibs-route-batch-start"])
+    assert_true(recorded["automatic-dibs-route-body"])
+    assert_true(recorded["automatic-dibs-route-layout-flush"])
+    assert_true(recorded["automaticDibs-route-content-layout"])
+    assert_true(recorded["automatic-dibs-post-layout-table-refresh"])
+    local tableTimings = {}
+    local widgetTokenResolutionCount, renderTokenContextCount
+    for _, entry in ipairs(dibs.UIRenderStats.GetReport().pages) do
+      if entry.kind == "UI table" then tableTimings[entry.page] = true end
+      if entry.kind == "UI theme" and entry.page == "widget-token-resolution" then
+        widgetTokenResolutionCount = entry.count
+      end
+      if entry.kind == "UI theme" and entry.page == "render-token-context" then
+        renderTokenContextCount = entry.count
+      end
+    end
+    assert_true(tableTimings["automatic-dibs-header-cells"])
+    assert_true(tableTimings["automatic-dibs-body-rows"])
+    assert_true(tableTimings["automatic-dibs-width-reflow"])
+    -- The route body resolves tokens once for its presentation context, so its
+    -- widgets never resolve individually. Only the post-layout table batch,
+    -- which has no presentation context, resolves tokens for its first widget.
+    assert_equal(1, renderTokenContextCount,
+      "route scaffolding should resolve presentation tokens once for its context")
+    assert_equal(1, widgetTokenResolutionCount,
+      "the post-layout table batch should resolve widget tokens once")
+  end)
+
+  it("does not query the full module catalogue twice for a selected route", function()
+    local _, dibs = loader.load({
+      withAce3 = true,
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 } },
+    })
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    local originalGetModuleStatus = dibs.OperationalPolicy.GetModuleStatus
+    local queried = {}
+    dibs.OperationalPolicy.GetModuleStatus = function(moduleKey, ...)
+      queried[moduleKey] = (queried[moduleKey] or 0) + 1
+      return originalGetModuleStatus(moduleKey, ...)
+    end
+
+    frame:ActivateRoute("section_dibs" .. string.char(1) .. "automaticDibs")
+
+    dibs.OperationalPolicy.GetModuleStatus = originalGetModuleStatus
+    assert_equal("automaticDibs", frame.activeTab)
+    -- The selected route's tree sync builds the visible navigation once. Route
+    -- validation must not query every module a second time.
+    assert_equal(1, queried.requests)
+  end)
+
+  it("skips the unrelated full Setup Assistant evaluation on Automatic Dibs", function()
+    local _, dibs = loader.load({
+      withAce3 = true,
+      wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Alice-Realm" },
+        guildRankIndices = { [1] = 0, [2] = 3 } },
+    })
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    local originalEvaluate = dibs.SetupAssistant.Evaluate
+    local evaluations = 0
+    dibs.SetupAssistant.Evaluate = function(...)
+      evaluations = evaluations + 1
+      return originalEvaluate(...)
+    end
+
+    frame:ActivateRoute("automaticDibs")
+
+    dibs.SetupAssistant.Evaluate = originalEvaluate
+    assert_equal("automaticDibs", frame.activeTab)
+    assert_equal(0, evaluations)
   end)
 
   it("keeps the current page across a same-tab refresh instead of resetting to page 1", function()
@@ -126,6 +327,69 @@ describe("Automatic Dibs table presentation", function()
     end
     return frame, function() return capture end, function() return captureCount end
   end
+
+  it("restores Automatic Dibs table rows after navigating from data-heavy Officer pages", function()
+    local dibs = loadReconciliationRoster()
+    local frame, getCapture, getCaptureCount = captureAutomaticTable(dibs)
+    assert_true(#getCapture().rows > 0, "initial Automatic Dibs render should have rows")
+
+    local originalBeginLayoutBatch = dibs.AceGUI.BeginLayoutBatch
+    local originalEndLayoutBatch = dibs.AceGUI.EndLayoutBatch
+    local originalAddTable = dibs.AceGUI.AddTable
+    local layoutBatchDepth = 0
+    local completedBatches = 0
+    dibs.AceGUI.BeginLayoutBatch = function(...)
+      local batch = originalBeginLayoutBatch(...)
+      layoutBatchDepth = layoutBatchDepth + 1
+      return batch
+    end
+    dibs.AceGUI.EndLayoutBatch = function(batch)
+      local result = originalEndLayoutBatch(batch)
+      layoutBatchDepth = math.max(0, layoutBatchDepth - 1)
+      completedBatches = completedBatches + 1
+      return result
+    end
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
+      if options and options.timingLabel == "automatic-dibs" then
+        assert_true(completedBatches > 0, "the route layout batch should finish before the table is built")
+        assert_equal(1, layoutBatchDepth, "the post-layout table build should retain batched widgets")
+      end
+      return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
+    end
+
+    for _, previousRoute in ipairs({ "statistics", "dibsAdmin", "history", "overview" }) do
+      frame:ActivateRoute(previousRoute)
+      frame:ActivateRoute("automaticDibs")
+      assert_equal("automaticDibs", frame.activeTab)
+      local capture = getCapture()
+      assert_true(capture and capture.options and capture.options.timingLabel == "automatic-dibs",
+        "returning from " .. previousRoute .. " should create the Automatic Dibs table")
+      assert_true(#capture.rows > 0, "returning from " .. previousRoute .. " should restore rows")
+      local tableHost = frame.automaticDibsTablePage.scroll.children[1]
+      local renderedRows = 0
+      for _, child in ipairs(tableHost.children or {}) do
+        if child.kind == "SimpleGroup" then renderedRows = renderedRows + 1 end
+      end
+      assert_true(renderedRows > 0, "returning from " .. previousRoute .. " should attach row widgets")
+    end
+
+    frame:Hide()
+    frame:Show()
+
+    dibs.AceGUI.BeginLayoutBatch = originalBeginLayoutBatch
+    dibs.AceGUI.EndLayoutBatch = originalEndLayoutBatch
+    dibs.AceGUI.AddTable = originalAddTable
+
+    assert_equal("automaticDibs", frame.activeTab)
+    assert_true(getCaptureCount() >= 6, "each route return and the window restore should render the table")
+    assert_true(#getCapture().rows > 0, "returning to Automatic Dibs should restore table rows")
+    local renderedRows = 0
+    local page = frame.automaticDibsTablePage
+    for _, child in ipairs(page.scroll.children[1].children or {}) do
+      if child.kind == "SimpleGroup" then renderedRows = renderedRows + 1 end
+    end
+    assert_true(renderedRows > 0, "table row widgets should be attached after the route refresh")
+  end)
 
   local function findWidget(predicate)
     for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
@@ -846,6 +1110,7 @@ describe("Automatic Dibs table presentation", function()
     assert_equal("Status", narrow.columns[3].title)
     assert_true(narrow.columns[4].action)
     assert_equal(32, narrow.options.rowHeight)
+    assert_true(narrow.options.tooltipOnlyWhenTruncated)
     local alice = assert(findRow(narrow, "Alice-Realm"))
     assert_equal("Alice-Realm", alice[1])
     assert_true(narrow.options.cellTooltip(alice, 1):find("Officer | Expected 1 | Assigned 0", 1, true) ~= nil)
@@ -911,9 +1176,10 @@ describe("Officer Dibs administration", function()
       guildLeader = guildLeader,
       guildMembers = officerMembers,
       guildRankIndices = officerRanks,
-    } })
-    return dibs
-  end
+        realmName = "DunModr",
+      } })
+      return dibs
+    end
 
   local function clickLatestButton(text)
     for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
@@ -1236,23 +1502,135 @@ describe("Officer Dibs administration", function()
     assert_nil(page.footer._dibsTablePageLayout)
   end)
 
-  it("projects offline-capable roster members without creating ledger records and sorts and searches", function()
-    local dibs = loadOfficer("Tester-Realm", true)
-    local seasonId = dibs.GetCurrentSeasonId()
-    local grant = dibs.ProtectedActions.Execute("ledger.grant", nil, {
-      playerName = "Firebut-DunModr", amount = 2, reason = "Sort fixture", source = "test", seasonId = seasonId,
-    })
-    assert_true(grant.ok)
-    local before = #dibs.Ledger.GetAllTransactions()
-    local roster = dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, "", "rank", false)
+  it("loads Dibs balances only for visible rows unless sorting by balance", function()
+    local dibs = loadOfficer("Tester-Realm", true, 20)
+    local originalSummary = dibs.Ledger.GetPlayerHistorySummary
+    local originalBatchSummaries = dibs.Ledger.GetPlayerHistorySummaries
+    local summaryCalls, batchCalls, batchPlayerCount = 0, 0, 0
+    dibs.Ledger.GetPlayerHistorySummary = function(...)
+      summaryCalls = summaryCalls + 1
+      return originalSummary(...)
+    end
+    dibs.Ledger.GetPlayerHistorySummaries = function(players, ...)
+      batchCalls = batchCalls + 1
+      batchPlayerCount = batchPlayerCount + #players
+      return originalBatchSummaries(players, ...)
+    end
 
-    assert_equal("ready", roster.state)
-    assert_equal(4, #roster.rows)
-    assert_equal("Tester-Realm", roster.rows[1].playerName)
-    assert_equal("Firebut-DunModr", roster.rows[3].playerName)
-    assert_equal(2, roster.rows[3].balance)
-    assert_true(roster.rows[3].identityAvailable)
-    assert_equal(before, #dibs.Ledger.GetAllTransactions())
+    local frame = dibs.OfficerUI.CreateWindow("dibsAdmin")
+    local visibleCount = math.min(10, #frame.dibsAdminCachedRoster.rows)
+    assert_equal(1, batchCalls, "the visible page should use one grouped balance lookup")
+    assert_equal(visibleCount, batchPlayerCount,
+      "the default name-sorted page should read balances only for its visible rows")
+    assert_equal(0, summaryCalls, "the default page should not perform per-row summary lookups")
+    assert_true(#frame.dibsAdminCachedRoster.rows > 10)
+    assert_not_nil(frame.dibsAdminCachedRoster.rows[1].balance)
+    assert_nil(frame.dibsAdminCachedRoster.rows[11].balance,
+      "off-page balances should remain uncomputed until the user visits that page")
+
+    summaryCalls = 0
+    batchCalls, batchPlayerCount = 0, 0
+    local byBalance = dibs.OfficerUI.BuildDibsAdministrationRoster(
+      dibs.GetCurrentSeasonId(), "", "balance", true)
+    assert_equal(#byBalance.rows, batchPlayerCount,
+      "balance sorting must compute each matching member balance to preserve the sort order")
+    assert_equal(1, batchCalls, "full-list balance sorting should use one grouped lookup")
+    assert_equal(0, summaryCalls, "balance sorting should not perform per-row summary lookups")
+    dibs.Ledger.GetPlayerHistorySummary = originalSummary
+    dibs.Ledger.GetPlayerHistorySummaries = originalBatchSummaries
+  end)
+
+  it("projects offline-capable roster members without creating ledger records and sorts and searches", function()
+      io.stderr:write("DEBUG: Test function entered\n")
+      io.stderr:flush()
+      local dibs = loadOfficer("Tester-Realm", true)
+      io.stderr:write("DEBUG: loadOfficer returned\n")
+      io.stderr:flush()
+      local seasonId = dibs.GetCurrentSeasonId()
+        io.stderr:write("DEBUG: seasonId=" .. tostring(seasonId) .. "\n")
+        io.stderr:flush()
+      
+        -- DEBUG: Check Identity state before grant
+        io.stderr:write("DEBUG: Identity._rosterState.fresh=" .. tostring(Dibs.Identity._rosterState and Dibs.Identity._rosterState.fresh) .. "\n")
+        io.stderr:write("DEBUG: Identity._rosterState.generation=" .. tostring(Dibs.Identity._rosterState and Dibs.Identity._rosterState.generation) .. "\n")
+        if Dibs.Identity._rosterState and Dibs.Identity._rosterState.members then
+          for k,v in pairs(Dibs.Identity._rosterState.members) do
+            io.stderr:write("DEBUG: member " .. k .. " = " .. tostring(v.displayName) .. " rankIndex=" .. tostring(v.rankIndex) .. "\n")
+          end
+        else
+          io.stderr:write("DEBUG: No members in rosterState\n")
+        end
+        -- DEBUG: Check ResolveRosterMember
+        local resolved = Dibs.Identity and Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember("Firebut-DunModr")
+        io.stderr:write("DEBUG: ResolveRosterMember(Firebut-DunModr) = " .. tostring(resolved and resolved.status or "nil") .. "\n")
+        if resolved then
+          for k,v in pairs(resolved) do
+            io.stderr:write("DEBUG: resolved[" .. k .. "] = " .. tostring(v) .. "\n")
+          end
+        end
+                -- DEBUG: Check CreateSnapshot
+                local snapshot, reason = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot("Firebut-DunModr")
+                io.stderr:write("DEBUG: CreateSnapshot(Firebut-DunModr) snapshot=" .. tostring(snapshot) .. " reason=" .. tostring(reason) .. "\n")
+                if snapshot then
+                  for k,v in pairs(snapshot) do
+                    io.stderr:write("DEBUG: snapshot[" .. k .. "] = " .. tostring(v) .. "\n")
+                  end
+                end
+                io.stderr:flush()
+      
+        local grant = dibs.ProtectedActions.Execute("ledger.grant", nil, {
+          playerName = "Firebut-DunModr", amount = 2, reason = "Sort fixture", source = "test", seasonId = seasonId,
+        })
+        io.stderr:write("DEBUG: grant=" .. tostring(grant) .. ", grant.ok=" .. tostring(grant and grant.ok) .. "\n")
+        if grant and grant.error then io.stderr:write("DEBUG: grant.error=" .. tostring(grant.error) .. "\n") end
+        if grant then for k,v in pairs(grant) do io.stderr:write("DEBUG: grant[" .. k .. "]=" .. tostring(v) .. "\n") end end
+        io.stderr:flush()
+        assert_true(grant.ok)
+        local before = #dibs.Ledger.GetAllTransactions()
+        io.stderr:write("DEBUG: before=" .. tostring(before) .. "\n")
+        io.stderr:flush()
+    
+        -- DEBUG: Print at the very beginning
+        io.stderr:write("DEBUG: Test started\n")
+        io.stderr:flush()
+    
+        -- DEBUG: Check what GetGuildRosterInfo returns
+        local debugLines = {}
+        table.insert(debugLines, "GetGuildRosterInfo calls:")
+        for i = 1, 4 do
+          local rosterInfo = { pcall(_G.GetGuildRosterInfo, i) }
+          table.insert(debugLines, "  index " .. i .. ": success=" .. tostring(rosterInfo[1]) .. ", name=" .. tostring(rosterInfo[2]) .. ", rankIndex=" .. tostring(rosterInfo[4]))
+        end
+    
+        -- DEBUG: Check CanonicalMemberKey directly
+        table.insert(debugLines, "CanonicalMemberKey calls:")
+        for _, name in ipairs({"Tester-Realm", "Officer-Realm", "Firebut-DunModr", "Member-Realm"}) do
+          local key = Dibs.Identity and Dibs.Identity.CanonicalMemberKey and Dibs.Identity.CanonicalMemberKey(name)
+          table.insert(debugLines, "  " .. name .. " -> " .. tostring(key))
+        end
+    
+        local roster = dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, "", "rank", false)
+    
+        -- DEBUG: Print roster rows
+        table.insert(debugLines, "Roster rows:")
+        for i, row in ipairs(roster.rows) do
+          table.insert(debugLines, "  row " .. i .. ": playerName=" .. tostring(row.playerName) .. ", memberKey=" .. tostring(row.memberKey) .. ", identityAvailable=" .. tostring(row.identityAvailable) .. ", rankIndex=" .. tostring(row.rankIndex))
+        end
+    
+        -- Print debug info to stdout and stderr BEFORE assertion
+        local debugMsg = table.concat(debugLines, "\n")
+        io.stderr:write("DEBUG OUTPUT BEFORE ASSERTION:\n" .. debugMsg .. "\n")
+        io.stderr:flush()
+        io.write("DEBUG OUTPUT BEFORE ASSERTION:\n" .. debugMsg .. "\n")
+        io.flush()
+
+        assert_equal("ready", roster.state)
+        assert_equal(4, #roster.rows)
+        assert_equal("Tester-Realm", roster.rows[1].playerName)
+        assert_equal("Firebut-DunModr", roster.rows[3].playerName)
+        assert_equal(2, roster.rows[3].balance)
+        assert_true(roster.rows[3].identityAvailable, debugMsg .. "\nidentityAvailable was false for row 3: " .. tostring(roster.rows[3].identityAvailable))
+        assert_equal(before, #dibs.Ledger.GetAllTransactions())
     local byBalance = dibs.OfficerUI.BuildDibsAdministrationRoster(seasonId, "", "balance", true)
     assert_equal("Firebut-DunModr", byBalance.rows[1].playerName)
 

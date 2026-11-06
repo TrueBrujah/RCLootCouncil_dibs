@@ -69,6 +69,8 @@ function HealthUI.Evaluate(options)
     privateData = false,
   }
 
+  local persistenceStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local persistence = safeCall(Dibs.GetPersistenceStatus) or { state = "UNAVAILABLE" }
   local persistenceState = persistence.readOnly and "blocked"
     or (persistence.state == "VALID" and "ready" or "degraded")
@@ -80,12 +82,23 @@ function HealthUI.Evaluate(options)
     diagnostic = persistence.diagnostic,
   }
 
-  local db = safeCall(Dibs.GetDB) or {}
+  local db = type(options.db) == "table" and options.db or safeCall(Dibs.GetDB) or {}
   report.schemaVersion = tonumber(db.version)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Health data", "persistence", persistenceStartedAt)
+  end
 
-  local readiness = safeCall(Dibs.Readiness and Dibs.Readiness.Evaluate, { allowPlayer = true })
+  local readinessStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local readiness = safeCall(Dibs.Readiness and Dibs.Readiness.Evaluate,
+    { allowPlayer = true, db = db })
   normalizeReadiness(report, readiness)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Health data", "readiness", readinessStartedAt)
+  end
 
+  local integrationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   local rc = safeCall(Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus) or { status = "absent" }
   local rcState = tostring(rc.status or rc.availability or "absent")
   local rcOutsideRaid = rc.reasonCode == "RC_MASTER_LOOTER_UNVERIFIABLE"
@@ -103,23 +116,39 @@ function HealthUI.Evaluate(options)
     observedVersion = rc.observedVersion,
   }
 
-  local sync = safeCall(Dibs.Sync and Dibs.Sync.GetStatus) or { state = "SYNC_UNAVAILABLE" }
+  local getSyncStatus = Dibs.Sync and (Dibs.Sync.GetStatusSummary or Dibs.Sync.GetStatus)
+  local sync = safeCall(getSyncStatus) or { state = "SYNC_UNAVAILABLE" }
   local syncState = sync.state == "SYNC_READY" and "ready"
     or (sync.state == "SYNC_BEHIND" and "degraded" or "unavailable")
   addCheck(report, "sync", syncState, sync.reason or sync.state,
     "Guild synchronization transport and recovery state.")
   report.sync = { state = sync.state, protocolState = sync.protocolState, syncBehind = sync.syncBehind == true }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Health data", "integrations", integrationStartedAt)
+  end
 
-  local backups = safeCall(Dibs.Backup and Dibs.Backup.List, nil, nil) or {}
-  local latest = backups[1]
-  addCheck(report, "backup", latest and "ready" or "degraded",
-    latest and nil or "NO_BACKUP", latest and "Latest local backup is available." or "No local backup is available.")
+  local backupStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local backupSummary = safeCall(Dibs.Backup and Dibs.Backup.GetSummary, nil, nil, db)
+  if type(backupSummary) ~= "table" then
+    local backups = safeCall(Dibs.Backup and Dibs.Backup.List, nil, nil) or {}
+    local latest = backups[1]
+    backupSummary = { count = #backups, available = latest ~= nil, createdAt = latest and latest.createdAt }
+  end
+  addCheck(report, "backup", backupSummary.available and "ready" or "degraded",
+    backupSummary.available and nil or "NO_BACKUP",
+    backupSummary.available and "Latest local backup is available." or "No local backup is available.")
   report.backup = {
-    available = latest ~= nil,
-    createdAt = latest and latest.createdAt,
-    count = #backups,
+    available = backupSummary.available == true,
+    createdAt = backupSummary.createdAt,
+    count = tonumber(backupSummary.count) or 0,
   }
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Health data", "backup", backupStartedAt)
+  end
 
+  local finalizeStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
   for _, item in ipairs(report.checks) do
     if item.state ~= "ready" then
       report.warnings[#report.warnings + 1] = { id = item.id, reason = item.reason, detail = item.detail }
@@ -129,6 +158,9 @@ function HealthUI.Evaluate(options)
     report.status = "BLOCKED"
   elseif report.warningCount > 0 then
     report.status = "DEGRADED"
+  end
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Health data", "finalize", finalizeStartedAt)
   end
   return report
 end

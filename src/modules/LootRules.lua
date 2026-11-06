@@ -111,16 +111,16 @@ function Dibs.LootRules.NormalizeSnapshot(snapshot)
   return normalized
 end
 
-local function settings()
-  local db = Dibs.GetDB and Dibs.GetDB() or {}
+local function settings(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or (Dibs.GetDB and Dibs.GetDB() or {})
   db.settings = db.settings or {}
   return db.settings
 end
 
-function Dibs.LootRules.GetDraftSnapshot()
+function Dibs.LootRules.GetDraftSnapshot(dbOverride)
   local keys, keySet = supportedTypes()
   if not keys then return nil, keySet end
-  local current = settings()
+  local current = settings(dbOverride)
   local allowed = type(current.dibAllowedTypes) == "table" and current.dibAllowedTypes or {}
   local buttons = type(current.dibRCEnabledTypes) == "table" and current.dibRCEnabledTypes or {}
   local snapshot = { schemaVersion = SCHEMA_VERSION, types = {} }
@@ -158,11 +158,10 @@ function Dibs.LootRules.SetDraftValue(typeKey, field, value)
 end
 
 function Dibs.LootRules.GetAuthoritySnapshot()
-  if not (Dibs.Seasons and Dibs.Seasons.GetCatalogState and Dibs.Seasons.GetCatalogRecord) then
+  if not (Dibs.Seasons and Dibs.Seasons.GetCatalogRevision and Dibs.Seasons.GetCatalogRecord) then
     return nil, "GUILD_LOOT_RULES_UNAVAILABLE"
   end
-  local state = Dibs.Seasons.GetCatalogState()
-  local revision = tonumber(state and state.catalogRevision) or 0
+  local revision = tonumber(Dibs.Seasons.GetCatalogRevision()) or 0
   if revision < 1 then return nil, "GUILD_LOOT_RULES_NOT_CONFIGURED" end
   local record = Dibs.Seasons.GetCatalogRecord(revision)
   local raw = record and record.guildConfiguration and record.guildConfiguration.guildLootRules
@@ -172,14 +171,54 @@ function Dibs.LootRules.GetAuthoritySnapshot()
   return normalized, "GUILD_LOOT_RULES_READY", record
 end
 
-local function hasLocalDraft()
-  local current = settings()
+local function getAuthoritySnapshotForStatus(dbOverride)
+  local seasons = Dibs.Seasons
+  if not (seasons and type(seasons.GetGuildLootRulesSnapshot) == "function") then
+    return Dibs.LootRules.GetAuthoritySnapshot()
+  end
+  local raw, reason, revision = seasons.GetGuildLootRulesSnapshot(dbOverride)
+  if raw == nil then return nil, reason, { catalogRevision = revision } end
+  local normalized, normalizeReason = Dibs.LootRules.NormalizeSnapshot(raw)
+  if not normalized then
+    return nil, "GUILD_LOOT_RULES_INCOMPATIBLE", normalizeReason
+  end
+  return normalized, "GUILD_LOOT_RULES_READY", { catalogRevision = revision }
+end
+
+-- Presentation readers need only the active rule tree, not the complete
+-- catalog record returned by GetAuthoritySnapshot. Keep the full-record API
+-- unchanged for callers that explicitly need the record.
+function Dibs.LootRules.GetAuthorityRulesSnapshot(dbOverride)
+  local startedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
+    and Dibs.UIRenderStats.Begin(false)
+  local rules, status, detail = getAuthoritySnapshotForStatus(dbOverride)
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Loot Rules data", "authority-rules-snapshot", startedAt)
+  end
+  return rules, status, detail
+end
+
+local function hasLocalDraft(dbOverride)
+  local current = settings(dbOverride)
   return (type(current.dibAllowedTypes) == "table" and next(current.dibAllowedTypes) ~= nil)
     or (type(current.dibRCEnabledTypes) == "table" and next(current.dibRCEnabledTypes) ~= nil)
 end
 
 local function synchronizationIssue()
   if type(Dibs.Sync) ~= "table" then return nil end
+  if type(Dibs.Sync.GetStatusSummary) == "function" then
+    local summary = Dibs.Sync.GetStatusSummary()
+    if type(summary) ~= "table" then return nil end
+    if summary.lastAddonVersionMismatchReasonCode == "ADDON_UPDATE_REQUIRED" then
+      return "GUILD_LOOT_RULES_INCOMPATIBLE", summary.lastAddonVersionMismatchReasonCode
+    end
+    local reason = summary.reason
+    if (summary.syncBehind == true or summary.state == "SYNC_BEHIND")
+      and type(reason) == "string" and reason:find("SEASON_CATALOG", 1, true) then
+      return "GUILD_LOOT_RULES_SYNC_BEHIND", reason
+    end
+    return nil
+  end
   local synchronization = type(Dibs.Sync.GetSynchronizationStatus) == "function"
     and Dibs.Sync.GetSynchronizationStatus() or {}
   local mismatch = type(synchronization) == "table" and synchronization.lastAddonVersionMismatch
@@ -196,14 +235,28 @@ local function synchronizationIssue()
   return nil
 end
 
-function Dibs.LootRules.GetStatus()
+local function getStatus(hasAuthoritySnapshot, authority, authorityStatus, detail, dbOverride)
+  local supportedStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local keys, reason = supportedTypes()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Loot Rules data", "supported-types", supportedStartedAt)
+  end
   if not keys then return { status = "UNAVAILABLE", reasonCode = reason } end
+  local synchronizationStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local synchronizationStatus, synchronizationReason = synchronizationIssue()
+  if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+    Dibs.UIRenderStats.Record("Loot Rules data", "synchronization", synchronizationStartedAt)
+  end
   if synchronizationStatus == "GUILD_LOOT_RULES_INCOMPATIBLE" then
     return { status = synchronizationStatus, reasonCode = synchronizationReason }
   end
-  local authority, authorityStatus, detail = Dibs.LootRules.GetAuthoritySnapshot()
+  if not hasAuthoritySnapshot then
+    local authorityStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
+    authority, authorityStatus, detail = getAuthoritySnapshotForStatus(dbOverride)
+    if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
+      Dibs.UIRenderStats.Record("Loot Rules data", "authority-snapshot", authorityStartedAt)
+    end
+  end
   if authority then
     if synchronizationStatus then
       return { status = synchronizationStatus, reasonCode = synchronizationReason }
@@ -219,8 +272,19 @@ function Dibs.LootRules.GetStatus()
   if synchronizationStatus then
     return { status = synchronizationStatus, reasonCode = synchronizationReason }
   end
-  if hasLocalDraft() then return { status = "LOCAL_LEGACY_ONLY" } end
+  if hasLocalDraft(dbOverride) then return { status = "LOCAL_LEGACY_ONLY" } end
   return { status = "GUILD_LOOT_RULES_NOT_CONFIGURED" }
+end
+
+function Dibs.LootRules.GetStatus(dbOverride)
+  return getStatus(false, nil, nil, nil, dbOverride)
+end
+
+-- Officer Loot Rules already resolves this snapshot to show the active guild
+-- values. Reuse it for the status badge instead of normalizing the same record
+-- a second time during that render.
+function Dibs.LootRules.GetStatusWithAuthoritySnapshot(authority, authorityStatus, detail, dbOverride)
+  return getStatus(true, authority, authorityStatus, detail, dbOverride)
 end
 
 local function currentGM()

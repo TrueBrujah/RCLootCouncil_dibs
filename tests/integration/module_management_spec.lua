@@ -92,6 +92,48 @@ local function adopt(dibs)
 end
 
 describe("B12 module management", function()
+  it("reads only module values instead of copying the full policy record", function()
+    local dibs = load()
+    local originalGetCurrentRecord = dibs.OperationalPolicy.GetCurrentRecord
+    dibs.OperationalPolicy.GetCurrentRecord = function()
+      error("module list should not copy the complete policy record")
+    end
+
+    local ok, values = pcall(dibs.OperationalPolicy.GetModuleValues, dibs.GetDB())
+    dibs.OperationalPolicy.GetCurrentRecord = originalGetCurrentRecord
+
+    assert_true(ok, tostring(values))
+    assert_equal(true, values.preDibs)
+    values.preDibs = false
+    assert_equal(true, dibs.OperationalPolicy.GetModuleValues(dibs.GetDB()).preDibs,
+      "returned module values remain a caller-owned map")
+  end)
+
+  it("uses compact governance and avoids repeating the same GM identity check", function()
+    local dibs = load()
+    adopt(dibs)
+    local originalGetState = dibs.Governance.GetState
+    local originalGetCurrentRecord = dibs.Governance.GetCurrentRecord
+    local originalCreateSnapshot = dibs.Identity.CreateSnapshot
+    local snapshotCalls = 0
+    dibs.Governance.GetState = function() error("module diagnostics should use the compact governance summary") end
+    dibs.Governance.GetCurrentRecord = function() error("module diagnostics should not copy a governance record") end
+    dibs.Identity.CreateSnapshot = function(...)
+      snapshotCalls = snapshotCalls + 1
+      return originalCreateSnapshot(...)
+    end
+
+    local ok, diagnostics = pcall(dibs.OperationalPolicy.GetModuleManagementDiagnostics, nil, dibs.GetDB())
+
+    dibs.Governance.GetState = originalGetState
+    dibs.Governance.GetCurrentRecord = originalGetCurrentRecord
+    dibs.Identity.CreateSnapshot = originalCreateSnapshot
+    assert_true(ok, tostring(diagnostics))
+    assert_true(diagnostics.governanceActive)
+    assert_true(diagnostics.canManageModules)
+    assert_equal(2, snapshotCalls, "only actor and local identity snapshots should be needed")
+  end)
+
   it("renders the GM bootstrap action and refreshes the Modules page after confirmation", function()
     local dibs = load()
     local frame = dibs.OfficerUI.CreateWindow("modules")
@@ -229,7 +271,7 @@ describe("B12 module management", function()
     dibs.AceGUI.FlushRefreshes()
     assert_true(dibs.OperationalPolicy.IsModuleEnabled("preDibs"))
     assert_true(frame.moduleDraft.preDibs == false)
-    assert_not_nil(findLabel(frame.contentHost, "Modules - Unsaved changes"))
+    assert_not_nil(findLabel(frame.contentHost, "Unsaved changes"))
     assert_not_nil(findButton(frame.contentHost, "Reset"))
     local save = findButton(frame.contentHost, "Save changes")
     assert_not_nil(save)
@@ -265,7 +307,13 @@ describe("B12 module management", function()
     local controls = collectCheckBoxes(frame.contentHost)
     local enabled = 0
     for _, control in ipairs(controls) do if control.disabled ~= true then enabled = enabled + 1 end end
-    assert_equal(6, enabled)
+    local expectedEnabled = 0
+    for _, definition in ipairs(dibs.OperationalPolicy.GetModuleDefinitions()) do
+      if not definition.requires or frame.moduleDraft[definition.requires] == true then
+        expectedEnabled = expectedEnabled + 1
+      end
+    end
+    assert_equal(expectedEnabled, enabled)
     findButton(frame.contentHost, "Save changes").callbacks.OnClick()
     assert_false(frame.moduleDraft.preDibs)
     assert_true(dibs.OperationalPolicy.IsModuleEnabled("preDibs"))
@@ -294,7 +342,7 @@ describe("B12 module management", function()
   it("keeps core services immutable and changes optional modules in one policy revision", function()
     local dibs = load(); adopt(dibs)
     local core = dibs.OperationalPolicy.GetCoreModuleDefinitions()
-    assert_equal(7, #core)
+    assert_equal(8, #core)
     assert_true(core[1].alwaysEnabled)
     local beforeRequests = dibs.GetDB().disputes
     local changed, reason = dibs.OperationalPolicy.ChangeModules({ preDibs = false, requests = false }, nil, "test module change")

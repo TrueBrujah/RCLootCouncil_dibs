@@ -18,12 +18,14 @@ local state = Identity._rosterState or {
   generation = 0,
   fresh = false,
   members = {},
+  sortedMembers = {},
   shortNames = {},
   displayNames = {},
   reason = "ROSTER_NOT_REFRESHED",
 }
 Identity._rosterState = state
 state.displayNames = state.displayNames or {}
+state.sortedMembers = state.sortedMembers or {}
 state.invalidationGeneration = tonumber(state.invalidationGeneration) or 0
 
 local function copy(value)
@@ -95,7 +97,7 @@ local function shortName(value)
   return string.lower(display)
 end
 
-local function rosterMember(name, rankIndex, className, classFileName, online)
+local function rosterMember(name, rankName, rankIndex, className, classFileName, online)
   local key, display = parseNameRealm(name)
   if not key then
     -- WoW may return an unqualified name for a same-realm roster member.
@@ -108,6 +110,7 @@ local function rosterMember(name, rankIndex, className, classFileName, online)
   return {
     memberKey = key,
     displayName = display,
+    rankName = rankName,
     rankIndex = rankIndex,
     className = className,
     classFileName = classFileName,
@@ -123,6 +126,7 @@ function Identity.InvalidateRoster(reason)
   state.invalidationGeneration = state.invalidationGeneration + 1
   state.fresh = false
   state.members = {}
+  state.sortedMembers = {}
   state.shortNames = {}
   state.displayNames = {}
   state.reason = reason or "ROSTER_INVALIDATED"
@@ -153,11 +157,14 @@ function Identity.RefreshRoster()
   end
 
   local members, shortNames, displayNames = {}, {}, {}
+  local entries = {}
   for index = 1, tonumber(count) or 0 do
-    local success, name, _, rankIndex, _, className, _, _, _, online, _, classFileName = pcall(GetGuildRosterInfo, index)
+    local success, name, rankName, rankIndex, _, className, _, _, _, online, _, classFileName = pcall(GetGuildRosterInfo, index)
     if success and name then
-      local member = rosterMember(name, rankIndex, className, classFileName, online)
+      local member = rosterMember(name, rankName, rankIndex, className, classFileName, online)
       if member then
+        member.rosterIndex = index
+        entries[#entries + 1] = member
         members[member.memberKey] = member
         local short = string.lower(member.displayName:match("^([^%-]+)"))
         shortNames[short] = shortNames[short] or {}
@@ -171,13 +178,50 @@ function Identity.RefreshRoster()
   for _, candidates in pairs(shortNames) do
     if #candidates > 1 then table.sort(candidates) end
   end
+  -- The ordered list keeps every roster entry. The memberKey map above resolves
+  -- one entry per key, so building this list from it would silently merge
+  -- duplicate names and hide the ambiguity that callers must fail closed on.
+  table.sort(entries, function(first, second)
+    if first.memberKey ~= second.memberKey then return first.memberKey < second.memberKey end
+    return first.rosterIndex < second.rosterIndex
+  end)
+  local sortedMembers = entries
   state.generation = state.generation + 1
   state.fresh = true
   state.members = members
+  state.sortedMembers = sortedMembers
   state.shortNames = shortNames
   state.displayNames = displayNames
   state.reason = nil
   return true, state.generation
+end
+
+---@return table|nil members Shared, read-only roster snapshot; replaced after GUILD_ROSTER_UPDATE.
+function Identity.GetRosterSnapshot()
+  if not state.fresh then
+    local refreshed, reason = Identity.RefreshRoster()
+    if not refreshed then return nil, reason end
+  end
+  return state.sortedMembers
+end
+
+-- Defensive copy for callers that need to own or mutate their list.
+function Identity.GetRosterMembers()
+  local snapshot, reason = Identity.GetRosterSnapshot()
+  if not snapshot then return nil, reason end
+  local members = {}
+  for _, member in ipairs(snapshot) do
+    members[#members + 1] = {
+      memberKey = member.memberKey,
+      displayName = member.displayName,
+      rankName = member.rankName,
+      rankIndex = member.rankIndex,
+      className = member.className,
+      classFileName = member.classFileName,
+      online = member.online,
+    }
+  end
+  return members
 end
 
 function Identity.GetRosterState()

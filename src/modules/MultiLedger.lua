@@ -13,6 +13,12 @@ Dibs.MultiLedger = Dibs.MultiLedger or {}
 local MultiLedger = Dibs.MultiLedger
 
 local DEFAULT_LEDGER_ID = "guild-primary"
+local transactionCountCache = setmetatable({}, { __mode = "k" })
+local PROPOSAL_SOURCES = { ledger = true, predibs = true }
+local PROPOSAL_PURPOSES = {
+  GUILD_PRIMARY_MISSING = true, GUILD_PRIMARY_UNAPPROVED = true,
+  LEGACY_SCAN_INCOMPLETE = true, RECOVERY_AFTER_FAILURE = true,
+}
 
 local function trim(value)
   if type(value) ~= "string" then return nil end
@@ -24,13 +30,15 @@ local function copy(value)
   return Dibs.DeepCopy and Dibs.DeepCopy(value) or value
 end
 
-local function ensureLedgers()
-  local db = Dibs.GetDB and Dibs.GetDB()
+local function ensureLedgers(dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride or Dibs.GetDB and Dibs.GetDB()
   if not db then return nil end
 
   if type(db.ledgers) ~= "table" then
     db.ledgers = {}
   end
+  if type(db.ledgerProposals) ~= "table" then db.ledgerProposals = {} end
+  if type(db.auditLog) ~= "table" then db.auditLog = {} end
 
   if not db.ledgers[DEFAULT_LEDGER_ID] then
     if type(db.ledger) == "table" and db.ledger.transactions then
@@ -60,6 +68,74 @@ local function ensureLedgers()
   db.ledger = db.ledgers[db.activeLedgerId]
 
   return db
+end
+
+local function auditProposal(db, action, fields)
+  local entry = fields or {}
+  entry.action, entry.timestamp = action, (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  db.auditLog[#db.auditLog + 1] = entry
+  while #db.auditLog > 100 do table.remove(db.auditLog, 1) end
+end
+
+local function validateProposalMetadata(options)
+  if type(options) ~= "table" then return nil, "INVALID_PROPOSAL_METADATA" end
+  if not PROPOSAL_PURPOSES[options.purpose] then return nil, "INVALID_PROPOSAL_PURPOSE" end
+  local function validateSources(list, reason)
+    if type(list) ~= "table" then return nil, reason end
+    local found = {}
+    for _, source in ipairs(list) do
+      if not PROPOSAL_SOURCES[source] or found[source] then return nil, reason end
+      found[source] = true
+    end
+    return found
+  end
+  local discovered, scopeReason = validateSources(options.discoveredSources, "INVALID_PROPOSAL_SCOPE")
+  if not discovered then return nil, scopeReason end
+  local unreadable, unreadableReason = validateSources(options.unreadableSources or {}, "INVALID_PROPOSAL_COMPLETENESS")
+  if not unreadable then return nil, unreadableReason end
+  if type(options.discoveredCounts) ~= "table" then return nil, "INVALID_PROPOSAL_VOLUME" end
+  for source, volume in pairs(options.discoveredCounts) do
+    if not PROPOSAL_SOURCES[source] or type(volume) ~= "number" or volume < 0 or volume % 1 ~= 0 then
+      return nil, "INVALID_PROPOSAL_VOLUME"
+    end
+  end
+  for source in pairs(discovered) do
+    if options.discoveredCounts[source] == nil then return nil, "INVALID_PROPOSAL_VOLUME" end
+  end
+  if options.scanComplete ~= nil and type(options.scanComplete) ~= "boolean" then return nil, "INVALID_PROPOSAL_COMPLETENESS" end
+  if options.scanComplete == true and next(unreadable) ~= nil then return nil, "INVALID_PROPOSAL_COMPLETENESS" end
+  return {
+    purpose = options.purpose,
+    discoveredSources = (function()
+      local sources = {}
+      for source in pairs(discovered) do sources[#sources + 1] = source end
+      table.sort(sources)
+      return sources
+    end)(),
+    discoveredCounts = copy(options.discoveredCounts),
+    unreadableSources = copy(options.unreadableSources or {}),
+    scanComplete = options.scanComplete == true,
+  }
+end
+
+local function sourceProgress(db, sourceName)
+  local baseline = db.legacyBaseline or {}
+  for sourceId, progress in pairs(baseline.collectionProgress or {}) do
+    if type(sourceId) == "string" and sourceId:match(":" .. sourceName .. "$") then return progress end
+  end
+end
+
+local function actualSourceCount(db, sourceName, progress)
+  if sourceName == "ledger" then
+    local ledger = db.ledgers and db.ledgers[DEFAULT_LEDGER_ID]
+    local total = 0
+    for _, tx in pairs((ledger and ledger.transactions) or {}) do
+      if type(tx) == "table" and tx.type ~= "SEASON_ALLOCATION" then total = total + 1 end
+    end
+    return total
+  end
+  local preDibs = db.preDibs or {}
+  return type(preDibs.requests) == "table" and #preDibs.requests or 0
 end
 
 local function resolveLedger(db, ledgerId)
@@ -93,9 +169,9 @@ end
 
 local enforcingGuildLedger = false
 
-local function imposedLedgerId()
+local function imposedLedgerId(dbOverride)
   local policy = Dibs.OperationalPolicy
-  return policy and type(policy.GetActiveLedgerId) == "function" and policy.GetActiveLedgerId() or nil
+  return policy and type(policy.GetActiveLedgerId) == "function" and policy.GetActiveLedgerId(dbOverride) or nil
 end
 
 local function refreshOpenWindows()
@@ -104,14 +180,12 @@ local function refreshOpenWindows()
   end
 end
 
--- Aligns the local working ledger with the guild-imposed one carried by the
--- synchronized operational policy. Without an imposed ledger, the local
--- choice remains (legacy behavior).
-function MultiLedger.EnforceGuildActiveLedger(silent)
+-- Aligns an already-resolved database with the guild-imposed ledger. Callers
+-- that have resolved the active DB should reuse it instead of resolving it again.
+local function enforceGuildActiveLedger(db, silent, imposed)
   if enforcingGuildLedger then return true, "ENFORCEMENT_IN_PROGRESS" end
-  local db = ensureLedgers()
   if not db then return false, "DB_UNAVAILABLE" end
-  local imposed = imposedLedgerId()
+  if imposed == nil then imposed = imposedLedgerId() end
   if not imposed then return true, "NOT_IMPOSED" end
   if db.activeLedgerId == imposed then return true, "IMPOSED" end
   local ledger = db.ledgers[imposed]
@@ -125,9 +199,25 @@ function MultiLedger.EnforceGuildActiveLedger(silent)
   return true, "IMPOSED"
 end
 
-function MultiLedger.GetActiveLedgerId()
-  if not enforcingGuildLedger then MultiLedger.EnforceGuildActiveLedger(true) end
-  local db = ensureLedgers()
+-- Aligns the local working ledger with the guild-imposed one carried by the
+-- synchronized operational policy. Without an imposed ledger, the local
+-- choice remains (legacy behavior).
+function MultiLedger.EnforceGuildActiveLedger(silent)
+  if enforcingGuildLedger then return true, "ENFORCEMENT_IN_PROGRESS" end
+  return enforceGuildActiveLedger(ensureLedgers(), silent)
+end
+
+function MultiLedger.GetActiveLedgerId(dbOverride)
+  if enforcingGuildLedger then
+    local db = type(dbOverride) == "table" and dbOverride or Dibs.db
+    return db and db.activeLedgerId or DEFAULT_LEDGER_ID
+  end
+  local db = ensureLedgers(dbOverride)
+  if not db then return DEFAULT_LEDGER_ID end
+  local imposed = imposedLedgerId(db)
+  if imposed and db.activeLedgerId ~= imposed then
+    enforceGuildActiveLedger(db, true, imposed)
+  end
   return db and db.activeLedgerId or DEFAULT_LEDGER_ID
 end
 
@@ -144,10 +234,11 @@ function MultiLedger.RequireGuildActiveLedger()
   return true
 end
 
-function MultiLedger.GetGuildLedgerStatus()
-  local db = ensureLedgers()
-  local active = MultiLedger.GetActiveLedgerId()
-  local imposed = imposedLedgerId()
+function MultiLedger.GetGuildLedgerStatus(dbOverride)
+  local db = ensureLedgers(dbOverride)
+  local active = MultiLedger.GetActiveLedgerId(db)
+  local imposed = imposedLedgerId(db)
+  local viewLedgerId = MultiLedger.GetViewLedgerId(db)
   local function ledgerName(id)
     local ledger = db and id and db.ledgers[id]
     return ledger and ledger.name or (id == DEFAULT_LEDGER_ID and "Primary") or id
@@ -159,8 +250,8 @@ function MultiLedger.GetGuildLedgerStatus()
     activeLedgerName = ledgerName(active),
     imposedLedgerId = imposed,
     imposedLedgerName = imposed and ledgerName(imposed) or nil,
-    viewLedgerId = MultiLedger.GetViewLedgerId(),
-    viewLedgerName = ledgerName(MultiLedger.GetViewLedgerId()),
+    viewLedgerId = viewLedgerId,
+    viewLedgerName = ledgerName(viewLedgerId),
   }
 end
 
@@ -205,8 +296,8 @@ end
 
 -- Read-only consultation of another approved ledger; never changes the ledger
 -- used for Pre-Dibs, awards, or debits. Session-local by design.
-function MultiLedger.GetViewLedgerId()
-  local db = ensureLedgers()
+function MultiLedger.GetViewLedgerId(dbOverride)
+  local db = ensureLedgers(dbOverride)
   local view = MultiLedger.viewLedgerId
   if view and db and isLocallyApproved(view, db.ledgers[view]) then return view end
   MultiLedger.viewLedgerId = nil
@@ -227,16 +318,39 @@ function MultiLedger.IsViewingOtherLedger()
   return MultiLedger.GetViewLedgerId() ~= MultiLedger.GetActiveLedgerId()
 end
 
-function MultiLedger.GetLedgers()
-  local db = ensureLedgers()
+function MultiLedger.GetLedgers(options, dbOverride)
+  options = type(options) == "table" and options or {}
+  local includeTransactionCount = options.includeTransactionCount ~= false
+  local db = ensureLedgers(dbOverride)
   if not db then return {} end
 
   local list = {}
   for id, ledger in pairs(db.ledgers) do
-    local txCount = 0
-    if type(ledger.transactions) == "table" then
-      for _ in pairs(ledger.transactions) do
-        txCount = txCount + 1
+    local txCount
+    if includeTransactionCount then
+      local transactions = type(ledger.transactions) == "table" and ledger.transactions or nil
+      local getRevision = Dibs.Ledger and Dibs.Ledger.GetDataRevision
+      local revision = type(getRevision) == "function" and getRevision(id, db) or nil
+      local cached = transactionCountCache[ledger]
+      if transactions and revision ~= nil and cached
+        and cached.transactions == transactions and cached.revision == revision then
+        txCount = cached.count
+      else
+        txCount = 0
+        if transactions then
+          for _ in pairs(transactions) do
+            txCount = txCount + 1
+          end
+        end
+        if transactions and revision ~= nil then
+          transactionCountCache[ledger] = {
+            transactions = transactions,
+            revision = revision,
+            count = txCount,
+          }
+        else
+          transactionCountCache[ledger] = nil
+        end
       end
     end
 
@@ -250,6 +364,7 @@ function MultiLedger.GetLedgers()
       approvedBy = ledger.approvedBy or (ledger.isDefault and "SYSTEM" or nil),
       isDefault = ledger.isDefault == true,
       transactionCount = txCount,
+      proposal = ledger.proposal and copy(ledger.proposal) or nil,
     })
   end
 
@@ -266,6 +381,28 @@ function MultiLedger.GetLedgerById(ledgerId)
   local db = ensureLedgers()
   if not db or not ledgerId or not db.ledgers[ledgerId] then return nil end
   return copy(db.ledgers[ledgerId])
+end
+
+-- Resolve a dispute reference by its immutable transaction ID across retained
+-- ledgers. A caller supplying an expected ledger gets an explicit scope check;
+-- the active/view ledger is never used as a search hint for the original.
+function MultiLedger.ResolveOriginalTransaction(transactionId, expectedLedgerId, dbOverride)
+  if type(transactionId) ~= "string" or transactionId == "" then return nil, "ORIGINAL_TRANSACTION_NOT_FOUND" end
+  local db = ensureLedgers(dbOverride)
+  if not db then return nil, "DB_UNAVAILABLE" end
+  local matchLedgerId, matchTransaction
+  for ledgerId, ledger in pairs(db.ledgers) do
+    if isLocallyApproved(ledgerId, ledger) then
+      local transaction = ledger.transactions and ledger.transactions[transactionId]
+      if transaction then
+        if matchTransaction then return nil, "ORIGINAL_TRANSACTION_AMBIGUOUS" end
+        matchLedgerId, matchTransaction = ledgerId, transaction
+      end
+    end
+  end
+  if not matchTransaction then return nil, "ORIGINAL_TRANSACTION_NOT_FOUND" end
+  if expectedLedgerId and expectedLedgerId ~= matchLedgerId then return nil, "LEDGER_SCOPE_MISMATCH", matchLedgerId end
+  return { ledgerId = matchLedgerId, transaction = copy(matchTransaction) }, nil
 end
 
 function MultiLedger.SetActiveLedger(arg1, arg2)
@@ -299,6 +436,21 @@ function MultiLedger.ProposeLedger(actor, name, options)
     return { ok = false, reasonCode = "INVALID_LEDGER_NAME" }
   end
 
+  local metadata
+  if options ~= nil then
+    local metadataReason
+    metadata, metadataReason = validateProposalMetadata(options)
+    if not metadata then return { ok = false, reasonCode = metadataReason } end
+    local scopeKey = table.concat(metadata.discoveredSources, ",")
+    for _, existing in pairs(db.ledgerProposals) do
+      if type(existing) == "table" and existing.status == "PROPOSED"
+        and existing.metadata and existing.metadata.purpose == metadata.purpose
+        and table.concat(existing.metadata.discoveredSources or {}, ",") == scopeKey then
+        return { ok = false, reasonCode = "DUPLICATE_LEDGER_PROPOSAL" }
+      end
+    end
+  end
+
   local now = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
   local randSuffix = string.format("%04x", math.random(0, 0xffff))
   local ledgerId = "LDR-" .. tostring(now) .. "-" .. randSuffix
@@ -320,7 +472,74 @@ function MultiLedger.ProposeLedger(actor, name, options)
     canonical = { schema = 1, epoch = nil, nextSeq = 1, rootHash = nil, commits = {}, transactionIndex = {}, positions = {} },
   }
 
+  if metadata then
+    local proposalId = "LPR-" .. tostring(now) .. "-" .. randSuffix
+    local proposal = {
+      schema = 1, proposalId = proposalId, ledgerId = ledgerId, status = "PROPOSED",
+      createdAt = now, createdBy = actorName, metadata = metadata,
+    }
+    db.ledgerProposals[proposalId] = proposal
+    db.ledgers[ledgerId].proposal = {
+      proposalId = proposalId, purpose = metadata.purpose,
+      discoveredSources = copy(metadata.discoveredSources), discoveredCounts = copy(metadata.discoveredCounts),
+      unreadableSources = copy(metadata.unreadableSources), scanComplete = metadata.scanComplete,
+    }
+    auditProposal(db, "LEDGER_PROPOSAL_CREATED", { proposalId = proposalId, ledgerId = ledgerId, actor = actorName })
+    return { ok = true, ledgerId = ledgerId, proposalId = proposalId }
+  end
+
   return { ok = true, ledgerId = ledgerId }
+end
+
+function MultiLedger.GetProposal(proposalId)
+  local db = ensureLedgers()
+  local proposal = db and db.ledgerProposals[proposalId]
+  return proposal and copy(proposal) or nil
+end
+
+function MultiLedger.ListProposals()
+  local db = ensureLedgers()
+  local result = {}
+  if not db then return result end
+  for _, proposal in pairs(db.ledgerProposals) do
+    if type(proposal) == "table" and proposal.status == "PROPOSED" then result[#result + 1] = copy(proposal) end
+  end
+  table.sort(result, function(a, b) return a.proposalId < b.proposalId end)
+  return result
+end
+
+function MultiLedger.UpdateProposal(actor, proposalId, options)
+  local db = ensureLedgers()
+  if not db then return { ok = false, reasonCode = "DB_UNAVAILABLE" } end
+  local decision = Dibs.Permissions and Dibs.Permissions.Evaluate and Dibs.Permissions.Evaluate("ledger.propose", actor)
+  if not decision or not decision.allowed then
+    return { ok = false, reasonCode = decision and decision.reasonCode or "GUILD_ADMIN_REQUIRED" }
+  end
+  local proposal = db.ledgerProposals[proposalId]
+  if not proposal then
+    local legacyLedger = db.ledgers[proposalId]
+    if legacyLedger and legacyLedger.status == "PROPOSED" then
+      local now = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+      local adoptedId = "LPR-" .. tostring(now) .. "-" .. string.format("%04x", math.random(0, 0xffff))
+      proposal = { schema = 1, proposalId = adoptedId, ledgerId = legacyLedger.id or proposalId,
+        status = "PROPOSED", createdAt = legacyLedger.createdAt or now, createdBy = legacyLedger.createdBy,
+        metadata = nil, adopted = true }
+      db.ledgerProposals[adoptedId] = proposal
+      legacyLedger.proposal = { proposalId = adoptedId }
+    end
+  end
+  if not proposal or proposal.status ~= "PROPOSED" then return { ok = false, reasonCode = "PROPOSAL_NOT_FOUND" } end
+  local metadata, reason = validateProposalMetadata(options)
+  if not metadata then return { ok = false, reasonCode = reason } end
+  proposal.metadata = metadata
+  local ledger = db.ledgers[proposal.ledgerId]
+  if ledger then ledger.proposal = {
+    proposalId = proposalId, purpose = metadata.purpose, discoveredSources = copy(metadata.discoveredSources),
+    discoveredCounts = copy(metadata.discoveredCounts), unreadableSources = copy(metadata.unreadableSources),
+    scanComplete = metadata.scanComplete,
+  } end
+  auditProposal(db, "LEDGER_PROPOSAL_UPDATED", { proposalId = proposalId, ledgerId = proposal.ledgerId, actor = actor })
+  return { ok = true, proposalId = proposal.proposalId }
 end
 
 function MultiLedger.ApproveLedger(actor, ledgerId)
@@ -341,6 +560,43 @@ function MultiLedger.ApproveLedger(actor, ledgerId)
     return { ok = false, reasonCode = "LEDGER_NOT_APPROVABLE" }
   end
 
+  local proposal = ledger.proposal and db.ledgerProposals[ledger.proposal.proposalId]
+  if proposal then
+    local metadata, metadataReason = validateProposalMetadata(proposal.metadata)
+    if not metadata then return { ok = false, reasonCode = metadataReason or "INVALID_PROPOSAL_METADATA" } end
+    if #metadata.unreadableSources > 0 then
+      auditProposal(db, "LEDGER_PROPOSAL_REJECTED", { proposalId = proposal.proposalId, ledgerId = ledgerId,
+        reason = "PROPOSAL_UNREADABLE_SOURCES", actor = actor })
+      return { ok = false, reasonCode = "PROPOSAL_UNREADABLE_SOURCES" }
+    end
+    local discovered = {}
+    for _, source in ipairs(metadata.discoveredSources) do discovered[source] = true end
+    for _, source in ipairs({ "ledger", "predibs" }) do
+      local progress = sourceProgress(db, source)
+      local actual = actualSourceCount(db, source, progress)
+      if actual > 0 and not discovered[source] then
+        auditProposal(db, "LEDGER_PROPOSAL_REJECTED", { proposalId = proposal.proposalId, ledgerId = ledgerId,
+          reason = "PROPOSAL_SOURCE_OMITTED", actor = actor })
+        return { ok = false, reasonCode = "PROPOSAL_SOURCE_OMITTED" }
+      end
+    end
+    for _, source in ipairs(metadata.discoveredSources) do
+      local progress = sourceProgress(db, source)
+      if progress and progress.state ~= "COMPLETE" then
+        auditProposal(db, "LEDGER_PROPOSAL_REJECTED", { proposalId = proposal.proposalId, ledgerId = ledgerId,
+          reason = "PROPOSAL_SOURCE_INCOMPLETE", actor = actor })
+        return { ok = false, reasonCode = "PROPOSAL_SOURCE_INCOMPLETE" }
+      end
+      local actual = actualSourceCount(db, source, progress)
+      local scanned = progress and progress.state == "COMPLETE" and tonumber(progress.totalSeen) or nil
+      if actual ~= metadata.discoveredCounts[source] or (scanned ~= nil and scanned ~= actual) then
+        auditProposal(db, "LEDGER_PROPOSAL_REJECTED", { proposalId = proposal.proposalId, ledgerId = ledgerId,
+          reason = "PROPOSAL_VOLUME_MISMATCH", actor = actor })
+        return { ok = false, reasonCode = "PROPOSAL_VOLUME_MISMATCH" }
+      end
+    end
+  end
+
   if not (Dibs.Governance and Dibs.Governance.RecordLedgerApproval) then
     return { ok = false, reasonCode = "AUDIT_UNAVAILABLE" }
   end
@@ -350,6 +606,10 @@ function MultiLedger.ApproveLedger(actor, ledgerId)
   ledger.status = "APPROVED"
   ledger.approvedAt = approval and approval.approvedAt or ledger.approvedAt
   ledger.approvedBy = approval and approval.approvedBy or ledger.approvedBy
+  if proposal then
+    proposal.status, proposal.approvedAt, proposal.approvedBy = "APPROVED", ledger.approvedAt, ledger.approvedBy
+    auditProposal(db, "LEDGER_PROPOSAL_APPROVED", { proposalId = proposal.proposalId, ledgerId = ledgerId, actor = ledger.approvedBy })
+  end
 
   if not (Dibs.SyncV2 and type(Dibs.SyncV2.BroadcastCatalogDigest) == "function") then
     return { ok = false, reasonCode = "SYNC_PENDING", localApproved = true, retryable = true }

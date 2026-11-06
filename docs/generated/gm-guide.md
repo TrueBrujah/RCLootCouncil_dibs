@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Guild Master Documentation Reference
 
-Addon version: 0.8.10
+Addon version: 0.8.11
 
 ## Guild Ledger status
 
@@ -83,6 +83,18 @@ Scope: `guild-season` | Audit: `false` | Reason required: `false`
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
 
 Scope: `guild-season` | Audit: `false` | Reason required: `false`
+
+## Canonical ledger correction
+
+- **ID:** `ledger.operation`
+- **Category:** `ledger`
+- **Audience:** gm, officer
+
+**English:** Review and commit a validated canonical ledger correction. The action requires guild authority and a reason.
+**Francais:** Examinez et appliquez une correction canonique validee du ledger. L'action exige une autorite de guilde et une raison.
+
+Scope: `guild-season` | Audit: `true` | Reason required: `true`
+Permission: `ledger.operation`
 
 ## Loot eligibility
 
