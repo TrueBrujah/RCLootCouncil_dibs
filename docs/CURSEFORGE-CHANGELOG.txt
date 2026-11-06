@@ -3,8 +3,12 @@ RCLootCouncil_dibs 0.8.11
 Highlights
 - Improved Player and Officer page responsiveness by reusing resolved guild, roster, ledger, and history data instead of repeating broad scans.
 - Improved large Officer pages with more efficient rendering and scrolling behavior.
+- Added safer, idempotent ledger corrections with audit history and recovery for interrupted or retried operations.
+- Made historical Ledger and Pre-Dibs collection paginated and resumable; incomplete collections cannot be approved as complete.
+- Made imported data changes safer by validating before applying changes to SavedVariables.
 - Preserved duplicate guild roster entries so ambiguous player identities remain safely distinguishable.
 - Added an in-game build identifier in the window footer and with /dibs build, including the deployed commit and source-worktree state.
 
 Compatibility
-- Existing 0.8.10 SavedVariables remain compatible; this update does not change the SavedVariables schema or synchronization protocol.
+- Existing 0.8.10 SavedVariables remain loadable. This release adds fields for pending ledger proposals and resumable historical collection progress; no reset is required.
+- Synchronization now negotiates support for canonical ledger operations. Those operations are enabled only when peers advertise the required capability.
