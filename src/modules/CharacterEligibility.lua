@@ -88,10 +88,15 @@ local function ensureState(dbOverride)
   state.relationshipOrder = state.relationshipOrder or {}
   state.mainChanges = state.mainChanges or {}
   state.mainChangeOrder = state.mainChangeOrder or {}
+  state.revision = tonumber(state.revision) or 0
   state.exceptions = state.exceptions or {}
   state.decisions = state.decisions or {}
   state.groups = state.groups or {}
   return state
+end
+
+local function bumpRevision(state)
+  state.revision = math.min(2147483647, (tonumber(state.revision) or 0) + 1)
 end
 
 local function currentSeason(seasonId)
@@ -261,6 +266,95 @@ function Eligibility.GetPlayerGroup(playerName, seasonId)
   return "character:" .. tostring(character)
 end
 
+-- Public, compact identity projection for roster/statistics and ledger routing.
+-- Only explicitly approved relationships contribute members; no roster/name
+-- similarity is used to discover links.
+function Eligibility.GetPersonProjection(playerName, seasonId)
+  -- Read-only projection: callers such as roster previews must not create an
+  -- empty SavedVariables subtree merely by inspecting identity links.
+  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  local stored = type(db.characterEligibility) == "table" and db.characterEligibility or {}
+  local state = {
+    relationships = type(stored.relationships) == "table" and stored.relationships or {},
+    relationshipOrder = type(stored.relationshipOrder) == "table" and stored.relationshipOrder or {},
+    mainChanges = type(stored.mainChanges) == "table" and stored.mainChanges or {},
+    mainChangeOrder = type(stored.mainChangeOrder) == "table" and stored.mainChangeOrder or {},
+    revision = tonumber(stored.revision) or 0,
+  }
+  local targetSeason = currentSeason(seasonId)
+  local character = actorId(playerName)
+  if not character then return nil, "INVALID_IDENTITY" end
+  local groupId
+  for _, relationshipId in ipairs(state.relationshipOrder) do
+    local relationship = state.relationships[relationshipId]
+    if relationship and relationship.seasonId == targetSeason and relationship.status == "approved"
+      and (relationship.mainCharacterId == character or relationship.altCharacterId == character) then
+      groupId = relationship.playerGroupId
+      break
+    end
+  end
+  if not groupId then
+    for _, changeId in ipairs(state.mainChangeOrder) do
+      local change = state.mainChanges[changeId]
+      if change and change.seasonId == targetSeason and change.status == "approved"
+        and (change.oldMainId == character or change.newMainId == character) then
+        groupId = change.playerGroupId
+        break
+      end
+    end
+  end
+  groupId = groupId or "character:" .. tostring(character)
+  local members, names = {}, {}
+  for _, relationshipId in ipairs(state.relationshipOrder) do
+    local relationship = state.relationships[relationshipId]
+    if relationship and relationship.seasonId == targetSeason and relationship.status == "approved"
+      and relationship.playerGroupId == groupId then
+      if not members[relationship.mainCharacterId] then
+        members[relationship.mainCharacterId] = true
+        names[relationship.mainCharacterId] = relationship.mainCharacterName
+      end
+      if not members[relationship.altCharacterId] then
+        members[relationship.altCharacterId] = true
+        names[relationship.altCharacterId] = relationship.altCharacterName
+      end
+    end
+  end
+  if next(members) == nil then members[character] = true end
+  local mainCharacterKey
+  for _, changeId in ipairs(state.mainChangeOrder) do
+    local change = state.mainChanges[changeId]
+    if change and change.seasonId == targetSeason and change.playerGroupId == groupId
+      and change.status == "approved" and tonumber(change.effectiveAt) then
+      if not mainCharacterKey then mainCharacterKey = change.oldMainId end
+      -- Approval order is append-only and each request is checked against the
+      -- then-current Main, so later approved revisions replace the selection.
+      mainCharacterKey = change.newMainId
+    end
+  end
+  if not mainCharacterKey then
+    for _, relationshipId in ipairs(state.relationshipOrder) do
+      local relationship = state.relationships[relationshipId]
+      if relationship and relationship.seasonId == targetSeason and relationship.status == "approved"
+        and relationship.playerGroupId == groupId then
+        mainCharacterKey = relationship.mainCharacterId
+        break
+      end
+    end
+  end
+  if not mainCharacterKey or not members[mainCharacterKey] then
+    mainCharacterKey = character
+  end
+  local memberKeys = {}
+  for memberKey in pairs(members) do memberKeys[#memberKeys + 1] = memberKey end
+  table.sort(memberKeys)
+  return { groupId = groupId, mainCharacterKey = mainCharacterKey, memberKeys = memberKeys,
+    names = names, revision = state.revision, linked = #memberKeys > 1 }
+end
+
+function Eligibility.GetRevision()
+  return tonumber(ensureState().revision) or 0
+end
+
 local function relationshipForCharacter(character, seasonId)
   local state = ensureState()
   local id, targetSeason = actorId(character), currentSeason(seasonId)
@@ -285,6 +379,9 @@ function Eligibility.DeclareRelationship(input, actor)
   local main = actorId(options.mainCharacterId or options.mainCharacter or options.main)
   local alt = actorId(options.altCharacterId or options.altCharacter or options.alt)
   if not main or not alt or main == alt then return nil, "INVALID_RELATIONSHIP" end
+  -- A relationship declaration is self-service. Do not let a caller create
+  -- a pending Main/Alt link for characters they do not control.
+  if not sameIdentity(declaringActor, main) then return nil, "OWNER_MISMATCH" end
   if options.playerName and not sameIdentity(declaringActor, options.playerName) then return nil, "OWNER_MISMATCH" end
   local playerGroupId = Eligibility.GetPlayerGroup(main, targetSeason)
   if playerGroupId == "character:" .. tostring(main) then
@@ -307,6 +404,8 @@ function Eligibility.DeclareRelationship(input, actor)
   }
   state.relationships[relationship.relationshipId] = relationship
   table.insert(state.relationshipOrder, relationship.relationshipId)
+  bumpRevision(state)
+  appendAudit("eligibility.relationship.declare", declaringActor, relationship, relationship.reason)
   return copy(relationship)
 end
 
@@ -328,6 +427,7 @@ function Eligibility.ReviewRelationship(relationshipId, decision, actor, reason)
   local detail = type(decision) == "table" and decision.reason or reason
   if (status == "rejected" or status == "suspended") and trim(detail) == "" then return nil, "REASON_REQUIRED" end
   relationship.status, relationship.reviewedBy, relationship.reviewedAt, relationship.reviewReason = status, actorId(actor), now(), detail
+  bumpRevision(state)
   appendAudit("eligibility.relationship." .. status, actor, relationship, detail)
   return copy(relationship)
 end
@@ -382,14 +482,21 @@ function Eligibility.RequestMainChange(input, actor)
   local oldMain = actorId(options.oldMainId or options.oldMain or options.mainCharacter or actor or Dibs.GetPlayerName())
   local newMain = actorId(options.newMainId or options.newMain)
   if not oldMain or not newMain or oldMain == newMain then return nil, "INVALID_MAIN_CHANGE" end
+  -- Main changes are requested by the current Main; officer authority is
+  -- required only for review, never to impersonate another player's request.
+  if not sameIdentity(actor or Dibs.GetPlayerName(), oldMain) then return nil, "OWNER_MISMATCH" end
   local group = Eligibility.GetPlayerGroup(oldMain, targetSeason)
   if Eligibility.GetPlayerGroup(newMain, targetSeason) ~= group then
     return nil, "MAIN_CHANGE_GROUP_MISMATCH"
   end
+  local projection = Eligibility.GetPersonProjection(oldMain, targetSeason)
+  if projection and projection.mainCharacterKey ~= oldMain then return nil, "OLD_MAIN_NOT_CURRENT" end
   local state = ensureState()
   for _, changeId in ipairs(state.mainChangeOrder) do
     local existing = state.mainChanges[changeId]
-    if existing and existing.seasonId == targetSeason and existing.playerGroupId == group and (existing.status == "pending" or existing.status == "approved") then
+    if existing and existing.seasonId == targetSeason and existing.playerGroupId == group
+      and (existing.status == "pending" or (existing.status == "approved"
+        and tonumber(existing.probationEndsAt) and now() < tonumber(existing.probationEndsAt))) then
       return nil, "MAIN_CHANGE_ALREADY_ACTIVE"
     end
   end
@@ -402,6 +509,8 @@ function Eligibility.RequestMainChange(input, actor)
   }
   state.mainChanges[request.changeId] = request
   table.insert(state.mainChangeOrder, request.changeId)
+  bumpRevision(state)
+  appendAudit("eligibility.main.request", actor, request, request.reason)
   return copy(request)
 end
 
@@ -425,7 +534,24 @@ function Eligibility.ApproveMainChange(changeId, options, actor)
   change.status, change.effectiveAt, change.probationEndsAt = "approved", effectiveAt, effectiveAt + duration
   change.outcome = normalizeOutcome(settings.outcome or "block", "block")
   change.approverId, change.approverName, change.approvalReason = actorId(actor), displayName(actor), settings.reason or change.reason
+  bumpRevision(state)
   appendAudit("eligibility.main.approve", actor, change, change.approvalReason)
+  return copy(change)
+end
+
+function Eligibility.RejectMainChange(changeId, actor, reason)
+  if not Dibs.Permissions or not Dibs.Permissions.Can("eligibility.main.review", actor) then
+    return nil, "GUILD_ADMIN_REQUIRED"
+  end
+  local state = ensureState()
+  local change = state.mainChanges[tostring(changeId)]
+  if not change then return nil, "MAIN_CHANGE_NOT_FOUND" end
+  if change.status ~= "pending" then return nil, "MAIN_CHANGE_ALREADY_REVIEWED" end
+  if trim(reason) == "" then return nil, "REASON_REQUIRED" end
+  change.status, change.approverId, change.approvalReason = "rejected", actorId(actor), reason
+  change.reviewedAt = now()
+  bumpRevision(state)
+  appendAudit("eligibility.main.reject", actor, change, reason)
   return copy(change)
 end
 

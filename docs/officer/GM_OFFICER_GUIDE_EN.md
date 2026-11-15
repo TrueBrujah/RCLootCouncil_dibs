@@ -409,11 +409,30 @@ Officer view. Review actions require an explicit reason and preserve original
 evidence. Immutable identity conflicts are held for review rather than
 replaced by last-write-wins.
 
+Each member must have Dibs running when claiming a reward, with **Pre-Dibs**
+enabled. Their **Great Vault** page shows active, unavailable or disabled
+capture, readable equipment choices and the last capture result for the
+session. This temporary diagnostic is not acquisition history. Mythic
+keystones and recognized supplemental rewards are excluded from equipment
+choices; delayed tooltip data can retry an already proven capture while its
+context remains valid.
+
+After recording, periodic synchronization makes the member and item available
+in **Vault Review**. Dibs cannot directly read another member's personal Vault
+or automatically recover past claims that were never recorded. Transfers
+require authorized owner identity; review decisions require an authorized
+Officer. An acquisition is evidence and does not change Dib balances.
+
 Vault synchronization uses bounded `VAULT_DIGEST`, `VAULT_FETCH`,
 `VAULT_DETAIL`, and `VAULT_ACK` messages. It rejects cross-guild, unauthorized,
 private-evidence, malformed, and incomplete transfers. Reconnect retries are
 bounded and idempotent. A guild change does not merge old history, and an
 unguilded character keeps its own local ownership scope.
+
+Delivery is not necessarily immediate and still requires a real two-client
+Retail validation. Use the
+[0.8.12 Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md)
+to check player-to-Officer delivery and catch-up after reconnecting.
 
 _Pending Retail capture: Officer Vault Review —
 `docs/assets/guides/screenshots/en/officer/officer-vault-review.png`._
@@ -433,6 +452,31 @@ In **Data**:
   survive `/dibs factoryreset CONFIRM`;
 - **Profiles** separates local presentation from guild policy;
 - **Import / Export** validates scope, schema, size, checksum, and deduplication.
+
+Backups are local SavedVariables snapshots. **Import / Export** exports current state.
+To export a historical copy, select it in **Backups** and press **Export selected
+backup**. Copy the displayed text to a private file or channel yourself; the addon
+does not write an external file. The original package and attestations must be
+retained. Exports prefer compressed `DIBS-COMP-1` text when a codec is available;
+the interface shows compressed/original sizes and explains legacy fallback. The
+encoded package must fit 250,000 characters; its original fits 32 MiB and is checked
+before decompression. New large backups can retain a compressed original package.
+Older backups without retained original text/attestations cannot be exported.
+Local restore still works from a valid payload/checksum without a codec. Full-scope
+export requires explicit sensitive-data consent; compression does not encrypt it.
+
+To reimport a historical local/guild configuration, paste the package in **Import /
+Export**, choose its scope and merge/replace strategy, validate, review the preview,
+then confirm. This does not register an external snapshot as a new restore point.
+Both compressed and older raw packages are accepted automatically.
+That workflow remains incomplete. Full import is a legacy compatibility path and
+refuses unknown canonical history; a full export does not establish recovery of a
+fresh installation.
+
+At most 16 import previews and 16 restore previews are retained, each for 30 minutes.
+If a preview expires or is evicted, generate and review a new one before confirming.
+Activating a profile selects only that profile within its owner/scope; a rejected
+activation preserves the previous selection.
 
 Full-data packages may contain identities and award history. Keep them private.
 A cancelled preview must not change settings, balances, profiles, or history.
@@ -521,3 +565,35 @@ live award callbacks, and related projections remain unavailable.
 
 Check **System > Modules**. Stored data is retained and should return after
 reactivation; stale windows and direct routes should fail closed.
+
+## Seasonal roster workflow
+
+1. Enable the seasonal roster in **System > Modules**, then create a season
+   draft with its start and registration-opening dates. Optional closing/end
+   dates can be cleared. Review rules, participation statuses, manual Core
+   promotion guidance and rank allocations for that season.
+2. Open registration and review player submissions and explicit Main/Alt
+   declarations. A requested Core path remains separate from an awarded
+   status. Main-change approval starts 14 days of Dibs probation.
+3. Close registration, approve the intended participants and publish the
+   reviewed rank-allocation snapshot. Configure the explicit policy for any
+   participant without a guild rank.
+4. Inspect the activation preview and resolve its blockers. Review linked
+   legacy balances separately: retain the selected Main balance and confirm
+   any required Alt correction with a reason. Never sum old balances by
+   default. Refresh a stale preview before confirming activation.
+5. Activate with a reason and explicit confirmation. The canonical ledger
+   writer must be available. Only approved people receive the new season's
+   allocations; previous-season balances and transactions remain intact.
+6. For active-season rank/allocation changes, review the separate season
+   reconciliation and confirm its signed adjustments with a reason. This
+   preserves spent Dibs and never initializes unrelated guild characters.
+7. Complete the season and archive it after the seven-day grace period.
+   Closing registration alone does not complete or archive a season.
+
+Missing sync dependencies keep the prior season current until validation
+completes. Disabling the module preserves its read-only history and blocks
+mutations. Offline automated tests do not replace the two-client Retail checks
+in the [feature validation matrix](../../specs/029-seasonal-raid-roster/quickstart.md).
+The [0.8.12 Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md)
+collects the in-game checks; T053 stays open until real two-client validation.

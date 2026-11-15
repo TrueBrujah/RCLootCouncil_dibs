@@ -98,7 +98,7 @@ local function assertAccountingUnchanged(dibs, before, message)
 end
 
 describe("RF-0040 ImportExport hardening", function()
-  it("A01 imports a valid package into an empty environment", function()
+  it("A01 reimports an existing legacy package on the same populated client without accounting changes", function()
     -- A full import is only meaningful on a target that already holds the
     -- exported rows: B03 forbids adopting a `LOCAL_CANONICAL` row as a
     -- second durable write path. The scenario is therefore modelled on a

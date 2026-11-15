@@ -25,6 +25,7 @@ local CORE_MODULE_DEFINITIONS = {
   { key = "rankRules", label = "Rank Rules", core = true, alwaysEnabled = true, description = "Rank-based allocation rules and expected allocation resolution", category = "core" },
 }
 local MODULE_DEFINITIONS = {
+  { key = "seasonalRoster", label = "Seasonal Raid Roster", description = "Season enrollment, roster administration, and composition statistics", category = "guild" },
   { key = "preDibs", label = "Pre-Dibs", description = "Early expression of interest before loot drops", category = "loot" },
   { key = "requests", label = "Requests", description = "Formal loot request workflow with officer review", category = "loot" },
   { key = "rclootcouncil", label = "RCLootCouncil", description = "Integration with RCLootCouncil for council voting", category = "integration" },

@@ -277,29 +277,13 @@ local function stepRankRules(seasonId, rows, dbOverride, syncBehind)
   return { status = "READY", summary = "Rank Rules are configured and synchronized through SEASON_CATALOG revision " .. tostring(revision) .. ".", rows = rows }
 end
 
-local function stepAllocationReconciliation(rankRows)
-  rankRows = type(rankRows) == "table" and rankRows or {}
-  if #rankRows == 0 then
-    return { status = "WARNING", summary = "Member allocation reconciliation cannot be verified from the current roster." }
+local function stepAllocationReconciliation(hasConfiguredSeason)
+  if hasConfiguredSeason ~= true then
+    return { status = "OPTIONAL", summary = text("WIZARD_ALLOCATION_RECONCILIATION_DEFERRED",
+      "Create the first seasonal raid roster before reconciling member allocations.") }
   end
-  local needed, retained = 0, 0
-  local allDisabled = true
-  for _, row in ipairs(rankRows) do
-    if row.enabled ~= false then allDisabled = false end
-    needed = needed + (tonumber(row.pendingReconciliation) or 0)
-    retained = retained + (tonumber(row.surplusMembers) or 0)
-  end
-  if allDisabled then
-    return { status = "OPTIONAL", summary = "All current guild ranks have Dibs allocation disabled." }
-  end
-  if needed > 0 then
-    return { status = "ACTION_REQUIRED", summary = tostring(needed) .. " players need starting-allocation reconciliation.",
-      detail = { needsReconciliation = needed, keepGranted = retained } }
-  end
-  return { status = "READY", summary = retained > 0
-      and (tostring(retained) .. " existing allocations are retained after rank decreases.")
-      or "No member allocation top-ups are currently required.",
-    detail = { needsReconciliation = 0, keepGranted = retained } }
+  return { status = "OPTIONAL", summary = text("WIZARD_SEASONAL_RECONCILIATION_PENDING",
+    "Seasonal reconciliation is not available yet; it must use only approved participants in the active season.") }
 end
 
 local function stepDibsRules(report)
@@ -407,6 +391,7 @@ local function computeSteps(dbOverride)
   end
   local steps = {}
   local seasonId, rankRows = call(Dibs.GetCurrentSeasonId, dbOverride), nil
+  local hasConfiguredSeason = call(Dibs.SeasonalRoster and Dibs.SeasonalRoster.HasConfiguredSeason, dbOverride)
   local policySummaryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local policySummary = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetPreDibSummary,
     seasonId, activeLedgerId, dbOverride)
@@ -438,7 +423,7 @@ local function computeSteps(dbOverride)
       local computed = stepRankRules(seasonId, rankRows, dbOverride, syncBehind)
       steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail or computed.rows }
     elseif definition.id == "allocationReconciliation" then
-      local computed = stepAllocationReconciliation(rankRows)
+      local computed = stepAllocationReconciliation(hasConfiguredSeason)
       steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail or computed.rows }
     elseif definition.id == "dibsRules" then
       local computed = stepDibsRules(report)

@@ -141,6 +141,10 @@ function M.Activate(name, scope, actor, confirmation)
   end
   db.settings = db.settings or {}
   for k, v in pairs(profile.presentation or {}) do db.settings[k] = clone(v) end
+  for entryName, entry in pairs(entries) do
+    entry.active = false
+    profiles.active[key(scope, entryName)] = nil
+  end
   profiles.active[key(scope, name)] = true; profile.active = true; profile.updatedAt = time(); audit("profile_activate", scope, name, nil, "success", actor); return clone(profile)
 end
 function M.Reset(name, scope, actor)
@@ -159,7 +163,7 @@ function M.Delete(name, scope, actor)
   entries[name] = nil; profiles.active[key(scope, name)] = nil; audit("profile_delete", scope, name, nil, "success", actor); return true
 end
 function M.GetActive(scope)
-  local _, profiles = ensure(); scope = scopeName(scope); for name, p in pairs(bucket(profiles, scope)) do if p.active or profiles.active[key(scope, name)] then return clone(p) end end; return nil
+  local _, profiles = ensure(); scope = scopeName(scope); for name, p in pairs(bucket(profiles, scope)) do if p.active or ((scope == "guild" or p.active == nil) and profiles.active[key(scope, name)]) then return clone(p) end end; return nil
 end
 function M.SetActive(name, scope, actor, confirmation) return M.Activate(name, scope, actor, confirmation) end
 

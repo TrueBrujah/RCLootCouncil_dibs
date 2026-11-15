@@ -418,6 +418,34 @@ Les scopes complets peuvent contenir des identites et l'historique des gains. Ne
 
 Une importation repete deux fois doit rester sans doublon. Une annulation de preview ne change ni les soldes, ni l'historique, ni les reglages.
 
+Les sauvegardes sont des snapshots locaux dans les SavedVariables. **Import /
+Export** exporte l'etat courant. Pour une copie historique, selectionnez-la dans
+**Backups**, puis cliquez sur **Exporter la sauvegarde sélectionnée**. Copiez vous-meme
+le texte affiche dans un fichier ou canal prive : l'addon n'ecrit aucun fichier
+externe. Le paquet original et ses attestations doivent etre conserves. L'export
+prefere le format compresse `DIBS-COMP-1` lorsqu'un codec est disponible; l'interface
+affiche les tailles et explique le repli vers le texte classique. La limite portable
+reste 250 000 caracteres encodes, avec un budget original de 32 Mio verifie avant
+decompression. Les nouvelles grosses sauvegardes peuvent conserver leur paquet
+original compresse; les anciennes copies sans original conserve/atteste restent
+non exportables. La restauration locale d'un contenu et checksum valides reste
+disponible sans codec. L'export complet demande un consentement explicite pour les
+donnees sensibles : la compression ne les chiffre pas.
+
+Pour reimporter une configuration historique locale/guilde, collez ce paquet dans
+**Import / Export**, choisissez son perimetre et merge/replace, validez, relisez
+l'apercu, puis confirmez. Cela n'enregistre pas un snapshot externe comme nouveau
+point de restauration. Les paquets compresses et les anciens paquets texte sont
+reconnus automatiquement. L'enregistrement d'un nouveau point de restauration
+externe reste incomplet. L'import complet conserve ses
+restrictions legacy et refuse l'historique canonique inconnu; un export complet ne
+prouve pas une recuperation sur une installation neuve.
+
+Chaque type conserve au maximum 16 previews pendant 30 minutes. Si un preview
+expire ou disparait, regenerez-le et relisez-le avant confirmation. Une activation
+de profil reussie selectionne uniquement ce profil dans son perimetre/proprietaire;
+un refus conserve la selection precedente.
+
 ## 11. Synchronisation, coordinateur et reconciliation
 
 La synchronisation partage uniquement l'etat Dibs necessaire a la guilde et les metadonnees de recuperation.
@@ -429,12 +457,32 @@ legacy a migrer et les conflits qui exigent une decision. Une confirmation,
 un rejet ou un classement en reference demande une raison et conserve la preuve
 originale. Un conflit d'identite n'est jamais resolu par un simple last-write-wins.
 
+Chaque membre doit avoir Dibs actif au moment de reclamer sa recompense et le
+module **Pre-Dibs** active. Sa page **Grand coffre** indique la capture active,
+indisponible ou desactivee, le nombre de choix d'equipement lisibles et le
+dernier resultat de capture de la session. Ce diagnostic temporaire n'est pas
+un historique. Les cles mythiques et autres supplements reconnus sont exclus
+des choix d'equipement; les donnees d'infobulle chargees en retard peuvent
+relancer une capture deja prouvee tant que son contexte reste valide.
+
+Apres enregistrement, la sync periodique permet aux officiers de retrouver
+l'objet et le membre dans **Vault Review**. L'addon ne lit pas directement le
+coffre personnel des autres membres et ne recupere pas automatiquement les
+anciens retraits jamais enregistres. Le transfert exige une identite de
+proprietaire autorisee; les decisions de revue restent reservees aux officiers
+autorises. Une acquisition est une preuve et ne change pas les soldes Dibs.
+
 Les messages `VAULT_DIGEST`, `VAULT_FETCH`, `VAULT_DETAIL` et `VAULT_ACK` sont
 bornes, controles par guilde et filtres par confidentialite. Les candidats,
 votes, reponses RCLootCouncil et sessions de butin ne sont jamais transmis.
 Une reconnexion peut relancer une demande manquante, sans doublon ni transfert
 partiel. Un changement de guilde ne fusionne pas l'ancien historique; un
 personnage sans guilde conserve son propre scope local.
+
+La reception n'est pas necessairement instantanee et doit encore etre validee
+avec deux clients Retail. Utilisez la
+[liste des tests Retail 0.8.12](../audits/0.8.12-TESTS-RETAIL-FR.md)
+pour verifier le trajet joueur vers officier et le rattrapage apres reconnexion.
 
 _Capture Retail en attente : revue Officer du Grand Coffre —
 `docs/assets/guides/screenshots/fr/officer/officer-vault-review.png`._
@@ -591,3 +639,33 @@ doivent echouer proprement, et la reactivation restaure l'acces.
 
 La preuve historique est incomplete ou ambigue. Ne confirmez pas sans verifier
 l'identite, l'objet, le gagnant, la date, la reponse et la raison.
+
+## Cycle du roster saisonnier
+
+1. Activez le module dans **System > Modules**. Creez un brouillon avec le debut
+   de saison et d'inscription, puis revisez regles, statuts, criteres manuels
+   Core et allocations par rang. Les dates facultatives peuvent etre effacees.
+2. Ouvrez les inscriptions et examinez les personnages, les declarations
+   Main/Alt et les changements de Main. La voie Core demandee ne vaut pas
+   promotion. Un changement de Main approuve commence 14 jours de probation Dibs.
+3. Fermez les inscriptions, approuvez les participants et publiez les
+   allocations de rang. Configurez explicitement le cas sans rang de guilde.
+4. Revisez l'apercu et ses blocages. Rapprochez les soldes historiques dans une
+   operation distincte : conserver le solde du Main choisi et confirmer chaque
+   correction Alt avec un motif, sans sommer les soldes par defaut.
+5. Activez avec motif et confirmation explicite depuis le coordinateur
+   comptable autorise. Seules les personnes approuvees recoivent l'allocation
+   de la nouvelle saison; l'ancien historique reste intact.
+6. Pour les ecarts de rang/allocation actifs, revisez et confirmez la
+   reconciliation de saison. Les ajustements conservent les Dibs deja depenses
+   et n'incluent pas les autres personnages de la guilde.
+7. Terminez la saison puis archivez-la apres sept jours. Fermer les
+   inscriptions ne termine ni n'archive la saison.
+
+Actualisez un apercu perime. Une dependance de synchronisation manquante
+conserve l'ancienne saison courante. La desactivation garde l'historique en
+lecture seule et bloque les ecritures. Les validations Retail restent
+distinctes des tests automatises : voir la [matrice de validation](../../specs/029-seasonal-raid-roster/quickstart.md).
+La [liste des tests Retail 0.8.12](../audits/0.8.12-TESTS-RETAIL-FR.md)
+regroupe les verifications a effectuer en jeu; T053 reste ouverte jusqu'a une
+validation reelle a deux clients.

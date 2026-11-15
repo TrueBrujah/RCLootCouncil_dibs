@@ -32,17 +32,18 @@ describe("Encounter Journal Pre-Dibs", function()
 
   it("tracks the live encounter until its matching end event", function()
     local _, dibs = loader.load({ withAce3 = true })
-    local events = dibs.Ace3.handlers.events
+    -- Exercise the actual AceEvent entry point with its event-first contract.
+    local events = dibs.Ace3.libs.event.handlers
 
-    events.ENCOUNTER_START(dibs.Ace3, "ENCOUNTER_START", 500, "Test Boss", 15, 20)
+    events.ENCOUNTER_START("ENCOUNTER_START", 500, "Test Boss", 15, 20)
     local active = dibs.EncounterJournal.GetActiveEncounter()
     assert_equal(500, active.encounterID)
     assert_equal("Test Boss", active.encounterName)
 
-    events.ENCOUNTER_END(dibs.Ace3, "ENCOUNTER_END", 501, "Other Boss", 15, 20, 1)
+    events.ENCOUNTER_END("ENCOUNTER_END", 501, "Other Boss", 15, 20, 1)
     assert_equal(500, dibs.EncounterJournal.GetActiveEncounter().encounterID)
 
-    events.ENCOUNTER_END(dibs.Ace3, "ENCOUNTER_END", 500, "Test Boss", 15, 20, 1)
+    events.ENCOUNTER_END("ENCOUNTER_END", 500, "Test Boss", 15, 20, 1)
     assert_nil(dibs.EncounterJournal.GetActiveEncounter())
   end)
 

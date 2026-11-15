@@ -2,7 +2,7 @@
 
 **Branch**: `007-backup-export-import-profiles` | **Date**: 2026-09-09 | **Spec**: [spec.md](spec.md)
 
-**Status**: Implemented on `dev` in version 0.5.8-dev; Retail visual validation remains scheduled.
+**Status**: Local backup/configuration transfer, selected historical export and compressed portable transport implemented; external snapshot registration and full canonical recovery incomplete; Retail validation pending.
 
 ## Summary
 
@@ -56,6 +56,44 @@ tests/contract/profile_scope_spec.lua
 ```
 
 ## Delivery Phases
+
+### 0.8.12 stabilization follow-up — 2026-11-15
+
+1. Capture the current full automated-suite result before source edits; do not represent focused successes as a global pass.
+2. Bound temporary import/restore previews to 16 per store and 30 minutes, with deterministic oldest-first eviction and cleanup at service access. Invalid/expired IDs fail closed and require a fresh preview. Keep accepted history, backup retention and T049 recovery contracts unchanged.
+3. Capture backup content once through Export and derive the stored snapshot/checksums from the returned payload. Verify detachment, source work count, integrity, replay and tombstone regressions.
+4. Explain in DataUI and guides that transfer exports current state, local restore uses an existing snapshot, and full compatibility import cannot recover unknown canonical history. Expose the existing recoveryClass in previews.
+5. Track selected-snapshot export and external-snapshot import as unfinished work. Before implementing canonical recovery on a fresh installation, finalize provenance/authority/adoption constraints with the existing Feature 026 recovery boundary; do not widen ImportExport.Apply as a shortcut.
+6. Independently review the safe stabilization changes, run focused suites under Fengari/Lua 5.4.6/Lua 5.1.5, and retain unexecuted Retail gates.
+
+### Historical export slice — 2026-11-15
+
+1. Add `Backup.ExportSnapshot(snapshotId, options)` with retained-text validation,
+   snapshot/package/payload attestations, current permissions/context, local ownership,
+   strict portable limit and full-scope `confirmedSensitive == true`. Return the original
+   text and decoded metadata without recapturing live state or changing package schema.
+2. Add localized selected-snapshot controls to DataUI. Sensitive consent and generated
+   text are bound to the selection and cleared on selection change, refresh/context
+   invalidation or permission failure. Current-state export stays in its own workspace.
+3. Prove historical local/guild configuration round trips via existing Preview/Apply,
+   permission rechecks, tampering/size refusals, scope filtering and canonical refusal.
+   Raw external-snapshot registration remains T036: it would bypass Apply's scope
+   filters, and full recovery also depends on Feature 026/T049. No such shortcut is added.
+4. Independent QA and focused tests on Fengari, Lua 5.4.6 and native Lua 5.1.5;
+   source compilation/documentation checks; preserve all manual gates.
+
+### Compressed transport slice — 2026-11-15
+
+Implement BackupTransport (native preferred, existing LibDeflate fallback) with
+bounded DEFLATE preflight, standard Base64 and unchanged inner-package bytes.
+Integrate opt-in compression and auto-detect import in ImportExport, historical
+export/cache revalidation and optional retained compressed originals in Backup.
+Update DataUI and locales for preferred compressed export and explicit codec absence.
+Parallel ownership: codec module/tests; service/loading integration/tests; UI/locales
+and UI tests. Independent QA follows source stabilization. Verify actual DEFLATE
+using the unchanged vendored codec and cross-codec fixtures, not identity mocks;
+run Fengari/Lua 5.4.6/native Lua 5.1.5 and compile source. Retail native execution
+and full canonical recovery remain unvalidated; no global-suite pass is inferred.
 
 ### Phase 0: Package and schema contract
 

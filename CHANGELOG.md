@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased — 0.8.12 working candidate
+
+- (2026-11-15) Add versioned compressed portable export/import around unchanged
+  package bytes, using native WoW capabilities or the existing bundled LibDeflate.
+  Validate DEFLATE expansion before decompression; preserve the 250,000-character
+  encoded limit and existing 32 MiB raw budget. Keep legacy imports/exports, store
+  optional compressed originals for new large backups, and retain local restore
+  without a codec. Native Retail execution and full canonical recovery remain open.
+- (2026-11-15) Export the selected historical backup's retained original package,
+  preserving content, source metadata and checksum. Recheck character ownership,
+  guild context, permissions, integrity and the existing portable size limit;
+  full scope requires sensitive-data consent. Historical configurations retain the
+  existing validated import workflow. External restore-point registration and fresh
+  canonical recovery remain incomplete; no package schema or recovery gate changes.
+- (2026-11-15) Bound abandoned import/restore previews to 16 per type and 30 minutes,
+  and capture each backup payload once for a consistent detached snapshot/checksum.
+  Clarify local restore versus current-state export and the unfinished portable
+  snapshot recovery workflow; canonical recovery restrictions remain unchanged.
+- (2026-11-15) Keep only one active profile per owner/scope after successful
+  confirmation, preserve legacy profile selection and character isolation, and
+  repair the independent-raid start button's text reader. Remove an unreachable
+  legacy PlayerUI constructor while preserving the current window and fallback.
+- (2026-11-15) Complete the seasonal roster activation workflow with explicit
+  preview, reason and confirmation, initial allocations for approved participants,
+  immutable Main/Alt identity snapshots, and dependency-checked guild propagation.
+  Compact activation manifests keep the existing 8,192-byte Sync limit.
+- (2026-11-15) Add separate active-season allocation reconciliation that preserves
+  spent Dibs, season completion/archive, and read-only preserved history when
+  seasonal roster is disabled. Historical Main/Alt balance review remains explicit.
+- (2026-11-15) Repair Great Vault capture for equipment bundled with keystones or
+  supplemental items, localized self-loot messages without a sender GUID, and
+  delayed item tooltip data. PlayerUI now displays capture state and its latest
+  runtime result and refreshes after a confirmed receipt. Offered rewards are
+  not acquisitions; missed past claims are not reconstructed and no Dibs are spent.
+- (2026-11-15) Update the FR/EN player and Officer guides and provide the
+  [0.8.12 Retail test checklist](docs/audits/0.8.12-TESTS-RETAIL-FR.md).
+  Automated focused suites pass, but real-client/two-client gates remain open.
+  The canonical dispute correction release path remains disabled; its outstanding
+  implementation/recovery tasks are not declared complete by this candidate.
+
+- (2026-11-14) Prevent imported presentation settings from changing guild
+  authority, preserve deleted-ledger tombstones through import and restore,
+  and keep draft seasons outside active-season selection. Existing ledger
+  history and guild policy remain authoritative.
+- (2026-11-14) Repair runtime event fallback and shared event delivery, correct
+  EncounterJournal event arguments and encounter tuples, and reject invalid
+  or oversized sync input before retaining state or deserializing it.
+- (2026-11-14) Fix stable table sorting for equivalent case/numeric values and
+  fluid-column sizing when weights are unspecified. Add repeatable projection
+  work-budget checks for 20, 60, 500 and 1,000 enrollments. These checks do not
+  certify Retail layout or performance.
+- (2026-11-14) Align the constitution footer with its already approved 2.8.0
+  amendment. No governance rule, addon version or release is changed by this
+  metadata correction.
+
+## 0.8.12 - 2026-11-09
+
+Initial implementation scope recorded on November 9. The current working
+candidate includes the additional changes in **Unreleased** above; this older
+entry does not describe the final activation or Vault behavior now under test.
+
+- (2026-11-09) Add the optional seasonal raid roster workflow: dated season drafts,
+  player registration, officer review, a privacy-safe public roster, and
+  versioned season rules and status definitions. Seasonal roster data uses an
+  additive SavedVariables subtree and a Guild-only SyncV2 entity; old ledger,
+  season, and history records are preserved. The initial November 9 implementation
+  provided a read-only allocation preview; activation and initial allocation
+  commits were completed later in the working candidate described above.
+- (2026-11-09) Hide legacy guild-wide allocation reconciliation in the setup
+  wizard and Automatic Dibs. Before a seasonal roster exists, direct officers
+  to create one; afterward, explain that reconciliation awaits the season-scoped
+  workflow for approved participants. No legacy allocation is changed.
+- (2026-11-09) Keep the Officer route renderer below WoW Retail's 60-upvalue
+  limit by storing shared route helpers on its frame. This prevents a Lua
+  warning from appearing when the Officer UI loads; page behavior is unchanged.
+- (2026-11-09) Keep specific ledger failure codes in protected grant, use, and
+  refund results so officers and callers can distinguish coordinator and
+  validation failures from a generic rejected action. Close registration at
+  its configured end timestamp, including the exact boundary. Add read-only
+  preparation and freshness validation for a season activation manifest; this
+  does not activate a season. Main/Alt balance review is explicit and retains
+  the selected Main balance instead of summing character balances.
+
 ## 0.8.11 - 2026-11-03
 
 - (2026-11-03) Raise the addon version to 0.8.11 for the unreleased UI performance,

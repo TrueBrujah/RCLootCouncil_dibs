@@ -126,6 +126,12 @@
 - [X] T037 [P] Add dated entry in `CHANGELOG.md` documenting multi-ledger, officer setup empowerment, and independent raid sessions
 - [X] T038 Verify git diff, format consistency, and whitespace validation via `git diff --check`
 
+## Phase 8: Confirmed restore-tombstone correction — 2026-11-15
+
+- [x] T039 [P] Add normal-service restore regressions for an archived ledger deleted after a full backup, repeated restore, and importing state created before deletion. **Validated 2026-11-15:** new regression plus existing restore-safety suite passes 8/8; `Backup.lua` compiles under Lua 5.1.
+- [x] T040 Preserve live tombstones and deletion evidence across restore so deleted ledgers remain absent; retain append-only history and existing deletion authority. The additive tombstone merge was already present in the shared pending `Backup.lua` diff; T039 now protects its behavior against regression.
+- [x] T041 Repair the Officer independent-session start button to read title/points through the existing control helper rather than a missing AceGUI API. **Validated 2026-11-15:** 4/4 actual button/service tests under Fengari, Lua 5.4.6 and Lua 5.1.5; independent QA 4/4 under Lua 5.4.6. No session or accounting contract changed.
+
 ---
 
 ## Dependencies & Execution Order

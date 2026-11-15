@@ -214,6 +214,17 @@ Task T015: Retail adapter in src/integrations/GreatVault.lua
 
 ## Implementation Strategy
 
+### Retail defect follow-up — 2026-11-15
+
+- [X] T054 Fix selected-reward capture in `src/integrations/GreatVault.lua` for Retail reward bundles (equipment plus keystone/non-equippable reward), unavailable item data and local loot attribution. Preserve selected claim ID, full item variant, completed-claim evidence, context isolation, and zero ledger effects; add behavioral regressions in `tests/integration/great_vault_retail_capability_spec.lua`.
+  - Result: three new reproductions failed against the prior adapter and pass after repair. Supplemental rewards are excluded only with supporting metadata; unresolved candidates remain ambiguous. Localized self-loot formats support empty GUIDs; a foreign explicit GUID still rejects. Proven receipts retry delayed tooltip data within the original 120-second context. Real visible PlayerUI receives the confirmed row without ledger mutation.
+- [X] T055 Expose runtime capture diagnostics in the Player Vault page via `src/ui/PlayerUI.lua` and EN/FR locales, including unavailable/disabled detection and the last capture result. Retain existing history and manual fallback; cover the real page in `tests/integration/great_vault_capture_ui_spec.lua`.
+  - Result: current-session diagnostics are isolated by character/guild/season. Active/unavailable/disabled state, readable choice count and localized last result appear in the page. Capture transitions refresh only an existing visible Vault page; repeated unchanged events do not force rerenders.
+- [X] T056 Independently review T054/T055, run the focused Great Vault suites under Fengari and Lua 5.4.6, and syntax-check Lua 5.1 when available. Keep T051/T052 open until actual Retail validation; do not infer past unobserved claims.
+  - Evidence 2026-11-15: 93/93 tests across 14 Great Vault suites under Fengari, Lua 5.4.6 and native Lua 5.1.5. Independent QA: 27/27 capture/UI cases on all three runtimes; source compilation 108/108 under native Lua 5.1.5; targeted diff check passed. Actual Retail events/visual behavior and two-client delivery remain unvalidated (T051/T052). Persistence, T049 recovery contracts, ledger, Sync quota and third-party libraries are unchanged.
+- [X] T057 Prepare the user's 0.8.12 Retail execution checklist and align current README/change notes, FR/EN player/Officer guides and generated documentation with T054/T055 and the completed seasonal activation workflow. Keep historical notes distinguishable from the current candidate and all manual gates open.
+  - Evidence 2026-11-15: [Retail campaign](../../docs/audits/0.8.12-TESTS-RETAIL-FR.md) supplies steps, expectations and blank result fields. Guides and current change notes updated; two conflicting withdrawal locale uses split into status and notice keys. Documentation Validate/Generate/Check pass (29 concepts, zero errors, ten existing orphan-help warnings); cross-version generator produces 8/8 identical SHA-256 files under Windows PowerShell 5.1 and PowerShell 7. UI regression selection passes 35/35 under Fengari, Lua 5.4.6 and native Lua 5.1.5; 108/108 source files compile under Lua 5.1.5. Independent QA reviewed commands/links/roles and the GM-only module-management precondition. No Retail result recorded and no release performed.
+
 ### MVP First: User Story 1 Only
 
 1. Complete Setup and Foundational phases.

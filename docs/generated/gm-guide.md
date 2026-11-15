@@ -3,7 +3,7 @@ DO NOT EDIT MANUALLY.
 
 # Guild Master Documentation Reference
 
-Addon version: 0.8.11
+Addon version: 0.8.12
 
 ## Guild Ledger status
 

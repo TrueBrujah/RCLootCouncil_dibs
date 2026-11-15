@@ -197,3 +197,7 @@ description: "Task list for Pre-Dibs Encounter Journal feature implementation"
 - [X] T054 Rebuild the Player Pre-Dib panel with AceGUI controls while preserving public submission, Developer Mode isolation, and personal history in `src/ui/PlayerUI.lua`
 - [X] T055 Rebuild Officer Pre-Dib review, category policy, announcement settings, and seasonal filtering with AceGUI tabs/lists in `src/ui/OfficerUI.lua` and `src/integrations/RCLootCouncilOptions.lua`
 - [X] T056 Verify AceGUI UI migration preserves Adventure Guide action behavior, request lifecycle, announcements, combat safety, and optional RCLootCouncil operation in `tests/integration/combat_safety_spec.lua`, `tests/integration/predibs_announcements_spec.lua`, and `tests/contract/core_independence_spec.lua`
+
+## Phase 10: Blizzard Encounter Journal tuple regression — 2026-11-15
+
+- [x] T057 [P] Verify `EJ_GetEncounterInfoByIndex`'s current Retail tuple and cover the encounter-present/no-loot path in `tests/unit/encounter_journal_api_tuple_spec.lua`; keep the production callback aligned to Blizzard's third-return encounter ID. **Validated 2026-11-15:** current [Mainline Encounter Journal UI source](https://github.com/Gethe/wow-ui-source/blob/live/Interface/AddOns/Blizzard_EncounterJournal/Mainline/Blizzard_EncounterJournal.lua) consumes the third return as `bossID`; both tuple regressions pass in the combined Fengari/Lua 5.1.5 run. This source/test validation is not an in-client Retail check.

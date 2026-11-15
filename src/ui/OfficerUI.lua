@@ -17,6 +17,284 @@ Related docs: docs/officer/README.md.
 local Dibs = _G.Dibs
 Dibs.OfficerUI = Dibs.OfficerUI or {}
 
+function Dibs.OfficerUI.SeasonalText(code)
+  return (Dibs.L or {})["SEASONAL_ROSTER_CODE_" .. tostring(code)] or tostring(code or "")
+end
+
+function Dibs.OfficerUI.RenderPreservedSeasonHistory(shell, parent, frame)
+  local ui, labels = Dibs.AceGUI, Dibs.L or {}
+  ui.AddHeader(shell, parent, labels.SEASONAL_ROSTER_PRESERVED_HISTORY)
+  ui.AddLabel(shell, parent, labels.SEASONAL_ROSTER_PRESERVED_HELP, true)
+  local seasons, failure
+  if Dibs.SeasonalRoster and Dibs.SeasonalRoster.GetPreservedHistory then
+    seasons, failure = Dibs.SeasonalRoster.GetPreservedHistory()
+  end
+  if not seasons then ui.AddLabel(shell, parent, Dibs.OfficerUI.SeasonalText(failure or "SERVICE_UNAVAILABLE"), true); return end
+  local rows, choices, selected = {}, {}, nil
+  for _, season in ipairs(seasons.seasons or seasons) do
+    choices[season.seasonId] = season.name
+    if not selected or season.seasonId == frame.seasonHistorySelected then selected = season end
+  end
+  if not selected then ui.AddLabel(shell, parent, labels.SEASONAL_ROSTER_NO_SEASONS, true); return end
+  local selector = ui.AddDropdown(shell, parent, labels.SEASONAL_ROSTER_SEASON, choices, function(value)
+    frame.seasonHistorySelected, frame.seasonHistoryPage = value, 1; frame:Refresh()
+  end, 320)
+  ui.SetValue(selector, selected.seasonId)
+  ui.AddLabel(shell, parent, selected.raidRules or "", true)
+  ui.AddLabel(shell, parent, selected.promotionPolicy or "", true)
+  local history = selected.revisionHistory or {}
+  local page = math.max(1, math.min(frame.seasonHistoryPage or 1, math.max(1, math.ceil(#history / 20))))
+  for index = #history - (page - 1) * 20, math.max(1, #history - page * 20 + 1), -1 do
+    local record = history[index]
+    if record then rows[#rows + 1] = { tostring(record.revision), tostring(record.action or ""),
+      tostring(record.updatedBy or "—"), tostring(record.reason or ""),
+      record.updatedAt and date("%Y-%m-%d %H:%M", record.updatedAt) or "—" } end
+  end
+  if #history == 0 then rows[1] = { tostring(selected.revision), selected.name,
+    Dibs.OfficerUI.SeasonalText(selected.lifecycleState or (selected.lifecycle or {}).seasonStatus), "", "" } end
+  ui.AddTable(shell, parent, { { title = labels.SEASONAL_ROSTER_REVISION_HISTORY, width = 90 },
+    { title = labels.SEASONAL_ROSTER_HISTORY_ACTION, width = 140 },
+    { title = labels.SEASONAL_ROSTER_HISTORY_ACTOR, width = 130 },
+    { title = labels.SEASONAL_ROSTER_REVIEW_REASON, width = 200 },
+    { title = labels.SEASONAL_ROSTER_HISTORY_DATE, width = 120 } }, rows, 250, nil,
+    { fluidColumns = true, widthHint = 680, shrinkToFit = true, emptyText = labels.SEASONAL_ROSTER_NO_SEASONS })
+  local pager = ui.AddPaginationFooter(shell, { footer = ui.AddInlineGroup(shell, parent) }, { showPageSize = false,
+    onPrevious = function() frame.seasonHistoryPage = page - 1; frame:Refresh() end,
+    onNext = function() frame.seasonHistoryPage = page + 1; frame:Refresh() end })
+  if pager then pager.UpdateState(page, #history, 20) end
+end
+
+function Dibs.OfficerUI.RenderSeasonIdentity(shell, parent, frame, season)
+  local ui, labels, service = Dibs.AceGUI, Dibs.L or {}, Dibs.SeasonalRoster
+  ui.AddHeader(shell, parent, labels.SEASONAL_ROSTER_IDENTITY)
+  ui.AddLabel(shell, parent, labels.SEASONAL_ROSTER_IDENTITY_HELP, true)
+  if not service.GetSeasonIdentityReview then ui.AddLabel(shell, parent, Dibs.OfficerUI.SeasonalText("SERVICE_UNAVAILABLE"), true); return end
+  local review, failure = service.GetSeasonIdentityReview(season.seasonId)
+  if not review then ui.AddLabel(shell, parent, Dibs.OfficerUI.SeasonalText(failure), true); return end
+  local reason = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_REVIEW_REASON,
+    function(value) frame.seasonIdentityReason = value or "" end, 360)
+  if reason and reason.SetText then reason:SetText(frame.seasonIdentityReason or "") end
+  local rows = {}
+  for _, relationship in ipairs(review.relationships or {}) do
+    rows[#rows + 1] = { relationship.mainCharacterName or relationship.mainCharacterId,
+      relationship.altCharacterName or relationship.altCharacterId, Dibs.OfficerUI.SeasonalText(relationship.status), object = relationship, kind = "relationship" }
+  end
+  for _, change in ipairs(review.mainChanges or {}) do
+    rows[#rows + 1] = { change.oldMainName or change.oldMainId, change.newMainName or change.newMainId,
+      Dibs.OfficerUI.SeasonalText(change.status), object = change, kind = "main" }
+    if change.probationEndsAt then ui.AddLabel(shell, parent, string.format(labels.SEASONAL_ROSTER_PROBATION,
+      date("%Y-%m-%d %H:%M", change.probationEndsAt), change.approverName or change.approverId or "—"), true) end
+  end
+  local page = math.max(1, math.min(frame.seasonIdentityPage or 1, math.max(1, math.ceil(#rows / 20))))
+  local visible = {}
+  for index = (page - 1) * 20 + 1, math.min(page * 20, #rows) do visible[#visible + 1] = rows[index] end
+  ui.AddTable(shell, parent, { { title = labels.SEASONAL_ROSTER_MAIN, width = 180 },
+    { title = labels.SEASONAL_ROSTER_ALT_CHARACTER, width = 210 },
+    { title = labels.SEASONAL_ROSTER_ENROLLMENT_STATUS, width = 120 } }, visible, 180, nil, {
+    fluidColumns = true, widthHint = 680, shrinkToFit = true, emptyText = labels.SEASONAL_ROSTER_EMPTY,
+    onRowClick = function(row) frame.seasonIdentitySelected = row; frame:Refresh() end,
+  })
+  local pager = ui.AddPaginationFooter(shell, { footer = ui.AddInlineGroup(shell, parent) }, {
+    showPageSize = false, onPrevious = function() frame.seasonIdentityPage = page - 1; frame:Refresh() end,
+    onNext = function() frame.seasonIdentityPage = page + 1; frame:Refresh() end })
+  if pager then pager.UpdateState(page, #rows, 20) end
+  local selected
+  for _, row in ipairs(rows) do
+    local previous = frame.seasonIdentitySelected
+    if previous and row.kind == previous.kind
+      and (row.object.relationshipId or row.object.changeId) == (previous.object.relationshipId or previous.object.changeId) then selected = row end
+  end
+  if not selected then selected = rows[1] end
+  if selected and selected.object.status == "pending" and not (season.lifecycle or {}).readOnly then
+    for _, status in ipairs({ "approved", "rejected" }) do
+      ui.AddButton(shell, parent, (status == "approved" and labels.SEASONAL_ROSTER_APPROVE or labels.SEASONAL_ROSTER_REJECT)
+        .. " — " .. tostring(selected[2]), function()
+        local result
+        if not tostring(frame.seasonIdentityReason or ""):find("%S") then result = { ok = false, code = "REASON_REQUIRED" }
+        elseif selected.kind == "relationship" then
+          result = service.ReviewRelationship(season.seasonId, selected.object.relationshipId, status, review.revision,
+            Dibs.NewId("season-link-review"), frame.seasonIdentityReason)
+        else
+          result = service.ReviewMainChange(season.seasonId, selected.object.changeId, status, review.revision,
+            Dibs.NewId("season-main-review"), frame.seasonIdentityReason)
+        end
+        frame.seasonalRosterMessage = result and result.ok and labels.SEASONAL_ROSTER_IDENTITY_REVIEWED
+          or Dibs.OfficerUI.SeasonalText(result and result.code or "SERVICE_UNAVAILABLE")
+        frame:Refresh()
+      end, 280)
+    end
+  end
+  ui.AddButton(shell, parent, labels.SEASONAL_ROSTER_LEGACY_REVIEW, function()
+    frame.seasonLegacyCharacter = selected and selected[1] or ""
+    frame.seasonLegacyReview, frame.seasonLegacyPreview = true, nil
+    frame:Refresh()
+  end, 300)
+  if frame.seasonLegacyReview then Dibs.OfficerUI.RenderSeasonLegacyBalance(shell, parent, frame, season) end
+end
+
+function Dibs.OfficerUI.RenderSeasonLegacyBalance(shell, parent, frame, season)
+  local ui, labels, service = Dibs.AceGUI, Dibs.L or {}, Dibs.SeasonalRoster
+  ui.AddHeader(shell, parent, labels.SEASONAL_ROSTER_LEGACY_REVIEW)
+  local character = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_CHARACTER, function(value)
+    frame.seasonLegacyCharacter, frame.seasonLegacyPreview, frame.seasonLegacyConfirmed = value or "", nil, false
+  end, 300)
+  if character and character.SetText then character:SetText(frame.seasonLegacyCharacter or "") end
+  ui.AddButton(shell, parent, labels.SEASONAL_ROSTER_BALANCE_PREVIEW, function()
+    frame.seasonLegacyPreview, frame.seasonLegacyFailure = service.GetBalanceReconciliationPreview(season.seasonId,
+      frame.seasonLegacyCharacter)
+    frame.seasonLegacyConfirmed = false; frame:Refresh()
+  end, 260)
+  local preview = frame.seasonLegacyPreview
+  if not preview or preview.seasonId ~= season.seasonId then
+    if frame.seasonLegacyFailure then ui.AddLabel(shell, parent, Dibs.OfficerUI.SeasonalText(frame.seasonLegacyFailure), true) end
+    return
+  end
+  local rows, choices = {}, {}
+  for _, source in ipairs(preview.sourceBalances or {}) do rows[#rows + 1] = { source.character,
+    tostring(source.balance), tostring(source.pendingReservations), source.characterKey == preview.mainCharacterKey
+      and labels.SEASONAL_ROSTER_BALANCE_RETAIN_MAIN or labels.SEASONAL_ROSTER_BALANCE_REVIEW_ALT } end
+  for _, adjustment in ipairs(preview.adjustments or {}) do choices[adjustment.character] = adjustment.character end
+  local page = math.max(1, math.min(frame.seasonLegacyPage or 1, math.max(1, math.ceil(#rows / 20))))
+  local visible = {}
+  for index = (page - 1) * 20 + 1, math.min(page * 20, #rows) do visible[#visible + 1] = rows[index] end
+  ui.AddTable(shell, parent, { { title = labels.SEASONAL_ROSTER_CHARACTER, width = 200 },
+    { title = labels.SEASONAL_ROSTER_BALANCE_CURRENT, width = 100 },
+    { title = labels.SEASONAL_ROSTER_BALANCE_PENDING, width = 100 },
+    { title = labels.SEASONAL_ROSTER_ENROLLMENT_STATUS, width = 200 } }, visible, 170, nil,
+    { fluidColumns = true, widthHint = 680, shrinkToFit = true })
+  local pager = ui.AddPaginationFooter(shell, { footer = ui.AddInlineGroup(shell, parent) }, { showPageSize = false,
+    onPrevious = function() frame.seasonLegacyPage = page - 1; frame:Refresh() end,
+    onNext = function() frame.seasonLegacyPage = page + 1; frame:Refresh() end })
+  if pager then pager.UpdateState(page, #rows, 20) end
+  ui.AddLabel(shell, parent, string.format(labels.SEASONAL_ROSTER_BALANCE_PERSON, preview.resultingPersonBalance), true)
+  if preview.pendingReservations or (season.lifecycle or {}).readOnly then return end
+  local selected = choices[frame.seasonLegacyAlt] and frame.seasonLegacyAlt or next(choices)
+  if not selected then return end
+  local target = ui.AddDropdown(shell, parent, labels.SEASONAL_ROSTER_BALANCE_REVIEW_ALT, choices,
+    function(value) frame.seasonLegacyAlt, frame.seasonLegacyConfirmed = value, false; frame:Refresh() end, 300)
+  ui.SetValue(target, selected)
+  local reason = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_BALANCE_CORRECTION_REASON, function(value)
+    frame.seasonLegacyReason, frame.seasonLegacyConfirmed = value or "", false
+    if frame.seasonLegacyConfirmControl then ui.SetValue(frame.seasonLegacyConfirmControl, false) end
+  end, 360)
+  if reason and reason.SetText then reason:SetText(frame.seasonLegacyReason or "") end
+  frame.seasonLegacyConfirmControl = ui.AddCheckBox(shell, parent, labels.SEASONAL_ROSTER_BALANCE_CONFIRM,
+    frame.seasonLegacyConfirmed == true, function(value) frame.seasonLegacyConfirmed = value == true end)
+  ui.AddButton(shell, parent, string.format(labels.SEASONAL_ROSTER_BALANCE_CORRECT_ALT, selected), function()
+    local result
+    if not frame.seasonLegacyConfirmed then result = { ok = false, code = "CONFIRMATION_REQUIRED" }
+    elseif not tostring(frame.seasonLegacyReason or ""):find("%S") then result = { ok = false, code = "REASON_REQUIRED" }
+    else result = service.ApplyLegacyBalanceCorrection(season.seasonId, selected, preview, frame.seasonLegacyReason,
+      Dibs.NewId("season-legacy-correction"), true) end
+    frame.seasonalRosterMessage = result.ok and labels.SEASONAL_ROSTER_BALANCE_CORRECTED
+      or Dibs.OfficerUI.SeasonalText(result.code)
+    frame.seasonLegacyConfirmed, frame.seasonLegacyPreview = false, nil
+    frame:Refresh()
+  end, 300)
+end
+
+-- Confirmation is tied to the displayed preview and reason, never to a row click.
+function Dibs.OfficerUI.RenderSeasonCommit(shell, parent, frame, season, preview, reconciliation)
+  local ui, labels = Dibs.AceGUI, Dibs.L or {}
+  local prefix = reconciliation and "seasonReconcile" or "seasonActivate"
+  local permission = reconciliation and "season.reconcile" or "season.activate"
+  local decision = Dibs.Permissions and Dibs.Permissions.Evaluate(permission)
+  if not preview or not preview.ready or not decision or not decision.allowed then return end
+  local token = tostring(season.seasonId) .. ":" .. tostring(preview.previewId)
+  if frame[prefix .. "Token"] ~= token then
+    frame[prefix .. "Token"], frame[prefix .. "Confirmed"] = token, false
+  end
+  ui.AddLabel(shell, parent, reconciliation and labels.SEASONAL_ROSTER_RECONCILE_HELP
+    or labels.SEASONAL_ROSTER_ACTIVATE_HELP, true)
+  local reason = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_ADMIN_REASON, function(value)
+    frame[prefix .. "Reason"], frame[prefix .. "Confirmed"] = value or "", false
+    if frame[prefix .. "Check"] then ui.SetValue(frame[prefix .. "Check"], false) end
+  end, 360)
+  if reason and reason.SetText then reason:SetText(frame[prefix .. "Reason"] or "") end
+  frame[prefix .. "Check"] = ui.AddCheckBox(shell, parent, reconciliation
+    and labels.SEASONAL_ROSTER_CONFIRM_RECONCILE or labels.SEASONAL_ROSTER_CONFIRM_ACTIVATE,
+    frame[prefix .. "Confirmed"] == true, function(value) frame[prefix .. "Confirmed"] = value == true end)
+  frame[prefix .. "Button"] = ui.AddButton(shell, parent, reconciliation
+    and labels.SEASONAL_ROSTER_APPLY_RECONCILE or labels.SEASONAL_ROSTER_ACTIVATE, function()
+    local result
+    if frame[prefix .. "Token"] ~= token or frame[prefix .. "Confirmed"] ~= true then
+      result = { ok = false, code = "CONFIRMATION_REQUIRED" }
+    elseif not tostring(frame[prefix .. "Reason"] or ""):find("%S") then
+      result = { ok = false, code = "REASON_REQUIRED" }
+    elseif reconciliation then
+      result = Dibs.SeasonalRoster.ApplySeasonReconciliation(nil, preview.previewId, {
+        seasonId = season.seasonId, seasonRevision = preview.seasonRevision or season.revision,
+        rosterRevision = preview.rosterRevision, sourceLedgerRevision = preview.sourceLedgerRevision or preview.ledgerRevision,
+      }, Dibs.NewId("season-reconcile"), frame[prefix .. "Reason"], true)
+    else
+      result = Dibs.SeasonalRoster.ActivateSeason(season.seasonId, preview.previewId,
+        season.revision, Dibs.NewId("season-activate"), frame[prefix .. "Reason"], nil, true)
+    end
+    frame.seasonalRosterMessage = result and result.ok and (reconciliation
+      and labels.SEASONAL_ROSTER_RECONCILED or labels.SEASONAL_ROSTER_ACTIVATED)
+      or Dibs.OfficerUI.SeasonalText(result and (result.code or result.reasonCode) or "SERVICE_UNAVAILABLE")
+    frame[prefix .. "Confirmed"], frame[prefix .. "Token"] = false, nil
+    frame.seasonalRosterActivationPreview, frame.seasonalRosterReconciliationPreview = nil, nil
+    frame:Refresh()
+  end, 260)
+end
+
+function Dibs.OfficerUI.RenderSeasonReconciliation(shell, parent, frame, season)
+  local ui, labels, service = Dibs.AceGUI, Dibs.L or {}, Dibs.SeasonalRoster
+  if not service.PreviewSeasonReconciliation then return end
+  ui.AddHeader(shell, parent, labels.SEASONAL_ROSTER_RECONCILIATION)
+  local reason = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_ALLOCATION_PUBLISH_REASON,
+    function(value) frame.seasonalRosterAllocationPublishReason = value or "" end, 360)
+  if reason and reason.SetText then reason:SetText(frame.seasonalRosterAllocationPublishReason or "") end
+  ui.AddButton(shell, parent, labels.SEASONAL_ROSTER_ALLOCATION_PUBLISH, function()
+    local result = service.PublishRankAllocations(season.seasonId, season.revision,
+      Dibs.NewId("season-allocations"), frame.seasonalRosterAllocationPublishReason or "")
+    frame.seasonalRosterMessage = result.ok and labels.SEASONAL_ROSTER_ALLOCATION_PUBLISHED
+      or Dibs.OfficerUI.SeasonalText(result.code)
+    frame.seasonalRosterReconciliationPreview, frame.seasonReconcileConfirmed = nil, false
+    frame:Refresh()
+  end, 320)
+  ui.AddButton(shell, parent, labels.SEASONAL_ROSTER_PREVIEW_RECONCILE, function()
+    frame.seasonalRosterReconciliationPreview, frame.seasonalRosterReconciliationReason =
+      service.PreviewSeasonReconciliation(season.seasonId)
+    frame.seasonReconcileConfirmed = false
+    frame:Refresh()
+  end, 260)
+  local preview = frame.seasonalRosterReconciliationPreview
+  if not preview or preview.seasonId ~= season.seasonId then
+    if frame.seasonalRosterReconciliationReason then
+      ui.AddLabel(shell, parent, Dibs.OfficerUI.SeasonalText(frame.seasonalRosterReconciliationReason), true)
+    end
+    return
+  end
+  local rows, affected = {}, 0
+  for _, row in ipairs(preview.rows or {}) do if (tonumber(row.delta) or 0) ~= 0 then affected = affected + 1 end end
+  ui.AddLabel(shell, parent, string.format(labels.SEASONAL_ROSTER_RECONCILE_COUNTS, #(preview.rows or {}), affected), true)
+  local page = math.max(1, math.min(frame.seasonalRosterReconciliationPage or 1, math.max(1, math.ceil(#(preview.rows or {}) / 20))))
+  for index = (page - 1) * 20 + 1, math.min(page * 20, #(preview.rows or {})) do
+    local row = preview.rows[index]
+    rows[#rows + 1] = { row.character, tostring(row.assignedAllocation), tostring(row.allocation), tostring(row.delta) }
+  end
+  ui.AddTable(shell, parent, {
+    { title = labels.SEASONAL_ROSTER_MAIN, width = 180 },
+    { title = labels.SEASONAL_ROSTER_ASSIGNED, width = 110 },
+    { title = labels.SEASONAL_ROSTER_EXPECTED, width = 110 },
+    { title = labels.SEASONAL_ROSTER_DELTA, width = 90 },
+  }, rows, 230, nil, { fluidColumns = true, widthHint = 680, shrinkToFit = true,
+    emptyText = labels.SEASONAL_ROSTER_EMPTY })
+  local pager = ui.AddPaginationFooter(shell, { footer = ui.AddInlineGroup(shell, parent) }, { page = page, pageSize = 20, showPageSize = false,
+    totalCount = #(preview.rows or {}), onPrevious = function()
+      frame.seasonalRosterReconciliationPage = page - 1; frame:Refresh()
+    end, onNext = function() frame.seasonalRosterReconciliationPage = page + 1; frame:Refresh() end })
+  if pager and pager.UpdateState then pager.UpdateState(page, #(preview.rows or {}), 20) end
+  for index = 1, math.min(30, #(preview.blockers or {})) do
+    local blocker = preview.blockers[index]
+    ui.AddLabel(shell, parent, Dibs.OfficerUI.SeasonalText(blocker.code)
+      .. (blocker.character and (" — " .. blocker.character) or ""), true)
+  end
+  Dibs.OfficerUI.RenderSeasonCommit(shell, parent, frame, season, preview, true)
+end
+
 local RANK_LABELS = {
   [0] = "Guild Master",
   [1] = "Officer",
@@ -61,6 +339,27 @@ local function widgetIdentity(widget)
   return widget and tostring(widget) or "nil"
 end
 
+local function formatSeasonStatusCatalog(catalog)
+  local lines = {}
+  for _, entry in ipairs(type(catalog) == "table" and catalog or {}) do
+    lines[#lines + 1] = table.concat({ tostring(entry.id or ""), tostring(entry.name or ""),
+      tostring(entry.description or ""), entry.active == false and "inactive" or "active" }, "|")
+  end
+  return table.concat(lines, "\n")
+end
+
+local function parseSeasonStatusCatalog(text)
+  local catalog = {}
+  for line in tostring(text or ""):gmatch("[^\r\n]+") do
+    local id, name, description, active = line:match("^([^|]+)|([^|]+)|([^|]*)|([^|]+)$")
+    if not id or (active ~= "active" and active ~= "inactive") then return nil, "INVALID_STATUS_CATALOG" end
+    catalog[#catalog + 1] = { id = id, name = name, description = description,
+      active = active == "active" }
+    if #catalog > 16 then return nil, "INVALID_STATUS_CATALOG" end
+  end
+  return catalog
+end
+
   local function parseHistoryDate(value)
     local year, month, day = tostring(value or ""):match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
     year, month, day = tonumber(year), tonumber(month), tonumber(day)
@@ -70,6 +369,195 @@ end
     if not day or day < 1 or day > daysInMonth[month] then return nil end
     return year, month, day
   end
+
+local SEASON_HOUR_CHOICES, SEASON_MINUTE_CHOICES = {}, {}
+for hour = 0, 23 do
+  local value = string.format("%02d", hour)
+  SEASON_HOUR_CHOICES[value] = value
+end
+for minute = 0, 59 do
+  local value = string.format("%02d", minute)
+  SEASON_MINUTE_CHOICES[value] = value
+end
+
+local function seasonDateToTimestamp(value)
+  local year, month, day = parseHistoryDate(value)
+  if not year then return nil end
+  local timestamp = time({ year = year, month = month, day = day, hour = 0, min = 0, sec = 0 })
+  local parsed = date("*t", timestamp)
+  if parsed.year ~= year or parsed.month ~= month or parsed.day ~= day then return nil end
+  return timestamp
+end
+
+local function seasonDateFromTimestamp(timestamp)
+  if type(timestamp) ~= "number" then return "" end
+  local parsed = date("*t", timestamp)
+  return string.format("%04d-%02d-%02d", parsed.year, parsed.month, parsed.day)
+end
+
+local function renderSeasonDateTimePicker(shell, parent, frame, field, label, defaultHour, defaultMinute)
+  local labels = Dibs.L or {}
+  local prefix = "seasonalRosterNew" .. field
+  local dateKey, hourKey, minuteKey = prefix .. "Date", prefix .. "Hour", prefix .. "Minute"
+  frame[hourKey] = frame[hourKey] or defaultHour or "00"
+  frame[minuteKey] = frame[minuteKey] or defaultMinute or "00"
+
+  local datePicker = Dibs.AceGUI.Create(shell, "LAGW-DatePicker", parent)
+  if datePicker then
+    if datePicker.SetLabel then pcall(datePicker.SetLabel, datePicker, label) end
+    if datePicker.SetWidth then pcall(datePicker.SetWidth, datePicker, 320) end
+    if datePicker.SetRequired then pcall(datePicker.SetRequired, datePicker, false) end
+    if datePicker.SetValue then pcall(datePicker.SetValue, datePicker, seasonDateToTimestamp(frame[dateKey])) end
+    if datePicker.SetCallback then
+      datePicker:SetCallback("OnValueChanged", function(_, _, timestamp)
+        frame[dateKey] = seasonDateFromTimestamp(timestamp)
+      end)
+    end
+  else
+    local dateInput = Dibs.AceGUI.AddEditBox(shell, parent,
+      label .. " (YYYY-MM-DD)", function(value) frame[dateKey] = value or "" end, 240)
+    if dateInput then
+      dateInput._dibsText = tostring(frame[dateKey] or "")
+      if dateInput.SetText then dateInput:SetText(dateInput._dibsText) end
+    end
+  end
+
+  local timeRow = Dibs.AceGUI.AddInlineGroup(shell, parent)
+  local hour = Dibs.AceGUI.AddDropdown(shell, timeRow, labels.SEASONAL_ROSTER_HOUR or "Hour",
+    SEASON_HOUR_CHOICES, function(value) frame[hourKey] = value end, 90)
+  Dibs.AceGUI.SetValue(hour, frame[hourKey])
+  local minute = Dibs.AceGUI.AddDropdown(shell, timeRow, labels.SEASONAL_ROSTER_MINUTE or "Minute",
+    SEASON_MINUTE_CHOICES, function(value) frame[minuteKey] = value end, 90)
+  Dibs.AceGUI.SetValue(minute, frame[minuteKey])
+end
+
+function Dibs.OfficerUI.ParseSeasonDateTime(text, hour, minute, required)
+  text = tostring(text or ""):match("^%s*(.-)%s*$")
+  if text == "" then return nil, required and "REQUIRED_DATES" or nil end
+  local year, month, day = parseHistoryDate(text)
+  hour, minute = tonumber(hour), tonumber(minute)
+  if not year then return nil, "INVALID_DATE" end
+  if not hour or hour % 1 ~= 0 or hour < 0 or hour > 23
+    or not minute or minute % 1 ~= 0 or minute < 0 or minute > 59 then return nil, "INVALID_TIME" end
+  local timestamp = time({ year = year, month = month, day = day, hour = hour, min = minute, sec = 0 })
+  local parsed = date("*t", timestamp)
+  if parsed.year ~= year or parsed.month ~= month or parsed.day ~= day or parsed.hour ~= hour or parsed.min ~= minute then
+    return nil, "INVALID_DATE_TIME"
+  end
+  return timestamp
+end
+
+function Dibs.OfficerUI.RenderSeasonConfiguration(shell, parent, frame, season, seasons)
+  local ui, labels = Dibs.AceGUI, Dibs.L or {}
+  local lifecycle = season.lifecycle or {}
+  if lifecycle.readOnly or lifecycle.seasonStatus == "COMPLETED" or lifecycle.seasonStatus == "ARCHIVED" then return end
+  if lifecycle.seasonStatus == "DRAFT" then
+    if not frame.seasonConfig or frame.seasonConfig.id ~= season.seasonId or frame.seasonConfig.revision ~= season.revision then
+      frame.seasonConfig = { id = season.seasonId, revision = season.revision, name = season.name,
+        description = season.description or "", schedule = {}, timeZone = "" }
+      for _, raid in ipairs(season.raidSchedule or {}) do
+        frame.seasonConfig.schedule[#frame.seasonConfig.schedule + 1] = tostring(raid.weekday) .. "@" .. tostring(raid.startTime)
+        frame.seasonConfig.timeZone = raid.timeZone or ""
+      end
+      frame.seasonConfig.schedule = table.concat(frame.seasonConfig.schedule, ", ")
+      for field, value in pairs({ Start = season.startAt, End = season.endAt,
+        RegistrationStart = season.registrationStartAt, RegistrationEnd = season.registrationEndAt }) do
+        frame.seasonConfig["seasonalRosterNew" .. field .. "Date"] = value and date("%Y-%m-%d", value) or ""
+        frame.seasonConfig["seasonalRosterNew" .. field .. "Hour"] = value and date("%H", value) or "00"
+        frame.seasonConfig["seasonalRosterNew" .. field .. "Minute"] = value and date("%M", value) or "00"
+      end
+    end
+    local config = frame.seasonConfig
+    local name = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_NAME, function(value) config.name = value end, 300)
+    if name and name.SetText then name:SetText(config.name or "") end
+    local description = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_DESCRIPTION,
+      function(value) config.description = value or "" end, 360)
+    if description and description.SetText then description:SetText(config.description) end
+    local schedule = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_SCHEDULE,
+      function(value) config.schedule = value or "" end, 360)
+    if schedule and schedule.SetText then schedule:SetText(config.schedule) end
+    local zone = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_TIME_ZONE,
+      function(value) config.timeZone = value or "" end, 260)
+    if zone and zone.SetText then zone:SetText(config.timeZone) end
+    for _, entry in ipairs({ { "Start", "START_DATE" }, { "End", "END_DATE" },
+      { "RegistrationStart", "REGISTRATION_START" }, { "RegistrationEnd", "REGISTRATION_END" } }) do
+      renderSeasonDateTimePicker(shell, parent, config, entry[1], labels["SEASONAL_ROSTER_" .. entry[2]], "00", "00")
+    end
+    ui.AddButton(shell, parent, labels.SEASONAL_ROSTER_SAVE_DATES, function()
+      local patch = { name = config.name, description = config.description, raidSchedule = {} }
+      for entry in tostring(config.schedule or ""):gmatch("[^,]+") do
+        local day, hour, minute = entry:match("^%s*(%d)@(%d%d):(%d%d)%s*$")
+        day, hour, minute = tonumber(day), tonumber(hour), tonumber(minute)
+        if not day or day < 1 or day > 7 or not hour or hour > 23 or not minute or minute > 59 then
+          frame.seasonalRosterMessage = labels.SEASONAL_ROSTER_INVALID_SCHEDULE; frame:Refresh(); return
+        end
+        patch.raidSchedule[#patch.raidSchedule + 1] = { weekday = day,
+          startTime = string.format("%02d:%02d", hour, minute), timeZone = config.timeZone }
+        for _, previous in ipairs(season.raidSchedule or {}) do
+          if previous.weekday == day and previous.startTime == patch.raidSchedule[#patch.raidSchedule].startTime then
+            patch.raidSchedule[#patch.raidSchedule].durationMinutes = previous.durationMinutes
+          end
+        end
+      end
+      local keys = { Start = "startAt", End = "endAt", RegistrationStart = "registrationStartAt", RegistrationEnd = "registrationEndAt" }
+      for field, key in pairs(keys) do
+        local prefix = "seasonalRosterNew" .. field
+        local value, failure = Dibs.OfficerUI.ParseSeasonDateTime(config[prefix .. "Date"], config[prefix .. "Hour"],
+          config[prefix .. "Minute"], field == "Start" or field == "RegistrationStart")
+        if failure then frame.seasonalRosterMessage = Dibs.OfficerUI.SeasonalText(failure); frame:Refresh(); return end
+        patch[key] = value or false
+      end
+      local result = Dibs.SeasonalRoster.UpdateDraft(season.seasonId, patch, season.revision,
+        Dibs.NewId("season-dates"), frame.seasonalRosterChangeReason or "")
+      frame.seasonalRosterMessage = result.ok and labels.SEASONAL_ROSTER_DRAFT_SAVED or Dibs.OfficerUI.SeasonalText(result.code)
+      frame:Refresh()
+    end, 220)
+    local choices = {}
+    for _, source in ipairs(seasons or {}) do if source.seasonId ~= season.seasonId then choices[source.seasonId] = source.name end end
+    local copy = ui.AddDropdown(shell, parent, labels.SEASONAL_ROSTER_COPY_FROM, choices,
+      function(value) frame.seasonCopySource = value end, 300)
+    ui.SetValue(copy, frame.seasonCopySource)
+    ui.AddButton(shell, parent, labels.SEASONAL_ROSTER_COPY_SETTINGS, function()
+      local result = Dibs.SeasonalRoster.CopySeasonSettings(frame.seasonCopySource, season.seasonId, season.revision,
+        Dibs.NewId("season-copy"), frame.seasonalRosterChangeReason or "")
+      frame.seasonalRosterMessage = result.ok and labels.SEASONAL_ROSTER_DRAFT_SAVED or Dibs.OfficerUI.SeasonalText(result.code)
+      frame:Refresh()
+    end, 240)
+  end
+  ui.AddHeader(shell, parent, labels.SEASONAL_ROSTER_RANK_CONFIG)
+  ui.AddLabel(shell, parent, labels.SEASONAL_ROSTER_ALLOCATION_PUBLISH_HELP, true)
+  local rules = Dibs.RankRules.GetRulesForSeason(season.seasonId)
+  local rows = {}
+  for _, rule in pairs(rules or {}) do rows[#rows + 1] = { tostring(rule.rankIndex), rule.rankName,
+    tostring(rule.allocation), Dibs.OfficerUI.SeasonalText(rule.enabled == false and "DISABLED" or "ENABLED") } end
+  table.sort(rows, function(a, b) return tonumber(a[1]) < tonumber(b[1]) end)
+  ui.AddTable(shell, parent, { { title = labels.SEASONAL_ROSTER_RANK, width = 70 },
+    { title = labels.SEASONAL_ROSTER_NAME, width = 160 }, { title = labels.SEASONAL_ROSTER_EXPECTED, width = 110 },
+    { title = labels.SEASONAL_ROSTER_ENROLLMENT_STATUS, width = 110 } }, rows, 150, nil,
+    { fluidColumns = true, widthHint = 680, shrinkToFit = true })
+  local rank = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_RANK, function(value) frame.seasonRankIndex = value end, 160)
+  local amount = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_EXPECTED, function(value) frame.seasonRankAllocation = value end, 160)
+  if rank and rank.SetText then rank:SetText(frame.seasonRankIndex or "") end
+  if amount and amount.SetText then amount:SetText(frame.seasonRankAllocation or "") end
+  ui.AddCheckBox(shell, parent, labels.SEASONAL_ROSTER_RANK_ENABLED, frame.seasonRankEnabled ~= false,
+    function(value) frame.seasonRankEnabled = value == true end)
+  ui.AddButton(shell, parent, labels.SEASONAL_ROSTER_SAVE_RANK, function()
+    if not Dibs.OperationalPolicy.IsModuleEnabled("seasonalRoster") then
+      frame.seasonalRosterMessage = Dibs.OfficerUI.SeasonalText("MODULE_DISABLED"); frame:Refresh(); return
+    end
+    local rankIndex, allocation = tonumber(frame.seasonRankIndex), tonumber(frame.seasonRankAllocation)
+    if not rankIndex or rankIndex % 1 ~= 0 or rankIndex < 0 or rankIndex > 9
+      or not allocation or allocation % 1 ~= 0 or allocation < 0 or allocation > 100000 then
+      frame.seasonalRosterMessage = Dibs.OfficerUI.SeasonalText("INVALID_ALLOCATION"); frame:Refresh(); return
+    end
+    local result = Dibs.ProtectedActions.Execute("rank.set", nil, { seasonId = season.seasonId,
+      rankIndex = tonumber(frame.seasonRankIndex), allocation = tonumber(frame.seasonRankAllocation), enabled = frame.seasonRankEnabled ~= false })
+    frame.seasonalRosterMessage = result.ok and labels.SEASONAL_ROSTER_RANK_SAVED
+      or Dibs.OfficerUI.SeasonalText(result.code or result.reasonCode)
+    frame.seasonalRosterActivationPreview, frame.seasonalRosterReconciliationPreview = nil, nil
+    frame:Refresh()
+  end, 220)
+end
 
   local function historyDateTimestamp(value, endOfDay)
     local year, month, day = parseHistoryDate(value)
@@ -98,6 +586,7 @@ local OFFICER_NAV_TREE = {
   { section = "GUILD SETUP", text = "Guided Setup", labelKey = "OFFICER_NAV_GUIDED_SETUP_LABEL", value = "wizard" },
   { section = "GUILD SETUP", text = "Guild Setup Checks", labelKey = "OFFICER_NAV_GUILD_SETUP_CHECKS_LABEL", value = "guildSetup" },
   { section = "GUILD SETUP", text = "Guild Ledgers", labelKey = "OFFICER_NAV_GUILD_LEDGERS_LABEL", value = "installation" },
+  { section = "GUILD SETUP", text = "Seasonal Roster", labelKey = "OFFICER_NAV_SEASONAL_ROSTER_LABEL", value = "seasonalRoster", module = "seasonalRoster" },
   { section = "DIBS", text = "Automatic Dibs", value = "automaticDibs" },
   { section = "DIBS", text = "Dibs Administration", value = "dibsAdmin" },
   { section = "DIBS", text = "History", value = "history" },
@@ -152,7 +641,7 @@ local function getOfficerNavigationTree(dbOverride)
   local tree = {}
   for _, entry in ipairs(OFFICER_NAV_TREE) do
     if ((entry.value ~= "developer" and entry.value ~= "debug") or developerEnabled)
-      and moduleEnabled(entry.module, dbOverride) then
+      and (entry.value == "seasonalRoster" or moduleEnabled(entry.module, dbOverride)) then
       table.insert(tree, { section = entry.section, text = labels[entry.labelKey] or entry.text, value = entry.value })
     end
   end
@@ -207,7 +696,7 @@ local function officerRouteVisible(route, dbOverride)
   -- whenever an Officer changes pages.
   for _, entry in ipairs(OFFICER_NAV_TREE) do
     if entry.value == route then
-      return moduleEnabled(entry.module, dbOverride)
+      return route == "seasonalRoster" or moduleEnabled(entry.module, dbOverride)
     end
   end
   return route == "overview" or route == "reconciliation"
@@ -4335,8 +4824,8 @@ local function renderIndependentRaidPage(shell, parent, frame)
     if pointsBox then Dibs.AceGUI.SetText(pointsBox, "1") end
 
     Dibs.AceGUI.AddButton(shell, parent, "Start Independent Session", function()
-      local title = (titleBox and Dibs.AceGUI.GetText(titleBox)) or "PUG Raid"
-      local points = tonumber(pointsBox and Dibs.AceGUI.GetText(pointsBox)) or 1
+      local title = titleBox and getControlText(titleBox) or "PUG Raid"
+      local points = tonumber(getControlText(pointsBox)) or 1
       local res = Dibs.IndependentRaid.StartSession(title, points)
       if res.ok then
         frame:SetStatus("Independent raid session started.")
@@ -4410,6 +4899,17 @@ local function createAceWindow(initialRoute, deferInitialRender)
   frame.dibsAceGUIShell = shell
   frame._dibsUiShell = shell
   frame.activeTab = normalizeOfficerTab(initialRoute or "overview")
+  frame._renderRouteFns = {
+    normalizeOfficerTab = normalizeOfficerTab,
+    formatSeasonStatusCatalog = formatSeasonStatusCatalog,
+    setControlText = setControlText,
+    formatHistoryDate = formatHistoryDate,
+    parseSeasonStatusCatalog = parseSeasonStatusCatalog,
+    renderSeasonDateTimePicker = renderSeasonDateTimePicker,
+    officerHistoryFilterErrorText = officerHistoryFilterErrorText,
+    hasOfficerHistoryFilters = hasOfficerHistoryFilters,
+    splitPipeLine = splitPipeLine,
+  }
   frame.selectedRoute = frame.activeTab
   frame.routeDispatchCount = 0
   frame.ledgerPage = 1
@@ -5757,7 +6257,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         { title = strings.OFFICER_STATISTICS_USED or "Used", width = 75, minWidth = 60, fixed = true, align = "RIGHT" },
         { title = strings.OFFICER_STATISTICS_CORRECTIONS or "Corrections", width = 95, minWidth = 75, fixed = true, align = "RIGHT" },
         { title = strings.OFFICER_STATISTICS_COVERAGE or "Coverage", width = 100, minWidth = 82, fixed = true, align = "CENTER" },
-      }, visibleRows, 360, nil, nil, {
+      }, visibleRows, 360, nil, {
         fluidColumns = true, disableContextMenu = true,
         widthHint = getOfficerContentWidth(frame, shell),
         horizontalPadding = metrics.tableHorizontalPadding,
@@ -5881,7 +6381,8 @@ local function createAceWindow(initialRoute, deferInitialRender)
   }
 
   local function renderRoute(self, routeContext)
-    self.activeTab = normalizeOfficerTab(self.activeTab or "overview")
+    local routeFns = self._renderRouteFns
+    self.activeTab = routeFns.normalizeOfficerTab(self.activeTab or "overview")
     self.selectedRoute = self.activeTab
     local routeDB = type(routeContext) == "table" and routeContext.db or nil
     local pageSetupStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
@@ -5893,10 +6394,14 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if not tabs then return end
     local routeModules = {
       disputes = "requests", preDibs = "preDibs", preDibRequests = "preDibs", announcements = "announcements",
-      integration = "rclootcouncil", eligibility = "lootEligibility",
+      integration = "rclootcouncil", eligibility = "lootEligibility", seasonalRoster = "seasonalRoster",
     }
     local disabledModule = routeModules[self.activeTab]
     if disabledModule and not moduleEnabled(disabledModule, routeDB) then
+      if disabledModule == "seasonalRoster" then
+        Dibs.OfficerUI.RenderPreservedSeasonHistory(shell, tabs, self)
+        return
+      end
       local status = Dibs.OperationalPolicy.GetModuleStatus(disabledModule)
       Dibs.AceGUI.AddHeader(shell, tabs, status.label or disabledModule, "Feature unavailable")
       Dibs.AceGUI.AddLabel(shell, tabs, (status.label or disabledModule) .. " is disabled by the Guild Master.", true)
@@ -5908,6 +6413,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       or self.activeTab == "eligibility" or self.activeTab == "preDibs"
       or self.activeTab == "announcements" or self.activeTab == "settings"
       or self.activeTab == "modules" or self.activeTab == "diagnostics"
+      or self.activeTab == "seasonalRoster"
     if routeNeedsScroll then
       local routeScroll = Dibs.AceGUI.AddScrollableList(shell, tabs, 680)
       if routeScroll then
@@ -5922,12 +6428,590 @@ local function createAceWindow(initialRoute, deferInitialRender)
     local routeTitles = {
       disputes = "Requests", preDibs = "Pre-Dibs Settings", preDibRequests = "Pre-Dib Requests", pendingAwards = "Pending Awards", history = "History", reconciliation = "History", seasons = "Seasons",
       ranks = "Rank Rules", lootTypes = "Loot Rules", announcements = "Announcements",
+      seasonalRoster = (Dibs.L and Dibs.L.OFFICER_NAV_SEASONAL_ROSTER_LABEL) or "Seasonal Roster",
       integration = "RCLootCouncil", independentRaid = "Independent Raid", settings = "Settings", diagnostics = "Diagnostics", vault = "Vault Review",
       eligibility = "Loot Eligibility", modules = "Modules", developer = "Developer", debug = "Debug",
     }
     routeTitles.setup = (Dibs.L and Dibs.L.DOC_SETUP_ASSISTANT_LABEL) or "Raid Readiness"
     if self.activeTab == "statistics" then
       renderStatisticsPage(self, currentId, tabs, routeDB)
+      return
+    end
+    if self.activeTab == "seasonalRoster" then
+      local labels = Dibs.L or {}
+      local access = Dibs.Permissions and Dibs.Permissions.Evaluate("season.draft.edit")
+      if not access or not access.allowed then
+        Dibs.AceGUI.AddLabel(shell, tabs, Dibs.OfficerUI.SeasonalText("GUILD_ADMIN_REQUIRED"), true)
+        return
+      end
+      Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_TITLE or "Seasonal Raid Roster",
+        labels.SEASONAL_ROSTER_OFFICER_HELP or "Configure registration and review the season roster.")
+      local seasons, seasonReason = Dibs.SeasonalRoster and Dibs.SeasonalRoster.ListSeasons
+        and Dibs.SeasonalRoster.ListSeasons()
+      if not seasons then
+        Dibs.AceGUI.AddLabel(shell, tabs, labels.SEASONAL_ROSTER_UNAVAILABLE or
+          ("Seasonal roster unavailable: " .. tostring(seasonReason)), true)
+        return
+      end
+      local values, selected = {}, nil
+      for _, season in ipairs(seasons) do
+        local lifecycle = season.lifecycle or { registrationStatus = season.registrationState,
+          seasonStatus = "ACTIVE" }
+        values[season.seasonId] = string.format("%s — %s / %s (%d)", season.name,
+          Dibs.OfficerUI.SeasonalText(lifecycle.registrationStatus), Dibs.OfficerUI.SeasonalText(lifecycle.seasonStatus), season.enrollmentCount or 0)
+        if not selected then selected = season end
+        if season.seasonId == self.seasonalRosterSeasonId then selected = season end
+      end
+      if #seasons == 0 then selected = nil end
+      self.seasonalRosterSeasonId = selected and selected.seasonId or nil
+      if selected then
+        local lifecycle = selected.lifecycle or { registrationStatus = selected.registrationState,
+          seasonStatus = "ACTIVE", readOnly = false }
+        local latestHistory = Dibs.SeasonalRoster.GetSeasonRevisionHistory(selected.seasonId, 1)
+        local persistedLifecycle = selected.persistedLifecycleState
+          or (latestHistory and latestHistory[1] and latestHistory[1].lifecycleState) or lifecycle.seasonStatus
+        local select = Dibs.AceGUI.AddDropdown(shell, tabs, labels.SEASONAL_ROSTER_SEASON or "Season", values,
+          function(value)
+            self.seasonalRosterSeasonId = value
+            self.seasonalRosterDraftLoadedSeasonId = nil
+            self.seasonalRosterActivationPreview, self.seasonalRosterReconciliationPreview = nil, nil
+            self.seasonActivateConfirmed, self.seasonReconcileConfirmed = false, false
+            self.seasonalRosterCompleteConfirm = nil
+            self.seasonalRosterArchiveConfirm = nil
+            self:Refresh()
+          end, 320)
+        Dibs.AceGUI.SetValue(select, selected.seasonId)
+        Dibs.OfficerUI.RenderSeasonConfiguration(shell, tabs, self, selected, seasons)
+        Dibs.OfficerUI.RenderSeasonIdentity(shell, tabs, self, selected)
+        if self.seasonalRosterStatusCatalogSeasonId ~= selected.seasonId
+          or self.seasonalRosterStatusCatalogRevision ~= selected.revision then
+          self.seasonalRosterStatusCatalogSeasonId, self.seasonalRosterStatusCatalogRevision = selected.seasonId, selected.revision
+          self.seasonalRosterStatusCatalogText = routeFns.formatSeasonStatusCatalog(selected.categoryCatalog)
+        end
+        local reason = Dibs.AceGUI.AddEditBox(shell, tabs,
+          labels.SEASONAL_ROSTER_CHANGE_REASON or "Reason for registration state change", function(value)
+            self.seasonalRosterChangeReason = value or ""
+          end, 360)
+        routeFns.setControlText(reason, self.seasonalRosterChangeReason or "")
+        local nextState = selected.registrationState == "OPEN" and "CLOSED" or "OPEN"
+        Dibs.AceGUI.AddLabel(shell, tabs, string.format("%s — %s%s", Dibs.OfficerUI.SeasonalText(lifecycle.seasonStatus),
+          Dibs.OfficerUI.SeasonalText(lifecycle.registrationStatus), lifecycle.archiveAt and (" — "
+            .. routeFns.formatHistoryDate(lifecycle.archiveAt)) or ""), true)
+        if lifecycle.seasonStatus == "DRAFT" then
+          if self.seasonalRosterDraftLoadedSeasonId ~= selected.seasonId
+            or self.seasonalRosterDraftLoadedRevision ~= selected.revision then
+            self.seasonalRosterDraftLoadedSeasonId, self.seasonalRosterDraftLoadedRevision = selected.seasonId, selected.revision
+            self.seasonalRosterDraftRules = selected.raidRules or ""
+            self.seasonalRosterDraftPromotionPolicy = selected.promotionPolicy or ""
+            local noRankPolicy = selected.noRankPolicy or { mode = "UNCONFIGURED" }
+            self.seasonalRosterDraftNoRankMode = noRankPolicy.mode or "UNCONFIGURED"
+            self.seasonalRosterDraftNoRankAllocation = tostring(noRankPolicy.allocation or 0)
+            self.seasonalRosterStatusCatalogText = routeFns.formatSeasonStatusCatalog(selected.categoryCatalog)
+          end
+          Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_RULES or "Season raid rules")
+          local draftRules = Dibs.AceGUI.AddMultilineEditBox(shell, tabs,
+            labels.SEASONAL_ROSTER_RULES or "Season raid rules",
+            function(value) self.seasonalRosterDraftRules = value or "" end, 680, 110)
+          routeFns.setControlText(draftRules, self.seasonalRosterDraftRules or "")
+          local draftPromotion = Dibs.AceGUI.AddMultilineEditBox(shell, tabs,
+            labels.SEASONAL_ROSTER_CORE_POLICY or "Core Raider promotion criteria",
+            function(value) self.seasonalRosterDraftPromotionPolicy = value or "" end, 680, 85)
+          routeFns.setControlText(draftPromotion, self.seasonalRosterDraftPromotionPolicy or "")
+          Dibs.AceGUI.AddLabel(shell, tabs, labels.SEASONAL_ROSTER_NO_RANK_HELP or
+            "This rule applies to approved characters without a current guild rank.", true)
+          local noRankOptions = {
+            UNCONFIGURED = labels.SEASONAL_ROSTER_NO_RANK_UNCONFIGURED or "Unconfigured — activation is blocked",
+            EXCLUDE = labels.SEASONAL_ROSTER_NO_RANK_EXCLUDE or "Exclude from starting Dibs",
+            FIXED = labels.SEASONAL_ROSTER_NO_RANK_FIXED or "Use a fixed seasonal starting Dibs amount",
+          }
+          local noRankMode = Dibs.AceGUI.AddDropdown(shell, tabs,
+            labels.SEASONAL_ROSTER_NO_RANK_POLICY or "Approved players without a guild rank", noRankOptions,
+            function(value) self.seasonalRosterDraftNoRankMode = value; self:Refresh() end, 360)
+          Dibs.AceGUI.SetValue(noRankMode, self.seasonalRosterDraftNoRankMode or "UNCONFIGURED")
+          if self.seasonalRosterDraftNoRankMode == "FIXED" then
+            local noRankAllocation = Dibs.AceGUI.AddEditBox(shell, tabs,
+              labels.SEASONAL_ROSTER_NO_RANK_ALLOCATION or "Starting Dibs for players without a guild rank",
+              function(value) self.seasonalRosterDraftNoRankAllocation = value or "" end, 240)
+            routeFns.setControlText(noRankAllocation, self.seasonalRosterDraftNoRankAllocation or "0")
+          end
+          local draftReason = Dibs.AceGUI.AddEditBox(shell, tabs,
+            labels.SEASONAL_ROSTER_DRAFT_REASON or "Reason for draft change", function(value)
+              self.seasonalRosterDraftReason = value or ""
+            end, 360)
+          routeFns.setControlText(draftReason, self.seasonalRosterDraftReason or "")
+          self.seasonalRosterSaveDraftButton = Dibs.AceGUI.AddButton(shell, tabs,
+            labels.SEASONAL_ROSTER_SAVE_DRAFT or "Save season rules", function()
+              local result = Dibs.SeasonalRoster.UpdateDraft(selected.seasonId,
+                { raidRules = self.seasonalRosterDraftRules or "",
+                  promotionPolicy = self.seasonalRosterDraftPromotionPolicy or "",
+                  noRankPolicy = self.seasonalRosterDraftNoRankMode == "FIXED"
+                    and { mode = "FIXED", allocation = tonumber(self.seasonalRosterDraftNoRankAllocation) }
+                    or { mode = self.seasonalRosterDraftNoRankMode or "UNCONFIGURED" } }, selected.revision,
+                Dibs.NewId("season-draft"), self.seasonalRosterDraftReason or "", nil)
+              self.seasonalRosterMessage = result.ok
+                and (labels.SEASONAL_ROSTER_DRAFT_SAVED or "Season draft updated.")
+                or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Change rejected: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+              if result.ok then self.seasonalRosterDraftLoadedSeasonId = nil end
+              self:Refresh()
+            end, 190)
+        elseif not lifecycle.readOnly and lifecycle.seasonStatus ~= "COMPLETED" then
+          if self.seasonalRosterPublishedPolicySeasonId ~= selected.seasonId
+            or self.seasonalRosterPublishedPolicyRevision ~= selected.revision then
+            self.seasonalRosterPublishedPolicySeasonId, self.seasonalRosterPublishedPolicyRevision = selected.seasonId, selected.revision
+            self.seasonalRosterPublishedRules = selected.raidRules or ""
+            self.seasonalRosterPublishedPromotionPolicy = selected.promotionPolicy or ""
+          end
+          Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_RULES or "Season raid rules")
+          local publishedRules = Dibs.AceGUI.AddMultilineEditBox(shell, tabs,
+            labels.SEASONAL_ROSTER_RULES or "Season raid rules", function(value)
+              self.seasonalRosterPublishedRules = value or ""
+            end, 680, 100)
+          routeFns.setControlText(publishedRules, self.seasonalRosterPublishedRules)
+          local publishedPromotion = Dibs.AceGUI.AddMultilineEditBox(shell, tabs,
+            labels.SEASONAL_ROSTER_CORE_POLICY or "Core Raider promotion criteria", function(value)
+              self.seasonalRosterPublishedPromotionPolicy = value or ""
+            end, 680, 80)
+          routeFns.setControlText(publishedPromotion, self.seasonalRosterPublishedPromotionPolicy)
+          Dibs.AceGUI.AddButton(shell, tabs,
+            labels.SEASONAL_ROSTER_PUBLISH_POLICY or "Publish season rules and Core criteria", function()
+              local result = Dibs.SeasonalRoster.PublishSeasonPolicy(selected.seasonId, {
+                raidRules = self.seasonalRosterPublishedRules or "",
+                promotionPolicy = self.seasonalRosterPublishedPromotionPolicy or "",
+              }, selected.revision, Dibs.NewId("season-policy"), self.seasonalRosterChangeReason or "", nil)
+              self.seasonalRosterMessage = result.ok
+                and (labels.SEASONAL_ROSTER_DRAFT_SAVED or "Season policy published.")
+                or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Change rejected: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+              self.seasonalRosterPublishedRules, self.seasonalRosterPublishedPromotionPolicy = nil, nil
+              self.seasonalRosterPublishedPolicyRevision = nil
+              self:Refresh()
+            end, 260)
+        else
+          Dibs.AceGUI.AddLabel(shell, tabs, selected.raidRules or "", true)
+          Dibs.AceGUI.AddLabel(shell, tabs, selected.promotionPolicy or "", true)
+        end
+        if not lifecycle.readOnly and lifecycle.seasonStatus ~= "COMPLETED" then
+          self.seasonalRosterStatusCatalogText = self.seasonalRosterStatusCatalogText
+            or routeFns.formatSeasonStatusCatalog(selected.categoryCatalog)
+          local statusCatalog = Dibs.AceGUI.AddMultilineEditBox(shell, tabs,
+            labels.SEASONAL_ROSTER_STATUS_CATALOG or "Season status catalog (ID|Name|Description|active/inactive per line)",
+            function(value) self.seasonalRosterStatusCatalogText = value or "" end, 680, 100)
+          routeFns.setControlText(statusCatalog, self.seasonalRosterStatusCatalogText)
+          Dibs.AceGUI.AddButton(shell, tabs, labels.SEASONAL_ROSTER_SAVE_STATUS_CATALOG or "Save status catalog", function()
+            local catalog, parseReason = routeFns.parseSeasonStatusCatalog(self.seasonalRosterStatusCatalogText)
+            local result = catalog and Dibs.SeasonalRoster.UpdateCategoryCatalog(selected.seasonId, catalog,
+              selected.revision, self.seasonalRosterChangeReason or "", Dibs.NewId("season-status-catalog"))
+              or { ok = false, code = parseReason }
+            self.seasonalRosterMessage = result.ok
+              and (labels.SEASONAL_ROSTER_STATUS_CATALOG_SAVED or "Season status catalog saved.")
+              or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Change rejected: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+            self.seasonalRosterStatusCatalogText = nil
+            self:Refresh()
+          end, 190)
+        end
+        if not lifecycle.readOnly and lifecycle.seasonStatus ~= "COMPLETED" then
+          self.seasonalRosterStateButton = Dibs.AceGUI.AddButton(shell, tabs, nextState == "OPEN"
+            and (labels.SEASONAL_ROSTER_OPEN or "Open registration")
+            or (labels.SEASONAL_ROSTER_CLOSE or "Close registration"), function()
+          local result = Dibs.SeasonalRoster.SetRegistrationState(selected.seasonId, nextState,
+            selected.revision, Dibs.NewId("seasonal-state"), self.seasonalRosterChangeReason or "Officer registration update")
+          self.seasonalRosterMessage = result.ok and (labels.SEASONAL_ROSTER_STATE_SAVED or "Registration state updated.")
+            or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Change rejected: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+          self:Refresh()
+          end, 180)
+        end
+        if persistedLifecycle == "ACTIVE" then
+          local completeToken = selected.seasonId .. ":" .. tostring(selected.revision)
+          self.seasonalRosterCompleteButton = Dibs.AceGUI.AddButton(shell, tabs,
+            self.seasonalRosterCompleteConfirm == completeToken and labels.SEASONAL_ROSTER_COMPLETE_CONFIRMED
+              or labels.SEASONAL_ROSTER_COMPLETE or "End season", function()
+              if self.seasonalRosterCompleteConfirm ~= completeToken then
+                self.seasonalRosterCompleteConfirm = completeToken
+                self.seasonalRosterMessage = labels.SEASONAL_ROSTER_CONFIRM_COMPLETE
+                self:Refresh()
+                return
+              end
+              self.seasonalRosterCompleteConfirm = nil
+              local result = Dibs.SeasonalRoster.CompleteSeason(selected.seasonId, selected.revision,
+                Dibs.NewId("seasonal-complete"), self.seasonalRosterChangeReason or "", nil)
+              self.seasonalRosterMessage = result.ok and (labels.SEASONAL_ROSTER_COMPLETED or "Season ended.")
+                or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Season was not ended: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+              self:Refresh()
+            end, 150)
+        end
+        if persistedLifecycle == "COMPLETED" and lifecycle.seasonStatus == "ARCHIVED" then
+          local archiveToken = selected.seasonId .. ":" .. tostring(selected.revision)
+          Dibs.AceGUI.AddButton(shell, tabs, self.seasonalRosterArchiveConfirm == archiveToken
+            and labels.SEASONAL_ROSTER_CONFIRM_ARCHIVE or labels.SEASONAL_ROSTER_ARCHIVE, function()
+            if self.seasonalRosterArchiveConfirm ~= archiveToken then
+              self.seasonalRosterArchiveConfirm = archiveToken
+              self.seasonalRosterMessage = labels.SEASONAL_ROSTER_ARCHIVE_HELP; self:Refresh(); return
+            end
+            self.seasonalRosterArchiveConfirm = nil
+            local result = Dibs.SeasonalRoster.ArchiveSeason(selected.seasonId, selected.revision,
+              Dibs.NewId("season-archive"), self.seasonalRosterChangeReason or "")
+            self.seasonalRosterMessage = result.ok and labels.SEASONAL_ROSTER_ARCHIVED
+              or Dibs.OfficerUI.SeasonalText(result.code)
+            self:Refresh()
+          end, 220)
+        end
+        if selected.registrationState == "CLOSED" and (lifecycle.seasonStatus == "REVIEW"
+          or lifecycle.seasonStatus == "READY") then
+          Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_ACTIVATION_PREVIEW or "Activation preview")
+          Dibs.AceGUI.AddLabel(shell, tabs,
+            labels.SEASONAL_ROSTER_ALLOCATION_PUBLISH_HELP
+              or "Rank Rules are local working values until published here. Activation uses the published season snapshot shared through guild sync.", true)
+          local allocationPublishReason = Dibs.AceGUI.AddEditBox(shell, tabs,
+            labels.SEASONAL_ROSTER_ALLOCATION_PUBLISH_REASON or "Reason for publishing rank allocations",
+            function(value) self.seasonalRosterAllocationPublishReason = value or "" end, 400)
+          routeFns.setControlText(allocationPublishReason, self.seasonalRosterAllocationPublishReason or "")
+          Dibs.AceGUI.AddButton(shell, tabs,
+            labels.SEASONAL_ROSTER_ALLOCATION_PUBLISH or "Publish this season's rank allocations", function()
+              local result = Dibs.SeasonalRoster.PublishRankAllocations(selected.seasonId, selected.revision,
+                Dibs.NewId("season-allocations"), self.seasonalRosterAllocationPublishReason or "", nil)
+              self.seasonalRosterMessage = result.ok
+                and (labels.SEASONAL_ROSTER_ALLOCATION_PUBLISHED or "Season rank allocations published.")
+                or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Change rejected: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+              self.seasonalRosterActivationPreview = nil
+              self.seasonalRosterActivationPreviewSeasonId = nil
+              self:Refresh()
+            end, 320)
+          Dibs.AceGUI.AddButton(shell, tabs, labels.SEASONAL_ROSTER_ACTIVATION_PREVIEW or "Preview season activation", function()
+            local preview, previewReason = Dibs.SeasonalRoster.PreviewActivation(selected.seasonId)
+            self.seasonalRosterActivationPreviewSeasonId = selected.seasonId
+            self.seasonalRosterActivationPreviewRevision = selected.revision
+            self.seasonalRosterActivationPreview = preview
+            self.seasonalRosterActivationPreviewReason = previewReason
+            self.seasonActivateConfirmed, self.seasonActivateToken = false, nil
+            self:Refresh()
+          end, 260)
+          local preview = self.seasonalRosterActivationPreview
+          if self.seasonalRosterActivationPreviewSeasonId == selected.seasonId
+            and self.seasonalRosterActivationPreviewRevision == selected.revision and preview then
+            if preview.ready then
+              Dibs.AceGUI.AddLabel(shell, tabs, string.format(
+                labels.SEASONAL_ROSTER_ACTIVATION_READY or "Preview ready: %d unique Main players, %d starting Dibs. This is not activated.",
+                preview.participantCount, preview.totalAllocation), true)
+              Dibs.OfficerUI.RenderSeasonCommit(shell, tabs, self, selected, preview, false)
+            else
+              Dibs.AceGUI.AddLabel(shell, tabs, string.format(
+                labels.SEASONAL_ROSTER_ACTIVATION_BLOCKED or "Activation preview has %d blocker(s). This is not activated.",
+                #preview.blockers), true)
+              local blockerLimit = math.min(30, #preview.blockers)
+              local activationBlockerLabels = {
+                PERSON_BALANCE_RECONCILIATION_REQUIRED = "SEASONAL_ROSTER_BLOCK_PERSON_BALANCE_RECONCILIATION",
+                PERSON_BALANCE_RESERVATIONS_PENDING = "SEASONAL_ROSTER_BLOCK_PERSON_BALANCE_RESERVATIONS",
+                PERSON_BALANCE_SYNC_UNAVAILABLE = "SEASONAL_ROSTER_BLOCK_PERSON_BALANCE_UNAVAILABLE",
+                RANK_ALLOCATION_NOT_PUBLISHED = "SEASONAL_ROSTER_BLOCK_ALLOCATION_NOT_PUBLISHED",
+                RANK_ALLOCATION_SNAPSHOT_INVALID = "SEASONAL_ROSTER_BLOCK_ALLOCATION_INVALID",
+              }
+              for index = 1, blockerLimit do
+                local blocker = preview.blockers[index]
+                local messageKey = activationBlockerLabels[blocker.code]
+                local message = messageKey and labels[messageKey] or Dibs.OfficerUI.SeasonalText(blocker.code)
+                Dibs.AceGUI.AddLabel(shell, tabs, tostring(message)
+                  .. (blocker.character and (" — " .. blocker.character) or ""), true)
+              end
+              if #preview.blockers > blockerLimit then
+                Dibs.AceGUI.AddLabel(shell, tabs, string.format(labels.SEASONAL_ROSTER_PREVIEW_MORE or "…and %d more",
+                  #preview.blockers - blockerLimit), true)
+              end
+            end
+            if #preview.rows > 0 then
+              local allocationRows = {}
+              local previewPage = math.max(1, math.min(self.seasonalRosterActivationPage or 1, math.max(1, math.ceil(#preview.rows / 20))))
+              for index = (previewPage - 1) * 20 + 1, math.min(previewPage * 20, #preview.rows) do
+                local row = preview.rows[index]
+                allocationRows[#allocationRows + 1] = { row.character, row.categoryId,
+                  row.rankName or row.allocationSource, tostring(row.allocation) }
+              end
+              Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_ACTIVATION_ROWS or "Activation allocation preview")
+              Dibs.AceGUI.AddTable(shell, tabs, {
+                { title = "Main", width = 180 }, { title = "Season category", width = 140 },
+                { title = "Allocation source", width = 180 }, { title = "Starting Dibs", width = 100 },
+              }, allocationRows, math.min(240, math.max(72, #allocationRows * 22)), nil,
+                { fluidColumns = true, widthHint = 680, shrinkToFit = true })
+              local pager = Dibs.AceGUI.AddPaginationFooter(shell,
+                { footer = Dibs.AceGUI.AddInlineGroup(shell, tabs) }, { showPageSize = false,
+                onPrevious = function() self.seasonalRosterActivationPage = previewPage - 1; self:Refresh() end,
+                onNext = function() self.seasonalRosterActivationPage = previewPage + 1; self:Refresh() end })
+              if pager then pager.UpdateState(previewPage, #preview.rows, 20) end
+            end
+            if #preview.excluded > 0 then
+              Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_ACTIVATION_EXCLUDED or "Not included in starting allocation")
+              local excludedLimit = math.min(50, #preview.excluded)
+              for index = 1, excludedLimit do
+                local excluded = preview.excluded[index]
+                Dibs.AceGUI.AddLabel(shell, tabs, excluded.character .. " — " .. Dibs.OfficerUI.SeasonalText(excluded.reason), true)
+              end
+              if #preview.excluded > excludedLimit then
+                Dibs.AceGUI.AddLabel(shell, tabs, string.format(labels.SEASONAL_ROSTER_PREVIEW_MORE or "…and %d more",
+                  #preview.excluded - excludedLimit), true)
+              end
+            end
+          elseif self.seasonalRosterActivationPreviewReason then
+            Dibs.AceGUI.AddLabel(shell, tabs, tostring(self.seasonalRosterActivationPreviewReason), true)
+          end
+        end
+        if lifecycle.seasonStatus == "ACTIVE" then
+          Dibs.OfficerUI.RenderSeasonReconciliation(shell, tabs, self, selected)
+        end
+        local rows, rowsReason = Dibs.SeasonalRoster.GetOfficerEnrollments(selected.seasonId)
+        if not rows then
+          Dibs.AceGUI.AddLabel(shell, tabs, tostring(rowsReason), true)
+        else
+          local display = {}
+          local enrollmentChoices = {}
+          for _, row in ipairs(rows) do
+            enrollmentChoices[row.enrollmentId] = string.format("%s — %s — %s", row.character,
+              row.categoryId, row.status)
+            display[#display + 1] = { row.character, row.requestedPath or "STANDARD", row.categoryId, row.primarySpec,
+              row.secondarySpec or "—", table.concat(row.roles or {}, ", "), row.status }
+          end
+          local rosterPage = math.max(1, math.min(self.seasonalRosterOfficerPage or 1, math.max(1, math.ceil(#display / 20))))
+          local visibleRows = {}
+          for index = (rosterPage - 1) * 20 + 1, math.min(rosterPage * 20, #display) do visibleRows[#visibleRows + 1] = display[index] end
+          Dibs.AceGUI.AddTable(shell, tabs, {
+            { title = labels.SEASONAL_ROSTER_CHARACTER, width = 170, minWidth = 100, weight = 3 },
+            { title = labels.SEASONAL_ROSTER_REQUESTED_PATH, width = 135, minWidth = 90, weight = 2 },
+            { title = labels.SEASONAL_ROSTER_CATEGORY, width = 105, minWidth = 75, weight = 1 },
+            { title = labels.SEASONAL_ROSTER_PRIMARY_SPEC, width = 110, minWidth = 75, weight = 1 },
+            { title = labels.SEASONAL_ROSTER_SECONDARY_SPEC, width = 110, minWidth = 75, weight = 1 },
+            { title = labels.SEASONAL_ROSTER_ROLES, width = 110, minWidth = 70, weight = 1 },
+            { title = labels.SEASONAL_ROSTER_ENROLLMENT_STATUS, width = 95, minWidth = 70, weight = 1 },
+          }, visibleRows, math.min(400, math.max(90, #visibleRows * 24)), nil, {
+            fluidColumns = true, widthHint = 700, shrinkToFit = true,
+            emptyText = labels.SEASONAL_ROSTER_EMPTY or "No players are enrolled for this season yet.",
+          })
+          local pager = Dibs.AceGUI.AddPaginationFooter(shell,
+            { footer = Dibs.AceGUI.AddInlineGroup(shell, tabs) }, { showPageSize = false,
+            onPrevious = function() self.seasonalRosterOfficerPage = rosterPage - 1; self:Refresh() end,
+            onNext = function() self.seasonalRosterOfficerPage = rosterPage + 1; self:Refresh() end })
+          if pager then pager.UpdateState(rosterPage, #display, 20) end
+          if #rows > 0 and not lifecycle.readOnly and lifecycle.seasonStatus ~= "COMPLETED" then
+            local selectedRow
+            for _, row in ipairs(rows) do
+              if row.enrollmentId == self.seasonalRosterEditEnrollmentId then selectedRow = row; break end
+            end
+            if not selectedRow then selectedRow = rows[1] end
+            self.seasonalRosterEditEnrollmentId = selectedRow.enrollmentId
+            local selectedEnrollment = Dibs.AceGUI.AddDropdown(shell, tabs,
+              labels.SEASONAL_ROSTER_EDIT_ENROLLMENT or "Select enrollment to manage", enrollmentChoices,
+              function(value)
+                self.seasonalRosterEditEnrollmentId = value
+                self.seasonalRosterEditLoadedId = nil
+                self:Refresh()
+              end, 420)
+            Dibs.AceGUI.SetValue(selectedEnrollment, selectedRow.enrollmentId)
+            if self.seasonalRosterEditLoadedId ~= selectedRow.enrollmentId
+              or self.seasonalRosterEditLoadedRevision ~= selectedRow.revision then
+              self.seasonalRosterEditLoadedId, self.seasonalRosterEditLoadedRevision = selectedRow.enrollmentId, selectedRow.revision
+              self.seasonalRosterEditCategory = selectedRow.categoryId
+              self.seasonalRosterEditRequestedPath = selectedRow.requestedPath or "STANDARD"
+              self.seasonalRosterEditPrimarySpec = selectedRow.primarySpec
+              self.seasonalRosterEditSecondarySpec = selectedRow.secondarySpec or ""
+              self.seasonalRosterEditRoles = table.concat(selectedRow.roles or {}, ", ")
+              self.seasonalRosterEditStatus = selectedRow.status
+            end
+            local categories = {}
+            for _, category in ipairs(selected.categories or {}) do categories[category] = category end
+            local editCategory = Dibs.AceGUI.AddDropdown(shell, tabs,
+              labels.SEASONAL_ROSTER_CATEGORY or "Roster category", categories,
+              function(value) self.seasonalRosterEditCategory = value end, 240)
+            Dibs.AceGUI.SetValue(editCategory, self.seasonalRosterEditCategory)
+            local pathOptions = {
+              STANDARD = labels.SEASONAL_ROSTER_PATH_STANDARD or "Raider",
+              CORE_PROGRESSION = labels.SEASONAL_ROSTER_PATH_CORE or "Core Raider progression (Thursday)",
+              CASUAL = labels.SEASONAL_ROSTER_PATH_CASUAL or "Casual",
+            }
+            local editPath = Dibs.AceGUI.AddDropdown(shell, tabs,
+              labels.SEASONAL_ROSTER_REQUESTED_PATH or "Requested raid path", pathOptions,
+              function(value) self.seasonalRosterEditRequestedPath = value end, 300)
+            Dibs.AceGUI.SetValue(editPath, self.seasonalRosterEditRequestedPath or "STANDARD")
+            local editPrimary = Dibs.AceGUI.AddEditBox(shell, tabs,
+              labels.SEASONAL_ROSTER_PRIMARY_SPEC or "Primary spec", function(value)
+                self.seasonalRosterEditPrimarySpec = value or ""
+              end, 220)
+            routeFns.setControlText(editPrimary, self.seasonalRosterEditPrimarySpec)
+            local editSecondary = Dibs.AceGUI.AddEditBox(shell, tabs,
+              labels.SEASONAL_ROSTER_SECONDARY_SPEC or "Secondary spec", function(value)
+                self.seasonalRosterEditSecondarySpec = value or ""
+              end, 220)
+            routeFns.setControlText(editSecondary, self.seasonalRosterEditSecondarySpec)
+            local editRoles = Dibs.AceGUI.AddEditBox(shell, tabs,
+              labels.SEASONAL_ROSTER_ROLES or "Roles (TANK, HEALER, DAMAGER)", function(value)
+                self.seasonalRosterEditRoles = value or ""
+              end, 300)
+            routeFns.setControlText(editRoles, self.seasonalRosterEditRoles)
+            local statusOptions = {
+              PENDING_REVIEW = labels.SEASONAL_ROSTER_PENDING_REVIEW or "Pending review",
+              ACTIVE = labels.SEASONAL_ROSTER_APPROVED or "Approved",
+              REJECTED = labels.SEASONAL_ROSTER_REJECTED or "Rejected",
+              WITHDRAWN = labels.SEASONAL_ROSTER_WITHDRAWN or "Withdrawn",
+              REMOVED = labels.SEASONAL_ROSTER_REMOVED or "Removed",
+            }
+            local editStatus = Dibs.AceGUI.AddDropdown(shell, tabs,
+              labels.SEASONAL_ROSTER_ENROLLMENT_STATUS or "Enrollment status", statusOptions,
+              function(value) self.seasonalRosterEditStatus = value end, 240)
+            Dibs.AceGUI.SetValue(editStatus, self.seasonalRosterEditStatus)
+            local correctionReason = Dibs.AceGUI.AddEditBox(shell, tabs,
+              labels.SEASONAL_ROSTER_ADMIN_REASON or "Required reason for this correction", function(value)
+                self.seasonalRosterAdminReason = value or ""
+              end, 420)
+            routeFns.setControlText(correctionReason, self.seasonalRosterAdminReason or "")
+            self.seasonalRosterCorrectButton = Dibs.AceGUI.AddButton(shell, tabs,
+              labels.SEASONAL_ROSTER_SAVE_CORRECTION or "Save roster correction", function()
+                local roles = {}
+                for role in tostring(self.seasonalRosterEditRoles or ""):gmatch("[^,]+") do
+                  role = role:match("^%s*(.-)%s*$")
+                  if role ~= "" then roles[#roles + 1] = string.upper(role) end
+                end
+                local result = Dibs.SeasonalRoster.AdminUpdateEnrollment(selected.seasonId,
+                  selectedRow.enrollmentId, { categoryId = self.seasonalRosterEditCategory,
+                    requestedPath = self.seasonalRosterEditRequestedPath,
+                    primarySpec = self.seasonalRosterEditPrimarySpec,
+                    secondarySpec = self.seasonalRosterEditSecondarySpec ~= "" and self.seasonalRosterEditSecondarySpec or nil,
+                    keepSecondarySpec = false,
+                    roles = roles, status = self.seasonalRosterEditStatus }, selectedRow.revision,
+                  self.seasonalRosterAdminReason or "", Dibs.NewId("seasonal-admin-edit"))
+                self.seasonalRosterMessage = result.ok
+                  and (labels.SEASONAL_ROSTER_CORRECTION_SAVED or "Roster correction saved.")
+                  or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Correction rejected: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+                self.seasonalRosterEditLoadedId = nil
+                self:Refresh()
+              end, 190)
+          end
+        end
+        Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_REVISION_HISTORY or "Season revision history")
+        local revisionHistory, historyReason = Dibs.SeasonalRoster.GetSeasonRevisionHistory(selected.seasonId, 10)
+        if not revisionHistory then
+          Dibs.AceGUI.AddLabel(shell, tabs, tostring(historyReason), true)
+        elseif #revisionHistory == 0 then
+          Dibs.AceGUI.AddLabel(shell, tabs, labels.SEASONAL_ROSTER_NO_REVISION_HISTORY or "No season revisions yet.", true)
+        else
+          local historyRows = {}
+          for _, revision in ipairs(revisionHistory) do
+            historyRows[#historyRows + 1] = {
+              tostring(revision.revision), tostring(revision.action), tostring(revision.reason),
+              tostring(revision.updatedBy), routeFns.formatHistoryDate(revision.updatedAt),
+              "rules " .. tostring(revision.rulesRevision), tostring(revision.lifecycleState),
+            }
+          end
+          Dibs.AceGUI.AddTable(shell, tabs, {
+            { title = "Revision", width = 65 }, { title = "Action", width = 145 },
+            { title = "Reason", width = 220 }, { title = "Officer", width = 130 },
+            { title = "Updated", width = 120 }, { title = "Rules", width = 75 },
+            { title = "Lifecycle", width = 115 },
+          }, historyRows, math.min(240, math.max(72, #historyRows * 22)), nil, {
+            fluidColumns = true, widthHint = 700, shrinkToFit = true,
+          })
+        end
+      else
+        Dibs.AceGUI.AddLabel(shell, tabs, labels.SEASONAL_ROSTER_NO_SEASONS or "No raid seasons have been configured yet.", true)
+      end
+      Dibs.AceGUI.AddHeader(shell, tabs, labels.SEASONAL_ROSTER_CREATE_TITLE or "Create a raid season")
+      local seasonName = Dibs.AceGUI.AddEditBox(shell, tabs, labels.SEASONAL_ROSTER_NAME or "Season name", function(value)
+        self.seasonalRosterNewName = value or ""
+      end, 300)
+      routeFns.setControlText(seasonName, self.seasonalRosterNewName or "")
+      local categoryInput = Dibs.AceGUI.AddEditBox(shell, tabs,
+        labels.SEASONAL_ROSTER_CATEGORIES or "Categories (comma separated IDs)", function(value)
+          self.seasonalRosterNewCategories = value or ""
+        end, 360)
+      routeFns.setControlText(categoryInput, self.seasonalRosterNewCategories or "MYTHIC, HEROIC")
+      local raidRulesInput = Dibs.AceGUI.AddMultilineEditBox(shell, tabs,
+        labels.SEASONAL_ROSTER_RULES or "Season raid rules", function(value)
+          self.seasonalRosterNewRules = value or ""
+        end, 680, 110)
+      routeFns.setControlText(raidRulesInput, self.seasonalRosterNewRules or "")
+      routeFns.renderSeasonDateTimePicker(shell, tabs, self, "Start",
+        labels.SEASONAL_ROSTER_START_DATE or "Season starts", "00", "00")
+      routeFns.renderSeasonDateTimePicker(shell, tabs, self, "End",
+        labels.SEASONAL_ROSTER_END_DATE or "Season ends (optional)", "23", "59")
+      routeFns.renderSeasonDateTimePicker(shell, tabs, self, "RegistrationStart",
+        labels.SEASONAL_ROSTER_REGISTRATION_START or "Registration opens", "00", "00")
+      routeFns.renderSeasonDateTimePicker(shell, tabs, self, "RegistrationEnd",
+        labels.SEASONAL_ROSTER_REGISTRATION_END or "Registration closes (optional)", "23", "59")
+      Dibs.AceGUI.AddLabel(shell, tabs, labels.SEASONAL_ROSTER_DATETIME_HELP
+        or "Times use your local time zone. The schedule time zone below applies only to raid nights.", true)
+      local scheduleInput = Dibs.AceGUI.AddEditBox(shell, tabs,
+        labels.SEASONAL_ROSTER_SCHEDULE or "Raid schedule (Sunday=1, weekday@HH:MM, comma separated)", function(value)
+          self.seasonalRosterNewSchedule = value or ""
+        end, 420)
+      routeFns.setControlText(scheduleInput, self.seasonalRosterNewSchedule or "")
+      local timeZoneInput = Dibs.AceGUI.AddEditBox(shell, tabs,
+        labels.SEASONAL_ROSTER_TIME_ZONE or "Schedule time zone (optional)", function(value)
+          self.seasonalRosterNewTimeZone = value or ""
+        end, 240)
+      routeFns.setControlText(timeZoneInput, self.seasonalRosterNewTimeZone or "")
+      self.seasonalRosterCreateButton = Dibs.AceGUI.AddButton(shell, tabs, labels.SEASONAL_ROSTER_CREATE or "Create season", function()
+        local function parseDateTime(text, hourText, minuteText, required)
+          text = tostring(text or ""):match("^%s*(.-)%s*$")
+          if text == "" then
+            if required then return nil, labels.SEASONAL_ROSTER_REQUIRED_DATES or "Choose the required dates." end
+            return nil
+          end
+          local year, month, day = parseHistoryDate(text)
+          if not year then return nil, labels.SEASONAL_ROSTER_INVALID_DATE or "Choose a valid calendar date." end
+          local hour, minute = tonumber(hourText), tonumber(minuteText)
+          if not hour or hour < 0 or hour > 23 or not minute or minute < 0 or minute > 59 then
+            return nil, labels.SEASONAL_ROSTER_INVALID_TIME or "Choose a valid local time."
+          end
+          local timestamp = time({ year = year, month = month, day = day,
+            hour = hour, min = minute, sec = 0 })
+          local parsed = date("*t", timestamp)
+          if parsed.year ~= year or parsed.month ~= month or parsed.day ~= day
+            or parsed.hour ~= hour or parsed.min ~= minute then
+            return nil, labels.SEASONAL_ROSTER_INVALID_DATE_TIME or "That local date and time does not exist."
+          end
+          return timestamp
+        end
+        local categories = {}
+        for category in tostring(self.seasonalRosterNewCategories or ""):gmatch("[^,]+") do
+          category = category:match("^%s*(.-)%s*$")
+          if category ~= "" then categories[#categories + 1] = category end
+        end
+        local startAt, startReason = parseDateTime(self.seasonalRosterNewStartDate,
+          self.seasonalRosterNewStartHour, self.seasonalRosterNewStartMinute, true)
+        local endAt, endReason = parseDateTime(self.seasonalRosterNewEndDate,
+          self.seasonalRosterNewEndHour, self.seasonalRosterNewEndMinute, false)
+        local registrationStartAt, registrationStartReason = parseDateTime(self.seasonalRosterNewRegistrationStartDate,
+          self.seasonalRosterNewRegistrationStartHour, self.seasonalRosterNewRegistrationStartMinute, true)
+        local registrationEndAt, registrationEndReason = parseDateTime(self.seasonalRosterNewRegistrationEndDate,
+          self.seasonalRosterNewRegistrationEndHour, self.seasonalRosterNewRegistrationEndMinute, false)
+        if startReason or endReason or registrationStartReason or registrationEndReason then
+          self.seasonalRosterMessage = startReason or endReason or registrationStartReason or registrationEndReason
+          self:Refresh()
+          return
+        end
+        if not startAt or not registrationStartAt then
+          self.seasonalRosterMessage = labels.SEASONAL_ROSTER_REQUIRED_DATES
+            or "Enter both the season start and registration opening date."
+          self:Refresh()
+          return
+        end
+        local raidSchedule = {}
+        for entry in tostring(self.seasonalRosterNewSchedule or ""):gmatch("[^,]+") do
+          local weekday, hour, minute = entry:match("^%s*(%d)@(%d%d):(%d%d)%s*$")
+          weekday, hour, minute = tonumber(weekday), tonumber(hour), tonumber(minute)
+          if not weekday or not hour or not minute then
+            self.seasonalRosterMessage = "Use weekday@HH:MM for each raid time."
+            self:Refresh()
+            return
+          end
+          raidSchedule[#raidSchedule + 1] = { weekday = weekday,
+            startTime = string.format("%02d:%02d", hour, minute), timeZone = self.seasonalRosterNewTimeZone or "" }
+        end
+        local result = Dibs.SeasonalRoster.CreateSeason({ name = self.seasonalRosterNewName,
+          registrationState = "DRAFT", categories = categories, raidRules = self.seasonalRosterNewRules or "",
+          startAt = startAt, endAt = endAt,
+          registrationStartAt = registrationStartAt, registrationEndAt = registrationEndAt,
+          raidSchedule = raidSchedule }, Dibs.NewId("seasonal-create"))
+        self.seasonalRosterMessage = result.ok and (labels.SEASONAL_ROSTER_CREATED or "Season created as draft.")
+          or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Season was not created: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+        if result.ok then self.seasonalRosterSeasonId = result.value end
+        self:Refresh()
+      end, 160)
+      if self.seasonalRosterMessage then Dibs.AceGUI.AddLabel(shell, tabs, self.seasonalRosterMessage, true) end
       return
     end
     if self.activeTab == "ranks" then
@@ -6283,7 +7367,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
           refreshSearch()
         end
       end, 240)
-      setControlText(self.syncRosterSearch, self.syncRosterQuery or "")
+      routeFns.setControlText(self.syncRosterSearch, self.syncRosterQuery or "")
       if self.syncRosterRestoreFocus then
         self.syncRosterRestoreFocus = nil
         focusControlAtEnd(self.syncRosterSearch)
@@ -6371,7 +7455,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         local peerTarget = Dibs.AceGUI.AddEditBox(shell, peerControls, helpText.SYNC_PEER_TARGET_LABEL or "Peer character", function(value)
           self.syncPeerTarget = trimText(value or "")
         end, 200)
-        setControlText(peerTarget, self.syncPeerTarget or "")
+        routeFns.setControlText(peerTarget, self.syncPeerTarget or "")
         local probeButton = Dibs.AceGUI.AddButton(shell, peerControls, helpText.SYNC_PEER_PROBE_BUTTON or "Probe peer", function()
           local target = self.syncPeerTarget or ""
           local sent, reasonCode = false, "SYNC_UNAVAILABLE"
@@ -7045,7 +8129,13 @@ local function createAceWindow(initialRoute, deferInitialRender)
           or (self.activeTab ~= "disputes" and self.activeTab ~= "reconciliation" and self.activeTab ~= "eligibility" and self.activeTab ~= "debug" and groups.officer and groups.officer.args and groups.officer.args[self.activeTab])
       end
     end
-    if not optionGroup and self.activeTab ~= "overview" then
+    if self.activeTab == "lootTypes" then
+      -- The AceConfig loot rules group renders its controls without the
+      -- parent group title. Keep an explicit route heading so this page has
+      -- the same clear entry point as the other long Officer pages.
+      Dibs.AceGUI.AddHeading(shell, tabs, routeTitles.lootTypes or "Loot Rules",
+        (Dibs.L or {}).LOOT_RULES_REVIEW_HELP or "Review the complete local draft. Opening this page does not publish guild rules.")
+    elseif not optionGroup and self.activeTab ~= "overview" then
       Dibs.AceGUI.AddHeading(shell, tabs, routeTitles[self.activeTab] or "Officer", "Officer controls and current local projection.")
       if SETUP_HELP_OPTION_ROUTES[self.activeTab] then renderSetupPageHelp(shell, tabs, self, routeDB) end
     end
@@ -7162,7 +8252,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       local reasonControl = Dibs.AceGUI.AddEditBox(shell, relationshipSection, "Review reason", function(value)
         self.eligibilityReviewReason = value or ""
       end, 360)
-      setControlText(reasonControl, self.eligibilityReviewReason or "")
+      routeFns.setControlText(reasonControl, self.eligibilityReviewReason or "")
       local relationshipRows = {}
       for _, relationship in ipairs(relationships) do
         relationshipRows[#relationshipRows + 1] = {
@@ -7245,6 +8335,138 @@ local function createAceWindow(initialRoute, deferInitialRender)
             end, 270)
         end
       end
+      local reconciliationCharacters, reconciliationChoices = {}, {}
+      for _, relationship in ipairs(relationships) do
+        if relationship.status == "approved" then
+          local mainId, altId = relationship.mainCharacterId, relationship.altCharacterId
+          local mainName = tostring(relationship.mainCharacterName or mainId or "")
+          local altName = tostring(relationship.altCharacterName or altId or "")
+          if mainId and not reconciliationChoices[mainId] then
+            reconciliationCharacters[#reconciliationCharacters + 1] = mainId
+            reconciliationChoices[mainId] = mainName
+          end
+          if altId and not reconciliationChoices[altId] then
+            reconciliationCharacters[#reconciliationCharacters + 1] = altId
+            reconciliationChoices[altId] = altName
+          end
+        end
+      end
+      if #reconciliationCharacters > 0 and Dibs.SeasonalRoster
+        and Dibs.SeasonalRoster.GetBalanceReconciliationPreview then
+        table.sort(reconciliationCharacters, function(a, b)
+          return tostring(reconciliationChoices[a]) < tostring(reconciliationChoices[b])
+        end)
+        local reconciliationSection = Dibs.AceGUI.AddSection(shell, scroll,
+          "Main/Alt Dibs balance review",
+          "Review every linked balance. The selected Main balance is retained; other balances are not added.")
+        local rosterSeasons, rosterSeasonReason = Dibs.SeasonalRoster.ListSeasons()
+        rosterSeasons = type(rosterSeasons) == "table" and rosterSeasons or {}
+        local rosterSeasonChoices, selectedRosterSeason = {}, nil
+        for _, rosterSeason in ipairs(rosterSeasons) do
+          rosterSeasonChoices[rosterSeason.seasonId] = rosterSeason.name
+          if not selectedRosterSeason or rosterSeason.identitySeasonId == seasonId then selectedRosterSeason = rosterSeason end
+          if rosterSeason.seasonId == self.eligibilityRosterSeasonId then selectedRosterSeason = rosterSeason end
+        end
+        if #rosterSeasons > 0 then
+          if not selectedRosterSeason or not rosterSeasonChoices[self.eligibilityRosterSeasonId] then
+            self.eligibilityRosterSeasonId = selectedRosterSeason.seasonId
+          end
+          local rosterSeasonSelector = Dibs.AceGUI.AddDropdown(shell, reconciliationSection,
+            "Roster season", rosterSeasonChoices, function(value)
+              self.eligibilityRosterSeasonId = value
+              self:Refresh()
+            end, 260)
+          Dibs.AceGUI.SetValue(rosterSeasonSelector, self.eligibilityRosterSeasonId)
+        end
+        local previewCharacter = self.eligibilityReconciliationCharacter
+        if not reconciliationChoices[previewCharacter] then previewCharacter = reconciliationCharacters[1] end
+        self.eligibilityReconciliationCharacter = previewCharacter
+        local characterSelector = Dibs.AceGUI.AddDropdown(shell, reconciliationSection,
+          "Linked character", reconciliationChoices, function(value)
+            self.eligibilityReconciliationCharacter = value
+            self:Refresh()
+          end, 280)
+        Dibs.AceGUI.SetValue(characterSelector, previewCharacter)
+        local preview, previewReason
+        if #rosterSeasons > 0 then
+          preview, previewReason = Dibs.SeasonalRoster.GetBalanceReconciliationPreview(
+            self.eligibilityRosterSeasonId, previewCharacter, Dibs.GetPlayerName())
+        else
+          previewReason = rosterSeasonReason or "NO_ROSTER_SEASON"
+        end
+        if preview then
+          local balanceRows = {}
+          for _, source in ipairs(preview.sourceBalances or {}) do
+            balanceRows[#balanceRows + 1] = { source.character,
+              tostring(source.balance), tostring(source.pendingReservations or 0),
+              source.characterKey == preview.mainCharacterKey and "Retain Main balance" or "Review / correction" }
+          end
+          Dibs.AceGUI.AddTable(shell, reconciliationSection, {
+            { title = "Character", width = 180 }, { title = "Current balance", width = 120 },
+            { title = "Pending Dibs", width = 110 }, { title = "Review", width = 180 },
+          }, balanceRows, 140, nil, { noScrolling = true })
+          Dibs.AceGUI.AddLabel(shell, reconciliationSection,
+            "Proposed person balance: " .. tostring(preview.resultingPersonBalance), true)
+          Dibs.AceGUI.AddLabel(shell, reconciliationSection,
+            ((Dibs.L or {}).SEASONAL_ROSTER_BALANCE_ACTIVATION_BLOCKED
+              or "Season activation remains blocked: %s."):format(tostring(preview.activationBlockReason)), true)
+          local correctionReason = Dibs.AceGUI.AddEditBox(shell, reconciliationSection,
+            (Dibs.L or {}).SEASONAL_ROSTER_BALANCE_CORRECTION_REASON or "Reason for this balance correction",
+            function(value)
+              self.eligibilityReconciliationReason = value or ""
+              self.eligibilityBalanceConfirmed = false
+              if self.eligibilityBalanceConfirmControl then Dibs.AceGUI.SetValue(self.eligibilityBalanceConfirmControl, false) end
+            end, 360)
+          if correctionReason and correctionReason.SetText then
+            correctionReason:SetText(self.eligibilityReconciliationReason or "")
+          end
+          Dibs.AceGUI.AddLabel(shell, reconciliationSection,
+            (Dibs.L or {}).SEASONAL_ROSTER_BALANCE_CORRECTION_HELP
+              or "Each button appends one audited correction and sets that linked Alt balance to zero. The selected Main balance is retained.", true)
+          if not preview.pendingReservations then
+            local previewToken = tostring(self.eligibilityRosterSeasonId) .. ":" .. tostring(preview.previewId)
+            if self.eligibilityBalancePreviewToken ~= previewToken then
+              self.eligibilityBalancePreviewToken, self.eligibilityBalanceConfirmed = previewToken, false
+            end
+            self.eligibilityBalanceConfirmControl = Dibs.AceGUI.AddCheckBox(shell, reconciliationSection,
+              (Dibs.L or {}).SEASONAL_ROSTER_BALANCE_CONFIRM, self.eligibilityBalanceConfirmed == true,
+              function(value) self.eligibilityBalanceConfirmed = value == true end)
+            for _, adjustment in ipairs(preview.adjustments or {}) do
+              local targetName = adjustment.character
+              local expectedPreview = {
+                previewId = preview.previewId,
+                sourceLedgerRevision = preview.sourceLedgerRevision,
+                eligibilityRevision = preview.eligibilityRevision,
+                mainCharacterKey = preview.mainCharacterKey,
+                personGroupId = preview.personGroupId,
+                ledgerId = preview.ledgerId,
+              }
+              Dibs.AceGUI.AddButton(shell, reconciliationSection,
+                ((Dibs.L or {}).SEASONAL_ROSTER_BALANCE_CORRECT_ALT or "Set %s balance to 0"):format(targetName), function()
+                  if not self.eligibilityBalanceConfirmed or self.eligibilityBalancePreviewToken ~= previewToken then
+                    self:SetStatus(Dibs.OfficerUI.SeasonalText("CONFIRMATION_REQUIRED")); return
+                  end
+                  if not tostring(self.eligibilityReconciliationReason or ""):find("%S") then
+                    self:SetStatus(Dibs.OfficerUI.SeasonalText("REASON_REQUIRED")); return
+                  end
+                  self.eligibilityBalanceConfirmed = false
+                  local operationId = Dibs.NewId and Dibs.NewId("main-alt-reconciliation")
+                  local result = Dibs.SeasonalRoster.ApplyLegacyBalanceCorrection(
+                    self.eligibilityRosterSeasonId, targetName, expectedPreview,
+                    self.eligibilityReconciliationReason, operationId, true, Dibs.GetPlayerName())
+                  self:SetStatus(result and result.ok
+                    and ((Dibs.L or {}).SEASONAL_ROSTER_BALANCE_CORRECTED or "Balance correction recorded.")
+                    or ((Dibs.L or {}).SEASONAL_ROSTER_BALANCE_CORRECTION_FAILED or "Balance correction failed: ")
+                      .. Dibs.OfficerUI.SeasonalText(result and (result.code or result.diagnostic) or "SERVICE_UNAVAILABLE"))
+                  self:Refresh()
+                end, 360)
+            end
+          end
+        else
+          Dibs.AceGUI.AddLabel(shell, reconciliationSection,
+            "Balance preview unavailable: " .. tostring(previewReason), true)
+        end
+      end
       Dibs.AceGUI.AddButton(shell, recommendedSection, self.eligibilityAdvanced and "Hide Customize" or "Customize", function()
         self.eligibilityAdvanced = not self.eligibilityAdvanced
         self:Refresh()
@@ -7305,7 +8527,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
           local threshold
           if family == "TOKEN" then
             threshold = Dibs.AceGUI.AddEditBox(shell, detail, "Curio completion slots", nil, 120)
-            setControlText(threshold, tostring(policy and policy.completionThreshold or 4))
+            routeFns.setControlText(threshold, tostring(policy and policy.completionThreshold or 4))
           end
           Dibs.AceGUI.AddButton(shell, detail, "Save", function()
             local payload = {
@@ -7388,7 +8610,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         self.disputePage = 1
         self:Refresh()
       end, 300)
-      setControlText(self.disputeSearchBox, self.disputeQuery)
+      routeFns.setControlText(self.disputeSearchBox, self.disputeQuery)
       Dibs.AceGUI.AddButton(shell, filterSection, "Clear", function()
         self.disputeQuery, self.disputeStatusFilter, self.disputeSelectedId = "", "", nil
         self.disputeFollowUpFilter = "all"
@@ -7446,7 +8668,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       for _, request in ipairs(displayRequests) do
         local presentation = buildOfficerRequestRow(request)
         requestRows[#requestRows + 1] = {
-          formatHistoryDate(request.createdAt or request.updatedAt),
+          routeFns.formatHistoryDate(request.createdAt or request.updatedAt),
           presentation.details.player,
           presentation.details.item,
           presentation.status.label,
@@ -7568,7 +8790,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
             self.disputeReason = value or ""
             if updateDangerousButtons then updateDangerousButtons() end
           end, 540)
-          setControlText(reason, self.disputeReason)
+          routeFns.setControlText(reason, self.disputeReason)
 
           local function resolve(action, options)
             options = options or {}
@@ -7644,7 +8866,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
             local advancedSection = Dibs.AceGUI.AddSection(shell, tabs, "Advanced officer tools", "Administrative corrections are separate from the normal review workflow.")
             self.disputeAmount = self.disputeAmount or ""
             local amount = Dibs.AceGUI.AddEditBox(shell, advancedSection, "Balance change", function(value) self.disputeAmount = value or "" end, 180)
-            setControlText(amount, self.disputeAmount)
+            routeFns.setControlText(amount, self.disputeAmount)
             self.disputeConfirmed = self.disputeConfirmed == true
             Dibs.AceGUI.AddCheckBox(shell, advancedSection, "I understand this changes recorded Dibs data", self.disputeConfirmed, function(value)
               self.disputeConfirmed = value == true
@@ -7681,7 +8903,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
                 else Dibs.AceGUI.SetText(correctedPlayerDropdown, "Select a guild player...") end
               end
             end, 250)
-            setControlText(correctedPlayerSearch, self.disputeCorrectPlayerQuery)
+            routeFns.setControlText(correctedPlayerSearch, self.disputeCorrectPlayerQuery)
             correctedPlayerDropdown = Dibs.AceGUI.AddDropdown(shell, playerGroup, "Correct player", playerChoices, function(value)
               self.disputeCorrectPlayer = value and tostring(value) ~= "" and tostring(value) or nil
             end, 270)
@@ -7806,7 +9028,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
                 itemSearchState:SetText(filteredByRules and "No eligible items match the current Loot Rules." or (next(choices or {}) == nil and "No eligible raid items found." or ""))
               end
             end, 360)
-            setControlText(correctedItemSearch, self.disputeCorrectItemQuery)
+            routeFns.setControlText(correctedItemSearch, self.disputeCorrectItemQuery)
             local filteredContext = itemCandidateContext(selected, evidence)
             filteredContext.expansionID = self.disputeCorrectExpansionID
             filteredContext.seasonID = self.disputeCorrectSeasonID
@@ -7979,20 +9201,20 @@ local function createAceWindow(initialRoute, deferInitialRender)
       end, 240, { tooltip = helpText.UI_HELP_RC_HISTORY_SEASON })
       if self.reconSeasonId then Dibs.AceGUI.SetValue(seasonControl, self.reconSeasonId) end
       local aliases = Dibs.AceGUI.AddEditBox(shell, form, "DIB response aliases (comma separated)", function(value) self.reconAliasesText = value or "" end, 500)
-      setControlText(aliases, self.reconAliasesText)
+      routeFns.setControlText(aliases, self.reconAliasesText)
       Dibs.AceGUI.AttachHelp(aliases, "DIB response aliases", helpText.UI_HELP_RC_HISTORY_ALIASES)
       local historySearch = Dibs.AceGUI.AddEditBox(shell, form,
         helpText.HISTORY_FILTER_SEARCH or "Search history", function(value)
           self.reconQuery = value or ""
         end, 360)
-      setControlText(historySearch, self.reconQuery)
+      routeFns.setControlText(historySearch, self.reconQuery)
       Dibs.AceGUI.AttachHelp(historySearch, helpText.HISTORY_FILTER_SEARCH or "Search history",
         helpText.HISTORY_FILTER_SEARCH_HELP or "Search recorded item, player, raid, boss, source, or status details.")
       local historySource = Dibs.AceGUI.AddEditBox(shell, form,
         helpText.HISTORY_FILTER_SOURCE or "Source", function(value)
           self.reconSource = value or ""
         end, 220)
-      setControlText(historySource, self.reconSource)
+      routeFns.setControlText(historySource, self.reconSource)
       Dibs.AceGUI.AttachHelp(historySource, helpText.HISTORY_FILTER_SOURCE or "Source",
         helpText.HISTORY_FILTER_SEARCH_HELP or "Only recorded source values are searchable.")
       local inferStatus = Dibs.AceGUI.AddCheckBox(shell, form, "Infer missing award status from RC history", self.reconInferFinalStatus, function(value)
@@ -8000,7 +9222,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       end, 500)
       Dibs.AceGUI.AttachHelp(inferStatus, "Infer missing award status", helpText.UI_HELP_RC_HISTORY_INFER_STATUS)
       local limit = Dibs.AceGUI.AddEditBox(shell, form, "Maximum rows (1-500)", function(value) self.reconLimit = value or "200" end, 150)
-      setControlText(limit, self.reconLimit)
+      routeFns.setControlText(limit, self.reconLimit)
       Dibs.AceGUI.AttachHelp(limit, "Maximum rows", helpText.UI_HELP_RC_HISTORY_LIMIT)
       local dateRange = Dibs.AceGUI.AddSection(shell, form, "Date range", helpText.UI_HELP_RC_HISTORY_DATE_RANGE)
       local fromDateButton = Dibs.AceGUI.AddButton(shell, dateRange,
@@ -8192,7 +9414,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         local candidate = session.candidates[index]
         local projected = projectedById[candidate.candidateId] or {}
         candidateRecords[#candidateRecords + 1] = {
-          date = projected.date or formatHistoryDate(candidate.originalAwardTime, candidate.originalAwardTimeText),
+          date = projected.date or routeFns.formatHistoryDate(candidate.originalAwardTime, candidate.originalAwardTimeText),
           status = projected.status and projected.status.label or "Needs review",
           winner = projected.winner or "Unknown",
           item = projected.item or "Unavailable",
@@ -8406,13 +9628,13 @@ local function createAceWindow(initialRoute, deferInitialRender)
         Dibs.PreDibs.SetAnnouncementTemplates(value, currentTemplates.reminder)
         updatePreview()
       end, 520)
-      setControlText(self.preDibTemplateInput, templates.preDib)
+      routeFns.setControlText(self.preDibTemplateInput, templates.preDib)
       self.reminderTemplateInput = Dibs.AceGUI.AddEditBox(shell, templateSection, "Raid reminder", function(value)
         local currentTemplates = Dibs.PreDibs.GetAnnouncementTemplates()
         Dibs.PreDibs.SetAnnouncementTemplates(currentTemplates.preDib, value)
         updatePreview()
       end, 520)
-      setControlText(self.reminderTemplateInput, templates.reminder)
+      routeFns.setControlText(self.reminderTemplateInput, templates.reminder)
       local channelSection = Dibs.AceGUI.AddSection(shell, tabs, "Delivery channels",
         helpText.UI_HELP_ANNOUNCEMENT_CHANNELS)
       local channelRow = Dibs.AceGUI.AddInlineGroup(shell, channelSection)
@@ -9076,7 +10298,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
       end, 80)
       self.seasonLabel = Dibs.AceGUI.AddLabel(shell, tabs, "Season: " .. tostring(current and current.name or "None"), true)
       self.seasonNameInput = Dibs.AceGUI.AddEditBox(shell, tabs, "Season name", nil, 260)
-      setControlText(self.seasonNameInput, current and current.name or getDefaultSeasonName())
+      routeFns.setControlText(self.seasonNameInput, current and current.name or getDefaultSeasonName())
       Dibs.AceGUI.AddButton(shell, tabs, "Create", function()
         local name = makeUniqueSeasonName(trimText(getControlText(self.seasonNameInput)))
         local result = Dibs.ProtectedActions.Execute("season.create", nil, { name = name })
@@ -9140,7 +10362,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         self:Refresh()
       end, 250)
       Dibs.AceGUI.AddTooltip(self.dibsAdminSearch, "Search player", helpText.UI_HELP_DIBS_ADMIN)
-      setControlText(self.dibsAdminSearch, self.dibsAdminQuery or "")
+      routeFns.setControlText(self.dibsAdminSearch, self.dibsAdminQuery or "")
       Dibs.AceGUI.AddButton(shell, controls, "Clear", function()
         self.dibsAdminQuery = ""
         self.dibsAdminPage = 1
@@ -9405,324 +10627,29 @@ local function createAceWindow(initialRoute, deferInitialRender)
       return
     end
     if self.activeTab == "automaticDibs" then
-      -- The table shows allocations and their differences, not transaction
-      -- balances. Avoid scanning every roster member's ledger history here.
-      local details = Dibs.OfficerUI.BuildAutomaticAllocationDetails(currentId,
-        { deferSnapshots = true, includeBalance = false,
-          db = type(routeContext) == "table" and routeContext.db or nil })
-      self.automaticDibsFilter = self.automaticDibsFilter or "needsReconciliation"
-      local presentation = Dibs.OfficerUI.BuildAutomaticDibsPresentation(details,
-        self.automaticDibsFilter, self.automaticDibsQuery)
-      local pageScaffoldStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      local summary = presentation.summary
-      local headerControlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      local tablePageCreateStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
+      local hasConfiguredSeason = Dibs.SeasonalRoster
+        and Dibs.SeasonalRoster.HasConfiguredSeason
+        and Dibs.SeasonalRoster.HasConfiguredSeason(type(routeContext) == "table" and routeContext.db or nil)
       local tablePage = Dibs.AceGUI.AddTablePage(shell, tabs, {
-        footer = true, boundsFrame = navigation.content,
+        footer = false, boundsFrame = navigation.content,
       })
       if not tablePage then return end
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-page-create", tablePageCreateStartedAt)
-      end
-      local pageHeaderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      self.automaticDibsTablePage = tablePage
-      local pageHeader = tablePage.header
-      renderSetupPageHelp(shell, pageHeader, self, routeDB)
-      Dibs.AceGUI.AddHeading(shell, pageHeader, "Automatic Dibs", "Current rank allocation compared with assigned seasonal allocation.")
-      local catalogStatusStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      local catalogStatus = Dibs.OfficerUI.BuildRankCatalogStatus()
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-rank-catalog-status", catalogStatusStartedAt)
-      end
-      Dibs.AceGUI.AddLabel(shell, pageHeader, catalogStatus, true)
-      Dibs.AceGUI.AddLabel(shell, pageHeader, tostring(summary.playersNeedingReconciliation)
-        .. " players need reconciliation\nMissing allocation: +" .. tostring(summary.totalMissing) .. " Dibs", true)
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-header-content", pageHeaderStartedAt)
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-page-header", pageHeaderStartedAt)
-      end
-      local searchControlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      local searchControls = Dibs.AceGUI.AddInlineGroup(shell, pageHeader)
-      self.automaticDibsSearch = Dibs.AceGUI.AddEditBox(shell, searchControls,
-        "Search player", function(value)
-          self.automaticDibsQuery = value or ""
-          self.automaticDibsPage = 1
-          if self.RefreshAutomaticDibsTable then self:RefreshAutomaticDibsTable() end
-        end, 260)
-      if self.automaticDibsSearch and self.automaticDibsSearch.DisableButton then
-        self.automaticDibsSearch:DisableButton(true)
-      end
-      setControlText(self.automaticDibsSearch, self.automaticDibsQuery or "")
-      Dibs.AceGUI.AddButton(shell, searchControls, "Clear", function()
-        self.automaticDibsQuery = ""
-        self.automaticDibsPage = 1
-        if self.automaticDibsSearch then setControlText(self.automaticDibsSearch, "") end
-        if self.RefreshAutomaticDibsTable then self:RefreshAutomaticDibsTable() end
-      end, 60)
-      Dibs.AceGUI.AddButton(shell, searchControls, "Refresh roster", function()
-        if type(_G.GuildRoster) ~= "function" then
-          self.automaticDibsStatus = "Guild roster refresh is unavailable."
-          self:Refresh()
-          return
-        end
-        local refreshed = pcall(_G.GuildRoster)
-        if refreshed then
-          self.automaticDibsRosterLoading = true
-          self.automaticDibsStatus = "Waiting for guild roster update..."
-        else
-          self.automaticDibsStatus = "Unable to request a guild roster refresh."
-        end
-        self:Refresh()
-      end, 130)
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-search-controls", searchControlsStartedAt)
-      end
-      local statusFilterStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      local statusOptions = {
-        all = "All",
-        needsReconciliation = "Needs Reconciliation",
-        ready = "Ready",
-        surplus = "Surplus",
-      }
-      self.automaticDibsStatusFilter = Dibs.AceGUI.AddDibsSelect(shell, pageHeader, "Status",
-        statusOptions, function(value)
-          self.automaticDibsFilter = value
-          self.automaticDibsPage = 1
-          if self.RefreshAutomaticDibsTable then self:RefreshAutomaticDibsTable() end
-        end, 240, { tooltip = (Dibs.L or {}).UI_HELP_AUTOMATIC_DIBS_FILTER })
-      Dibs.AceGUI.SetValue(self.automaticDibsStatusFilter, self.automaticDibsFilter)
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-status-filter", statusFilterStartedAt)
-      end
-      local reconciliationControlsStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      if self.automaticDibsStatus and self.automaticDibsStatus ~= "" then
-        Dibs.AceGUI.AddLabel(shell, pageHeader, self.automaticDibsStatus, true)
-      end
-      local reconcileAllLabel = "Reconcile All — " .. tostring(summary.playersNeedingReconciliation)
-        .. " players / +" .. tostring(summary.totalMissing) .. " Dibs"
-      if summary.blockedReason and summary.blockedPlayers > 0 then
-        local _, blockedHelp = Dibs.OfficerUI.DescribeReconciliationBlock(summary.blockedReason)
-        Dibs.Midnight.AddStatusBadge(shell, pageHeader, "warning", blockedHelp)
-        if summary.blockedReason == "SYNC_BEHIND" then
-          Dibs.AceGUI.AddButton(shell, pageHeader, (Dibs.L or {}).SYNC_FIX_OPEN_BUTTON or "Fix synchronization", function()
-            self:ActivateRoute("sync")
-          end, 170)
-        end
-      end
-      if summary.playersNeedingReconciliation > 0 then
-        Dibs.AceGUI.AddButton(shell, pageHeader, reconcileAllLabel, function()
-          openAutomaticDibsConfirmation({
-            seasonId = currentId, rows = details.rows,
-            players = summary.playersNeedingReconciliation, total = summary.totalMissing,
-          })
-        end, 300)
-      end
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-reconciliation-controls", reconciliationControlsStartedAt)
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-header-controls", headerControlsStartedAt)
-      end
-      local tableSetupStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-        and Dibs.UIRenderStats.Begin(false)
-      self.automaticDibsPageSize = tonumber(self.automaticDibsPageSize) or 10
-      if self.automaticDibsPageSize ~= 5 and self.automaticDibsPageSize ~= 10
-        and self.automaticDibsPageSize ~= 15 and self.automaticDibsPageSize ~= 20 then
-        self.automaticDibsPageSize = 10
-      end
-      self.automaticDibsPage = math.max(1, tonumber(self.automaticDibsPage) or 1)
-      self.automaticDibsPagination = Dibs.AceGUI.AddPaginationFooter(shell, tablePage, {
-        pageSize = self.automaticDibsPageSize,
-        onPrevious = function()
-          self.automaticDibsPage = math.max(1, self.automaticDibsPage - 1)
-          if self.ReflowAutomaticDibsTable then self:ReflowAutomaticDibsTable() end
-        end,
-        onNext = function()
-          local rows = self.automaticDibsCachedPresentation and self.automaticDibsCachedPresentation.rows or {}
-          local _, currentPage, totalPages = Dibs.AceGUI.GetPageSlice(rows, self.automaticDibsPage,
-            self.automaticDibsPageSize)
-          self.automaticDibsPage = math.min(totalPages, currentPage + 1)
-          if self.ReflowAutomaticDibsTable then self:ReflowAutomaticDibsTable() end
-        end,
-        onPageSizeChanged = function(value)
-          local pageSize = tonumber(value)
-          if pageSize == 5 or pageSize == 10 or pageSize == 15 or pageSize == 20 then
-            local firstVisible = ((self.automaticDibsPage - 1) * self.automaticDibsPageSize) + 1
-            self.automaticDibsPageSize = pageSize
-            self.automaticDibsPage = math.floor((firstVisible - 1) / pageSize) + 1
-            if self.ReflowAutomaticDibsTable then self:ReflowAutomaticDibsTable() end
-          end
-        end,
-      })
-      self.automaticDibsPreviousPage = self.automaticDibsPagination and self.automaticDibsPagination.previous
-      self.automaticDibsPageIndicator = self.automaticDibsPagination and self.automaticDibsPagination.page
-      self.automaticDibsNextPage = self.automaticDibsPagination and self.automaticDibsPagination.next
-      self.automaticDibsPageSizeDropdown = self.automaticDibsPagination and self.automaticDibsPagination.pageSize
-      local tableHost = Dibs.AceGUI.Create(shell, "SimpleGroup", tablePage.scroll) or tablePage.scroll
-      if tableHost ~= tablePage.scroll then
-        if tableHost.SetFullWidth then tableHost:SetFullWidth(true) end
-        if tableHost.SetLayout then tableHost:SetLayout("List") end
-      end
-      self.ReflowAutomaticDibsTable = function(_, rebuildRows)
-        local reflowStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-        local currentPresentation = self.automaticDibsCachedPresentation
-        if not currentPresentation then
-          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-            Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-reflow", reflowStartedAt)
-          end
-          return
-        end
-        local currentWidth = tonumber(tablePage.root.frame and tablePage.root.frame.GetWidth
-          and tablePage.root.frame:GetWidth()) or 0
-        if currentWidth <= 0 then
-          currentWidth = tonumber(tabs.frame and tabs.frame.GetWidth and tabs.frame:GetWidth()) or 0
-        end
-        if currentWidth <= 0 then currentWidth = getOfficerContentWidth(frame, shell, frame._automaticDibsResizeWidth) end
-        if currentWidth <= 0 then currentWidth = 760 end
-        local currentMode = Dibs.OfficerUI.GetAutomaticDibsResponsiveLayoutMode(currentWidth)
-        local structureMode = (currentMode == "WIDE" or currentMode == "MEDIUM") and "FULL" or currentMode
-        local previousMode = self.automaticDibsLayoutMode
-        local sameStructure = previousMode == currentMode
-          or ((previousMode == "WIDE" or previousMode == "MEDIUM")
-            and (currentMode == "WIDE" or currentMode == "MEDIUM"))
-        if rebuildRows == false and sameStructure then
-          self.automaticDibsLayoutMode = currentMode
-          tablePage.UpdateViewportHeight()
-          if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-            Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-reflow", reflowStartedAt)
-          end
-          return
-        end
-        local columns = automaticDibsColumns(currentMode,
-          self.automaticDibsSortKey, self.automaticDibsSortDescending)
-        local metrics = Dibs.AceGUI.GetLayoutMetrics()
-        local pageSize = self.automaticDibsPageSize or 10
-        local sortStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-        local rowsForDisplay = sortAutomaticDibsRows(currentPresentation.rows,
-          self.automaticDibsSortKey, self.automaticDibsSortDescending)
-        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-row-sort", sortStartedAt)
-        end
-        local _, currentPage, totalPages, rowCount, firstRow, lastRow = Dibs.AceGUI.GetPageSlice(
-          rowsForDisplay, self.automaticDibsPage, pageSize)
-        self.automaticDibsPage = currentPage
-        for index = firstRow, lastRow do
-          local projected = rowsForDisplay[index]
-          if projected and projected.source and projected.source.snapshotDeferred then
-            local row = projected.source
-            local snapshotStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin
-              and Dibs.UIRenderStats.Begin(false)
-            frame._ensureAutomaticReconciliationSnapshot(row)
-            if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-              Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-reconciliation-snapshot", snapshotStartedAt)
-            end
-            projected.actionText = row.actionable and "RECONCILE"
-              or Dibs.OfficerUI.DescribeReconciliationBlock(row.blockedReason)
-          end
-        end
-        local projectionStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-        local tableRows = frame._automaticDibsTableRows({ rows = rowsForDisplay }, currentMode, firstRow, lastRow)
-        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-row-projection", projectionStartedAt)
-        end
-        local tableRowHeight = math.max(metrics.rowHeight, metrics.buttonHeight + 8)
-        if self.automaticDibsPagination then
-          self.automaticDibsPage, totalPages = self.automaticDibsPagination.UpdateState(
-            self.automaticDibsPage, rowCount, pageSize)
-        end
-        Dibs.AceGUI.Clear(tablePage.columnHeader)
-        Dibs.AceGUI.Clear(tableHost)
-        local tableRenderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-        Dibs.AceGUI.AddTable(shell, tableHost, columns, tableRows, 430, function(displayRow)
-          local row = displayRow and displayRow.reconciliationRow
-          if not row or not row.actionable or (tonumber(row.difference) or 0) <= 0 then return nil end
-          return { text = (Dibs.L or {}).UI_ACTION_RECONCILE or "RECONCILE", callback = function()
-            openAutomaticDibsConfirmation({ row = row })
-          end }
-        end, {
-          widthHint = currentWidth, disableContextMenu = true, noScrolling = true,
-          timingLabel = "automatic-dibs",
-          tooltipOnlyWhenTruncated = true,
-          fluidColumns = true, headerParent = tablePage.columnHeader,
-          horizontalPadding = metrics.tableHorizontalPadding,
-          scrollbarReserve = metrics.tableScrollbarReserve, columnGap = metrics.tableColumnGap,
-          rowHeight = tableRowHeight,
-          emptyText = "No players match this filter and search.",
-          onHeaderClick = function(column)
-            local key = column.sortKey
-            if not key then return end
-            if self.automaticDibsSortKey == key then
-              self.automaticDibsSortDescending = not self.automaticDibsSortDescending
-            else
-              self.automaticDibsSortKey, self.automaticDibsSortDescending = key, false
-            end
-            self.automaticDibsPage = 1
-            self:ReflowAutomaticDibsTable(true)
-          end,
-          cellTooltip = function(displayRow, index)
-            if currentMode == "NARROW" and index == 1 and displayRow.reconciliationRow then
-              return displayRow.automaticDetailTooltip
-            end
-            return nil
-          end,
-        })
-        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-render", tableRenderStartedAt)
-        end
-        tablePage.UpdateViewportHeight()
-        self.automaticDibsLayoutMode = currentMode
-        self.automaticDibsStructureMode = structureMode
-        if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-          Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-reflow", reflowStartedAt)
-        end
-      end
-      self.RefreshAutomaticDibsTable = function()
-        self.automaticDibsCachedPresentation = Dibs.OfficerUI.BuildAutomaticDibsPresentation(
-          self.automaticDibsCachedDetails, self.automaticDibsFilter, self.automaticDibsQuery)
-        self:ReflowAutomaticDibsTable()
-      end
-      self.automaticDibsCachedDetails = details
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-table-setup", tableSetupStartedAt)
-      end
-      if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
-        Dibs.UIRenderStats.Record("Officer data", "automatic-dibs-page-scaffold", pageScaffoldStartedAt)
-      end
-      if shell.AddResizeHandler and not self._automaticDibsResizeHandlerInstalled then
-        self._automaticDibsResizeHandlerInstalled = true
-        shell:AddResizeHandler(function(activeShell, width)
-          if frame.activeTab ~= "automaticDibs" or type(frame.ReflowAutomaticDibsTable) ~= "function" then return end
-          local resizedWidth = tonumber(width)
-          if resizedWidth and resizedWidth > 0 then frame._automaticDibsResizeWidth = resizedWidth end
-          if frame._automaticDibsReflowQueued then return end
-          frame._automaticDibsReflowQueued = true
-          local function reflow()
-            frame._automaticDibsReflowQueued = nil
-            if frame.activeTab == "automaticDibs" and type(frame.ReflowAutomaticDibsTable) == "function" then
-              frame:ReflowAutomaticDibsTable(false)
-            end
-          end
-          if Dibs.AceGUI.RequestRefresh then
-            Dibs.AceGUI.RequestRefresh("AUTOMATIC_DIBS_RESIZE", reflow)
-          else
-            reflow()
-          end
-        end)
-      end
-      if self.reconciliationBatchReport and self.reconciliationBatchReport.seasonId == currentId then
-        for _, result in ipairs(self.reconciliationBatchReport.report.results or {}) do
-          Dibs.AceGUI.AddLabel(shell, pageHeader, tostring(result.playerName) .. " | " .. result.outcome
-            .. (result.reasonCode and (" | " .. tostring(result.reasonCode)) or ""), true)
-        end
-      end
-      self.statusText = Dibs.AceGUI.AddLabel(shell, pageHeader, self.statusMessage or "Ready", true)
+      local header = tablePage.header
+      renderSetupPageHelp(shell, header, self, routeDB)
+      Dibs.AceGUI.AddHeading(shell, header, "Automatic Dibs", "Season-scoped member allocation.")
+      local labels = Dibs.L or {}
+      local message = hasConfiguredSeason == true
+        and (labels.SEASONAL_ROSTER_RECONCILIATION_PENDING
+          or "Seasonal reconciliation is not available yet. It will include only approved participants in the active season; guild-wide reconciliation is hidden.")
+        or (labels.SEASONAL_ROSTER_RECONCILIATION_DEFERRED
+          or "Create the first seasonal raid roster before reconciling member allocations.")
+      Dibs.AceGUI.AddLabel(shell, header, message, true)
       tablePage.UpdateViewportHeight()
+      self.automaticDibsTablePage = tablePage
+      self.automaticDibsCachedDetails = nil
+      self.automaticDibsCachedPresentation = nil
+      self.RefreshAutomaticDibsTable = nil
+      self.ReflowAutomaticDibsTable = nil
       return
     end
 
@@ -9761,7 +10688,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         Dibs.AceGUI.AddTooltip(input, definition.label, strings.HISTORY_FILTER_SEARCH_HELP)
         local value = historyCriteria[definition.field]
         if definition.field == "query" and trimText(value) == "" then value = self.ledgerQuery end
-        setControlText(input, value or "")
+        routeFns.setControlText(input, value or "")
       end
     end
     self.searchBox = filterInputs.query
@@ -9843,8 +10770,8 @@ local function createAceWindow(initialRoute, deferInitialRender)
     self.ledgerPageSize = tonumber(self.ledgerPageSize) or 10
     local view
     if isPreDibRequestRoute then
-      local emptyText = preDibFilterError and officerHistoryFilterErrorText(preDibFilterError)
-        or (hasOfficerHistoryFilters(requestCriteria)
+      local emptyText = preDibFilterError and routeFns.officerHistoryFilterErrorText(preDibFilterError)
+        or (routeFns.hasOfficerHistoryFilters(requestCriteria)
           and (((Dibs.L or {}).HISTORY_FILTER_NO_RESULTS) or "No history records match these filters.")
           or "No pre-Dibs for this season.")
       view = { title = "Pre-Dibs", lines = { emptyText }, filterError = preDibFilterError }
@@ -9869,7 +10796,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
     end
     local pageTitle = self.activeTab == "preDibRequests" and "Pre-Dib Requests" or view.title
     if preDibFilterError then
-      Dibs.AceGUI.AddLabel(shell, pageHeader, officerHistoryFilterErrorText(preDibFilterError), true)
+      Dibs.AceGUI.AddLabel(shell, pageHeader, routeFns.officerHistoryFilterErrorText(preDibFilterError), true)
     end
     self.ledgerTitle = Dibs.AceGUI.AddHeading(shell, pageHeader, pageTitle .. " (" .. totalCount .. ")")
     local headerText, headerTooltip
@@ -9896,7 +10823,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if isPreDibRequestRoute then
       for _, row in ipairs(pagedPreDibRows) do
         local values = {
-          formatHistoryDate(row.createdAt), row.details.player,
+          routeFns.formatHistoryDate(row.createdAt), row.details.player,
           row.status.label, row.details.item, row.details.difficulty,
           row.details.mode, row.details.delivery ~= "" and row.details.delivery or row.explanation,
         }
@@ -9916,7 +10843,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
         })
       end
     else
-      for _, line in ipairs(view.lines) do table.insert(tableRows, splitPipeLine(line, expectedColumns)) end
+      for _, line in ipairs(view.lines) do table.insert(tableRows, routeFns.splitPipeLine(line, expectedColumns)) end
     end
     local columns = {}
     if expectedColumns == 7 and self.activeTab == "automaticDibs" then
@@ -10127,7 +11054,7 @@ local function createAceWindow(initialRoute, deferInitialRender)
     if not routeVisible then
       local routeModules = {
         disputes = "requests", preDibs = "preDibs", preDibRequests = "preDibs", announcements = "announcements",
-        integration = "rclootcouncil", eligibility = "lootEligibility",
+        integration = "rclootcouncil", eligibility = "lootEligibility", seasonalRoster = "seasonalRoster",
       }
       if not routeModules[normalized] or moduleEnabled(routeModules[normalized], statusDatabase) then normalized = "overview" end
     end

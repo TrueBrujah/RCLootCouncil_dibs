@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-03
 
-**Status**: Planning revision — unified seasonal lifecycle; no production implementation authorized by this spec revision yet
+**Status**: Implementation in progress — canonical season identity and additive schema migration are implemented locally; lifecycle, activation, review and sync gates remain in progress
 
 **Input**: User direction: manage a raid season from draft through registration, officer review, Dibs allocation, activation, completion, and archive as one lifecycle; preserve player signup, read-only roster, Main/Alt identity, audit, and statistics.
 

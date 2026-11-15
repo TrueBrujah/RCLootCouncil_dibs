@@ -2,6 +2,18 @@ local host = _G
 local disputeFixtures = host.require("helpers.dispute_fixtures")
 local M = {}
 
+-- Keep the canonical client harness independent while supplying the failure
+-- point inventory expected by its integration suite. The generic dispute
+-- fixtures module intentionally contains only request/transaction builders.
+if type(disputeFixtures.getFailurePoints) ~= "function" then
+  function disputeFixtures.getFailurePoints()
+    return {
+      "pre-validation", "pre-acceptance", "after-canonical-acceptance",
+      "transaction-row:1", "transaction-row:2", "transaction-index", "balance",
+    }
+  end
+end
+
 local function isClientGlobal(name)
   return name == "Dibs"
     or name == "DibsDB"
@@ -64,7 +76,13 @@ local function encode(value, active)
 end
 
 local function decode(payload)
-  local chunk, loadError = host.load("return " .. payload, "canonical client wire", "t", {})
+  local chunk, loadError
+  if host._VERSION == "Lua 5.1" then
+    chunk, loadError = host.loadstring("return " .. payload, "canonical client wire")
+    if chunk and type(host.setfenv) == "function" then host.setfenv(chunk, {}) end
+  else
+    chunk, loadError = host.load("return " .. payload, "canonical client wire", "t", {})
+  end
   if not chunk then return nil, loadError end
   local ok, value = pcall(chunk)
   if not ok then return nil, value end
@@ -83,7 +101,13 @@ local function makeEnvironment()
   environment.register_reset = function() end
   environment.require = function(name)
     if name == "helpers.wow_api" then
-      local chunk, loadError = host.loadfile("tests/helpers/wow_api.lua", "t", environment)
+      local chunk, loadError
+      if host._VERSION == "Lua 5.1" then
+        chunk, loadError = host.loadfile("tests/helpers/wow_api.lua")
+        if chunk and type(host.setfenv) == "function" then host.setfenv(chunk, environment) end
+      else
+        chunk, loadError = host.loadfile("tests/helpers/wow_api.lua", "t", environment)
+      end
       if not chunk then error(loadError, 2) end
       return chunk()
     end
@@ -92,8 +116,37 @@ local function makeEnvironment()
   return environment
 end
 
+local function loadInEnvironment(path, environment)
+  local chunk, loadError
+  if host._VERSION == "Lua 5.1" then
+    chunk, loadError = host.loadfile(path)
+    if chunk and type(host.setfenv) == "function" then host.setfenv(chunk, environment) end
+  else
+    chunk, loadError = host.loadfile(path, "t", environment)
+  end
+  return chunk, loadError
+end
+
 local function normalizeName(name)
   return tostring(name or ""):gsub("%s+", ""):lower()
+end
+
+local function makeFailureInjector()
+  local armed, triggered = nil, {}
+  return {
+    Arm = function(_, point) armed = tostring(point) end,
+    Hit = function(_, point)
+      if armed ~= tostring(point) then return false end
+      local matched = armed
+      armed = nil
+      local failure = { code = "INJECTED_TEST_FAILURE", point = matched }
+      triggered[#triggered + 1] = failure
+      return true, failure
+    end,
+    Reset = function() armed, triggered = nil, {} end,
+    IsArmed = function() return armed ~= nil end,
+    GetTriggered = function() return clone(triggered) end,
+  }
 end
 
 function M.new(options)
@@ -110,7 +163,7 @@ function M.new(options)
   function world:Load(name, savedVariables)
     assert(self.clients[name] == nil, "client already loaded: " .. tostring(name))
     local environment = makeEnvironment()
-    local loaderChunk, loaderError = host.loadfile("tests/helpers/load_addon.lua", "t", environment)
+    local loaderChunk, loaderError = loadInEnvironment("tests/helpers/load_addon.lua", environment)
     if not loaderChunk then error(loaderError, 2) end
     local loader = loaderChunk()
     local roster = {}
@@ -131,12 +184,26 @@ function M.new(options)
       },
     })
     if not dibs then error("Dibs failed to initialize for " .. tostring(name), 2) end
+    if environment.Dibs ~= dibs then error("isolated loader did not retain Dibs in the client environment", 2) end
+    local failureInjector = makeFailureInjector()
+    if dibs.GetPlayerName() ~= name then
+      error("client WoW API environment resolved the wrong local player", 2)
+    end
+    for _, existing in pairs(self.clients) do
+      if existing.env == environment or existing.dibs == dibs or existing.dibs.GetDB() == dibs.GetDB()
+        or existing.failureInjector == failureInjector then
+        error("canonical test clients are not isolated", 2)
+      end
+      if existing.dibs.GetPlayerName() ~= existing.name then
+        error("loading a client changed another client's local player", 2)
+      end
+    end
 
     local client = {
       name = name,
       env = environment,
       dibs = dibs,
-      failureInjector = disputeFixtures.newFailureInjector(),
+      failureInjector = failureInjector,
     }
     dibs.Ace3.Serialize = encode
     dibs.Ace3.Deserialize = function(payload)

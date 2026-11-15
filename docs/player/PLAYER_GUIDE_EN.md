@@ -124,6 +124,15 @@ recorded items across seasons in the current guild scope, newest first, with
 hover a row for its source, weekly reset, synchronization state, and evidence
 explanation. Private Officer review evidence is not displayed.
 
+The top of the page shows whether automatic capture is **active**,
+**unavailable on this client**, or **disabled by guild policy**. While active,
+the counter shows readable equipment choices in the currently opened Vault,
+not the number of items already acquired. A Mythic keystone or another
+recognized supplemental reward does not count as an equipment choice or
+prevent capture of the chosen item.
+**Last capture** explains the latest attempt in this session. It is a
+temporary diagnostic, not history retained after a reload.
+
 The Player window can show Great Vault acquisitions with their item, source,
 weekly reset, verification state, eligibility explanation, and sync state.
 Use the Great Vault history filters for recorded item/source/status/date
@@ -135,8 +144,19 @@ Opening the Vault or viewing a reward choice is not a completed claim.
 Automatic detection requires the selected claim, receipt of the same item by
 your character, and the end of reward availability. Dibs must be active before
 the claim; it does not reconstruct past claims from chat or bag contents.
-Real-client validation remains pending. When Retail does not expose all the
-required evidence, use:
+If the item's tooltip data loads late, Dibs retries the same proven capture
+when the data arrives, while its context remains valid. Open history refreshes
+after recording.
+
+Each member must have Dibs running when claiming the reward, with **Pre-Dibs**
+enabled. Recorded acquisitions then synchronize periodically within the guild
+to **OfficerUI > Vault Review**; delivery is not necessarily immediate.
+Transfers respect owner identity and Officer review permissions. Past claims
+that were never recorded are not recovered automatically. Real player-to-Officer
+validation remains pending: use the
+[0.8.12 Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md).
+
+When Retail does not expose all the required evidence, use:
 
 ```text
 /dibs vault <item link | [Item Name] | itemID> <LFR | Normal | Heroic | Mythic>
@@ -301,3 +321,20 @@ that require RCLootCouncil award evidence remain unavailable.
 `Unavailable` usually means optional context is missing. `Blocked` means a
 security or configuration condition prevents the action. Do not bypass either
 state; ask a GM or Officer to verify the setup.
+
+## Seasonal raid registration
+
+Select the season in **Seasonal Raid Roster** and read its published raid rules.
+While registration is open, submit or edit your own character, specializations,
+roles and requested path. The Core progression path is a request; Core Raider
+status requires a separate Officer decision. Registration never changes Dibs.
+
+Declare Main/Alt relationships explicitly and request Main changes through the
+season form. An Officer reviews these requests. An approved Main change starts
+14 days of Dibs probation; it does not change ordinary RCLootCouncil responses.
+The public roster is read-only and its filters apply to both rows and totals.
+Changing seasons reloads the selected season's registration before saving.
+
+When the module is disabled, its history is preserved and writes are blocked.
+An incomplete synchronization must be resolved before an activation is treated
+as confirmed. A preview alone does not allocate Dibs.

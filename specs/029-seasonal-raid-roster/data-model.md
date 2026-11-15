@@ -49,6 +49,7 @@ This is a planning contract. Existing persisted objects are migrated additively;
 ## Seasonal allocation and reconciliation
 
 - One allocation configuration per season and native WoW guild rank, plus explicit no-rank policy.
+- Rank allocation drafts remain local until a GM/Officer publishes a validated snapshot into the immutable seasonal revision chain; the snapshot hash is synchronized and is the preview's allocation authority.
 - Only approved roster persons/Main snapshots are included. Each person is counted once; inactive/offline guild members outside the roster are excluded.
 - Reconciliation preview records `seasonId`, roster/rank/config revisions, expected and actual allocation, proposed ledger events, conflicts, and a stable idempotency key.
 - Apply requires verified authority, unchanged preview revisions, explicit confirmation, and a reason where an adjustment is made. Events are append-only.

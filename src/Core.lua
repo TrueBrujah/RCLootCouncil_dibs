@@ -74,7 +74,10 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.11"
+Dibs.VERSION = "0.8.12"
+-- RF-0012 dispute corrections stay closed in release builds until the
+-- canonical multi-entry operation path has passed its Retail validation.
+Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = false
 local getAddonMetadata = C_AddOns and C_AddOns.GetAddOnMetadata or _G.GetAddOnMetadata
 if type(getAddonMetadata) == "function" then
   local ok, buildId = pcall(getAddonMetadata, Dibs.ADDON_NAME, "X-Dibs-Build")
@@ -257,6 +260,15 @@ local defaultDB = {
       preDibs = true, requests = true, rclootcouncil = true, announcements = true,
       lootEligibility = true, historicalReconciliation = true,
     } },
+  },
+    seasonalRoster = {
+      schema = 2,
+    nextId = 1,
+    seasons = {},
+      seasonAliases = { schema = 1, records = {} },
+    auditLog = {},
+    auditOperationIndex = {},
+    operations = {},
   },
   legacyBaseline = {
     schema = 1,
@@ -469,6 +481,52 @@ local function validateGuildSubtrees(db, root, changes, guildKey)
   sanitizeRecordMap(db.seasons, root, changes, scope .. ".seasons")
   ensureTable(db, "rankRules", {}, root, changes, scope .. ".rankRules")
   sanitizeRecordMap(db.rankRules, root, changes, scope .. ".rankRules")
+
+  -- This subtree is additive and independently versioned. Preserve unknown
+  -- future schemas byte-for-byte at the table level; the domain service will
+  -- fail closed rather than downgrading data written by a newer build.
+  local seasonalRoster = ensureTable(db, "seasonalRoster", defaultDB.seasonalRoster, root, changes, scope .. ".seasonalRoster")
+  if seasonalRoster.schema == 1 then
+    if not isWholeNumber(seasonalRoster.nextId) or seasonalRoster.nextId < 1 then
+      seasonalRoster.nextId = 1
+      changes.changed = true
+    end
+    ensureTable(seasonalRoster, "seasons", {}, root, changes, scope .. ".seasonalRoster.seasons")
+    local aliases = ensureTable(seasonalRoster, "seasonAliases", { schema = 1, records = {} }, root, changes,
+      scope .. ".seasonalRoster.seasonAliases")
+    ensureTable(aliases, "records", {}, root, changes, scope .. ".seasonalRoster.seasonAliases.records")
+    -- Preserve the old roster key and record its previous Dibs-season link as
+    -- an explicit migration alias. Do not guess or rewrite either identity.
+    for rosterSeasonId, season in pairs(seasonalRoster.seasons) do
+      if type(rosterSeasonId) == "string" and type(season) == "table" and not aliases.records[rosterSeasonId] then
+        local legacyIds, seen = {}, {}
+        for _, revision in pairs(season.revisions or {}) do
+          local legacyId = type(revision) == "table" and revision.identitySeasonId
+          if type(legacyId) == "string" and legacyId ~= "" and legacyId ~= rosterSeasonId and not seen[legacyId] then
+            legacyIds[#legacyIds + 1] = legacyId
+            seen[legacyId] = true
+          end
+        end
+        table.sort(legacyIds)
+        aliases.records[rosterSeasonId] = { canonicalSeasonId = rosterSeasonId,
+          legacyDibsSeasonIds = legacyIds, migration = "SCHEMA_1_IDENTITY_LINK" }
+        changes.changed = true
+      end
+    end
+    ensureTable(seasonalRoster, "auditLog", {}, root, changes, scope .. ".seasonalRoster.auditLog")
+    ensureTable(seasonalRoster, "auditOperationIndex", {}, root, changes, scope .. ".seasonalRoster.auditOperationIndex")
+    ensureTable(seasonalRoster, "operations", {}, root, changes, scope .. ".seasonalRoster.operations")
+    seasonalRoster.schema = 2
+    changes.changed, changes.migration = true, true
+  elseif seasonalRoster.schema == 2 then
+    ensureTable(seasonalRoster, "seasons", {}, root, changes, scope .. ".seasonalRoster.seasons")
+    local aliases = ensureTable(seasonalRoster, "seasonAliases", { schema = 1, records = {} }, root, changes,
+      scope .. ".seasonalRoster.seasonAliases")
+    ensureTable(aliases, "records", {}, root, changes, scope .. ".seasonalRoster.seasonAliases.records")
+    ensureTable(seasonalRoster, "auditLog", {}, root, changes, scope .. ".seasonalRoster.auditLog")
+    ensureTable(seasonalRoster, "auditOperationIndex", {}, root, changes, scope .. ".seasonalRoster.auditOperationIndex")
+    ensureTable(seasonalRoster, "operations", {}, root, changes, scope .. ".seasonalRoster.operations")
+  end
 
   local ledger = ensureTable(db, "ledger", defaultDB.ledger, root, changes, scope .. ".ledger")
   ensureTable(ledger, "transactions", {}, root, changes, scope .. ".ledger.transactions")
@@ -727,8 +785,15 @@ local function isReadyRoot(root, guildKey)
   local db = root.guilds[guildKey]
   if type(db) ~= "table" then return false, "guild-entry-type" end
   if db.version ~= GUILD_SCHEMA_VERSION then return false, "guild-schema" end
-  for _, key in ipairs({ "seasons", "rankRules", "ledger", "permissions", "preDibs", "disputes", "reconciliation", "characterEligibility", "governance", "backups", "auditLog", "sync", "settings" }) do
+  for _, key in ipairs({ "seasons", "rankRules", "ledger", "permissions", "preDibs", "disputes", "reconciliation", "characterEligibility", "governance", "seasonalRoster", "backups", "auditLog", "sync", "settings" }) do
     if type(db[key]) ~= "table" then return false, "guild-subtree-" .. key end
+  end
+  local seasonalRoster = db.seasonalRoster
+  if seasonalRoster.schema == 2 and (not isWholeNumber(seasonalRoster.nextId) or seasonalRoster.nextId < 1
+    or type(seasonalRoster.seasons) ~= "table" or type(seasonalRoster.auditLog) ~= "table"
+    or type(seasonalRoster.seasonAliases) ~= "table" or type(seasonalRoster.seasonAliases.records) ~= "table"
+    or type(seasonalRoster.auditOperationIndex) ~= "table" or type(seasonalRoster.operations) ~= "table") then
+    return false, "guild-subtree-seasonalRoster-shape"
   end
   return true
 end
@@ -1184,7 +1249,15 @@ function Dibs.GetCurrentSeasonId(dbOverride)
     db = Dibs.db
   end
   if db.currentSeasonId and db.currentSeasonId ~= "" then
-    return db.currentSeasonId
+    local selected = type(db.seasons) == "table" and db.seasons[db.currentSeasonId] or nil
+    if selected and selected.isActive == true and not selected.isArchived and not selected.isDraft then
+      return db.currentSeasonId
+    end
+    if Dibs.Seasons and Dibs.Seasons.GetCurrent then
+      local season = Dibs.Seasons.GetCurrent(db)
+      return season and season.id or nil
+    end
+    return nil
   end
 
   -- Preserve the legacy default-season initialization path, which may mutate
@@ -2443,6 +2516,24 @@ function Dibs.Initialize()
 
   ensureDB()
 
+  -- Rebuild canonical correction projections before startup services can expose
+  -- or act on them. The Disputes recovery routine first verifies the complete
+  -- canonical history and only rebuilds the explicitly recoverable projection
+  -- and index classifications; conflicting history is left untouched.
+  if Dibs.Disputes and type(Dibs.Disputes.ReconstructOperationStates) == "function" then
+    local recoveryOk, recovery = pcall(Dibs.Disputes.ReconstructOperationStates, "guild-primary")
+    Dibs.canonicalOperationRecoveryStatus = recoveryOk and recovery or {
+      rebuilt = false, reasonCode = "CANONICAL_RECOVERY_FAILED",
+    }
+    if not recoveryOk and Dibs.Debug then
+      Dibs.Debug("canonical dispute recovery failed", tostring(recovery))
+    end
+  else
+    Dibs.canonicalOperationRecoveryStatus = {
+      rebuilt = false, reasonCode = "CANONICAL_RECOVERY_UNAVAILABLE",
+    }
+  end
+
   if Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault then
     Dibs.Seasons.GetOrCreateDefault()
   end
@@ -2537,15 +2628,22 @@ end
 function Dibs.SetupRuntimeEvents()
   if Dibs.runtimeEventsRegistered then return true end
   local events = { "PLAYER_LOGIN", "ADDON_LOADED", "GROUP_ROSTER_UPDATE", "GUILD_ROSTER_UPDATE", "CHAT_MSG_SYSTEM", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_REGEN_ENABLED" }
-  local usingAceEvent = Dibs.Ace3 and Dibs.Ace3.RegisterEvent
-  if usingAceEvent then
-    for _, event in ipairs(events) do Dibs.Ace3.RegisterEvent(event, onRuntimeEvent) end
-    if not (Dibs.Sync and Dibs.Sync.RegisterTransport and Dibs.Sync.RegisterTransport()) then
-      Dibs.Ace3.RegisterEvent("CHAT_MSG_ADDON", onRuntimeEvent)
+  local usingFallback = false
+  local function registerEvent(event)
+    local ok, registered = false, false
+    if Dibs.Ace3 and type(Dibs.Ace3.RegisterEvent) == "function" then
+      ok, registered = pcall(Dibs.Ace3.RegisterEvent, event, onRuntimeEvent)
     end
-  else
-    for _, event in ipairs(events) do eventFrame:RegisterEvent(event) end
-    eventFrame:RegisterEvent("CHAT_MSG_ADDON")
+    if not ok or registered ~= true then
+      eventFrame:RegisterEvent(event)
+      usingFallback = true
+    end
+  end
+  for _, event in ipairs(events) do registerEvent(event) end
+  if not (Dibs.Sync and Dibs.Sync.RegisterTransport and Dibs.Sync.RegisterTransport()) then
+    registerEvent("CHAT_MSG_ADDON")
+  end
+  if usingFallback then
     eventFrame:SetScript("OnEvent", function(_, event, ...) return onRuntimeEvent(event, ...) end)
   end
   Dibs.runtimeEventsRegistered = true

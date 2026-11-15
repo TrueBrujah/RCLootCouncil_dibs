@@ -836,12 +836,12 @@ end
 
 local function getJournalEncounterDetails(index, instanceID)
   if type(EJ_GetEncounterInfoByIndex) ~= "function" then return nil end
-  local ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index, instanceID)
+  local ok, name, description, encounterID = pcall(EJ_GetEncounterInfoByIndex, index, instanceID)
   if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
     if tostring(name or "") == "" then return nil end
     return tonumber(encounterID), tostring(name)
   end
-  ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index)
+  ok, name, description, encounterID = pcall(EJ_GetEncounterInfoByIndex, index)
   if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
     if tostring(name or "") == "" then return nil end
     return tonumber(encounterID), tostring(name)
@@ -1307,7 +1307,7 @@ function Dibs.EncounterJournal.DumpVisibleLootDebug()
       local previousEncounter = type(currentInfo) == "table" and tonumber(currentInfo["encounterID"]) or nil
 
       for encounterIndex = 1, 200 do
-        local okEncounter, encounterID = pcall(EJ_GetEncounterInfoByIndex, encounterIndex, instanceID)
+        local okEncounter, encounterName, encounterDescription, encounterID = pcall(EJ_GetEncounterInfoByIndex, encounterIndex, instanceID)
         if not okEncounter or not tonumber(encounterID) or tonumber(encounterID) <= 0 then
           break
         end
@@ -2045,11 +2045,11 @@ do
   end
 
   local registeredWithAce = Dibs.Ace3 and type(Dibs.Ace3.RegisterEvent) == "function"
-      and Dibs.Ace3.RegisterEvent("PLAYER_LOGIN", handleBootstrapEvent)
-      and Dibs.Ace3.RegisterEvent("ADDON_LOADED", handleBootstrapEvent)
+      and Dibs.Ace3.RegisterEvent("PLAYER_LOGIN", function(event, ...) handleBootstrapEvent(nil, event, ...) end)
+      and Dibs.Ace3.RegisterEvent("ADDON_LOADED", function(event, ...) handleBootstrapEvent(nil, event, ...) end)
   if registeredWithAce then
-    Dibs.Ace3.RegisterEvent("ENCOUNTER_START", handleEncounterEvent)
-    Dibs.Ace3.RegisterEvent("ENCOUNTER_END", handleEncounterEvent)
+    Dibs.Ace3.RegisterEvent("ENCOUNTER_START", function(event, ...) handleEncounterEvent(nil, event, ...) end)
+    Dibs.Ace3.RegisterEvent("ENCOUNTER_END", function(event, ...) handleEncounterEvent(nil, event, ...) end)
   else
     local bootstrap = CreateFrame("Frame")
     bootstrap:RegisterEvent("PLAYER_LOGIN")

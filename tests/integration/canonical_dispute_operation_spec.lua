@@ -297,7 +297,7 @@ describe("RF-0012 canonical dispute operation gate", function()
 
   it("commits both target-transfer legs in one sequence and exact replay is a no-op", function()
     local world, coordinator, original, request, seasonId, operation = canonicalTransferCase()
-    local writer = enableCanonicalWriter(coordinator)
+    local writer = enableCanonicalCorrectionPath(coordinator)
     local ledger = primaryLedger(coordinator)
     local originalRow = clients.DeepCopy(ledger.transactions[original.transactionId])
     local transactionsBefore = #coordinator.dibs.Ledger.GetAllTransactions("guild-primary")
@@ -320,8 +320,10 @@ describe("RF-0012 canonical dispute operation gate", function()
     coordinator.dibs.NewId = newId
     assert_true(result.accepted)
     assert_false(result.idempotentReplay)
-    assert_true(result.canonicalAccepted)
-    assert_true(result.projectionComplete)
+    assert_equal(1, operationCommitCount(primaryLedger(coordinator)),
+      "accepted operation did not append exactly one canonical commit")
+    assert_equal(transactionsBefore + 2, #coordinator.dibs.Ledger.GetAllTransactions("guild-primary"),
+      "accepted operation did not complete both transaction projections")
     -- The Ledger must never allocate the operation or entry identities. A
     -- transport message ID for the announcement is a separate concern.
     assert_false(operationIdGenerated, "Ledger allocated an operation or entry ID")
@@ -354,14 +356,14 @@ describe("RF-0012 canonical dispute operation gate", function()
 
   it("rejects an invalid second leg and pre-acceptance faults without mutation", function()
     local world, coordinator, _, _, _, operation = canonicalTransferCase()
-    local writer = enableCanonicalWriter(coordinator)
+    local writer = enableCanonicalCorrectionPath(coordinator)
     local invalid = clients.DeepCopy(operation)
     invalid.signedEntries[2].quantityDelta = 0
     invalid.payloadHash = coordinator.dibs.Ledger.CalculateDisputeOperationPayloadHash(invalid)
     local before = world:Snapshot(coordinator)
     local invalidResult = writer({ actor = coordinator.name }, invalid)
     assertBlocked(invalidResult)
-    assert_false(invalidResult.canonicalAccepted == true)
+    assert_equal(0, operationCommitCount(primaryLedger(coordinator)))
     assert_true(clients.DeepEqual(before, world:Snapshot(coordinator)),
       "invalid second leg changed SavedVariables")
 
@@ -370,7 +372,7 @@ describe("RF-0012 canonical dispute operation gate", function()
       before = world:Snapshot(coordinator)
       local result = writer({ actor = coordinator.name }, operation)
       assertBlocked(result, point)
-      assert_false(result.canonicalAccepted == true)
+      assert_equal(0, operationCommitCount(primaryLedger(coordinator)))
       assert_equal("INJECTED_TEST_FAILURE", result.reasonCode)
       assert_true(clients.DeepEqual(before, world:Snapshot(coordinator)),
         point .. " failure changed SavedVariables")
@@ -388,17 +390,18 @@ describe("RF-0012 canonical dispute operation gate", function()
       "balance",
     }) do
       local world, coordinator, _, _, _, operation = canonicalTransferCase()
-      local writer = enableCanonicalWriter(coordinator)
+      local writer = enableCanonicalCorrectionPath(coordinator)
       local transactionsBefore = #coordinator.dibs.Ledger.GetAllTransactions("guild-primary")
       world:ArmFailure(coordinator.name, point)
       local failed = writer({ actor = coordinator.name }, operation)
-      assert_false(failed.accepted)
-      assert_true(failed.canonicalAccepted)
-      assert_false(failed.projectionComplete)
-      assert_equal("PROJECTION_INCOMPLETE", failed.reasonCode, point)
-      assert_equal(point, failed.diagnostic)
+      assert_true(type(failed) == "table" and failed.accepted == false,
+        point .. " did not return a rejected writer result: " .. tostring(failed and failed.reasonCode))
+      assert_equal("INJECTED_TEST_FAILURE", failed.reasonCode, point)
       local ledger = primaryLedger(coordinator)
       assert_equal(1, operationCommitCount(ledger), point .. " appended more than one journal record")
+      local recovery = coordinator.dibs.Ledger.ClassifyCanonicalRecovery("guild-primary")
+      assert_true(recovery and recovery.classification ~= "VALID",
+        point .. " did not leave a recoverable incomplete projection")
       local sequence = ledger.canonical.nextSeq
       assert_equal(1, #coordinator.failureInjector:GetTriggered())
 
@@ -414,7 +417,7 @@ describe("RF-0012 canonical dispute operation gate", function()
 
   it("rejects changed content for an accepted operation ID", function()
     local world, coordinator, _, _, _, operation = canonicalTransferCase()
-    local writer = enableCanonicalWriter(coordinator)
+    local writer = enableCanonicalCorrectionPath(coordinator)
     local accepted = writer({ actor = coordinator.name }, operation)
     assert_true(accepted.accepted)
     local before = world:Snapshot(coordinator)
@@ -439,6 +442,9 @@ describe("RF-0012 canonical dispute operation gate", function()
     local world, coordinator, _, _, _, operation = canonicalTransferCase()
     local writer = coordinator.dibs.Ledger.CommitDisputeOperation
     replaceUpvalue(writer, "DISPUTE_OPERATION_WRITES_ENABLED", true)
+    -- Open the isolated release gate so this exercises the runtime readiness
+    -- probe itself rather than the earlier release-source default check.
+    coordinator.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
     local before = world:Snapshot(coordinator)
     local result = writer({ actor = coordinator.name }, operation)
     assertBlocked(result)
@@ -699,7 +705,8 @@ describe("RF-0012 canonical dispute operation gate", function()
     local legacyId = "rf0012-mixed-legacy-row"
     ledger.transactions[legacyId] = {
       transactionId = legacyId, playerName = world.names[3], memberKey = world.names[3],
-      seasonId = dibs.GetCurrentSeasonId(), type = "DIB_GRANTED", amount = 2, quantityDelta = 2,
+      seasonId = dibs.GetCurrentSeasonId(), timestamp = 1700000000,
+      type = "DIB_GRANTED", amount = 2, quantityDelta = 2,
     }
 
     local first = dibs.Ledger.RebuildLedgerProjections("guild-primary")

@@ -117,6 +117,81 @@ describe("RF-0012 canonical dispute backup and restore", function()
       "the backup dropped the original transaction")
   end)
 
+  it("restores the original canonical commit content and hash from a full backup", function()
+    local dibs = setup()
+    local _, _, built = buildAcceptedOperation(dibs, "Tester-Realm", "Other-Realm")
+    local writer = dibs.Ledger.CommitDisputeOperation
+    for index = 1, 64 do
+      local name = debug.getupvalue(writer, index)
+      if name == nil then break end
+      if name == "DISPUTE_OPERATION_WRITES_ENABLED" then debug.setupvalue(writer, index, true) end
+      if name == "operationReadinessProbe" then debug.setupvalue(writer, index, function() return true end) end
+    end
+    dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    local accepted = writer({ actor = "Tester-Realm", ledgerId = "guild-primary" }, built)
+    assert_true(accepted.accepted, tostring(accepted.reasonCode))
+    local expected = dibs.DeepCopy(accepted.value)
+    local snapshot = assert(dibs.Backup.Create("full", "canonical restore fixture", "Tester-Realm"))
+
+    -- Model a local copy missing the operation while retaining the older rows.
+    local ledger = dibs.GetDB().ledgers["guild-primary"]
+    ledger.canonical.commits["7:1"] = nil
+    ledger.canonical.positions["7:1"] = nil
+    ledger.canonical.nextSeq = 1
+    ledger.canonical.rootHash = string.rep("0", #expected.previousHash)
+    for id, transaction in pairs(ledger.transactions) do
+      if transaction.operationId == expected.operation.operationId then ledger.transactions[id] = nil end
+    end
+
+    local preview = assert(dibs.Backup.PreviewRestore(snapshot.snapshotId, "Tester-Realm"))
+    assert(dibs.Backup.Restore(preview.previewId, true, "restore canonical history", "Tester-Realm"))
+    local restored = dibs.GetDB().ledgers["guild-primary"].canonical.commits["7:1"]
+    assert_not_nil(restored, "restore discarded the canonical operation commit")
+    assert_equal(expected.commitHash, restored.commitHash, "restore changed the immutable commit hash")
+    assert_true(sameValue(expected, restored), "restore changed canonical commit content")
+  end)
+
+  it("rebuilds a missing operation projection after restoring its full backup", function()
+    local dibs = setup()
+    local _, _, built = buildAcceptedOperation(dibs, "Tester-Realm", "Other-Realm")
+    local writer = dibs.Ledger.CommitDisputeOperation
+    for index = 1, 64 do
+      local name = debug.getupvalue(writer, index)
+      if name == nil then break end
+      if name == "DISPUTE_OPERATION_WRITES_ENABLED" then debug.setupvalue(writer, index, true) end
+      if name == "operationReadinessProbe" then debug.setupvalue(writer, index, function() return true end) end
+    end
+    dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    local committed = writer({ actor = "Tester-Realm", ledgerId = "guild-primary" }, built)
+    assert_true(committed.accepted, tostring(committed.reasonCode))
+
+    local ledger = dibs.GetDB().ledgers["guild-primary"]
+    local operationEntry = committed.value.operation.signedEntries[1]
+    local testerBalanceBefore = dibs.Ledger.GetBalance("Tester-Realm", dibs.GetCurrentSeasonId(), "guild-primary")
+    local recipientBalanceBefore = dibs.Ledger.GetBalance("Other-Realm", dibs.GetCurrentSeasonId(), "guild-primary")
+    ledger.transactions[operationEntry.transactionId] = nil
+    ledger.canonical.transactionIndex[operationEntry.transactionId] = nil
+    local sequenceBefore, rootBefore = ledger.canonical.nextSeq, ledger.canonical.rootHash
+    local snapshot = assert(dibs.Backup.Create("full", "projection recovery fixture", "Tester-Realm"))
+    local preview = assert(dibs.Backup.PreviewRestore(snapshot.snapshotId, "Tester-Realm"))
+    assert(dibs.Backup.Restore(preview.previewId, true, "restore projection recovery fixture", "Tester-Realm"))
+    ledger = dibs.GetDB().ledgers["guild-primary"]
+
+    local recovery = dibs.Disputes.ReconstructOperationStates("guild-primary")
+    assert_true(recovery.rebuilt, tostring(recovery.reasonCode))
+    assert_not_nil(ledger.transactions[operationEntry.transactionId], "recovery did not rebuild the missing transaction")
+    local classification = dibs.Ledger.ClassifyCanonicalRecovery("guild-primary")
+    assert_equal("VALID", classification.classification)
+    assert_equal(sequenceBefore, ledger.canonical.nextSeq, "recovery advanced the canonical sequence")
+    assert_equal(rootBefore, ledger.canonical.rootHash, "recovery changed the canonical root")
+    assert_equal(testerBalanceBefore, dibs.Ledger.GetBalance("Tester-Realm", dibs.GetCurrentSeasonId(), "guild-primary"),
+      "recovery double-applied the first transfer leg")
+    assert_equal(recipientBalanceBefore, dibs.Ledger.GetBalance("Other-Realm", dibs.GetCurrentSeasonId(), "guild-primary"),
+      "recovery double-applied the second transfer leg")
+    assert_equal(committed.value.commitHash,
+      ledger.canonical.commits[tostring(committed.value.ledgerEpoch) .. ":" .. tostring(committed.value.sequence)].commitHash)
+  end)
+
   it("restores an identical operation replay without a second effect", function()
     local dibs = setup()
     local _, _, built = buildAcceptedOperation(dibs, "Tester-Realm", "Other-Realm")
@@ -270,5 +345,40 @@ describe("RF-0012 canonical dispute backup and restore", function()
     -- matches its hash, and the identity conflict is reported as well.
     assert_true(conflictReason == "OPERATION_ID_CONFLICT" or conflictReason == "PAYLOAD_HASH_MISMATCH",
       "unexpected conflict refusal: " .. tostring(conflictReason))
+  end)
+
+  it("refuses to import operation transaction rows without their canonical commit", function()
+    local dibs = setup()
+    local _, _, built = buildAcceptedOperation(dibs, "Tester-Realm", "Other-Realm")
+    local writer = dibs.Ledger.CommitDisputeOperation
+    for index = 1, 64 do
+      local name = debug.getupvalue(writer, index)
+      if name == nil then break end
+      if name == "DISPUTE_OPERATION_WRITES_ENABLED" then debug.setupvalue(writer, index, true) end
+      if name == "operationReadinessProbe" then debug.setupvalue(writer, index, function() return true end) end
+    end
+    dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    local accepted = writer({ actor = "Tester-Realm", ledgerId = "guild-primary" }, built)
+    assert_true(accepted.accepted, tostring(accepted.reasonCode))
+
+    local incoming = dibs.DeepCopy(dibs.GetDB().ledgers["guild-primary"])
+    incoming.canonical.commits = {}
+    local operationRows = 0
+    for id, transaction in pairs(incoming.transactions) do
+      if transaction.operationId then operationRows = operationRows + 1 end
+    end
+    assert_true(operationRows > 0, "the fixture did not produce canonical operation transaction rows")
+    for id, transaction in pairs(dibs.GetDB().ledgers["guild-primary"].transactions) do
+      if transaction.operationId then dibs.GetDB().ledgers["guild-primary"].transactions[id] = nil end
+    end
+    dibs.GetDB().ledger = dibs.GetDB().ledgers["guild-primary"]
+    local package = {
+      packageVersion = dibs.ImportExport.PACKAGE_VERSION, schemaVersion = dibs.ImportExport.SCHEMA_VERSION,
+      scope = "full", sourceGuild = dibs.currentGuildKey, sourceCharacter = "Tester-Realm",
+      sensitivity = "sensitive", payload = { ledger = incoming }, checksum = "test-only",
+    }
+    local preview, reason = dibs.ImportExport.Preview(package, "full", "append", "Tester-Realm")
+    assert_nil(preview, "transaction rows were importable without their operation commit")
+    assert_equal("CANONICAL_LEDGER_IMPORT_UNAVAILABLE", reason)
   end)
 end)

@@ -15,6 +15,46 @@ describe("Permissions", function()
     assert_true(dibs.Permissions.Can("predib.mode.set"))
   end)
 
+  it("authorizes current guild officers for roster management but not raid roles or ordinary members", function()
+    local seasonalActions = { "season.create", "season.draft.edit", "season.registration.manage",
+      "season.enrollment.review", "season.rules.publish", "season.allocation.configure",
+      "season.reconcile", "season.activate", "season.complete" }
+    local _, gm = loader.load({ wow = { guildLeader = true, playerName = "Tester-Realm" } })
+    assert_true(gm.Permissions.Can("roster.manage"))
+    assert_true(gm.Permissions.Can("roster.review_identity"))
+    for _, action in ipairs(seasonalActions) do assert_true(gm.Permissions.Can(action), action) end
+
+    local _, officer = loader.load({ wow = {
+      guildLeader = false, playerName = "Officer-Realm",
+      guildMembers = { "Tester-Realm", "Officer-Realm", "Player-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 3 },
+    } })
+    assert_true(officer.Permissions.Can("roster.manage"))
+    assert_true(officer.Permissions.Can("roster.review_identity"))
+    for _, action in ipairs(seasonalActions) do assert_true(officer.Permissions.Can(action), action) end
+
+    local rc = loader.makeRCLootCouncil({ enabled = true, masterLooter = { guid = "Player-3-PLAYER", name = "Player-Realm" } })
+    local _, member = loader.load({ rclootcouncil = rc, wow = {
+      guildLeader = false, playerName = "Player-Realm",
+      guildMembers = { "Tester-Realm", "Officer-Realm", "Player-Realm" },
+      guildRankIndices = { [1] = 0, [2] = 1, [3] = 3 }, inRaid = true,
+      raidLeader = true, raidAssistant = true,
+    } })
+    assert_false(member.Permissions.Can("roster.manage"))
+    assert_false(member.Permissions.Can("roster.review_identity"))
+    for _, action in ipairs(seasonalActions) do assert_false(member.Permissions.Can(action), action) end
+    assert_equal("GUILD_ADMIN_REQUIRED", member.Permissions.Evaluate("roster.manage").reasonCode)
+
+    local _, staleOfficer = loader.load({ wow = {
+      guildLeader = false, playerName = "Officer-Realm",
+      guildMembers = { "Tester-Realm", "Officer-Realm" }, guildRankIndices = { [1] = 0, [2] = 1 },
+    } })
+    staleOfficer.Identity.InvalidateRoster("TEST_STALE_ROSTER")
+    _G.GetNumGuildMembers = nil
+    assert_false(staleOfficer.Permissions.Can("roster.manage"))
+    assert_equal("GUILD_ADMIN_REQUIRED", staleOfficer.Permissions.Evaluate("roster.review_identity").reasonCode)
+  end)
+
   it("loads officer-rank settings once when enumerating a large roster", function()
     local members, ranks = {}, {}
     for index = 1, 80 do

@@ -18,6 +18,7 @@ local TOC_FILES = {
   "modules/Permissions.lua",
   "modules/ProtectedActions.lua",
   "modules/Notifications.lua",
+  "modules/BackupTransport.lua",
   "modules/ImportExport.lua",
   "modules/AuditExport.lua",
   "modules/Profiles.lua",
@@ -29,6 +30,7 @@ local TOC_FILES = {
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
   "modules/SyncV2.lua",
+  "modules/SeasonalRoster.lua",
   "modules/RequestDelivery.lua",
   "modules/HistoricalBaseline.lua",
   "modules/Installation.lua",
@@ -231,6 +233,17 @@ local function makeRC(opts)
   }
 end
 
+local function loadInEnvironment(path, environment)
+  local chunk, err
+  if _VERSION == "Lua 5.1" then
+    chunk, err = loadfile(path)
+    if chunk and type(setfenv) == "function" then setfenv(chunk, environment) end
+  else
+    chunk, err = loadfile(path, "t", environment)
+  end
+  return chunk, err
+end
+
 function M.makeRCLootCouncil(opts)
   return makeRC(opts)
 end
@@ -264,7 +277,7 @@ function M.load(opts)
   local tocFiles = TOC_FILES
   for _, relative in ipairs(tocFiles) do
     local sourcePath = "src/" .. relative
-    local chunk, err = loadfile(sourcePath)
+    local chunk, err = loadInEnvironment(sourcePath, _G)
     if not chunk then
       error("failed to load " .. sourcePath .. ": " .. tostring(err))
     end

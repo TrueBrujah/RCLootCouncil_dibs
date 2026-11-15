@@ -4,6 +4,9 @@ enable-nolib-creation: no
 
 manual-changelog: docs/CURSEFORGE-CHANGELOG.txt
 
+embedded-libraries:
+  - libaceguiwidgets
+
 move-folders:
   RCLootCouncil_dibs/src: RCLootCouncil_dibs
 

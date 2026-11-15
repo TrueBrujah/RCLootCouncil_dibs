@@ -176,6 +176,67 @@ describe("RF-0019 Player eligibility surface and integration badge", function()
     assert_equal("Player-Realm", relationships[1].mainCharacterName)
   end)
 
+  it("lists online guild characters first, caps the offline choices, and searches the full roster", function()
+    local members = { "Player-Realm", "OnlineAlt-Realm" }
+    local online = { ["Player-Realm"] = true, ["OnlineAlt-Realm"] = true }
+    for index = 1, 900 do members[#members + 1] = string.format("OfflineAlt%03d-Realm", index) end
+    for index = 1, 900 do online[string.format("OfflineAlt%03d-Realm", index)] = false end
+    local _, dibs = setup({ wow = {
+      playerName = "Player-Realm", guildLeader = false, guildMembers = members,
+      guildOnline = online,
+    } })
+
+    local dropdowns, buttons, edits, labels = {}, {}, {}, {}
+    local originalDropdown, originalButton, originalEditBox, originalLabel = dibs.AceGUI.AddDropdown,
+      dibs.AceGUI.AddButton, dibs.AceGUI.AddEditBox, dibs.AceGUI.AddLabel
+    dibs.AceGUI.AddDropdown = function(shell, parent, label, values, callback, ...)
+      dropdowns[tostring(label)] = { values = values, callback = callback }
+      return originalDropdown(shell, parent, label, values, callback, ...)
+    end
+    dibs.AceGUI.AddButton = function(shell, parent, label, callback, ...)
+      buttons[tostring(label)] = callback
+      return originalButton(shell, parent, label, callback, ...)
+    end
+    dibs.AceGUI.AddEditBox = function(shell, parent, label, callback, ...)
+      edits[tostring(label)] = callback
+      return originalEditBox(shell, parent, label, callback, ...)
+    end
+    dibs.AceGUI.AddLabel = function(shell, parent, text, ...)
+      labels[#labels + 1] = tostring(text)
+      return originalLabel(shell, parent, text, ...)
+    end
+
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame:Show()
+    frame.SelectTab("my-dibs")
+    frame:Refresh()
+    assert_true(dropdowns["Online characters"]
+      and dropdowns["Online characters"].values["OnlineAlt-Realm"] ~= nil,
+      "the online character should appear in the online section")
+    assert_true(dropdowns["Offline / remaining characters"] ~= nil)
+    local offlineValues = dropdowns["Offline / remaining characters"].values
+    local offlineCount = 0
+    for _ in pairs(offlineValues) do offlineCount = offlineCount + 1 end
+    assert_equal(50, offlineCount, "the initial offline dropdown must remain bounded; got " .. tostring(offlineCount))
+    local currentMainVisible = false
+    for _, label in ipairs(labels) do
+      if label == "Current character (selected Main): Player-Realm" then currentMainVisible = true end
+    end
+    assert_true(currentMainVisible, "the logged-in character should remain the selected Main")
+
+    edits["Search guild characters"]("OfflineAlt899-Realm")
+    buttons.Search()
+    offlineValues = dropdowns["Offline / remaining characters"].values
+    assert_equal("OfflineAlt899-Realm", offlineValues["OfflineAlt899-Realm"],
+      "search must find a guild member beyond the first bounded page")
+    local onlineCount = 0
+    for _ in pairs(dropdowns["Online characters"].values) do onlineCount = onlineCount + 1 end
+    assert_equal(0, onlineCount, "the search should filter the online section too")
+
+    dibs.AceGUI.AddDropdown, dibs.AceGUI.AddButton = originalDropdown, originalButton
+    dibs.AceGUI.AddEditBox, dibs.AceGUI.AddLabel = originalEditBox, originalLabel
+  end)
+
   it("maps the RCLootCouncil integration state without operator-precedence surprises", function()
     local _, dibs = setup({ wow = { playerName = "Player-Realm", guildLeader = false } })
     -- The original expression evaluated to the boolean `true` for an

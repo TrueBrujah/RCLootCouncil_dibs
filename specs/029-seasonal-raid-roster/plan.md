@@ -96,6 +96,18 @@ specs/029-seasonal-raid-roster/
 
 ## Risks and Release Gates
 
+### Authorized completion design — 2026-11-14
+
+The completion request authorizes the existing feature, not new governance or a release. Integrate missing Dibs-owned sources from the verified consolidation worktree without overwriting local changes; external libraries remain untouched.
+
+Activation retains the already approved ledger identity and creates an independent seasonal allocation space keyed by the canonical `seasonId`. It does not create an unapproved ledger or change the guild-imposed active-ledger policy. The existing V2 coordinator and canonical writer remain authoritative. A non-coordinator officer receives a recoverable refusal rather than bypassing the writer.
+
+Prepare allocations in a detached copy through the ledger domain; validate all rows, authority, preview freshness and dependencies before a single guild-bucket visibility commit. Publish notifications only after commit. Network delivery failure does not erase a committed operation. The activation manifest is a compact separate entity referencing configuration, the approved cohort, canonical identities, the published allocation snapshot and the canonical ledger sequence/root; it never transports ledger transactions inside roster data. Local guild-roster generations are freshness tokens, not portable network identities: cross-client validation uses content hashes and canonical revisions.
+
+Reconciliation compares assigned seasonal allocations against the reviewed cohort's current rank/configuration. It appends signed allocation adjustments with actor, reason and operation identity, never resets a spent balance. Completion/archive preserves the committed activation identity and all history; archive is an audited transition after the existing seven-day grace period. Main-change probation retains the feature's explicitly approved fourteen-day rule without changing unrelated global eligibility configuration.
+
+Automated completion and Retail release readiness are separate gates. Do not publish or increment the release version during this completion pass; real two-client Retail observations remain required before release.
+
 - Old roster seasons and Dibs seasons may not map one-to-one. Migrations must preserve IDs and require an explicit reviewed alias before activation if association is uncertain.
 - Synchronization can deliver a season, roster, rules, and ledger at different times. Clients must expose a season as active only after the manifest dependencies match.
 - Guild rank can change during registration. Allocation preview and apply must use the same roster/rank snapshot revision or require a refreshed preview.

@@ -10,6 +10,16 @@ local function countText(widget, text)
   return count
 end
 
+local function countRegisteredHeading(text)
+  local count = 0
+  for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+    if widget.kind == "Heading" and tostring(widget.text or "") == text then
+      count = count + 1
+    end
+  end
+  return count
+end
+
 local function findControl(widget, label)
   if type(widget) ~= "table" then return nil end
   if widget.kind == "Dropdown" and tostring(widget.label or "") == label then return widget end
@@ -512,7 +522,9 @@ describe("B11 Retail UI-004 ownership", function()
     }
     for _, route in ipairs({ "overview", "preDibs", "settings", "lootTypes", "overview" }) do
       frame.SelectTab(route)
-      assert_equal(1, countText(frame.contentHost, expected[route]))
+      local titleCount = countText(frame.contentHost, expected[route])
+      if route == "lootTypes" then titleCount = countRegisteredHeading(expected[route]) end
+      assert_equal(1, titleCount, route)
       assert_true(countText(frame.contentHost, "Active season request mode") <= 1)
       assert_false(countText(frame.contentHost, "Pre-Dibs") > 1)
     end
@@ -524,7 +536,7 @@ describe("B11 Retail UI-004 ownership", function()
     local expected = {
       overview = "Officer dashboard",
       seasons = "Seasons",
-      ranks = "Rank Rules",
+      ranks = "Rank allocations",
       preDibs = "Pre-Dibs",
       settings = "Settings",
     }
@@ -534,7 +546,7 @@ describe("B11 Retail UI-004 ownership", function()
     }
     for _, route in ipairs({ "overview", "seasons", "ranks", "preDibs", "settings" }) do
       frame.SelectTab(route)
-      assert_equal(1, countText(frame.contentHost, expected[route]))
+      assert_equal(1, countText(frame.contentHost, expected[route]), route)
       for previousRoute, title in pairs(expected) do
         if previousRoute ~= route then assert_equal(0, countText(frame.contentHost, title), previousRoute) end
       end

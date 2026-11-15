@@ -14,7 +14,8 @@ describe("First installation assistant contract", function()
     assert_true(ids.channels)
     assert_true(ids.loot_types)
 
-    loader.load({ wow = { guildLeader = false, guildRankIndices = { ["Tester-Realm"] = 3 } }, withAce3 = true })
+    loader.load({ wow = { guildLeader = false,
+      guildMembers = { "GuildMaster-Realm", "Tester-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 } }, withAce3 = true })
     local denied = _G.Dibs.SetupAssistant.Evaluate()
     assert_equal("DENIED", denied.status)
   end)

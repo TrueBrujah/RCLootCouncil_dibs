@@ -33,6 +33,7 @@ local VALID_ACTIONS = {
   ["ledger.use"] = true,
   ["ledger.refund"] = true,
   ["ledger.adjust"] = true,
+  ["ledger.operation"] = true,
   ["admin.list"] = true,
   ["admin.appoint"] = true,
   ["admin.revoke"] = true,
@@ -105,6 +106,7 @@ local function buildAudit(actionId, actor, payload, decision)
     evidenceId = payload and payload.evidenceId,
     originalTransactionId = payload and payload.originalTransactionId,
     correctionKey = payload and payload.correctionKey,
+    transactionId = payload and payload.transactionId,
     confirmation = payload and payload.confirmation == true or nil,
     debtPolicy = payload and payload.debtPolicy,
   }
@@ -246,24 +248,24 @@ local function executeLedgerGrant(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.Grant then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx = Dibs.Ledger.Grant(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.grant", actor, payload or {}, decision))
-  return buildResult(tx ~= nil, tx, decision)
+  local tx, reason = Dibs.Ledger.Grant(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.grant", actor, payload or {}, decision))
+  return buildResult(tx ~= nil, tx, decision, tx and nil or reason)
 end
 
 local function executeLedgerUse(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.Use then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx = Dibs.Ledger.Use(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.use", actor, payload or {}, decision))
-  return buildResult(tx ~= nil, tx, decision)
+  local tx, reason = Dibs.Ledger.Use(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.use", actor, payload or {}, decision))
+  return buildResult(tx ~= nil, tx, decision, tx and nil or reason)
 end
 
 local function executeLedgerRefund(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.Refund then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx = Dibs.Ledger.Refund(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.refund", actor, payload or {}, decision))
-  return buildResult(tx ~= nil, tx, decision)
+  local tx, reason = Dibs.Ledger.Refund(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.refund", actor, payload or {}, decision))
+  return buildResult(tx ~= nil, tx, decision, tx and nil or reason)
 end
 
 ---@doc.id ledger.adjust
@@ -292,6 +294,63 @@ local function executeLedgerAdjust(actor, payload, decision)
     return buildResult(false, nil, { reasonCode = reasonCode or "ADJUSTMENT_REJECTED" }, reasonCode or "Dibs adjustment rejected.")
   end
   return buildResult(tx ~= nil, tx, decision)
+end
+
+local function executeLedgerOperation(actor, payload, decision)
+  local function rejectOperation(reason)
+    local rejected = {}
+    for key, value in pairs(decision or {}) do rejected[key] = value end
+    rejected.allowed, rejected.reasonCode = false, reason
+    return buildResult(false, nil, rejected, reason)
+  end
+  local proposalId = payload and payload.proposalId
+  if type(proposalId) ~= "string" or proposalId == "" or not Dibs.Governance
+    or type(Dibs.Governance.GetDisputeOperationProposal) ~= "function" then
+    return rejectOperation("OPERATION_PROPOSAL_REQUIRED")
+  end
+  local proposal = Dibs.Governance.GetDisputeOperationProposal(proposalId)
+  if not proposal or proposal.status ~= "PENDING" or type(proposal.operation) ~= "table" then
+    return rejectOperation("OPERATION_PROPOSAL_NOT_PENDING")
+  end
+  local operation = proposal.operation
+  if operation.guildKey ~= (Dibs.GetGuildKey and Dibs.GetGuildKey()) then
+    return rejectOperation("GUILD_SCOPE_MISMATCH")
+  end
+  local proposer = Dibs.Identity and Dibs.Identity.ResolveRosterMember
+    and Dibs.Identity.ResolveRosterMember(operation.actor and operation.actor.displayName)
+  if not proposer or proposer.status ~= "RESOLVED" or proposer.memberKey ~= operation.actor.memberKey
+    or (proposer.role ~= "gm" and proposer.role ~= "officer") then
+    return rejectOperation("PROPOSER_NOT_AUTHORIZED")
+  end
+  if not Dibs.Ledger or type(Dibs.Ledger.CommitDisputeOperation) ~= "function" then
+    return rejectOperation("CANONICAL_OPERATION_UNAVAILABLE")
+  end
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  for ledgerId, ledger in pairs(db.ledgers or {}) do
+    for _, commit in pairs((ledger.canonical and ledger.canonical.commits) or {}) do
+      local accepted = type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT"
+        and type(commit.operation) == "table" and commit.operation or nil
+      if accepted and accepted.requestId == operation.requestId
+        and accepted.requestRevision == operation.requestRevision
+        and accepted.operationId ~= operation.operationId then
+        return buildResult(false, nil, { reasonCode = "DISPUTE_REVISION_ALREADY_CORRECTED" }, "DISPUTE_REVISION_ALREADY_CORRECTED")
+      end
+    end
+  end
+  local outcome = Dibs.Ledger.CommitDisputeOperation({ actor = actor, ledgerId = operation.ledgerId }, operation)
+  if type(outcome) ~= "table" or outcome.accepted ~= true then
+    local reason = type(outcome) == "table" and outcome.reasonCode or "CANONICAL_OPERATION_REJECTED"
+    if reason == "STALE_DISPUTE_REVISION" then
+      Dibs.Governance.ResolveDisputeOperationProposal(proposalId, "STALE", reason)
+    end
+    return buildResult(false, nil, { reasonCode = reason }, reason)
+  end
+  local marked, markReason = Dibs.Governance.ResolveDisputeOperationProposal(
+    proposalId, "COMMITTED", outcome.reasonCode, outcome.value)
+  if not marked then
+    return buildResult(false, nil, { reasonCode = markReason or "PROPOSAL_COMMIT_RECORD_FAILED" }, markReason or "PROPOSAL_COMMIT_RECORD_FAILED")
+  end
+  return buildResult(true, outcome.value, decision)
 end
 
 local function executeAdminList(actor, payload, decision)
@@ -769,6 +828,7 @@ function Dibs.ProtectedActions.Execute(actionId, actor, payload)
   if actionId == "ledger.use" then return executeLedgerUse(actor, command, decision) end
   if actionId == "ledger.refund" then return executeLedgerRefund(actor, command, decision) end
   if actionId == "ledger.adjust" then return executeLedgerAdjust(actor, command, decision) end
+  if actionId == "ledger.operation" then return executeLedgerOperation(actor, command, decision) end
   if actionId == "admin.list" then return executeAdminList(actor, command, decision) end
   if actionId == "admin.appoint" then return executeAdminChange(actor, command, true, decision) end
   if actionId == "admin.revoke" then return executeAdminChange(actor, command, false, decision) end

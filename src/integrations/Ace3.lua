@@ -208,12 +208,27 @@ end
 ---@return boolean registered
 function Adapter.RegisterEvent(event, callback)
   if not Adapter.libs.event or type(aceRegisterEvent) ~= "function" then return false end
-  Adapter.handlers.events[event] = callback
-  local ok = pcall(aceRegisterEvent, Adapter, event, function(receivedEvent, ...)
-    local handler = Adapter.handlers.events[receivedEvent]
-    if handler then return handler(receivedEvent, ...) end
-  end)
-  return ok
+  if type(event) ~= "string" or type(callback) ~= "function" then return false end
+  Adapter.handlers.eventListeners = Adapter.handlers.eventListeners or {}
+  local listeners = Adapter.handlers.eventListeners[event]
+  if not listeners then
+    listeners = {}
+    local function dispatch(receivedEvent, ...)
+      local firstError
+      for index = 1, #listeners do
+        local ok, reason = pcall(listeners[index], receivedEvent, ...)
+        if not ok and firstError == nil then firstError = reason end
+      end
+      if firstError ~= nil then error(firstError) end
+    end
+    local ok, registered = pcall(aceRegisterEvent, Adapter, event, dispatch)
+    if not ok or registered == false then return false end
+    Adapter.handlers.eventListeners[event] = listeners
+    Adapter.handlers.events[event] = dispatch
+  end
+  for _, listener in ipairs(listeners) do if listener == callback then return true end end
+  listeners[#listeners + 1] = callback
+  return true
 end
 
 function Adapter.ScheduleTimer(callback, delay)

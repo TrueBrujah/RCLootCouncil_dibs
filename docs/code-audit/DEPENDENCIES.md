@@ -1,5 +1,24 @@
 # Dependances et flux Lua / WoW
 
+## Transport de sauvegarde intégré — 15 novembre 2026
+
+- [BackupTransport](../../src/modules/BackupTransport.lua) préfère les capacités
+  `C_EncodingUtil` vérifiées à l'exécution; [embeds](../../src/embeds.xml) charge
+  également le [LibDeflate existant](../../src/libs/LibDeflate/LibDeflate.lua),
+  version `1.0.2-release`, minor LibStub 3, copyright Haoqian He, licence zlib
+  incluse dans son fichier. Version inchangée, aucun patch interne ni nouvelle copie.
+- SHA-256 du fichier intégré :
+  `8a8805a63a74e97e97212115b24cc5e426a06c7376866505c7f414216f25f99c`.
+- Adaptation uniquement dans le module Dibs : enveloppe DEFLATE/Base64 standard,
+  contrôle structurel et budget d'expansion avant décompression. L'API native et
+  le fallback partagent le même format. Compression ne signifie pas chiffrement.
+- Le helper de test isole la bibliothèque et émule les doubles Lua 5.1 pour ses
+  lectures d'octets sous Fengari (entiers 32 bits). Aucun remplacement de fonction
+  globale de production, aucune modification du source tiers. Fixtures Node/zlib
+  indépendantes et exécution des vrais codecs; pas de codec identité.
+- La coexistence LibStub et l'exécution réelle de `C_EncodingUtil`/UI restent à
+  vérifier dans les builds Retail ciblés; les tests hors jeu ne les certifient pas.
+
 ## Liens runtime revérifiés le 28 octobre 2026
 
 - TOC → Sync.lua → SyncV2.lua : même table Dibs.Sync, redéfinitions actives

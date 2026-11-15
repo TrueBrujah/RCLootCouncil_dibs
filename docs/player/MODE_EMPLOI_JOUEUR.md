@@ -162,6 +162,15 @@ montrent la date, l'objet, la difficulte et la verification; survolez une ligne
 pour la source, la semaine de reset, la synchronisation et l'explication des
 preuves. Les preuves privees des officiers ne sont pas affichees.
 
+Le haut de la page indique si la capture automatique est **active**,
+**indisponible sur ce client** ou **desactivee par la politique de guilde**.
+Quand elle est active, le compteur indique les choix d'equipement lisibles du
+coffre actuellement ouvert, pas le nombre d'objets deja acquis. Une cle
+mythique ou un autre supplement reconnu ne compte pas comme un choix
+d'equipement et ne bloque pas la capture de l'objet choisi.
+La ligne **Derniere capture** explique la derniere tentative de la session;
+c'est un diagnostic temporaire, pas un historique conserve apres rechargement.
+
 La fenetre Joueur affiche les acquisitions du Grand Coffre avec l'objet, la
 source, la semaine de reset, l'etat de verification, l'explication
 d'eligibilite et l'etat de synchronisation. Ouvrir le coffre ou regarder un
@@ -170,8 +179,20 @@ La detection automatique exige le choix effectivement reclame, la reception
 du meme objet par votre personnage et la fin de disponibilite des recompenses.
 Elle doit etre active avant le retrait; elle ne reconstruit pas les retraits
 passes a partir du chat ou du contenu des sacs. Si une de ces preuves manque,
-utilisez le secours manuel ci-dessous. La validation sur client Retail reste
-en attente.
+utilisez le secours manuel ci-dessous. Si l'infobulle de l'objet charge en
+retard, Dibs reessaie la meme capture prouvee lorsque les donnees arrivent,
+tant que son contexte reste valide. L'historique ouvert se rafraichit apres
+l'enregistrement.
+
+Chaque membre doit avoir Dibs actif lors du retrait et le module **Pre-Dibs**
+active. L'acquisition enregistree est ensuite synchronisee periodiquement
+dans la guilde vers **OfficerUI > Vault Review**; elle n'apparait donc pas
+necessairement instantanement chez les officiers. La transmission respecte
+l'identite du proprietaire et les autorisations de revue des officiers.
+Les anciens retraits jamais enregistres ne sont pas recuperes automatiquement.
+La validation reelle joueur vers officier reste en attente : suivez la
+[liste des tests Retail 0.8.12](../audits/0.8.12-TESTS-RETAIL-FR.md).
+
 Les filtres de l'historique du Grand Coffre portent sur l'objet, la source, le
 statut et les dates enregistres. Les dates `YYYY-MM-DD` sont inclusives. Une
 metadonnee absente ne correspond pas a une valeur de remplacement; effacer un
@@ -379,3 +400,21 @@ pas de contourner l'etat ; demandez une verification GM/Officer.
 - N'envoyez pas de donnees de guilde ou d'historique dans un canal public.
 - Consultez votre historique apres un gain ou une correction.
 - Contactez un Officer avec l'heure, l'objet et le contexte si un resultat semble incorrect.
+
+## Inscription au roster saisonnier
+
+Selectionnez la saison et lisez ses regles publiees. Pendant les inscriptions,
+vous pouvez soumettre ou modifier votre personnage, ses specialisations, ses
+roles et la voie demandee. Demander la progression Core ne donne pas le statut
+Core Raider : une decision distincte GM/Officer est necessaire. L'inscription
+ne change jamais vos Dibs.
+
+Declarez explicitement les relations Main/Alt et demandez les changements de
+Main dans le formulaire de saison. Une approbation commence une probation Dibs
+de 14 jours, sans modifier les reponses ordinaires de RCLootCouncil. Le roster
+public reste en lecture seule; les filtres s'appliquent aux lignes et aux totaux.
+Changer de saison recharge son inscription avant toute sauvegarde.
+
+La desactivation du module conserve l'historique et bloque les ecritures. Une
+synchronisation incomplete ne confirme pas l'activation; un apercu seul
+n'alloue aucun Dib.

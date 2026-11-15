@@ -1,7 +1,7 @@
 # Research: Unified seasonal raid lifecycle
 
 **Date**: 2026-11-07
-**Scope**: Planning only. No production implementation or in-game behavior is claimed as validated by this document.
+**Scope**: Code-path research for the current implementation. Automated tests listed later are local evidence; in-game behavior is not claimed as validated here.
 
 ## Decisions
 
@@ -89,9 +89,24 @@
 
 This list is a code-navigation map, not a claim that every current behavior satisfies the proposed contract.
 
+## Current code trace (2026-11-07)
+
+- `src/RCLootCouncil_dibs.toc` loads `modules/Seasons.lua` before `modules/SeasonalRoster.lua`, then `modules/SyncV2.lua` is already loaded before the roster service. `PlayerUI.lua` and `OfficerUI.lua` load after both services. The active implementations are these files in the TOC; no alternate later-loaded `SeasonalRoster` definition was found.
+- `Seasons.lua` owns `db.seasons` and `db.currentSeasonId`; before this implementation pass, `Create()` always selected a new season. The new `CreateDraft()` stores an inactive season under an explicit canonical ID without changing the active season.
+- `SeasonalRoster.lua` owns guild-scoped registrations, revisions, audit records and roster projection under `db.seasonalRoster`. Newly created roster seasons now use the same ID as a native Dibs draft. Existing schema-1 roster IDs are retained; Core migration adds an explicit alias record and keeps their historical `identitySeasonId` values. It does not infer a replacement ID.
+- The service revises draft configuration with expected revisions, reasoned audit events and idempotent operation IDs. Season raid-rule text is stored in each immutable configuration revision, bounded to 8,000 characters, and included in the existing revision hash/sync chain. Settings copy carries description, raid-rule text, category catalog and schedule into a target draft without copying dates, identity, participants or ledger data. Permission actions distinguish season creation, draft editing, registration, enrollment review, rule catalog publication, allocation publication, activation and reconciliation. Activation commits the approved cohort's initial allocations atomically with a separate dependency-bound manifest; active allocation drift uses a separate append-only reconciliation operation.
+- Public roster composition uses the same bounded filtered projection for its visible rows and counts; linked Main/Alt rows remain visible but count once toward people/class/armor/role composition. Signup and read-only roster routes have focused PlayerUI tests.
+- `CharacterEligibility.lua` remains the owner of Main/Alt identity and its season-scoped review state. `RankRules.lua` owns local per-season, per-native-guild-rank working values; a GM/Officer publishes a validated snapshot into an immutable, synchronized seasonal revision after registration closes. `Ledger.lua` owns balances and append-only accounting. Activation initializes only approved seasonal Main identities through the existing canonical ledger writer; reconciliation appends corrections without resetting spent balance.
+- `SyncV2.lua` owns the bounded message protocol. Roster configuration/enrollment, immutable `SEASON_IDENTITY`, published allocation snapshots, canonical ledger events and `SEASON_ACTIVATION` manifests remain separate entities. The compact manifest wire form expands before service validation; dependency mismatch preserves the prior current season and remains recoverable through bounded digest/detail requests.
+- `FeatureRegistry.RequireEnabled("seasonalRoster")` is checked by the service store boundary. While disabled, reads and writes are unavailable to the service UI, incoming revisions fail before mutation, and the SavedVariables subtree remains intact for re-enable.
+
+### Initial focused evidence — 2026-11-09 (historical)
+
+The initial seasonal-roster selection passed **39 tests across 12 files**, including activation preview dependency binding, allocation snapshot publication and replay, forged snapshot rejection, two-client SyncV2 adoption, Player/Officer UI behavior, migration, and module gating. It did not verify atomic activation or full season reconciliation. The final automated evidence is recorded in `quickstart.md`; Retail behavior remains unvalidated because no Retail client matrix was run.
+
 ## Unresolved for implementation, not blocking the product spec
 
-- Exact Core Raider evidence threshold and attendance capture method. Initial UI/configuration supports a versioned criterion and manual officer decision only.
+- Exact Core Raider evidence threshold and attendance capture method remain undefined; no attendance or performance evidence is inferred. Manual officer review/promotion is implemented as an explicit seasonal decision and does not claim an automated attendance criterion.
 - Exact no-guild-rank policy. Must be an explicit season choice before the first such participant can be activated; default is fail closed.
 - The client cannot verify offline character ownership; declarations remain explicit and officer-reviewable.
 - The season's scheduled raid time uses the user's local time in the client. A provided time-zone label is descriptive unless the addon has a validated conversion source.
