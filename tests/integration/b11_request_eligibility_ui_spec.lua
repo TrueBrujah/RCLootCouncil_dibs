@@ -1,10 +1,12 @@
 local loader = require("helpers.load_addon")
 
 local function setup()
-  return loader.load({
+  local addon, dibs = loader.load({
     wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Player-1", "Player-2" } },
     withAce3 = true,
   })
+  assert_true(dibs.Installation.Initialize(nil).ok)
+  return addon, dibs
 end
 
 local function findCategory(categories, key)
@@ -21,6 +23,29 @@ local function findMenuEntry(entries, text)
 end
 
 describe("B11e request and eligibility UI", function()
+  it("labels non-accounting closure explicitly in English and French without changing balances", function()
+    for _, locale in ipairs({ "enUS", "frFR" }) do
+      local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true, locale = locale } })
+      local request = assert(dibs.Disputes.CreateReport({ category = "other", note = "Synthetic review" }))
+      local before = #dibs.Ledger.GetAllTransactions()
+      local frame = dibs.OfficerUI.CreateWindow()
+      assert_true(frame.OpenRequestDetail(request))
+      local close
+      for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+        if widget.kind == "Button" and widget.text == dibs.L.REQUEST_RESOLVE_NO_CORRECTION then close = widget end
+      end
+      assert_not_nil(close)
+      close.callbacks.OnClick(close, "OnClick")
+      local explanation
+      for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+        if widget.kind == "Label" and widget.text == dibs.L.REQUEST_NO_CORRECTION_HELP then explanation = widget end
+      end
+      assert_not_nil(explanation)
+      assert_equal(before, #dibs.Ledger.GetAllTransactions())
+      assert_equal("Open", dibs.Disputes.GetRequest(request.requestId).status)
+    end
+  end)
+
   it("projects bounded officer request rows with readable status and next action", function()
     local _, dibs = setup()
     dibs.Disputes.ListForOfficer = function()

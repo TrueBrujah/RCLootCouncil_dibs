@@ -269,6 +269,57 @@ describe("RF-0013 B1 officer proposal", function()
     assert_equal("INVALID_PROPOSAL_PURPOSE", result.reasonCode)
   end)
 
+  it("rejects dictionary, sparse and empty source scopes before writing", function()
+    local officer = loadOfficer()
+    for _, sources in ipairs({ { ledger = true }, { [2] = "ledger" }, {} }) do
+      local before = officer.Sync.CalculateContentHash(officer.GetDB())
+      local result = officer.MultiLedger.ProposeLedger(nil, "Invalid scope", metadata({ discoveredSources = sources }))
+      assert_false(result.ok)
+      assert_equal("INVALID_PROPOSAL_SCOPE", result.reasonCode)
+      assert_equal(before, officer.Sync.CalculateContentHash(officer.GetDB()))
+    end
+  end)
+
+  it("refuses an uncompleted scan even when no progress row was saved", function()
+    local shared = sharedDatabase()
+    local officer = loadOfficer(shared)
+    local proposed = officer.MultiLedger.ProposeLedger(nil, "Incomplete scan", metadata({ scanComplete = false }))
+    assert_true(proposed.ok)
+    local gm = loadGM(officer.DeepCopy(officer.GetDB()))
+    local result = gm.MultiLedger.ApproveLedger(nil, proposed.ledgerId)
+    assert_false(result.ok)
+    assert_equal("PROPOSAL_SOURCE_INCOMPLETE", result.reasonCode)
+    assert_equal("PROPOSED", gm.MultiLedger.GetProposal(proposed.proposalId).status)
+  end)
+
+  it("never hides an incomplete collector behind another completed source", function()
+    local shared = sharedDatabase()
+    local officer = loadOfficer(shared)
+    local proposed = officer.MultiLedger.ProposeLedger(nil, "Multiple scans", metadata())
+    assert_true(proposed.ok)
+    local gm = loadGM(officer.DeepCopy(officer.GetDB()))
+    gm.GetDB().legacyBaseline.collectionProgress = {
+      ["done:ledger"] = { state = "COMPLETE", totalSeen = 0, cursor = 0 },
+      ["partial:ledger"] = { state = "INCOMPLETE", totalSeen = 0, cursor = 0 },
+    }
+    local result = gm.MultiLedger.ApproveLedger(nil, proposed.ledgerId)
+    assert_false(result.ok)
+    assert_equal("PROPOSAL_SOURCE_INCOMPLETE", result.reasonCode)
+  end)
+
+  it("validates legacy proposal updates before adopting their metadata", function()
+    local officer = loadOfficer()
+    local legacy = officer.MultiLedger.ProposeLedger(nil, "Legacy proposal")
+    assert_true(legacy.ok)
+    local before = officer.Sync.CalculateContentHash(officer.GetDB())
+    local invalid = officer.MultiLedger.UpdateProposal(nil, legacy.ledgerId, {})
+    assert_false(invalid.ok)
+    assert_equal(before, officer.Sync.CalculateContentHash(officer.GetDB()))
+    local updated = officer.MultiLedger.UpdateProposal(nil, legacy.ledgerId, metadata())
+    assert_true(updated.ok)
+    assert_equal(updated.proposalId, officer.MultiLedger.GetLedgerById(legacy.ledgerId).proposal.proposalId)
+  end)
+
   it("B15 never reports a proposal created when none was persisted", function()
     local member = loadMember()
     local result = member.MultiLedger.ProposeLedger("Member-Realm", "Guild Primary", metadata())

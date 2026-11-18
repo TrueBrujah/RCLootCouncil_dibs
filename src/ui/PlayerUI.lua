@@ -18,6 +18,56 @@ Related docs: docs/player/README.md.
 
 local Dibs = _G.Dibs
 Dibs.PlayerUI = Dibs.PlayerUI or {}
+
+function Dibs.PlayerUI.RenderSeasonIdentity(shell, parent, frame, season)
+  local ui, labels, service = Dibs.AceGUI, Dibs.L or {}, Dibs.SeasonalRoster
+  ui.AddHeader(shell, parent, labels.SEASONAL_ROSTER_IDENTITY)
+  ui.AddLabel(shell, parent, labels.SEASONAL_ROSTER_IDENTITY_HELP, true)
+  if not service.DeclareRelationship or not service.RequestMainChange then return end
+  local actor = Dibs.GetPlayerName()
+  local review, failure = service.GetSeasonIdentityReview(season.seasonId)
+  if not review then ui.AddLabel(shell, parent, Dibs.OfficerUI.SeasonalText(failure), true); return end
+  local projection = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetPersonProjection(actor, season.seasonId)
+  ui.AddLabel(shell, parent, labels.SEASONAL_ROSTER_MAIN .. ": " .. tostring(projection and projection.mainCharacterKey or actor), true)
+  local probation = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetProbation(actor, season.seasonId)
+  if probation then ui.AddLabel(shell, parent, string.format(labels.SEASONAL_ROSTER_PROBATION,
+    date("%Y-%m-%d %H:%M", probation.probationEndsAt), probation.approverName or probation.approverId or "—"), true) end
+  local rows = {}
+  for _, relationship in ipairs(review.relationships or {}) do rows[#rows + 1] = {
+    relationship.mainCharacterName or relationship.mainCharacterId,
+    relationship.altCharacterName or relationship.altCharacterId, Dibs.OfficerUI.SeasonalText(relationship.status) } end
+  for _, change in ipairs(review.mainChanges or {}) do rows[#rows + 1] = {
+    change.oldMainName or change.oldMainId, change.newMainName or change.newMainId, Dibs.OfficerUI.SeasonalText(change.status) } end
+  local page = math.max(1, math.min(frame.seasonIdentityPage or 1, math.max(1, math.ceil(#rows / 20))))
+  local visible = {}
+  for index = (page - 1) * 20 + 1, math.min(page * 20, #rows) do visible[#visible + 1] = rows[index] end
+  ui.AddTable(shell, parent, { { title = labels.SEASONAL_ROSTER_MAIN, width = 180, minWidth = 100, weight = 2 },
+    { title = labels.SEASONAL_ROSTER_ALT_CHARACTER, width = 200, minWidth = 100, weight = 2 },
+    { title = labels.SEASONAL_ROSTER_ENROLLMENT_STATUS, width = 120, minWidth = 80, weight = 1 } }, visible, 150, nil,
+    { fluidColumns = true, widthHint = 680, shrinkToFit = true, emptyText = labels.SEASONAL_ROSTER_EMPTY })
+  local pager = ui.AddPaginationFooter(shell, { footer = ui.AddInlineGroup(shell, parent) }, {
+    showPageSize = false, onPrevious = function() frame.seasonIdentityPage = page - 1; frame:Refresh() end,
+    onNext = function() frame.seasonIdentityPage = page + 1; frame:Refresh() end })
+  if pager then pager.UpdateState(page, #rows, 20) end
+  if (season.lifecycle or {}).readOnly then return end
+  local target = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_ALT_CHARACTER,
+    function(value) frame.seasonIdentityCharacter = value or "" end, 300)
+  if target and target.SetText then target:SetText(frame.seasonIdentityCharacter or "") end
+  local reason = ui.AddEditBox(shell, parent, labels.SEASONAL_ROSTER_REVIEW_REASON,
+    function(value) frame.seasonIdentityReason = value or "" end, 360)
+  if reason and reason.SetText then reason:SetText(frame.seasonIdentityReason or "") end
+  for _, action in ipairs({ "DeclareRelationship", "RequestMainChange" }) do
+    ui.AddButton(shell, parent, action == "DeclareRelationship" and labels.SEASONAL_ROSTER_DECLARE_ALT or labels.SEASONAL_ROSTER_REQUEST_MAIN,
+      function()
+        local input = action == "DeclareRelationship" and { mainCharacter = actor, altCharacter = frame.seasonIdentityCharacter,
+          reason = frame.seasonIdentityReason } or { oldMain = actor, newMain = frame.seasonIdentityCharacter, reason = frame.seasonIdentityReason }
+        local result = service[action](season.seasonId, input, review.revision, Dibs.NewId("season-identity"))
+        frame.seasonalRosterMessage = result and result.ok and labels.SEASONAL_ROSTER_IDENTITY_SUBMITTED
+          or Dibs.OfficerUI.SeasonalText(result and result.code or "SERVICE_UNAVAILABLE")
+        frame:Refresh()
+      end, 260)
+  end
+end
 local helpText = Dibs.L or {}
 local playerPreDibSummaryCache
 
@@ -48,19 +98,107 @@ local function trimText(value)
   return tostring(value or ""):match("^%s*(.-)%s*$")
 end
 
-local function getGuildCharacterChoices()
-  local choices = {}
-  local localName = string.lower(trimText(Dibs.GetPlayerName and Dibs.GetPlayerName() or ""))
-  if type(_G.GetNumGuildMembers) == "function" and type(_G.GetGuildRosterInfo) == "function" then
-    local count = _G.GetNumGuildMembers() or 0
-    if type(count) ~= "number" then count = tonumber(count) or 0 end
-    for index = 1, count do
-      local ok, name = pcall(_G.GetGuildRosterInfo, index)
-      name = ok and trimText(name) or ""
-      if name ~= "" and string.lower(name) ~= localName then choices[name] = name end
+local guildCharacterRosterCache = { generation = nil, members = {} }
+local GUILD_CHARACTER_ONLINE_PAGE_SIZE = 100
+local GUILD_CHARACTER_OFFLINE_PAGE_SIZE = 50
+
+local function getGuildCharacterChoices(search, currentCharacter)
+  local identity = Dibs.Identity
+  if not identity or type(identity.GetRosterSnapshot) ~= "function"
+    or type(identity.GetInvalidationGeneration) ~= "function" then
+    return {}, {}, { error = "ROSTER_API_UNAVAILABLE" }
+  end
+  local generation = identity.GetInvalidationGeneration()
+  if guildCharacterRosterCache.generation ~= generation then
+    local snapshot, reason = identity.GetRosterSnapshot()
+    if not snapshot then return {}, {}, { error = reason or "ROSTER_UNAVAILABLE" } end
+    local members = {}
+    for _, member in ipairs(snapshot) do
+      if type(member) == "table" and type(member.displayName) == "string"
+        and member.displayName ~= "" then
+        members[#members + 1] = { name = member.displayName, online = member.online == true }
+      end
+    end
+    guildCharacterRosterCache = { generation = identity.GetInvalidationGeneration(), members = members }
+  end
+
+  local currentKey = identity.CanonicalMemberKey(currentCharacter or "")
+  local query = string.lower(trimText(search))
+  local onlineChoices, offlineChoices, onlineTotal, offlineTotal, onlineShown, offlineShown = {}, {}, 0, 0, 0, 0
+  local firstOnline, firstOffline
+  for _, member in ipairs(guildCharacterRosterCache.members) do
+    local memberKey = identity.CanonicalMemberKey(member.name)
+    if memberKey and memberKey ~= currentKey
+      and (query == "" or string.find(string.lower(member.name), query, 1, true)) then
+      if member.online then
+        onlineTotal = onlineTotal + 1
+        if onlineShown < GUILD_CHARACTER_ONLINE_PAGE_SIZE then
+          onlineChoices[member.name] = member.name
+          onlineShown = onlineShown + 1
+          firstOnline = firstOnline or member.name
+        end
+      else
+        offlineTotal = offlineTotal + 1
+        if offlineShown < GUILD_CHARACTER_OFFLINE_PAGE_SIZE then
+          offlineChoices[member.name] = member.name
+          offlineShown = offlineShown + 1
+          firstOffline = firstOffline or member.name
+        end
+      end
     end
   end
-  return choices
+  return onlineChoices, offlineChoices, { onlineTotal = onlineTotal, offlineTotal = offlineTotal,
+    firstOnline = firstOnline, firstOffline = firstOffline, search = query }
+end
+
+local function addEligibilityCharacterPicker(shell, parent, frame, currentCharacter, labels)
+  labels = labels or {}
+  Dibs.AceGUI.AddLabel(shell, parent,
+    (labels.PLAYER_ELIGIBILITY_CURRENT_MAIN or "Current character (selected Main): %s"):format(currentCharacter), true)
+  local searchInput = Dibs.AceGUI.AddEditBox(shell, parent,
+    labels.PLAYER_ELIGIBILITY_GUILD_SEARCH or "Search guild characters", function(value)
+      frame.eligibilitySearchDraft = value or ""
+    end, 240)
+  setControlText(searchInput, frame.eligibilitySearchDraft or frame.eligibilitySearch or "")
+  Dibs.AceGUI.AddButton(shell, parent, labels.PLAYER_ELIGIBILITY_SEARCH or "Search", function()
+    frame.eligibilitySearch = trimText(frame.eligibilitySearchDraft or "")
+    frame.eligibilityCharacter = nil
+    frame:Refresh()
+  end, 90)
+
+  local onlineChoices, offlineChoices, info = getGuildCharacterChoices(
+    frame.eligibilitySearch or "", currentCharacter)
+  if info.error then
+    Dibs.AceGUI.AddLabel(shell, parent,
+      (labels.PLAYER_ELIGIBILITY_ROSTER_UNAVAILABLE or "Guild roster unavailable: %s"):format(info.error), true)
+    return nil
+  end
+  local selected = frame.eligibilityCharacter
+  if not selected or (onlineChoices[selected] == nil and offlineChoices[selected] == nil) then
+    selected = info.firstOnline or info.firstOffline
+    frame.eligibilityCharacter = selected
+  end
+  local onlineTitle = info.onlineTotal > GUILD_CHARACTER_ONLINE_PAGE_SIZE
+      and (labels.PLAYER_ELIGIBILITY_ONLINE_MORE or "Online guild characters (%d; showing %d)")
+        :format(info.onlineTotal, GUILD_CHARACTER_ONLINE_PAGE_SIZE)
+      or (labels.PLAYER_ELIGIBILITY_ONLINE_CHARACTERS or "Online guild characters (%d)"):format(info.onlineTotal)
+  Dibs.AceGUI.AddLabel(shell, parent, onlineTitle, true)
+  local onlineDropdown = Dibs.AceGUI.AddDropdown(shell, parent,
+    labels.PLAYER_ELIGIBILITY_ONLINE_LIST or "Online", onlineChoices, function(value)
+      frame.eligibilityCharacter = value
+    end, 280)
+  if selected and onlineChoices[selected] then Dibs.AceGUI.SetValue(onlineDropdown, selected) end
+  local offlineTitle = info.offlineTotal > GUILD_CHARACTER_OFFLINE_PAGE_SIZE
+      and (labels.PLAYER_ELIGIBILITY_OFFLINE_MORE or "Other guild characters (%d; showing %d)")
+        :format(info.offlineTotal, GUILD_CHARACTER_OFFLINE_PAGE_SIZE)
+      or (labels.PLAYER_ELIGIBILITY_OFFLINE_CHARACTERS or "Other guild characters (%d)"):format(info.offlineTotal)
+  Dibs.AceGUI.AddLabel(shell, parent, offlineTitle, true)
+  local offlineDropdown = Dibs.AceGUI.AddDropdown(shell, parent,
+    labels.PLAYER_ELIGIBILITY_OFFLINE_LIST or "Offline / remaining", offlineChoices, function(value)
+      frame.eligibilityCharacter = value
+    end, 280)
+  if selected and offlineChoices[selected] then Dibs.AceGUI.SetValue(offlineDropdown, selected) end
+  return selected
 end
 
 local function formatDate(timestamp, pattern)
@@ -129,12 +267,13 @@ local function parseItemInput(raw)
 end
 
 local PLAYER_NAV_TREE = {
-  { text = "My Dibs", value = "my-dibs" },
+  { text = helpText.PLAYER_NAV_MY_DIBS or "My Dibs", value = "my-dibs" },
   { text = helpText.PLAYER_NAV_REPORTS or "Reports", value = "requests", module = "requests" },
-  { text = "History", value = "history" },
+  { text = helpText.PLAYER_NAV_HISTORY or "History", value = "history" },
   { text = helpText.PLAYER_VAULT_TITLE or "Great Vault", value = "vault" },
+  { text = (Dibs.L or {}).PLAYER_NAV_SEASONAL_ROSTER or "Raid Roster", value = "seasonal-roster", module = "seasonalRoster" },
   { text = helpText.MINIMAP_SETTINGS_NAV or "Preferences", value = "preferences" },
-  { text = "Diagnostics", value = "diagnostics" },
+  { text = helpText.PLAYER_NAV_DIAGNOSTICS or "Diagnostics", value = "diagnostics" },
 }
 
 local function moduleEnabled(moduleKey)
@@ -144,8 +283,24 @@ end
 
 function Dibs.PlayerUI.GetNavigation()
   local navigation = {}
+  local access = Dibs.Wizard and Dibs.Wizard.GetNavigationAccess and Dibs.Wizard.GetNavigationAccess()
+  if access and (access.firstInstall or not access.foundationReady) then
+    navigation[#navigation + 1] = { text = (Dibs.L or {}).PLAYER_SETUP_STATUS or "Guild setup", value = "setup-status" }
+    if access.firstInstall then return navigation end
+  end
   for _, entry in ipairs(PLAYER_NAV_TREE) do
-    if moduleEnabled(entry.module) then
+    local visible = true
+    if access then
+      local dependencies, routes = access.dependencies or {}, access.routes or {}
+      if entry.value == "my-dibs" then
+        visible = dependencies.seasonConfigured and dependencies.ranksPublished and dependencies.ledgerReady
+      elseif entry.value == "requests" then visible = routes.disputes == true
+      elseif entry.value == "history" then visible = access.preservedHistory == true or dependencies.ledgerReady == true
+      elseif entry.value == "seasonal-roster" then
+        visible = routes.seasonalRoster == true and (dependencies.rosterConfigured == true or access.preservedHistory == true)
+      elseif entry.value == "vault" then visible = access.foundationReady == true or routes.vault == true end
+    end
+    if visible and moduleEnabled(entry.module) then
       navigation[#navigation + 1] = { text = entry.text, value = entry.value }
     end
   end
@@ -374,10 +529,7 @@ function Dibs.PlayerUI.GetSummary(playerName, ledgerId, options)
   local currentPlayer = playerName or Dibs.GetPlayerName()
   local historySummary = Dibs.Ledger and Dibs.Ledger.GetPlayerHistorySummary
     and Dibs.Ledger.GetPlayerHistorySummary(currentPlayer, season and season.id, ledgerId) or nil
-  -- The history summary is an inexpensive ledger projection, but the Player
-  -- balance shown to the user must come from the canonical state (pending
-  -- reservations affect availability in RC, not the committed balance here).
-  local canonical = Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
+  local canonical = not historySummary and Dibs.Ledger and Dibs.Ledger.GetCanonicalPlayerDibsState
     and Dibs.Ledger.GetCanonicalPlayerDibsState(season and season.id, currentPlayer, ledgerId) or nil
   local playerState = not historySummary and Dibs.Ledger and Dibs.Ledger.GetPlayerState
     and Dibs.Ledger.GetPlayerState(currentPlayer, season and season.id, ledgerId) or {}
@@ -473,7 +625,7 @@ function Dibs.PlayerUI.GetSummary(playerName, ledgerId, options)
   local summary = {
     season = season,
     player = currentPlayer,
-    balance = canonical and canonical.balance or (historySummary and historySummary.balance or 0),
+    balance = historySummary and historySummary.balance or (canonical and canonical.balance or 0),
     balanceState = canonical,
     seasonAllocation = historySummary and historySummary.allocation or (tonumber(playerState.allocation) or 0),
     seasonUsed = used,
@@ -548,9 +700,9 @@ end
 
 function Dibs.PlayerUI.GetIntegrationState(result)
   result = type(result) == "table" and result or {}
-  local availability, status = tostring(result.availability or ""), tostring(result.status or "")
-  if availability == "operational" or status == "Ready" then return { status = "Ready" } end
-  if availability == "degraded" or status == "Degraded" then return { status = "Degraded" } end
+  local availability = string.lower(tostring(result.availability or result.status or ""))
+  if availability == "operational" or availability == "ready" then return { status = "Ready" } end
+  if availability == "degraded" or availability == "limited" then return { status = "Degraded" } end
   return { status = "Unavailable" }
 end
 
@@ -849,7 +1001,7 @@ function Dibs.PlayerUI.GetViewModel(playerName, historyFilters, ledgerId, option
   options = type(options) == "table" and options or {}
   local summary = Dibs.PlayerUI.GetSummary(playerName, ledgerId, {
     includeAcquisitions = false,
-    includeEligibility = false,
+    includeEligibility = options.includeEligibility == true,
     includeModePolicy = false,
   })
   local readiness = Dibs.Readiness and Dibs.Readiness.Evaluate and Dibs.Readiness.Evaluate({ allowPlayer = true }) or {}
@@ -917,7 +1069,9 @@ function Dibs.PlayerUI.GetViewModel(playerName, historyFilters, ledgerId, option
   local view = {
     navigation = Dibs.PlayerUI.GetNavigation(),
     player = summary.player,
+    season = summary.season,
     balance = summary.balance,
+    eligibility = summary.eligibility,
     seasonAllocation = summary.seasonAllocation or 0,
     seasonUsed = summary.seasonUsed or 0,
     seasonName = summary.season and summary.season.name or "No active season",
@@ -1073,6 +1227,42 @@ local function resolveVaultItem(record, frame, ownedLinks)
   return record
 end
 
+local function renderVaultCaptureStatus(shell, parent)
+  local gui = Dibs.AceGUI
+  local policy = Dibs.OperationalPolicy
+  if policy and type(policy.RequireModuleEnabled) == "function"
+    and not policy.RequireModuleEnabled("preDibs") then
+    gui.AddLabel(shell, parent, helpText.PLAYER_VAULT_CAPTURE_DISABLED
+      or "Automatic Great Vault capture is disabled by guild policy.", true)
+    return
+  end
+  local adapter = Dibs.GreatVault
+  local capture = adapter and type(adapter.GetCaptureStatus) == "function" and adapter.GetCaptureStatus() or nil
+  if type(capture) ~= "table" then capture = nil end
+  if not capture or capture.status ~= "OPERATIONAL" then
+    gui.AddLabel(shell, parent, helpText.PLAYER_VAULT_CAPTURE_UNAVAILABLE
+      or "Automatic Great Vault capture is unavailable on this client.", true)
+    local reason = capture and helpText["VAULT_REASON_" .. tostring(capture.reasonCode or "")]
+      or helpText.VAULT_REASON_CLAIM_SIGNAL_UNAVAILABLE
+    if reason then gui.AddLabel(shell, parent, reason, true) end
+  else
+    gui.AddLabel(shell, parent, helpText.PLAYER_VAULT_CAPTURE_ACTIVE
+      or "Automatic Great Vault capture is active.", true)
+    local count = math.max(0, math.floor(tonumber(capture.choiceCount) or 0))
+    gui.AddLabel(shell, parent, string.format(helpText.PLAYER_VAULT_CAPTURE_CHOICES
+      or "Readable equipment choices in the currently opened Vault: %d.", count), true)
+  end
+  if type(capture) == "table" and capture.lastReasonCode then
+    local reason = helpText["VAULT_REASON_" .. tostring(capture.lastReasonCode)]
+      or helpText.PLAYER_VAULT_CAPTURE_LAST_UNKNOWN
+      or "The last capture attempt could not be confirmed; use manual recording if needed."
+    gui.AddLabel(shell, parent, string.format(helpText.PLAYER_VAULT_CAPTURE_LAST
+      or "Last capture: %s", reason), true)
+  end
+  gui.AddLabel(shell, parent, helpText.PLAYER_VAULT_CAPTURE_HELP
+    or "Only the selected reward actually received is recorded. Opening the Vault or viewing its choices does not add an acquisition.", true)
+end
+
 local function renderVaultHistory(shell, parent, frame, widthHint)
   local gui = Dibs.AceGUI
   local page = gui.AddTablePage(shell, parent, { footer = true, boundsFrame = parent.content or parent.frame })
@@ -1083,6 +1273,7 @@ local function renderVaultHistory(shell, parent, frame, widthHint)
   frame.vaultTablePage = page
   gui.AddHeading(shell, page.header, helpText.PLAYER_VAULT_TITLE or "Great Vault",
     helpText.PLAYER_VAULT_HELP or "Your recorded rewards across seasons in the current guild scope. Read-only; no Dibs are spent.")
+  renderVaultCaptureStatus(shell, page.header)
   if not (Dibs.PreDibs and type(Dibs.PreDibs.GetAcquisitionsForPlayer) == "function"
     and type(Dibs.PreDibs.ProjectVaultAcquisition) == "function") then
     gui.AddLabel(shell, page.header, helpText.PLAYER_VAULT_UNAVAILABLE or "Great Vault history is unavailable.", true)
@@ -1421,6 +1612,8 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
       received = strings.REQUEST_RECEIVED or "Received", error = strings.REQUEST_ERROR or "Delivery error" }
     Dibs.AceGUI.AddLabel(shell, parent, (strings.REQUEST_DELIVERY or "Delivery") .. ": " .. tostring(labels[delivery.state] or delivery.state)
       .. (delivery.reason and (" — " .. delivery.reason) or ""), true)
+    Dibs.AceGUI.AddLabel(shell, parent, strings.REQUEST_DELIVERY_SCOPE_HELP
+      or "Receipt confirms delivery to an authorized reviewer, not approval, an accounting change, or reception by every guild member.", true)
     if delivery.state ~= "received" and Dibs.RequestDelivery and Dibs.RequestDelivery.Retry then
       Dibs.AceGUI.AddButton(shell, parent, strings.REQUEST_RETRY or "Retry delivery", function()
         local ok, reason = Dibs.RequestDelivery.Retry(selected.requestId)
@@ -1490,336 +1683,6 @@ local function renderReviewRequests(shell, parent, frame, summary, options)
   end, 130)
 end
 
-local function createLegacyAceWindow()
-  local shell = Dibs.AceGUI.CreateWindow("RCLootCouncil - Dibs | Player", 720, 620, { "CENTER", 0, 0 })
-  if not shell then return nil end
-  local frame = shell.frame
-  if frame and frame.SetUserPlaced then frame:SetUserPlaced(true) end
-  frame.dibsAceGUIShell = shell
-  frame._dibsUiShell = shell
-  frame.historyMode = "current"
-  frame.historyPage = 1
-  frame.playerTab = "summary"
-  frame.devContext = nil
-
-  local function submitFromInput()
-    local request, errorText = submitPublicPreDib(getControlText(frame.preDibInput))
-    if request then
-      setControlText(frame.preDibInput, "")
-      frame.preDibStatusText = "Pre-Dib saved for item " .. tostring(request.itemID) .. " (status: " .. tostring(request.status) .. ")"
-    else
-      frame.preDibStatusText = errorText or "Unable to create pre-dib request."
-    end
-    frame:Refresh()
-  end
-
-  local function submitDevRequest()
-    local enabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() or false
-    local context = frame.devContext or (Dibs.LootPipeline and Dibs.LootPipeline.GetPendingDevContext and Dibs.LootPipeline.GetPendingDevContext())
-    if not enabled then
-      frame.devStatus = "Developer Mode required"
-    elseif not context then
-      frame.devStatus = "Use /dibs testitem <itemID> to inject an item."
-    elseif Dibs.LootPipeline and Dibs.LootPipeline.RequestDibFromContext then
-      local request, reason = Dibs.LootPipeline.RequestDibFromContext(context)
-      frame.devStatus = request and ("Test Request Dib created for item " .. tostring(request.itemID) .. ".")
-        or (reason == "INVALID_ITEM" and "Invalid test item." or "Unable to create test Request Dib.")
-    else
-      frame.devStatus = "Loot pipeline unavailable."
-    end
-    frame:Refresh()
-  end
-
-  local tabs = Dibs.AceGUI.AddTree(shell, PLAYER_NAV_TREE, function(value)
-    frame.playerTab = value
-    frame:Refresh()
-  end, 170)
-  frame.aceTabs = tabs
-  frame.SelectTab = function(tab)
-    if not Dibs.AceGUI.SelectTree(tabs, tab) then
-      frame.playerTab = tab
-      frame:Refresh()
-    end
-  end
-
-  frame.Refresh = function(self)
-    Dibs.AceGUI.Clear(tabs)
-    if Dibs.AceGUI.SetShellStatus then Dibs.AceGUI.SetShellStatus(shell) end
-    if self.playerTab == "vault" then
-      renderVaultHistory(shell, tabs, self, 480)
-      return
-    end
-    local summaryOptions
-    if self.playerTab == "requests" or self.playerTab == "history" then
-      summaryOptions = {
-        includeRequests = false, includeAcquisitions = false,
-        includeEligibility = false, includeModePolicy = false,
-      }
-    end
-    local summary = Dibs.PlayerUI.GetSummary(nil,
-      Dibs.MultiLedger and Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or nil,
-      summaryOptions)
-    if self.playerTab == "requests" then
-      -- Keep the report form, request list and details in one bounded page so
-      -- the lower controls remain reachable on smaller screens.
-      local tabs = Dibs.AceGUI.AddScrollableList(shell, tabs, 535) or tabs
-      Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", helpText.UI_HELP_PLAYER_OVERVIEW)
-      local toolbar = Dibs.AceGUI.AddInlineGroup(shell, tabs)
-      Dibs.AceGUI.AddButton(shell, toolbar, "Open shared options", function() Dibs.RCOptions.Open() end, 170)
-      renderReviewRequests(shell, tabs, self, summary, { historyMode = self.historyMode, widthHint = 560 })
-      return
-    end
-    Dibs.AceGUI.AddHeading(shell, tabs, "RCLootCouncil - Dibs options", helpText.UI_HELP_PLAYER_OVERVIEW)
-    local toolbar = Dibs.AceGUI.AddInlineGroup(shell, tabs)
-    Dibs.AceGUI.AddButton(shell, toolbar, "Open shared options", function() Dibs.RCOptions.Open() end, 170)
-    if self.playerTab == "history" then
-      Dibs.AceGUI.AddLabel(shell, tabs, "History (condensed)", true)
-      Dibs.AceGUI.AddButton(shell, tabs, "Report a problem", function()
-        self.playerTab = "requests"
-        self.disputeTransactionId = ""
-        self:Refresh()
-      end, 150)
-      self.searchBox = Dibs.AceGUI.AddEditBox(shell, tabs, "Search", function(value)
-        self.historyQuery = value
-        self.historyPage = 1
-        self:Refresh()
-      end, 200)
-      setControlText(self.searchBox, self.historyQuery or "")
-      local modeButton = Dibs.AceGUI.AddButton(shell, tabs, self.historyMode == "all" and "Mode: All" or "Mode: Season", function()
-        self.historyMode = self.historyMode == "all" and "current" or "all"
-        self.historyPage = 1
-        self:Refresh()
-      end, 110)
-      Dibs.AceGUI.AddTooltip(modeButton, "History scope", helpText.UI_HELP_HISTORY_SCOPE)
-      Dibs.AceGUI.AddButton(shell, tabs, "Clear", function()
-        self.historyQuery = ""
-        self.historyPage = 1
-        self:Refresh()
-      end, 70)
-      local historyEntries = getFilteredHistoryEntries(summary.player, summary.season and summary.season.id, self.historyQuery, self.historyMode)
-      local pageSize = 9
-      local totalPages = math.max(1, math.ceil(#historyEntries / pageSize))
-      self.historyPage = math.min(math.max(1, self.historyPage), totalPages)
-      local visible = {}
-      for index = ((self.historyPage - 1) * pageSize) + 1, math.min(#historyEntries, self.historyPage * pageSize) do
-        table.insert(visible, historyEntries[index])
-      end
-      local rows = {}
-      for _, entry in ipairs(visible) do
-        local row = splitPipeLine(entry.line)
-        row.transaction = entry.transaction
-        table.insert(rows, row)
-      end
-    if #rows == 0 then rows[1] = { "No matching history." } end
-      self.aceHistoryScroll = Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Date", width = 145, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
-        { title = "Action", width = 150, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
-        { title = "Amount", width = 70, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
-        { title = "Reason", width = 170, tooltip = helpText.UI_HELP_AUDIT_HISTORY },
-      }, rows, 320, function(row)
-        if not row.transaction then return nil end
-        return {
-          text = "Report",
-          callback = function()
-            self.disputeTransactionId = row.transaction.transactionId or ""
-            self.playerTab = "requests"
-            self:Refresh()
-          end,
-        }
-      end)
-      local pageControls = Dibs.AceGUI.AddInlineGroup(shell, tabs)
-      local previous = Dibs.AceGUI.AddButton(shell, pageControls, "Previous", function()
-        self.historyPage = math.max(1, self.historyPage - 1)
-        self:Refresh()
-      end, 90)
-      local pageLabel = Dibs.AceGUI.AddLabel(shell, pageControls, "Page " .. tostring(self.historyPage) .. "/" .. tostring(totalPages))
-      local nextButton = Dibs.AceGUI.AddButton(shell, pageControls, "Next", function()
-        self.historyPage = math.min(totalPages, self.historyPage + 1)
-        self:Refresh()
-      end, 70)
-      Dibs.AceGUI.SetDisabled(previous, self.historyPage <= 1)
-      Dibs.AceGUI.SetDisabled(nextButton, self.historyPage >= totalPages)
-      Dibs.AceGUI.AddTooltip(pageLabel, "Page", "Current page and total number of pages.")
-      return
-    end
-
-    Dibs.AceGUI.AddHeader(shell, tabs, "Season summary", "Your current season balance and Pre-Dib status.")
-    local activeLedgerName = "Default"
-    if Dibs.MultiLedger and type(Dibs.MultiLedger.GetLedgers) == "function" then
-      local ledgers = Dibs.MultiLedger.GetLedgers()
-      local activeLedgerId = Dibs.MultiLedger.GetActiveLedgerId()
-      local approvedCount = 0
-      local ledgerValues = {}
-      for _, l in ipairs(ledgers) do
-        if l.status == "APPROVED" then
-          ledgerValues[l.id] = l.name
-          approvedCount = approvedCount + 1
-          if l.id == activeLedgerId then
-            activeLedgerName = l.name
-          end
-        end
-      end
-      if approvedCount > 0 then
-        ledgerValues = Dibs.AceGUI.GetLedgerDropdownValues()
-        local viewLedgerId = Dibs.MultiLedger.GetViewLedgerId and Dibs.MultiLedger.GetViewLedgerId() or activeLedgerId
-        local ledgerDropdown = Dibs.AceGUI.AddDropdown(shell, tabs, (Dibs.L or {}).LEDGER_VIEW_LABEL or "View ledger", ledgerValues, function(value)
-          if Dibs.MultiLedger.SetViewLedger then Dibs.MultiLedger.SetViewLedger(value) end
-          self:Refresh()
-        end, 200)
-        Dibs.AceGUI.SetValue(ledgerDropdown, viewLedgerId)
-      end
-    end
-    local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus and Dibs.RCLootCouncil.GetLocalStatus() or nil
-    if integration then
-      local integrationState = Dibs.PlayerUI.GetIntegrationState(integration)
-      local integrationView = Dibs.PlayerUI.GetStatusPresentation(integrationState)
-      local integrationBadge = Dibs.Midnight.AddStatusBadge(shell, tabs, integrationView.tone, "RCLootCouncil: " .. integrationView.label)
-      Dibs.AceGUI.AddLabel(shell, tabs, integrationView.explanation, true)
-      Dibs.AceGUI.AddTooltip(integrationBadge, "RCLootCouncil status", helpText.UI_HELP_PLAYER_STATUS)
-    end
-    if Dibs.Readiness and type(Dibs.Readiness.Evaluate) == "function" then
-      local readiness = Dibs.Readiness.Evaluate({ allowPlayer = true })
-      local readinessView = Dibs.PlayerUI.GetStatusPresentation(readiness)
-      Dibs.Midnight.AddStatusBadge(shell, tabs, readinessView.tone, "Raid readiness: " .. readinessView.label)
-      local readinessExplanation = Dibs.AceGUI.AddLabel(shell, tabs, readinessView.explanation ..
-        " Live Dibs consumption: " .. (readiness and readiness.liveConsumptionAllowed and "allowed after revalidation" or "blocked or unavailable"), true)
-      Dibs.AceGUI.AddTooltip(readinessExplanation, "Raid readiness", helpText.UI_HELP_PLAYER_READINESS)
-    end
-    Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Metric", width = 180, tooltip = "Summary field." },
-      { title = "Value", width = 280, tooltip = "Current value." },
-    }, {
-      { "Active Ledger", tostring(activeLedgerName) },
-      { "Season", tostring(summary.season and summary.season.name or "None") },
-      { (Dibs.L or {}).PLAYER_SEASON_ALLOCATION or "Season allocation", tostring(summary.seasonAllocation or 0) },
-      { (Dibs.L or {}).PLAYER_DIBS_USED or "Dibs used", tostring(summary.seasonUsed or 0) },
-      { (Dibs.L or {}).PLAYER_DIBS_REMAINING or "Dibs remaining", tostring(summary.balance) },
-      { "Active Pre-Dibs", tostring(#(summary.activePreDibs or {})) },
-      { (Dibs.L or {}).PLAYER_FULFILLED_PREDIBS or "Won Pre-Dibs", tostring(#(summary.wonPreDibs or {})) },
-      { "Vault acquisitions", tostring(#(summary.acquisitions or {})) },
-      { "Pre-Dib mode", tostring(summary.modePolicy and summary.modePolicy.mode or "WILD_OPEN") },
-      { "Protected-loot group", tostring(summary.eligibility and summary.eligibility.groupId or "Not linked") },
-      { "Main-change probation", tostring(summary.eligibility and summary.eligibility.probation and ("Until " .. tostring(summary.eligibility.probation.probationEndsAt)) or "None") },
-    }, 145)
-    if summary.eligibility then
-      local protectedRows = {}
-      for _, family in ipairs({ "TOKEN", "TOKEN_SET" }) do
-        local policy = summary.eligibility.policies and summary.eligibility.policies[family]
-        local count = 0
-        for _, acquisition in ipairs(summary.eligibility.acquisitions or {}) do
-          if acquisition.family == family then count = count + 1 end
-        end
-        protectedRows[#protectedRows + 1] = { family == "TOKEN" and "Curio" or "Tier Set", tostring(count), tostring(policy and policy.difficultyScope or "ALL"), tostring(policy and (policy.enabled and "Enabled" or "Disabled") or "Unknown") }
-      end
-      Dibs.AceGUI.AddHeader(shell, tabs, "Protected-loot status", "Only finalized acquisitions and approved character links affect these counts.")
-      Dibs.AceGUI.AddTable(shell, tabs, {
-        { title = "Family", width = 160, tooltip = "Tracked protected-loot family." },
-        { title = "Acquired", width = 90, tooltip = "Confirmed acquisitions for your linked group." },
-        { title = "Scope", width = 120, tooltip = "Difficulty scope in the active policy." },
-        { title = "Status", width = 150, tooltip = "Current policy status." },
-      }, protectedRows, 100)
-      local relationshipCount = #(summary.eligibility.relationships or {})
-      Dibs.AceGUI.AddLabel(shell, tabs, "Character links: " .. tostring(relationshipCount) .. " record(s). Pending links do not affect enforcement.", true)
-      local relationshipSection = Dibs.AceGUI.AddSection(shell, tabs, "Main / alt declarations", "Choose a guild character. Officers must approve the declaration before it affects protected-loot priority.")
-      local characterChoices = getGuildCharacterChoices()
-      self.eligibilityCharacter = self.eligibilityCharacter or next(characterChoices)
-      local characterChoice = Dibs.AceGUI.AddDropdown(shell, relationshipSection, "Guild character", characterChoices, function(value)
-        self.eligibilityCharacter = value
-      end, 260)
-      Dibs.AceGUI.SetValue(characterChoice, self.eligibilityCharacter)
-      local declare = Dibs.AceGUI.AddButton(shell, relationshipSection, "Declare alt", function()
-        local alt = self.eligibilityCharacter
-        local relationship = alt and Dibs.CharacterEligibility and Dibs.CharacterEligibility.DeclareRelationship and Dibs.CharacterEligibility.DeclareRelationship({
-          seasonId = summary.season and summary.season.id, mainCharacter = Dibs.GetPlayerName(), altCharacter = alt,
-        }) or nil
-        self.eligibilityStatus = relationship and "Declaration submitted for Officer approval." or "Choose a guild character before submitting."
-        self:Refresh()
-      end, 130)
-      local requestMain = Dibs.AceGUI.AddButton(shell, relationshipSection, "Request main change", function()
-        local newMain = self.eligibilityCharacter
-        local request = newMain and Dibs.CharacterEligibility and Dibs.CharacterEligibility.RequestMainChange and Dibs.CharacterEligibility.RequestMainChange({
-          seasonId = summary.season and summary.season.id, oldMain = Dibs.GetPlayerName(), newMain = newMain,
-          reason = "Player requested a main-character change",
-        }) or nil
-        self.eligibilityStatus = request and "Main-change request submitted for Officer approval." or "Choose a guild character before submitting."
-        self:Refresh()
-      end, 170)
-      Dibs.AceGUI.SetDisabled(declare, next(characterChoices) == nil)
-      Dibs.AceGUI.SetDisabled(requestMain, next(characterChoices) == nil)
-      Dibs.AceGUI.AddLabel(shell, relationshipSection, self.eligibilityStatus or "Declarations stay pending until an Officer reviews them.", true)
-    end
-    Dibs.AceGUI.AddHeader(shell, tabs, (Dibs.L or {}).PLAYER_ACTIVE_PREDIBS or "Active Pre-Dibs", helpText.UI_HELP_PREDIB)
-    local activeRows = {}
-    for _, request in ipairs(summary.activePreDibs or {}) do
-      activeRows[#activeRows + 1] = {
-        formatDate(request.createdAt or request.updatedAt),
-        tostring(request.itemName or request.itemLink or ("Item " .. tostring(request.itemID))),
-        tostring(request.difficulty or "Normal"), tostring(request.status), "", request = request,
-      }
-    end
-    Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Date", width = 145, align = "CENTER", tooltip = "When the Pre-Dib was created." },
-      { title = "Item", width = 240, tooltip = "The reserved loot." },
-      { title = "Difficulty", width = 100, align = "CENTER", tooltip = "Normal, Heroic, or Mythic." },
-      { title = "Status", width = 100, align = "CENTER", tooltip = "Pending or confirmed." },
-      { title = "Action", width = 90, tooltip = "Cancel your request." },
-    }, activeRows, playerListHeight(#activeRows, 145), function(row)
-      if not row.request then return nil end
-      return {
-        text = "Cancel",
-        callback = function()
-          local request = row.request
-          local cancelled, reason = cancelPlayerPreDib(request.requestId)
-          frame.preDibStatusText = cancelled and ("Pre-Dib cancelled for item " .. tostring(request.itemID) .. ".")
-            or (reason == "NOT_REQUEST_OWNER" and "You can only cancel your own Pre-Dibs." or "Unable to cancel this Pre-Dib.")
-          frame:Refresh()
-        end,
-      }
-    end, { fluidColumns = true, widthHint = playerContentWidthHint(), scrollbarReserve = 0,
-      columnGap = Dibs.AceGUI.GetLayoutMetrics().tableColumnGap,
-      emptyText = (Dibs.L or {}).PLAYER_NO_ACTIVE_PREDIBS or "No active Pre-Dibs this season." })
-    Dibs.AceGUI.AddHeader(shell, tabs, (Dibs.L or {}).PLAYER_FULFILLED_PREDIBS or "Won Pre-Dibs",
-      "Pre-Dibs fulfilled by a finalized loot award.")
-    local wonRows = {}
-    for _, request in ipairs(summary.wonPreDibs or {}) do
-      wonRows[#wonRows + 1] = {
-        formatDate(request.fulfilledAt or request.updatedAt or request.createdAt),
-        tostring(request.itemName or request.itemLink or ("Item " .. tostring(request.itemID))),
-        tostring(request.difficulty or "Normal"), (Dibs.L or {}).PLAYER_PREDIB_WON_STATUS or "Won",
-      }
-    end
-    Dibs.AceGUI.AddTable(shell, tabs, {
-      { title = "Date", width = 145, align = "CENTER", tooltip = "When the Pre-Dib was fulfilled." },
-      { title = "Item", width = 260, tooltip = "The item won through the fulfilled Pre-Dib." },
-      { title = "Difficulty", width = 110, align = "CENTER", tooltip = helpText.UI_HELP_DIFFICULTY },
-      { title = "Status", width = 100, align = "CENTER", tooltip = helpText.UI_HELP_REQUEST_STATUS },
-    }, wonRows, playerListHeight(#wonRows, 145), nil, { fluidColumns = true, widthHint = playerContentWidthHint(), scrollbarReserve = 0,
-      columnGap = Dibs.AceGUI.GetLayoutMetrics().tableColumnGap,
-      emptyText = (Dibs.L or {}).PLAYER_NO_FULFILLED_PREDIBS or "No won Pre-Dibs this season." })
-    self.preDibInput = Dibs.AceGUI.AddEditBox(shell, tabs, "Public pre-dib (item ID or link)", nil, 260)
-    Dibs.AceGUI.AddTooltip(self.preDibInput, "Pre-Dib", helpText.UI_HELP_PREDIB_FIELD)
-    setControlText(self.preDibInput, self.preDibValue or "")
-    self.preDibButton = Dibs.AceGUI.AddButton(shell, tabs, "I want to DIB this", submitFromInput, 170)
-    Dibs.AceGUI.AddTooltip(self.preDibButton, "Pre-Dib", helpText.UI_HELP_PREDIB_SUBMIT)
-    local publicEnabled = Dibs.PreDibs and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() or false
-    Dibs.AceGUI.SetDisabled(self.preDibButton, not publicEnabled)
-    self.preDibStatus = Dibs.AceGUI.AddLabel(shell, tabs, self.preDibStatusText or (publicEnabled and "Public pre-dibs enabled." or "Public pre-dibs disabled by officers."), true)
-    local context = self.devContext or (Dibs.LootPipeline and Dibs.LootPipeline.GetPendingDevContext and Dibs.LootPipeline.GetPendingDevContext())
-    local devEnabled = Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled and Dibs.DeveloperMode.IsEnabled() or false
-    if devEnabled or (Dibs.DebugEnabled and Dibs.DebugEnabled("ui", 4)) then
-      self.devItemText = Dibs.AceGUI.AddLabel(shell, tabs, formatDevContextLine(context), true)
-      self.devRequestButton = Dibs.AceGUI.AddButton(shell, tabs, "Request Dib (DEV)", submitDevRequest, 170)
-      Dibs.AceGUI.SetDisabled(self.devRequestButton, not (devEnabled and type(context) == "table" and tonumber(context.itemID)))
-      self.devStatusText = Dibs.AceGUI.AddLabel(shell, tabs, self.devStatus or (devEnabled and "Use /dibs testitem <itemID> to inject an item." or "Developer Mode required"), true)
-    end
-  end
-  frame:HookScript("OnShow", function(self) self:Refresh() end)
-  _G.DibsPlayerFrame = frame
-  frame:Refresh()
-  Dibs.AceGUI.SelectTree(tabs, frame.playerTab)
-  return frame
-end
-
 local function createAceWindow()
   local shell = Dibs.AceGUI.CreateWindow("Dibs | My Dibs", 720, 620, { "CENTER", 0, 0 }, "PlayerWindowPosition")
   if not shell then return nil end
@@ -1843,8 +1706,11 @@ local function createAceWindow()
   end
   frame.contentHost = contentHost
   frame.SelectTab = function(tab)
-    frame.playerTab = tab
-    if not Dibs.AceGUI.SelectTree(tabs, tab) then frame:Refresh() end
+    local navigation = Dibs.PlayerUI.GetNavigation()
+    local allowed
+    for _, entry in ipairs(navigation) do if entry.value == tab then allowed = true; break end end
+    frame.playerTab = allowed and tab or navigation[1] and navigation[1].value or "setup-status"
+    if not Dibs.AceGUI.SelectTree(tabs, frame.playerTab) then frame:Refresh() end
   end
   local function playerContentWidthHint()
     local content = tabs.content
@@ -1968,6 +1834,17 @@ local function createAceWindow()
 
   frame.Refresh = function(self)
     if not contentHost then return end
+    local navigation, allowed, navigationKeys = Dibs.PlayerUI.GetNavigation(), false, {}
+    for _, entry in ipairs(navigation) do
+      navigationKeys[#navigationKeys + 1] = entry.value
+      if entry.value == self.playerTab then allowed = true end
+    end
+    if not allowed then self.playerTab = navigation[1] and navigation[1].value or "setup-status" end
+    local navigationKey = table.concat(navigationKeys, "|")
+    if self._dibsNavigationKey ~= navigationKey then
+      self._dibsNavigationKey = navigationKey
+      if self.aceTabs and self.aceTabs.SetTree then self.aceTabs:SetTree(navigation) end
+    end
     shell._dibsPerfRoute = "Player/" .. tostring(self.playerTab or "unknown")
     local renderStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
     if Dibs.Midnight and Dibs.Midnight.ApplyToFrame and shell.frame then
@@ -2008,8 +1885,367 @@ local function createAceWindow()
     local ok, refreshError = pcall(function()
     if Dibs.AceGUI.SetShellStatus then Dibs.AceGUI.SetShellStatus(shell) end
     if self.playerTab ~= "diagnostics" then stopAutoPing() end
+    if self.playerTab == "setup-status" then
+      local labels = Dibs.L or {}
+      Dibs.AceGUI.AddHeading(shell, tabs, labels.PLAYER_SETUP_STATUS or "Guild setup")
+      Dibs.AceGUI.AddLabel(shell, tabs, labels.PLAYER_SETUP_WAITING
+        or "Your guild setup is not complete yet. Ask your Guild Master or an Officer to finish Guided Setup. Available pages appear automatically as each section is configured.", true)
+      finishLayoutBatch()
+      return
+    end
     if self.playerTab == "vault" then
       renderVaultHistory(shell, tabs, self, playerContentWidthHint())
+      finishLayoutBatch()
+      return
+    end
+    if self.playerTab == "seasonal-roster" then
+      self.seasonalRosterSaveButton, self.seasonalRosterWithdrawButton = nil, nil
+      local labels = Dibs.L or {}
+      local page = Dibs.AceGUI.AddScrollableList(shell, tabs, 600) or tabs
+      Dibs.AceGUI.AddHeading(shell, page, labels.SEASONAL_ROSTER_TITLE or "Seasonal Raid Roster",
+        labels.SEASONAL_ROSTER_PLAYER_HELP or "Enroll your character for an open raid season.")
+      local status = Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleStatus
+        and Dibs.OperationalPolicy.GetModuleStatus("seasonalRoster") or { enabled = false }
+      if status.enabled ~= true then
+        Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_DISABLED or "This feature is disabled by the guild.", true)
+        finishLayoutBatch()
+        return
+      end
+      local seasons, seasonReason
+      if Dibs.SeasonalRoster and Dibs.SeasonalRoster.ListSeasons then
+        seasons, seasonReason = Dibs.SeasonalRoster.ListSeasons()
+      end
+      if not seasons then
+        Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_UNAVAILABLE or
+          ("Seasonal roster unavailable: " .. tostring(seasonReason)), true)
+        finishLayoutBatch()
+        return
+      end
+      local seasonValues, selectedSeason = {}, nil
+      for _, season in ipairs(seasons) do
+        local registrationStatus = season.lifecycle and season.lifecycle.registrationStatus or season.registrationState
+        seasonValues[season.seasonId] = tostring(season.name) .. " (" .. Dibs.OfficerUI.SeasonalText(registrationStatus) .. ")"
+        if registrationStatus == "OPEN" and not selectedSeason then selectedSeason = season end
+      end
+      if self.seasonalRosterSeasonId and seasonValues[self.seasonalRosterSeasonId] then
+        for _, season in ipairs(seasons) do
+          if season.seasonId == self.seasonalRosterSeasonId then selectedSeason = season; break end
+        end
+      end
+      if not selectedSeason then selectedSeason = seasons[1] end
+      if not selectedSeason then
+        Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_NO_SEASONS or "No raid seasons have been configured yet.", true)
+        finishLayoutBatch()
+        return
+      end
+      self.seasonalRosterSeasonId = selectedSeason.seasonId
+      local seasonDropdown = Dibs.AceGUI.AddDropdown(shell, page, labels.SEASONAL_ROSTER_SEASON or "Season",
+        seasonValues, function(value)
+          self.seasonalRosterSeasonId = value
+          self.seasonalRosterEnrollmentId, self.seasonalRosterFormLoaded = nil, nil
+          self.seasonalRosterNewCharacter, self.seasonalRosterCharacter = nil, nil
+          self.seasonalRosterPrimarySpec, self.seasonalRosterSecondarySpec = nil, nil
+          self.seasonalRosterRequestedPath, self.seasonalRosterCategory = nil, nil
+          self.seasonalRosterRoles, self.seasonalRosterMessage = {}, nil
+          self.seasonalRosterPublicPage = 1
+          self:Refresh()
+        end, 280)
+      Dibs.AceGUI.SetValue(seasonDropdown, selectedSeason.seasonId)
+      local lifecycle = selectedSeason.lifecycle or { registrationStatus = selectedSeason.registrationState }
+      local registrationMessage
+      if lifecycle.seasonStatus == "ARCHIVED" then
+        registrationMessage = labels.SEASONAL_ROSTER_SEASON_ARCHIVED or "This season is archived and read-only."
+      elseif lifecycle.seasonStatus == "COMPLETED" then
+        registrationMessage = labels.SEASONAL_ROSTER_SEASON_COMPLETED
+          or "Season ended. The roster is read-only until it is archived."
+      elseif lifecycle.seasonStatus == "UPCOMING" then
+        registrationMessage = (labels.SEASONAL_ROSTER_SEASON_UPCOMING or "Season starts on %s.")
+          :format(formatDate(selectedSeason.startAt, "%Y-%m-%d"))
+      elseif lifecycle.registrationStatus == "OPEN" then
+        registrationMessage = labels.SEASONAL_ROSTER_REGISTRATION_OPEN or "Registration is open."
+      elseif lifecycle.registrationStatus == "SCHEDULED" then
+        registrationMessage = (labels.SEASONAL_ROSTER_REGISTRATION_SCHEDULED or "Registration opens on %s.")
+          :format(formatDate(selectedSeason.registrationStartAt, "%Y-%m-%d"))
+      elseif lifecycle.seasonStatus == "ACTIVE" then
+        registrationMessage = (labels.SEASONAL_ROSTER_SEASON_ACTIVE or "Season is active.") .. " "
+          .. (labels.SEASONAL_ROSTER_REGISTRATION_CLOSED or "Registration is closed.")
+      else
+        registrationMessage = Dibs.OfficerUI.SeasonalText(lifecycle.seasonStatus)
+          .. " — " .. Dibs.OfficerUI.SeasonalText(lifecycle.registrationStatus)
+      end
+      Dibs.AceGUI.AddLabel(shell, page, registrationMessage, true)
+      if selectedSeason.raidRules and selectedSeason.raidRules ~= "" then
+        Dibs.AceGUI.AddHeader(shell, page, (labels.SEASONAL_ROSTER_RULES or "Season raid rules")
+          .. " (v" .. tostring(selectedSeason.rulesRevision or selectedSeason.revision or 1) .. ")")
+        Dibs.AceGUI.AddLabel(shell, page, selectedSeason.raidRules, true)
+      end
+      if selectedSeason.promotionPolicy and selectedSeason.promotionPolicy ~= "" then
+        Dibs.AceGUI.AddHeader(shell, page, labels.SEASONAL_ROSTER_CORE_POLICY or "Guild promotion criteria")
+        Dibs.AceGUI.AddLabel(shell, page, selectedSeason.promotionPolicy, true)
+      end
+      Dibs.PlayerUI.RenderSeasonIdentity(shell, page, self, selectedSeason)
+      local ownEnrollments = Dibs.SeasonalRoster.GetOwnEnrollments(selectedSeason.seasonId) or {}
+      local enrollmentValues = { __NEW__ = labels.SEASONAL_ROSTER_NEW_CHARACTER or "Add another character" }
+      for _, ownEnrollment in ipairs(ownEnrollments) do
+        enrollmentValues[ownEnrollment.enrollmentId] = ownEnrollment.character
+      end
+      if self.seasonalRosterEnrollmentId then
+        local stillExists = false
+        for _, ownEnrollment in ipairs(ownEnrollments) do
+          if ownEnrollment.enrollmentId == self.seasonalRosterEnrollmentId then stillExists = true; break end
+        end
+        if not stillExists then self.seasonalRosterEnrollmentId = nil end
+      end
+      local enrollment
+      for _, ownEnrollment in ipairs(ownEnrollments) do
+        if ownEnrollment.enrollmentId == self.seasonalRosterEnrollmentId then enrollment = ownEnrollment; break end
+      end
+      if not self.seasonalRosterEnrollmentId and ownEnrollments[1] and not self.seasonalRosterNewCharacter then
+        enrollment = ownEnrollments[1]
+        self.seasonalRosterEnrollmentId = enrollment.enrollmentId
+      end
+      local enrollmentSelector = Dibs.AceGUI.AddDropdown(shell, page,
+        labels.SEASONAL_ROSTER_MY_CHARACTERS or "Your characters", enrollmentValues, function(value)
+          self.seasonalRosterEnrollmentId = value ~= "__NEW__" and value or nil
+          self.seasonalRosterNewCharacter = value == "__NEW__"
+          self.seasonalRosterFormLoaded = nil
+          self.seasonalRosterCharacter = nil
+          self.seasonalRosterPrimarySpec = nil
+          self.seasonalRosterSecondarySpec = nil
+          self.seasonalRosterCategory = nil
+          self.seasonalRosterRequestedPath = nil
+          self.seasonalRosterRoles = nil
+          self:Refresh()
+        end, 280)
+      Dibs.AceGUI.SetValue(enrollmentSelector, enrollment and enrollment.enrollmentId or "__NEW__")
+      local categories = {}
+      for _, category in ipairs(selectedSeason.categories or {}) do categories[category] = category end
+      for _, category in ipairs(selectedSeason.categoryCatalog or {}) do
+        if categories[category.id] then categories[category.id] = category.name or category.id end
+      end
+      local canEdit = lifecycle.registrationStatus == "OPEN" and lifecycle.readOnly ~= true
+      self.seasonalRosterCharacter = self.seasonalRosterCharacter or (enrollment and enrollment.character)
+        or (Dibs.GetPlayerName and Dibs.GetPlayerName() or "")
+      self.seasonalRosterPrimarySpec = self.seasonalRosterPrimarySpec or (enrollment and enrollment.primarySpec) or ""
+      self.seasonalRosterSecondarySpec = self.seasonalRosterSecondarySpec or (enrollment and enrollment.secondarySpec) or ""
+      self.seasonalRosterCategory = self.seasonalRosterCategory or (enrollment and enrollment.categoryId)
+        or (categories.RAIDER and "RAIDER") or (selectedSeason.categories or {})[1]
+      self.seasonalRosterRequestedPath = self.seasonalRosterRequestedPath
+        or (enrollment and enrollment.requestedPath) or "STANDARD"
+      local selectedCategory
+      for _, category in ipairs(selectedSeason.categoryCatalog or {}) do
+        if category.id == self.seasonalRosterCategory and category.active ~= false then
+          selectedCategory = category
+          break
+        end
+      end
+      self.seasonalRosterRoles = self.seasonalRosterRoles or {}
+      if enrollment and not self.seasonalRosterFormLoaded then
+        self.seasonalRosterRoles = {}
+        for _, role in ipairs(enrollment.roles or {}) do self.seasonalRosterRoles[role] = true end
+      end
+      self.seasonalRosterFormLoaded = true
+      local roleControls = {}
+      self.seasonalRosterCharacterInput = Dibs.AceGUI.AddEditBox(shell, page,
+        labels.SEASONAL_ROSTER_CHARACTER or "Character (Name-Realm)", function(value) self.seasonalRosterCharacter = value or "" end, 280)
+      setControlText(self.seasonalRosterCharacterInput, self.seasonalRosterCharacter)
+      local unifiedCategories = #(selectedSeason.categories or {}) > 1
+        and #(selectedSeason.categories or {}) == #(selectedSeason.raidDifficulties or {})
+      for index, category in ipairs(selectedSeason.categories or {}) do
+        if (category ~= "NORMAL" and category ~= "HEROIC" and category ~= "MYTHIC")
+          or category ~= (selectedSeason.raidDifficulties or {})[index] then
+          unifiedCategories = false
+          break
+        end
+      end
+      if canEdit and unifiedCategories then
+        local categoryInput = Dibs.AceGUI.AddDropdown(shell, page,
+          labels.SEASONAL_ROSTER_CATEGORY or "Raid category", categories, function(value)
+            self.seasonalRosterCategory = value
+            self:Refresh()
+          end, 280)
+        Dibs.AceGUI.SetValue(categoryInput, self.seasonalRosterCategory)
+      end
+      Dibs.AceGUI.AddLabel(shell, page, (labels.SEASONAL_ROSTER_AWARDED_STATUS or "Season status")
+        .. ": " .. tostring(selectedCategory and selectedCategory.name or self.seasonalRosterCategory or "RAIDER")
+        .. " (" .. (enrollment and enrollment.status == "ACTIVE"
+          and (labels.SEASONAL_ROSTER_APPROVED or "Approved")
+          or enrollment and Dibs.OfficerUI.SeasonalText(enrollment.status)
+          or (labels.SEASONAL_ROSTER_PENDING_REVIEW or "pending Officer review")) .. ")", true)
+      if selectedCategory and selectedCategory.description and selectedCategory.description ~= "" then
+        Dibs.AceGUI.AddLabel(shell, page,
+          (labels.SEASONAL_ROSTER_CATEGORY_EXPLANATION or "Status explanation") .. ": "
+            .. selectedCategory.description, true)
+      end
+      local requestedPaths = {
+        STANDARD = categories.RAIDER or labels.SEASONAL_ROSTER_PATH_STANDARD or "Standard",
+        CORE_PROGRESSION = categories.CORE_RAIDER or labels.SEASONAL_ROSTER_PATH_CORE or "Progression",
+        CASUAL = labels.SEASONAL_ROSTER_PATH_CASUAL or "Casual",
+      }
+      self.seasonalRosterRequestedPathInput = Dibs.AceGUI.AddDropdown(shell, page,
+        labels.SEASONAL_ROSTER_REQUESTED_PATH or "Requested raid path", requestedPaths, function(value)
+          self.seasonalRosterRequestedPath = value
+        end, 320)
+      Dibs.AceGUI.SetValue(self.seasonalRosterRequestedPathInput, self.seasonalRosterRequestedPath)
+      Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_PATH_HELP
+        or "Your requested path is reviewed by the guild; it does not grant a seasonal status.", true)
+      self.seasonalRosterPrimaryInput = Dibs.AceGUI.AddEditBox(shell, page,
+        labels.SEASONAL_ROSTER_PRIMARY_SPEC or "Primary specialization ID", function(value) self.seasonalRosterPrimarySpec = value or "" end, 280)
+      setControlText(self.seasonalRosterPrimaryInput, self.seasonalRosterPrimarySpec)
+      self.seasonalRosterSecondaryInput = Dibs.AceGUI.AddEditBox(shell, page,
+        labels.SEASONAL_ROSTER_SECONDARY_SPEC or "Secondary specialization ID (optional)", function(value) self.seasonalRosterSecondarySpec = value or "" end, 280)
+      setControlText(self.seasonalRosterSecondaryInput, self.seasonalRosterSecondarySpec)
+      Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_ROLES or "Available raid roles", true)
+      for _, role in ipairs({ "TANK", "HEALER", "DAMAGER" }) do
+        roleControls[#roleControls + 1] = Dibs.AceGUI.AddCheckBox(shell, page, labels["SEASONAL_ROSTER_ROLE_" .. role] or role,
+          self.seasonalRosterRoles[role] == true, function(value)
+            self.seasonalRosterRoles[role] = value == true
+          end, 180)
+      end
+      self.seasonalRosterStatus = Dibs.AceGUI.AddLabel(shell, page, self.seasonalRosterMessage or "", true)
+      if canEdit then
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterCharacterInput, false)
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterPrimaryInput, false)
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterSecondaryInput, false)
+        self.seasonalRosterSaveButton = Dibs.AceGUI.AddButton(shell, page, labels.SEASONAL_ROSTER_SAVE_ENROLLMENT or "Save enrollment", function()
+          local roles = {}
+          for role, checked in pairs(self.seasonalRosterRoles or {}) do if checked then roles[#roles + 1] = role end end
+          table.sort(roles)
+          local result = Dibs.SeasonalRoster.UpsertOwnEnrollment(selectedSeason.seasonId, {
+            enrollmentId = enrollment and enrollment.enrollmentId or nil,
+            character = self.seasonalRosterCharacter, categoryId = self.seasonalRosterCategory,
+            requestedPath = self.seasonalRosterRequestedPath,
+            primarySpec = self.seasonalRosterPrimarySpec, secondarySpec = self.seasonalRosterSecondarySpec ~= ""
+              and self.seasonalRosterSecondarySpec or nil, roles = roles,
+          }, enrollment and enrollment.revision or 0, Dibs.NewId("seasonal-enrollment"))
+          self.seasonalRosterMessage = result.ok and (labels.SEASONAL_ROSTER_SAVED or "Enrollment saved. Guild sync may take time.")
+            or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Enrollment was not saved: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+          if result.ok then
+            self.seasonalRosterEnrollmentId = result.value
+            self.seasonalRosterNewCharacter = nil
+          end
+          self.seasonalRosterFormLoaded = nil
+          self:Refresh()
+        end, 190)
+        if enrollment and (enrollment.status == "ACTIVE" or enrollment.status == "PENDING_REVIEW") then
+          self.seasonalRosterWithdrawButton = Dibs.AceGUI.AddButton(shell, page, labels.SEASONAL_ROSTER_WITHDRAW or "Withdraw enrollment", function()
+            local result = Dibs.SeasonalRoster.WithdrawOwnEnrollment(selectedSeason.seasonId,
+              enrollment.enrollmentId, enrollment.revision, Dibs.NewId("seasonal-withdraw"))
+            self.seasonalRosterMessage = result.ok and (labels.SEASONAL_ROSTER_WITHDRAWN_NOTICE or "Enrollment withdrawn.")
+              or (labels.SEASONAL_ROSTER_SAVE_FAILED or "Enrollment was not changed: ") .. Dibs.OfficerUI.SeasonalText(result.code)
+            self.seasonalRosterFormLoaded = nil
+            self:Refresh()
+          end, 190)
+        end
+      else
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterCharacterInput, true)
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterPrimaryInput, true)
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterSecondaryInput, true)
+        for _, control in ipairs(roleControls) do Dibs.AceGUI.SetDisabled(control, true) end
+      end
+      Dibs.AceGUI.AddHeader(shell, page, labels.SEASONAL_ROSTER_PUBLIC_TITLE or "Registered raid roster",
+        labels.SEASONAL_ROSTER_PUBLIC_HELP or "This list shows active public enrollment choices only.")
+      local searchInput = Dibs.AceGUI.AddEditBox(shell, page, labels.SEASONAL_ROSTER_SEARCH or "Search character",
+        function(value) self.seasonalRosterSearchDraft = value or "" end, 260)
+      setControlText(searchInput, self.seasonalRosterSearchDraft or self.seasonalRosterSearch or "")
+      local categoryFilters = { ALL = labels.SEASONAL_ROSTER_ALL_CATEGORIES or "All categories" }
+      for categoryId, categoryName in pairs(categories) do categoryFilters[categoryId] = categoryName end
+      local categoryFilter = Dibs.AceGUI.AddDropdown(shell, page,
+        labels.SEASONAL_ROSTER_CATEGORY_FILTER or "Category filter", categoryFilters, function(value)
+          self.seasonalRosterCategoryFilterDraft = value
+        end, 250)
+      Dibs.AceGUI.SetValue(categoryFilter, self.seasonalRosterCategoryFilter or "ALL")
+      local sortOptions = {
+        character = labels.SEASONAL_ROSTER_SORT_CHARACTER or "Character",
+        category = labels.SEASONAL_ROSTER_SORT_CATEGORY or "Category",
+        class = labels.SEASONAL_ROSTER_SORT_CLASS or "Class",
+      }
+      local sortBy = self.seasonalRosterSortBy or "character"
+      local sortControl = Dibs.AceGUI.AddDropdown(shell, page,
+        labels.SEASONAL_ROSTER_SORT or "Sort by", sortOptions, function(value)
+          self.seasonalRosterSortDraft = value
+        end, 180)
+      Dibs.AceGUI.SetValue(sortControl, sortBy)
+      Dibs.AceGUI.AddButton(shell, page, labels.SEASONAL_ROSTER_APPLY_FILTERS or "Apply filters", function()
+        self.seasonalRosterSearch = self.seasonalRosterSearchDraft or ""
+        self.seasonalRosterCategoryFilter = self.seasonalRosterCategoryFilterDraft or self.seasonalRosterCategoryFilter or "ALL"
+        self.seasonalRosterSortBy = self.seasonalRosterSortDraft or self.seasonalRosterSortBy or "character"
+        self.seasonalRosterPublicPage = 1
+        self:Refresh()
+      end, 130)
+      local projection, projectionReason = Dibs.SeasonalRoster.GetPublicRosterPage(selectedSeason.seasonId, {
+        page = self.seasonalRosterPublicPage or 1, pageSize = 20,
+        search = self.seasonalRosterSearch or "",
+        categoryId = self.seasonalRosterCategoryFilter ~= "ALL" and self.seasonalRosterCategoryFilter or nil,
+        sortBy = sortBy,
+      })
+      if not projection then
+        Dibs.AceGUI.AddLabel(shell, page, (labels.SEASONAL_ROSTER_ERROR or "Unable to load roster: %s")
+          :format(tostring(projectionReason)), true)
+      else
+        if projection.status == "CATCHING_UP" then
+          Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_CATCHING_UP
+            or "Guild sync is behind; recent roster changes may not be available yet.", true)
+        else
+          Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_SYNC_CURRENT
+            or "Guild sync is current.", true)
+        end
+        local rows = {}
+        for _, entry in ipairs(projection.rows) do
+          rows[#rows + 1] = { entry.character, requestedPaths[entry.requestedPath] or entry.requestedPath,
+            entry.categoryName or categories[entry.categoryId] or entry.categoryId, entry.primarySpec,
+            entry.secondarySpec or "—", table.concat(entry.roles or {}, ", "),
+            entry.className or (labels.SEASONAL_ROSTER_UNKNOWN or "Unknown"),
+            entry.armorType or (labels.SEASONAL_ROSTER_UNKNOWN or "Unknown") }
+        end
+        Dibs.AceGUI.AddLabel(shell, page, string.format(labels.SEASONAL_ROSTER_RESULT_COUNT or "%d registered character(s)", projection.total), true)
+        local function countSummary(counts)
+          local keys = {}
+          for key in pairs(counts or {}) do keys[#keys + 1] = key end
+          table.sort(keys)
+          local values = {}
+          for _, key in ipairs(keys) do values[#values + 1] = key .. ": " .. tostring(counts[key]) end
+          return #values > 0 and table.concat(values, ", ") or "—"
+        end
+        Dibs.AceGUI.AddLabel(shell, page, (labels.SEASONAL_ROSTER_COMPOSITION or "Composition") .. ": "
+          .. tostring(projection.uniquePlayers or 0) .. " | "
+          .. (labels.SEASONAL_ROSTER_ROLES or "Roles") .. ": " .. countSummary(projection.roles) .. " | "
+          .. (labels.SEASONAL_ROSTER_CLASS or "Class") .. ": " .. countSummary(projection.classes) .. " | "
+          .. (labels.SEASONAL_ROSTER_ARMOR or "Armor") .. ": " .. countSummary(projection.armor) .. " | "
+          .. (labels.SEASONAL_ROSTER_CATEGORY or "Category") .. ": " .. countSummary(projection.categories), true)
+        Dibs.AceGUI.AddLabel(shell, page, labels.SEASONAL_ROSTER_COMPOSITION_HELP or
+          "Counts use active filters and one approved Main per linked player.", true)
+        Dibs.AceGUI.AddTable(shell, page, {
+          { title = labels.SEASONAL_ROSTER_CHARACTER or "Character", width = 190, minWidth = 100, weight = 3 },
+          { title = labels.SEASONAL_ROSTER_REQUESTED_PATH or "Requested path", width = 150, minWidth = 80, weight = 2 },
+          { title = labels.SEASONAL_ROSTER_CATEGORY or "Category", width = 110, minWidth = 65, weight = 1 },
+          { title = labels.SEASONAL_ROSTER_PRIMARY_SPEC or "Primary spec", width = 130, minWidth = 70, weight = 1 },
+          { title = labels.SEASONAL_ROSTER_SECONDARY_SPEC or "Second spec", width = 130, minWidth = 70, weight = 1 },
+          { title = labels.SEASONAL_ROSTER_ROLES or "Roles", width = 120, minWidth = 60, weight = 1 },
+          { title = labels.SEASONAL_ROSTER_CLASS or "Class", width = 100, minWidth = 55, weight = 1 },
+          { title = labels.SEASONAL_ROSTER_ARMOR or "Armor", width = 80, minWidth = 50, weight = 1 },
+        }, rows, math.min(420, math.max(100, #rows * 24)), nil, {
+          fluidColumns = true, widthHint = playerContentWidthHint(), shrinkToFit = true,
+          emptyText = projection.total == 0 and ((self.seasonalRosterSearch or "") ~= ""
+            or self.seasonalRosterCategoryFilter and self.seasonalRosterCategoryFilter ~= "ALL")
+            and (labels.SEASONAL_ROSTER_NO_MATCHES or "No players match these filters.")
+            or (labels.SEASONAL_ROSTER_EMPTY or "No players are enrolled for this season yet."),
+        })
+        local navigation = Dibs.AceGUI.AddInlineGroup(shell, page)
+        self.seasonalRosterPrevious = Dibs.AceGUI.AddButton(shell, navigation,
+          labels.HISTORY_PREVIOUS or "Previous", function()
+            self.seasonalRosterPublicPage = math.max(1, projection.page - 1)
+            self:Refresh()
+          end, 90)
+        Dibs.AceGUI.AddLabel(shell, navigation, string.format("%d / %d", projection.page, projection.pages))
+        self.seasonalRosterNext = Dibs.AceGUI.AddButton(shell, navigation,
+          labels.HISTORY_NEXT or "Next", function()
+            self.seasonalRosterPublicPage = math.min(projection.pages, projection.page + 1)
+            self:Refresh()
+          end, 90)
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterPrevious, projection.page <= 1)
+        Dibs.AceGUI.SetDisabled(self.seasonalRosterNext, projection.page >= projection.pages)
+      end
       finishLayoutBatch()
       return
     end
@@ -2427,9 +2663,11 @@ local function createAceWindow()
         includeHistory = false, pagePreDibHistory = self.myDibsPastPage or 1,
         pageActivePreDibs = self.myDibsActivePage or 1,
         pageWonPreDibs = self.myDibsWonPage or 1,
+        includeEligibility = self.playerTab == "my-dibs" and self.eligibilityExpanded == true,
       })
     if self.playerTab == "history" then
-      Dibs.AceGUI.AddHeading(shell, tabs, "History", "Your Dibs activity for the current season.")
+      Dibs.AceGUI.AddHeading(shell, tabs, helpText.PLAYER_NAV_HISTORY or "History", helpText.PLAYER_HISTORY_OPEN_HINT
+        or "Your Dibs activity for the current season. Click an entry to view details or report a problem.")
       addActiveLedgerToolbar(tabs)
       addHistoryFilterControls(shell, tabs, self, "historyFilters", "history", playerContentWidthHint())
       if view.historyFilterError then Dibs.AceGUI.AddLabel(shell, tabs, view.historyFilterError, true) end
@@ -2446,6 +2684,11 @@ local function createAceWindow()
       else
         visibleHistoryRows, historyPage, historyPages = playerPageSlice(self, "historyPage", historyRows, historyPageSize)
       end
+      local function openHistoryDetail(row)
+        if not row or not row.entry then return end
+        self.historyDetail = row.entry
+        self:Refresh()
+      end
       Dibs.AceGUI.AddTable(shell, tabs, {
         { title = "Date", width = 145, minWidth = 100, weight = 1 },
         { title = "Item", width = 220, minWidth = 140, weight = 2 },
@@ -2453,6 +2696,7 @@ local function createAceWindow()
         { title = "Result", width = 190, minWidth = 120, weight = 2 },
         { title = "Balance", width = 90, minWidth = 70, weight = 1 },
       }, visibleHistoryRows, 300, nil, {
+        onRowClick = openHistoryDetail,
         allowTableSort = false,
         flatBackground = true,
         fluidColumns = true,
@@ -2466,11 +2710,8 @@ local function createAceWindow()
           if not row.entry then return nil end
           return {
             {
-              text = "View details",
-              callback = function()
-                self.historyDetail = row.entry
-                self:Refresh()
-              end,
+              text = helpText.PLAYER_HISTORY_VIEW_DETAILS or "View details",
+              callback = function() openHistoryDetail(row) end,
             },
           }
         end,
@@ -2507,14 +2748,25 @@ local function createAceWindow()
       return
     end
 
-    Dibs.AceGUI.AddHeading(shell, tabs, "My Dibs", "Your season allocation, Dibs use, and current balance.")
+    Dibs.AceGUI.AddHeading(shell, tabs, helpText.PLAYER_NAV_MY_DIBS or "My Dibs",
+      helpText.PLAYER_MY_DIBS_HELP or "Your remaining Dibs, active Pre-Dibs, and season allocation. Manage your characters only when needed.")
     Dibs.AceGUI.AddHeader(shell, tabs, view.seasonName, helpText.UI_HELP_SEASON)
     addActiveLedgerToolbar(tabs)
+    if self.playerTab == "my-dibs" then
+      local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus
+        and Dibs.RCLootCouncil.GetLocalStatus() or nil
+      if integration then
+        local integrationState = Dibs.PlayerUI.GetIntegrationState(integration)
+        local integrationView = Dibs.PlayerUI.GetStatusPresentation(integrationState)
+        Dibs.Midnight.AddStatusBadge(shell, tabs, integrationView.tone,
+          "RCLootCouncil: " .. integrationView.label)
+      end
+    end
     Dibs.AceGUI.AddTable(shell, tabs, {
+      { title = helpText.PLAYER_DIBS_REMAINING or "Dibs remaining", width = 180, minWidth = 120, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIB_BALANCE },
       { title = helpText.PLAYER_SEASON_ALLOCATION or "Season allocation", width = 180, minWidth = 120, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_SEASON },
       { title = helpText.PLAYER_DIBS_USED or "Dibs used", width = 150, minWidth = 100, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIB_BALANCE },
-      { title = helpText.PLAYER_DIBS_REMAINING or "Dibs remaining", width = 180, minWidth = 120, weight = 1, align = "CENTER", tooltip = helpText.UI_HELP_DIB_BALANCE },
-    }, {{ tostring(view.seasonAllocation), tostring(view.seasonUsed), tostring(view.balance) }}, 90,
+    }, {{ tostring(view.balance), tostring(view.seasonAllocation), tostring(view.seasonUsed) }}, 90,
       nil, {
         allowTableSort = false,
         flatBackground = true,
@@ -2526,57 +2778,41 @@ local function createAceWindow()
         contextMenu = function()
           return {
             { text = helpText.PLAYER_VIEW_REPORTS or "View Reports", callback = function() self.SelectTab("requests") end },
-            { text = "View History", callback = function() self.SelectTab("history") end },
-            { text = "Open Diagnostics", callback = function() self.SelectTab("diagnostics") end },
+            { text = helpText.PLAYER_VIEW_HISTORY or "View History", callback = function() self.SelectTab("history") end },
+            { text = helpText.PLAYER_OPEN_DIAGNOSTICS or "Open Diagnostics", callback = function() self.SelectTab("diagnostics") end },
           }
         end,
       })
-    -- Keep eligibility work confined to the visible My Dibs page. Requests
-    -- and history use the lighter shared view model without this projection.
-    local eligibilitySummary = Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary
-      and Dibs.CharacterEligibility.GetSummary(Dibs.GetPlayerName(), Dibs.GetCurrentSeasonId()) or nil
-    if eligibilitySummary then
-      Dibs.AceGUI.AddLabel(shell, tabs, "Protected-loot group: " .. tostring(eligibilitySummary.groupId or "Not linked"), true)
-      local probation = eligibilitySummary.probation
-      Dibs.AceGUI.AddLabel(shell, tabs, "Main-change probation: " .. tostring(probation
-        and ("Until " .. tostring(probation.probationEndsAt)) or "None"), true)
-      local integration = Dibs.RCLootCouncil and Dibs.RCLootCouncil.GetLocalStatus
-        and Dibs.RCLootCouncil.GetLocalStatus() or nil
-      if integration then
-        local integrationView = Dibs.PlayerUI.GetStatusPresentation(Dibs.PlayerUI.GetIntegrationState(integration))
-        local badge = Dibs.Midnight and Dibs.Midnight.AddStatusBadge
-          and Dibs.Midnight.AddStatusBadge(shell, tabs, integrationView.tone, "RCLootCouncil: " .. integrationView.label)
-        Dibs.AceGUI.AddLabel(shell, tabs, integrationView.explanation, true)
-        if badge then Dibs.AceGUI.AddTooltip(badge, "RCLootCouncil status", helpText.UI_HELP_PLAYER_STATUS) end
+    if self.playerTab == "my-dibs" and Dibs.Disputes and Dibs.Disputes.ListForPlayer then
+      local canOpenReports = false
+      for _, entry in ipairs(view.navigation or {}) do
+        if entry.value == "requests" then canOpenReports = true; break end
       end
-      local relationshipSection = Dibs.AceGUI.AddSection(shell, tabs, "Main / alt declarations",
-        "Choose a guild character. Officers must approve the declaration before it affects protected-loot priority.")
-      local characterChoices = getGuildCharacterChoices()
-      self.eligibilityCharacter = self.eligibilityCharacter or next(characterChoices)
-      local characterChoice = Dibs.AceGUI.AddDropdown(shell, relationshipSection, "Guild character", characterChoices,
-        function(value) self.eligibilityCharacter = value end, 260)
-      Dibs.AceGUI.SetValue(characterChoice, self.eligibilityCharacter)
-      local declare = Dibs.AceGUI.AddButton(shell, relationshipSection, "Declare alt", function()
-        local alt = self.eligibilityCharacter
-        local relationship = alt and Dibs.CharacterEligibility and Dibs.CharacterEligibility.DeclareRelationship and Dibs.CharacterEligibility.DeclareRelationship({
-          seasonId = eligibilitySummary.seasonId, mainCharacter = Dibs.GetPlayerName(), altCharacter = alt,
-        }) or nil
-        self.eligibilityStatus = relationship and "Declaration submitted for Officer approval." or "Choose a guild character before submitting."
-        self:Refresh()
-      end, 130)
-      local requestMain = Dibs.AceGUI.AddButton(shell, relationshipSection, "Request main change", function()
-        local newMain = self.eligibilityCharacter
-        local request = newMain and Dibs.CharacterEligibility and Dibs.CharacterEligibility.RequestMainChange and Dibs.CharacterEligibility.RequestMainChange({
-          seasonId = eligibilitySummary.seasonId, oldMain = Dibs.GetPlayerName(), newMain = newMain,
-          reason = "Player requested a main-character change",
-        }) or nil
-        self.eligibilityStatus = request and "Main-change request submitted for Officer approval." or "Choose a guild character before submitting."
-        self:Refresh()
-      end, 170)
-      Dibs.AceGUI.SetDisabled(declare, next(characterChoices) == nil)
-      Dibs.AceGUI.SetDisabled(requestMain, next(characterChoices) == nil)
-      Dibs.AceGUI.AddLabel(shell, relationshipSection, self.eligibilityStatus
-        or "Declarations stay pending until an Officer reviews them.", true)
+      if canOpenReports then
+        local awaitingReply = Dibs.Disputes.ListForPlayer(view.player, { status = "Need information" })
+        local request = type(awaitingReply) == "table" and awaitingReply[1] or nil
+        if request then
+          Dibs.AceGUI.AddHeader(shell, tabs, helpText.PLAYER_REPLY_REQUIRED or "Reply to an Officer",
+            helpText.PLAYER_REPLY_REQUIRED_HELP or "An authorized reviewer needs information about one of your reports. Your Dibs balance is unchanged.")
+          Dibs.AceGUI.AddButton(shell, tabs, helpText.PLAYER_REPLY_REQUIRED or "Reply to an Officer", function()
+            self.selectedDisputeRequestId = request.requestId
+            self.SelectTab("requests")
+          end, 210)
+        end
+      end
+    end
+    if self.playerTab == "my-dibs" and Dibs.CharacterEligibility then
+      local probation
+      if view.eligibility then
+        probation = view.eligibility.probation
+      elseif Dibs.CharacterEligibility.GetProbation then
+        probation = Dibs.CharacterEligibility.GetProbation(view.player, view.season and view.season.id)
+      end
+      if probation then
+        Dibs.Midnight.AddStatusBadge(shell, tabs, "warning", string.format(
+          helpText.PLAYER_ELIGIBILITY_PROBATION_UNTIL or "Main-change probation until %s",
+          formatDate(probation.probationEndsAt, "%Y-%m-%d %H:%M")))
+      end
     end
     Dibs.AceGUI.AddHeader(shell, tabs, view.status.label, view.status.explanation)
     local activeRows, activePage, activePages = {}, 1, 1
@@ -2620,6 +2856,48 @@ local function createAceWindow()
       widthHint = playerContentWidthHint(), shrinkToFit = true, hideScrollbarWhenFits = true,
       scrollbarReserve = 26, emptyText = view.empty.activePreDibs })
     addPlayerPager(shell, tabs, self, "myDibsActivePage", activePage, activePages, "Active Pre-Dibs %d / %d")
+    if self.playerTab == "my-dibs" and Dibs.CharacterEligibility and Dibs.CharacterEligibility.GetSummary then
+      local toggle = Dibs.AceGUI.AddButton(shell, tabs, self.eligibilityExpanded
+        and (helpText.PLAYER_ELIGIBILITY_HIDE or "Hide Main / alts")
+        or (helpText.PLAYER_ELIGIBILITY_MANAGE or "Manage Main / alts"), function()
+          self.eligibilityExpanded = not self.eligibilityExpanded
+          self:Refresh()
+        end, 230)
+      Dibs.AceGUI.AddTooltip(toggle, helpText.PLAYER_ELIGIBILITY_TITLE or "Main / alt declarations",
+        helpText.PLAYER_ELIGIBILITY_HELP or "Declare your characters explicitly. An Officer must approve a link before it affects Dibs.")
+      local eligibility = self.eligibilityExpanded and view.eligibility
+      if eligibility then
+        local relationshipSection = Dibs.AceGUI.AddSection(shell, tabs,
+          helpText.PLAYER_ELIGIBILITY_TITLE or "Main / alt declarations",
+          helpText.PLAYER_ELIGIBILITY_HELP or "Declare your characters explicitly. An Officer must approve a link before it affects Dibs.")
+        Dibs.AceGUI.AddLabel(shell, relationshipSection, string.format(
+          helpText.PLAYER_ELIGIBILITY_GROUP or "Protected-loot group: %s",
+          tostring(eligibility.groupId or (helpText.PLAYER_ELIGIBILITY_NOT_LINKED or "Not linked"))), true)
+        local currentCharacter = Dibs.GetPlayerName and Dibs.GetPlayerName() or ""
+        addEligibilityCharacterPicker(shell, relationshipSection, self, currentCharacter, helpText)
+        Dibs.AceGUI.AddButton(shell, relationshipSection, helpText.PLAYER_ELIGIBILITY_DECLARE_ALT or "Declare alt", function()
+          local alt = self.eligibilityCharacter
+          local relationship = alt and Dibs.CharacterEligibility.DeclareRelationship({
+            seasonId = view.season and view.season.id, mainCharacter = Dibs.GetPlayerName(), altCharacter = alt,
+          }) or nil
+          self.eligibilityStatus = relationship
+            and (helpText.PLAYER_ELIGIBILITY_DECLARED or "Declaration submitted for Officer approval.")
+            or (helpText.PLAYER_ELIGIBILITY_CHOOSE_CHARACTER or "Choose a guild character before submitting.")
+          self:Refresh()
+        end, 160)
+        Dibs.AceGUI.AddButton(shell, relationshipSection, helpText.PLAYER_ELIGIBILITY_REQUEST_MAIN or "Request main change", function()
+          local newMain = self.eligibilityCharacter
+          local request = newMain and Dibs.CharacterEligibility.RequestMainChange({
+            seasonId = view.season and view.season.id, oldMainId = Dibs.GetPlayerName(), newMainId = newMain,
+          }) or nil
+          self.eligibilityStatus = request
+            and (helpText.PLAYER_ELIGIBILITY_MAIN_REQUESTED or "Main change submitted for Officer approval.")
+            or (helpText.PLAYER_ELIGIBILITY_LINK_MAIN or "Link the new Main to your current character and select it first.")
+          self:Refresh()
+        end, 260)
+        if self.eligibilityStatus then Dibs.AceGUI.AddLabel(shell, relationshipSection, self.eligibilityStatus, true) end
+      end
+    end
     local wonRows, wonPage, wonPages = {}, 1, 1
     for _, request in ipairs(view.wonPreDibs or {}) do
       wonRows[#wonRows + 1] = {
@@ -2691,7 +2969,7 @@ local function createAceWindow()
       "aceTabs", "contentHost", "playerPageHost", "preDibInput", "preDibButton", "preDibStatus", "preDibStatusText", "preDibValue", "devItemText",
       "devRequestButton", "devStatusText", "devStatus", "playerTab", "historyDetail", "historyMode", "historyPage",
       "guildDiagnosticsSection", "guildSyncStatusLabel", "historyDetailSection", "historyDetailCloseButton",
-      "historyQuery", "eligibilityCharacter", "eligibilityStatus", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
+      "historyQuery", "eligibilityCharacter", "eligibilityStatus", "eligibilityExpanded", "Refresh", "SelectTab", "dibsAceGUIShell", "_dibsUiShell",
       "developerModeToggle", "channelTestChannel", "channelTestTarget", "channelTestCustomChannelName", "channelTestStatus",
       "channelTestReceivedStatus",
       "channelTestSelector", "channelTestTargetInput", "channelTestCustomChannelInput", "channelTestRunButton",
@@ -2700,6 +2978,7 @@ local function createAceWindow()
       "diagnosticsTablePage",
       "channelTestNext", "channelTestSummary", "channelTestAutoPingScheduled", "channelTestAutoPingGeneration",
       "channelTestAutoPingEnabled",
+      "_dibsNavigationKey", "_dibsSetupAccessElapsed",
     }) do
       frame[key] = nil
     end
@@ -2715,6 +2994,24 @@ local function createAceWindow()
       end
     end)
   end
+  if not frame._dibsSetupAccessHookInstalled and type(frame.HookScript) == "function" then
+    frame._dibsSetupAccessHookInstalled = true
+    -- The navigation projection is read-only and cheap. Poll only while this
+    -- window is visible; a changed access signature refreshes the open page,
+    -- while unchanged access leaves in-progress form controls untouched.
+    frame:HookScript("OnUpdate", function(self, elapsed)
+      local activeShell = self.dibsAceGUIShell
+      if not activeShell or activeShell._dibsActive ~= true
+        or type(self.IsShown) ~= "function" or not self:IsShown() then
+        self._dibsSetupAccessElapsed = nil
+        return
+      end
+      self._dibsSetupAccessElapsed = (self._dibsSetupAccessElapsed or 0) + (tonumber(elapsed) or 0)
+      if self._dibsSetupAccessElapsed < 1 then return end
+      self._dibsSetupAccessElapsed = 0
+      Dibs.PlayerUI.RefreshSetupAccess()
+    end)
+  end
   _G.DibsPlayerFrame = frame
   frame._dibsInitialTreeSelection = true
   Dibs.AceGUI.SelectTree(tabs, frame.playerTab)
@@ -2723,11 +3020,33 @@ local function createAceWindow()
   return frame
 end
 
+function Dibs.PlayerUI.RefreshSetupAccess()
+  local frame = _G.DibsPlayerFrame
+  local shell = frame and frame.dibsAceGUIShell
+  if not frame or type(frame.Refresh) ~= "function" or not shell or shell._dibsActive ~= true
+    or type(frame.IsShown) ~= "function" or not frame:IsShown() then return false end
+  local keys = {}
+  for _, entry in ipairs(Dibs.PlayerUI.GetNavigation()) do keys[#keys + 1] = entry.value end
+  if frame._dibsNavigationKey == table.concat(keys, "|") then return false end
+  frame:Refresh()
+  return true
+end
+
 function Dibs.PlayerUI.RefreshDiagnostics()
   local frame = _G.DibsPlayerFrame
   local shell = frame and frame.dibsAceGUIShell
   if not frame or frame.playerTab ~= "diagnostics" or type(frame.Refresh) ~= "function"
     or not shell or shell._dibsActive ~= true or (frame.IsShown and not frame:IsShown()) then return false end
+  frame:Refresh()
+  return true
+end
+
+function Dibs.PlayerUI.RefreshVaultCapture()
+  local frame = _G.DibsPlayerFrame
+  if not frame or frame.playerTab ~= "vault" or type(frame.Refresh) ~= "function"
+    or type(frame.IsShown) ~= "function" or not frame:IsShown() then return false end
+  local shell = frame.dibsAceGUIShell
+  if shell and shell._dibsActive ~= true then return false end
   frame:Refresh()
   return true
 end

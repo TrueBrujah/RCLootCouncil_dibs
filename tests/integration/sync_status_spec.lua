@@ -54,12 +54,29 @@ describe("Synchronization status", function()
 
   it("accepts patch and dev changes within one major.minor addon family", function()
     local dibs = load()
-    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.2"))
-    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.8.8-dev"))
+    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.9.2"))
+    assert_true(dibs.Sync.GetAddonVersionCompatibility("0.9.8-dev"))
     local message = assert(dibs.Sync.BuildEnvelope({ type = "HELLO" }))
-    message.addonVersion = "0.8.2"
+    message.addonVersion = "0.9.2"
     local accepted, reason = dibs.Sync.Receive(message, "Tester-Realm")
     assert_true(accepted, tostring(reason))
+  end)
+
+  it("requires 0.8.x peers to update before joining the 0.9.x sync family", function()
+    local dibs = load()
+    local before = dibs.Sync.CalculateContentHash(dibs.GetDB().ledgers)
+    local peer = assert(dibs.Identity.CreateSnapshot("Officer-Realm"))
+    for _, version in ipairs({ "0.8.11", "0.8.12" }) do
+      local message = assert(dibs.Sync.BuildEnvelope({ type = "HELLO" }))
+      message.addonVersion = version
+      message.senderNameRealm, message.senderMemberKey = peer.displayName, peer.memberKey
+      local accepted, reason = dibs.Sync.Receive(message, "Officer-Realm", "GUILD")
+      assert_false(accepted)
+      assert_equal("ADDON_UPDATE_REQUIRED", reason)
+      assert_equal(version, dibs.Sync.GetSynchronizationStatus().lastAddonVersionMismatch.remoteVersion)
+      assert_equal(before, dibs.Sync.CalculateContentHash(dibs.GetDB().ledgers),
+        "a peer from the previous minor family changed ledger data")
+    end
   end)
 
   it("LRA21 requires an update for a 0.7.x peer and reports Loot Rules incompatible", function()

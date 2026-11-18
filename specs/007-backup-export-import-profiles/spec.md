@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-09
 
-**Status**: Implemented on `dev` in version 0.5.8-dev; Retail visual validation remains scheduled.
+**Status**: Local backup/configuration transfer, selected historical export and compressed portable transport implemented and automatically tested. External snapshot registration and full canonical recovery remain incomplete. Retail validation is pending.
 
 **Input**: User description: "Add backups, export, import, and configuration profiles for RCLootCouncil_dibs so a guild can recover after a problem, move settings between characters or guilds, and share a safe configuration without accidentally overwriting the Dibs ledger."
 
@@ -147,6 +147,10 @@ As a guild administrator, I want version-aware packages and migration guidance, 
 - **FR-025**: The feature MUST work in standalone and optional RCLootCouncil integration modes without making RCLootCouncil SavedVariables authoritative for Dibs balances or history.
 - **FR-026**: All profile, backup, export, import, warning, conflict, migration, and restore controls MUST provide localized labels and help text with English fallback, including whether the action changes policy, ledger, permissions, or privacy scope.
 - **FR-027**: Any SavedVariables or package schema change MUST include a migration note, a dated changelog entry, and an incremented addon version before the behavior is shipped.
+- **FR-028**: Exporting a selected historical snapshot MUST return its original retained, checksum-validated portable package, preserving historical content and source metadata independently of current state. The action MUST recheck scope authority, guild context and local character ownership; full-scope export requires explicit sensitive-data confirmation. Missing original packages, mismatched attestations and oversized packages MUST fail without reconstructing provenance or changing active business state.
+- **FR-029**: Configuration packages exported from historical snapshots MUST use the existing validated configuration import preview/confirmation pipeline. An external package MUST NOT be registered as a raw restorable snapshot or used to adopt unknown canonical history through ordinary restore/import.
+- **FR-030**: Portable exports MAY wrap the original package in a versioned DEFLATE/Base64 envelope. Legacy packages MUST remain readable; unwrapping MUST reproduce the original package bytes and preserve its checksums, source context and recovery restrictions. The encoded transport remains limited to 250,000 characters and the uncompressed package to the existing 32 MiB backup budget. Before any allocating decompressor runs, a bounded structural pass MUST verify the actual DEFLATE output length against its declared length and budget. Invalid, truncated, nested, oversized or unsupported envelopes MUST fail without application.
+- **FR-031**: Current-state and selected-snapshot UI exports SHOULD prefer compression when an available supported codec is detected, identify the chosen format, and retain an explicit legacy fallback when unavailable. Larger newly created snapshots MAY retain an attested compressed original package rather than duplicate an oversized raw package in SavedVariables; no historical package may be reconstructed from live data or invented metadata. External restore-point registration and canonical recovery remain separate work.
 
 ### Key Entities
 
@@ -175,6 +179,13 @@ As a guild administrator, I want version-aware packages and migration guidance, 
 - **SC-011**: At least 95% of test users can identify package scope, sensitivity, conflict strategy, and expected ledger impact from the preview without opening external documentation.
 
 ## Assumptions
+
+### Stabilization and current recovery limits — 2026-11-15
+
+- Local snapshots and portable current-state packages are distinct. The transfer workspace captures current state; the selected-backup export defined in FR-028 returns only its retained historical package. Full-data import remains compatibility/append-and-deduplicate and must not become a second writer of unknown canonical history.
+- A complete external-snapshot round trip, including recovery on a fresh installation, is not implemented or certified by the current tests. Canonical adoption must follow the recovery/authority contracts of Feature 026; this follow-up does not relax them.
+- Pending import/restore previews are temporary working data, not backups or accepted history. Each store is bounded to 16 previews. At creation/application access, discard previews at least 1,800 seconds old or lacking a valid creation time, and evict the oldest deterministically when necessary. A missing/expired preview requires a new preview and cannot mutate accounting state. Backup retention, accepted canonical records, audit history and explicit-confirmation requirements are unchanged.
+- Creating a safety snapshot captures its source payload once and derives its package, payload checksum and detached stored snapshot from that same content. Later live changes must not alter the saved snapshot.
 
 - The current Dibs SavedVariables layout and append-only ledger remain authoritative; this feature adds versioned snapshots and packages without replacing the persistence model with an unrelated database format.
 - Backups are local to the WoW installation unless a user manually copies the portable export text elsewhere. The addon does not provide cloud storage or assume a trusted external host.

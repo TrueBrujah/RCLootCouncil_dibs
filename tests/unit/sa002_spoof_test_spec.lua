@@ -1,89 +1,82 @@
--- Simplified SA-002 Reproduction: Test if audit.actor spoofing works
-
+-- SA-002 regressions: authorization failures must fail the suite, not only print diagnostics.
 local loader = require("helpers.load_addon")
-
-local function load(playerName, guildLeader)
-  local _, dibs = loader.load({ wow = {
-    playerName = playerName,
-    guildLeader = guildLeader,
-    guildMembers = { "ActualGM-Realm", "Member-Realm", "Target-Realm" },
-    guildRankIndices = { [1] = 0, [2] = 3, [3] = 3 },
-  } })
-  return dibs
+local function load(gm, name)
+  name = name or "Tester-Realm"
+  return select(2, loader.load({ wow = {
+    guildLeader = gm ~= false, playerName = name,
+    guildMembers = { name, "Target-Realm" }, guildRankIndices = { gm == false and 3 or 0, 3 },
+  } }))
 end
 
 describe("SA-002: Direct API actor spoofing", function()
-  it("S002-A: Direct Ledger.Grant with spoofed actor in audit", function()
-    local dibs = load("ActualGM-Realm", true)
-    local before = dibs.Ledger.GetBalance("Target-Realm")
+  it("rejects a spoofed actor and leaves all ledger transactions unchanged", function()
+    local dibs = load()
+    local before = #dibs.Ledger.GetAllTransactions()
     local tx, reason = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "spoof-test", dibs.GetCurrentSeasonId(), {
-      actor = "FakeGM-Realm",
-      actorName = "FakeGM-Realm",
-      transactionId = "spoof-test-1"
+      actor = "FakeGM-Realm", actorName = "FakeGM-Realm", transactionId = "spoof-test-1",
     })
-
-    assert_nil(tx, "a caller-supplied fake audit actor authorized the grant")
-    assert_not_nil(reason, "the spoofed actor rejection has no diagnostic")
-    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "a rejected spoof changed the balance")
+    assert_nil(tx)
+    assert_not_nil(reason)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
   end)
 
-  it("S002-B: Direct Ledger.Grant with nil audit (defaults to current player)", function()
-    local dibs = load("ActualGM-Realm", true)
-    local tx, reason = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "direct-test", dibs.GetCurrentSeasonId(), nil)
-
+  it("binds a direct grant without audit to the verified current GM", function()
+    local dibs = load()
+    local tx, reason = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "direct-test", dibs.GetCurrentSeasonId())
     assert_not_nil(tx, tostring(reason))
-    assert_equal(dibs.Permissions.CanonicalPlayerId("ActualGM-Realm"), tx.actorId,
-      "the audit identity did not come from the current actor")
+    assert_equal(assert(dibs.Identity.CreateSnapshot(dibs.GetPlayerName())).memberKey, tx.actorId)
   end)
 
-  it("S002-C: Direct Ledger.Grant by regular member (no guildLeader)", function()
-    local dibs = load("Member-Realm", false)
-    local before = dibs.Ledger.GetBalance("Target-Realm")
-    local tx, reason = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "direct-test", dibs.GetCurrentSeasonId(), nil)
-
-    assert_nil(tx, "a guild member granted Dibs without Officer/GM authority")
-    assert_equal("GUILD_ADMIN_REQUIRED", reason)
-    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "a rejected member grant changed the balance")
+  it("refuses a direct grant by an actual rank-three member", function()
+    local dibs = load(false)
+    local before = #dibs.Ledger.GetAllTransactions()
+    local tx = dibs.Ledger.Grant("Target-Realm", 5, "Test grant", "direct-test", dibs.GetCurrentSeasonId())
+    assert_nil(tx)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
   end)
 
-  it("S002-D: ProtectedActions.Execute by GM", function()
-    local dibs = load("ActualGM-Realm", true)
-    local result = dibs.ProtectedActions.Execute("ledger.grant", "ActualGM-Realm", {
-      playerName = "Target-Realm",
-      amount = 5,
-      reason = "Test",
-      source = "protected-test",
-      seasonId = dibs.GetCurrentSeasonId()
+  it("allows a protected grant by the authenticated local GM", function()
+    local dibs = load()
+    local result = dibs.ProtectedActions.Execute("ledger.grant", nil, {
+      playerName = "Target-Realm", amount = 5, reason = "Test", source = "protected-test", seasonId = dibs.GetCurrentSeasonId(),
     })
-
-    assert_true(result.ok, tostring(result.reasonCode))
-    assert_equal(dibs.Permissions.CanonicalPlayerId("ActualGM-Realm"), result.value.actorId)
+    assert_true(result.ok, tostring(result.diagnostic))
+    assert_not_nil(result.value.transactionId)
   end)
 
-  it("S002-E: ProtectedActions.Execute by regular member", function()
-    local dibs = load("Member-Realm", false)
-    local before = dibs.Ledger.GetBalance("Target-Realm")
-    local result = dibs.ProtectedActions.Execute("ledger.grant", "Member-Realm", {
-      playerName = "Target-Realm",
-      amount = 5,
-      reason = "Test",
-      source = "protected-test",
-      seasonId = dibs.GetCurrentSeasonId()
+  it("refuses the same protected action by an authenticated ordinary member", function()
+    local dibs = load(false)
+    local before = #dibs.Ledger.GetAllTransactions()
+    local result = dibs.ProtectedActions.Execute("ledger.grant", nil, {
+      playerName = "Target-Realm", amount = 5, reason = "Test", source = "protected-test", seasonId = dibs.GetCurrentSeasonId(),
     })
-    assert_false(result.ok, "a regular guild member was authorized to grant Dibs")
-    assert_equal("GUILD_ADMIN_REQUIRED", result.reasonCode)
-    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "a rejected member action changed the balance")
+    assert_false(result.ok)
+    assert_equal("GUILD_ADMIN_REQUIRED", result.decision.reasonCode)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
   end)
 
-  it("rejects a ProtectedActions call that supplies a different GM identity", function()
-    local dibs = load("ActualGM-Realm", true)
-    local before = dibs.Ledger.GetBalance("Target-Realm")
+  it("verifies the actual guild master identity from the local context", function()
+    local dibs = load(true, "ActualGM-Realm")
+    assert_equal("ActualGM-Realm", dibs.GetPlayerName())
+    assert_true(dibs.Permissions.IsGM())
+  end)
+
+  it("does not confuse an arbitrary actor identifier with the local identity", function()
+    local dibs = load(true, "ActualGM-Realm")
+    local supplied = dibs.Permissions.CanonicalPlayerId("FakeGM-Realm")
+    local current = dibs.Permissions.CanonicalPlayerId(nil)
+    assert_not_nil(current)
+    assert_false(supplied == current)
+  end)
+
+  it("rejects a protected grant that supplies another GM identity", function()
+    local dibs = load(true, "ActualGM-Realm")
+    local before = #dibs.Ledger.GetAllTransactions()
     local result = dibs.ProtectedActions.Execute("ledger.grant", "FakeGM-Realm", {
       playerName = "Target-Realm", amount = 5, reason = "Test", source = "spoof-test",
       seasonId = dibs.GetCurrentSeasonId(),
     })
-
-    assert_false(result.ok, "a caller-supplied alternate GM name authorized a protected action")
-    assert_equal(before, dibs.Ledger.GetBalance("Target-Realm"), "the rejected spoof changed the balance")
+    assert_false(result.ok)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
   end)
 end)

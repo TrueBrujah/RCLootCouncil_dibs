@@ -85,3 +85,11 @@
 
 - Claim full automatic API coverage in unit tests: rejected because WoW event availability must be verified in Retail.
 - Make Retail validation optional: rejected because false claim detection is a release-blocking risk.
+
+## Retail capture defect investigation — 2026-11-15
+
+The adapter rejected every claim bundle with more than one item. The [Blizzard reward display](https://github.com/Gethe/wow-ui-source/blob/live/Interface/AddOns/Blizzard_WeeklyRewards/Blizzard_WeeklyRewards.lua) handles an equipment reward with supplementary non-equipment items and excludes mythic keystones. The public [Ask Mr. Robot export implementation](https://repos.curseforge.com/wow/askmrrobot/annotate/default/Export.lua) scans activity rewards through `GetActivities`/`GetItemHyperlink` and also excludes keystones. That export lists offered rewards; it does not by itself establish which reward was claimed.
+
+The repair preserves Dibs' stronger claim boundary: a selected claim ID, one identifiable equipment candidate, the exact locally received variant and completed reward availability transition. An unknown supplemental candidate still prevents guessing. A localized Blizzard self-loot message can establish receipt when its GUID is empty; an explicitly different GUID is rejected. Proven receipts with delayed difficulty data may retry on `GET_ITEM_INFO_RECEIVED` until the original context expires. Runtime diagnostics expose capture state without persisting offered rewards or fabricating missed historical claims.
+
+These source findings and automated regressions are not proof of event delivery in the user's Retail build. T051/T052 still require real clients.

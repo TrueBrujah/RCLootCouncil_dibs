@@ -1,7 +1,23 @@
 local loader = require("helpers.load_addon")
 
+local function configuredNavigation()
+  -- This suite isolates operational page projections and rendering after setup.
+  -- Setup progression and fresh-install visibility use the real Wizard service
+  -- in their own suites; permissions and page-level service gates remain real.
+  local routes = {}
+  for _, route in ipairs({ "overview", "setup", "wizard", "guildSetup", "installation", "seasonalRoster",
+    "automaticDibs", "dibsAdmin", "history", "statistics", "disputes", "preDibRequests", "pendingAwards",
+    "vault", "seasons", "ranks", "lootTypes", "eligibility", "preDibs", "announcements", "integration",
+    "independentRaid", "settings", "modules", "sync", "diagnostics", "developer", "debug", "reconciliation" }) do
+    routes[route] = true
+  end
+  return { firstInstall = false, foundationReady = true, preservedHistory = true, routes = routes,
+    dependencies = { seasonConfigured = true, rosterConfigured = true, ranksPublished = true, ledgerReady = true } }
+end
+
 local function setup()
   local _, dibs = loader.load({ wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Player-1", "Player-2", "Player-3", "Player-4", "Player-5", "Player-6", "Player-7", "Player-8", "Coordinator-Realm" } }, withAce3 = true })
+  dibs.Wizard.GetNavigationAccess = configuredNavigation
   dibs.Seasons.GetCurrent = function() return { id = 7, name = "Midnight Season" } end
   local fixtureTransactions = {}
   for index = 1, 8 do
@@ -52,12 +68,61 @@ local function setup()
 end
 
 describe("B11d Officer dashboard", function()
+  it("does not report an unknown synchronization state as ready", function()
+    local dibs = setup()
+    dibs.Sync.GetStatus = function() return {} end
+    local dashboard = dibs.OfficerUI.GetDashboardProjection()
+    assert_equal("Verification unavailable", dashboard.status.sync.label)
+    assert_equal("warning", dashboard.status.sync.tone)
+    assert_equal("sync", dashboard.nextAction.route)
+  end)
+
+  it("does not claim healthy accounting when persistence recovery blocks writes", function()
+    local dibs = setup()
+    dibs.GetPersistenceStatus = function() return { state = "RECOVERY_REQUIRED", readOnly = true } end
+    dibs.HealthUI.Evaluate = function() error("Dashboard must not run full health scans") end
+    local before = dibs.DeepCopy(dibs.GetDB().ledgers["guild-primary"].transactions)
+    local dashboard = dibs.OfficerUI.GetDashboardProjection()
+    assert_equal("Recovery required", dashboard.status.ledger.label)
+    assert_equal("danger", dashboard.status.ledger.tone)
+    assert_equal("diagnostics", dashboard.nextAction.route)
+    assert_equal(before["dashboard-1"].amount, dibs.GetDB().ledgers["guild-primary"].transactions["dashboard-1"].amount)
+    assert_not_nil(dibs.OfficerUI.BuildLedgerDetails(7))
+  end)
+
+  it("reports unavailable persistence verification without inventing a healthy state", function()
+    local dibs = setup()
+    dibs.GetPersistenceStatus = function() error("status unavailable") end
+    local dashboard = dibs.OfficerUI.GetDashboardProjection()
+    assert_equal("Verification unavailable", dashboard.status.ledger.label)
+    assert_equal("warning", dashboard.status.ledger.tone)
+  end)
+
+  it("renders localized service state and a useful next action before statistics", function()
+    local dibs = setup()
+    local originalLocale = GetLocale
+    _G.GetLocale = function() return "frFR" end
+    dofile("src/locales/frFR.lua")
+    _G.GetLocale = originalLocale
+    local frame = dibs.OfficerUI.CreateWindow("overview")
+    local action, serviceIndex, statisticsIndex
+    for index, widget in ipairs(_G.__dibsAceWidgets or {}) do
+      if widget.kind == "InlineGroup" and widget.title == dibs.L.DASHBOARD_SERVICES then serviceIndex = index end
+      if widget.kind == "Label" and widget.text == dibs.L.DASHBOARD_STATISTICS then statisticsIndex = index end
+      if widget.kind == "Button" and widget.text == dibs.L.DASHBOARD_OPEN_SYNC then action = widget end
+    end
+    assert_not_nil(action)
+    assert_true(serviceIndex < statisticsIndex)
+    action.callbacks.OnClick(action, "OnClick")
+    assert_equal("sync", frame.activeTab)
+  end)
+
   it("projects bounded operational summaries from normalized services", function()
     local dibs = setup()
     local dashboard = dibs.OfficerUI.GetDashboardProjection()
     assert_equal("gm", dashboard.role)
     assert_equal("Midnight Season", dashboard.season.name)
-    assert_equal("Healthy", dashboard.status.ledger.label)
+    assert_equal("Season available", dashboard.status.ledger.label)
     assert_equal("Behind / Synchronizing", dashboard.status.sync.label)
     assert_equal("Online", dashboard.status.coordinator.label)
     assert_equal("Degraded", dashboard.status.rclootcouncil.label)
@@ -149,8 +214,8 @@ describe("B11d Officer dashboard", function()
       assert_true(labels[label], "Dashboard statistic missing: " .. label)
     end
     assert_not_nil(searchLogsButton)
-    assert_true(seasonStatsIndex < serviceStatusIndex)
     assert_true(serviceStatusIndex < recentActivityIndex)
+    assert_true(recentActivityIndex < seasonStatsIndex)
     assert_true(#(_G.__dibsAceWidgets[serviceStatusIndex].children or {}) >= 8)
     assert_true(#(_G.__dibsAceWidgets[recentActivityIndex].children or {}) >= 2)
     searchLogsButton.callbacks.OnClick(searchLogsButton, "OnClick")
@@ -278,7 +343,7 @@ describe("B11d Officer dashboard", function()
     assert_equal("danger", dashboard.status.ledger.tone)
     assert_equal("danger", dashboard.status.sync.tone)
     assert_equal("danger", dashboard.status.coordinator.tone)
-    assert_equal("danger", dashboard.status.rclootcouncil.tone)
+    assert_equal("info", dashboard.status.rclootcouncil.tone)
     assert_equal("No pending requests.", dashboard.empty.pendingRequests)
     assert_equal("No active Pre-Dibs.", dashboard.empty.activePreDibs)
     assert_equal("No recent activity.", dashboard.empty.recentActivity)

@@ -129,6 +129,19 @@ describe("T016 Correction outcome localization and display", function()
     end
   end)
 
+  it("uses the French correction and historical report strings on a French client", function()
+    local _, dibs = loader.load({ withAce3 = true, wow = { locale = "frFR" } })
+    local label, help = dibs.OfficerUI.DescribeCorrectionOutcome("ACCEPTED_IN_SESSION")
+    assert_equal("Acceptée dans cette session", label)
+    assert_true(help:find("rechargement", 1, true) ~= nil)
+    local rows = dibs.OfficerUI.DescribeHistoricalReport({ summary = { complete = 1 } })
+    assert_equal("Références complètes", rows[1].label)
+    assert_true(rows[1].explanation:find("lecture seule", 1, true) ~= nil)
+    local unknown, unknownHelp = dibs.OfficerUI.DescribeOperationState("NOT_A_KNOWN_STATE")
+    assert_equal("Résultat non confirmé", unknown)
+    assert_not_nil(unknownHelp)
+  end)
+
   it("localizes every operation state string in English and French", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     local strings = dibs.L or {}

@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 describe("Health dashboard UI", function()
   it("keeps Diagnostics as one Officer-owned page", function()

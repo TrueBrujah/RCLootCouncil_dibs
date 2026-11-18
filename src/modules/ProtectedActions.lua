@@ -106,6 +106,7 @@ local function buildAudit(actionId, actor, payload, decision)
     evidenceId = payload and payload.evidenceId,
     originalTransactionId = payload and payload.originalTransactionId,
     correctionKey = payload and payload.correctionKey,
+    transactionId = payload and payload.transactionId,
     confirmation = payload and payload.confirmation == true or nil,
     debtPolicy = payload and payload.debtPolicy,
   }
@@ -247,17 +248,17 @@ local function executeLedgerGrant(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.Grant then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx = Dibs.Ledger.Grant(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.grant", actor, payload or {}, decision))
-  return buildResult(tx ~= nil, tx, decision)
+  local tx, reason = Dibs.Ledger.Grant(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.grant", actor, payload or {}, decision))
+  return buildResult(tx ~= nil, tx, decision, tx and nil or reason)
 end
 
 local function executeLedgerUse(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.Use then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx, reasonCode = Dibs.Ledger.Use(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.use", actor, payload or {}, decision))
-  local result = buildResult(tx ~= nil, tx, decision, reasonCode)
-  if not tx and reasonCode then result.reasonCode = reasonCode end
+  local tx, reason = Dibs.Ledger.Use(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.use", actor, payload or {}, decision))
+  local result = buildResult(tx ~= nil, tx, decision, reason)
+  if not tx and reason then result.reasonCode = reason end
   return result
 end
 
@@ -265,8 +266,8 @@ local function executeLedgerRefund(actor, payload, decision)
   if not Dibs.Ledger or not Dibs.Ledger.Refund then
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
-  local tx = Dibs.Ledger.Refund(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.refund", actor, payload or {}, decision))
-  return buildResult(tx ~= nil, tx, decision)
+  local tx, reason = Dibs.Ledger.Refund(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.refund", actor, payload or {}, decision))
+  return buildResult(tx ~= nil, tx, decision, tx and nil or reason)
 end
 
 ---@doc.id ledger.adjust
@@ -297,35 +298,72 @@ local function executeLedgerAdjust(actor, payload, decision)
   return buildResult(tx ~= nil, tx, decision)
 end
 
----@doc.id ledger.operation
----@doc.category ledger
----@doc.since 0.9.0
----@doc.audience officer,gm
----@doc.permission ledger.operation
----@doc.scope guild-season
----@doc.audit true
----@doc.reason-required true
----@doc.help-key UI_HELP_LEDGER_OPERATION
----@doc.label-key DOC_LEDGER_OPERATION_LABEL
 local function executeLedgerOperation(actor, payload, decision)
-  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then
-    return buildResult(false, nil, { reasonCode = "FEATURE_DISABLED" }, "Canonical dispute operations are disabled in this release.")
+  local function rejectOperation(reason)
+    local rejected = {}
+    for key, value in pairs(decision or {}) do rejected[key] = value end
+    rejected.allowed, rejected.reasonCode = false, reason
+    return buildResult(false, nil, rejected, reason)
+  end
+  if not Dibs.Ledger or not Dibs.Ledger.IsDisputeOperationTransportEnabled
+    or not Dibs.Ledger.IsDisputeOperationTransportEnabled() then
+    return rejectOperation("FEATURE_DISABLED")
+  end
+  local proposalId = payload and payload.proposalId
+  if type(proposalId) ~= "string" or proposalId == "" or not Dibs.Governance
+    or type(Dibs.Governance.GetDisputeOperationProposal) ~= "function" then
+    return rejectOperation("OPERATION_PROPOSAL_REQUIRED")
+  end
+  local proposal = Dibs.Governance.GetDisputeOperationProposal(proposalId)
+  if not proposal or proposal.status ~= "PENDING" or type(proposal.operation) ~= "table" then
+    return rejectOperation("OPERATION_PROPOSAL_NOT_PENDING")
+  end
+  local operation = proposal.operation
+  if operation.guildKey ~= (Dibs.GetGuildKey and Dibs.GetGuildKey()) then
+    return rejectOperation("GUILD_SCOPE_MISMATCH")
+  end
+  local proposer = Dibs.Identity and Dibs.Identity.ResolveRosterMember
+    and Dibs.Identity.ResolveRosterMember(operation.actor and operation.actor.displayName)
+  if not proposer or proposer.status ~= "RESOLVED" or proposer.memberKey ~= operation.actor.memberKey
+    or (proposer.role ~= "gm" and proposer.role ~= "officer") then
+    return rejectOperation("PROPOSER_NOT_AUTHORIZED")
+  end
+  local authority = Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  if type(authority) ~= "table" or authority.state ~= "ACTIVE"
+    or type(authority.coordinator) ~= "table" or type(proposal.coordinator) ~= "table"
+    or proposal.ledgerEpoch ~= authority.ledgerEpoch
+    or proposal.coordinator.memberKey ~= authority.coordinator.memberKey then
+    return rejectOperation("STALE_AUTHORITY")
   end
   if not Dibs.Ledger or type(Dibs.Ledger.CommitDisputeOperation) ~= "function" then
-    return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
+    return rejectOperation("CANONICAL_OPERATION_UNAVAILABLE")
   end
-  local operation = payload and payload.operation
-  if type(operation) ~= "table" then
-    return buildResult(false, nil, { reasonCode = "INVALID_OPERATION" }, "A complete canonical operation is required.")
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  for ledgerId, ledger in pairs(db.ledgers or {}) do
+    for _, commit in pairs((ledger.canonical and ledger.canonical.commits) or {}) do
+      local accepted = type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT"
+        and type(commit.operation) == "table" and commit.operation or nil
+      if accepted and accepted.requestId == operation.requestId
+        and accepted.requestRevision == operation.requestRevision
+        and accepted.operationId ~= operation.operationId then
+        return buildResult(false, nil, { reasonCode = "DISPUTE_REVISION_ALREADY_CORRECTED" }, "DISPUTE_REVISION_ALREADY_CORRECTED")
+      end
+    end
   end
-  local result = Dibs.Ledger.CommitDisputeOperation({
-    actor = actor, ledgerId = operation.ledgerId, proposalId = payload.proposalId,
-  }, operation)
-  if not result or result.accepted ~= true then
-    local reasonCode = result and result.reasonCode or "OPERATION_REJECTED"
-    return buildResult(false, result, { reasonCode = reasonCode }, result and (result.diagnostic or reasonCode) or reasonCode)
+  local outcome = Dibs.Ledger.CommitDisputeOperation({ actor = actor, ledgerId = operation.ledgerId }, operation)
+  if type(outcome) ~= "table" or outcome.accepted ~= true then
+    local reason = type(outcome) == "table" and outcome.reasonCode or "CANONICAL_OPERATION_REJECTED"
+    if reason == "STALE_DISPUTE_REVISION" then
+      Dibs.Governance.ResolveDisputeOperationProposal(proposalId, "STALE", reason)
+    end
+    return buildResult(false, nil, { reasonCode = reason }, reason)
   end
-  return buildResult(true, result.value, decision)
+  local marked, markReason = Dibs.Governance.ResolveDisputeOperationProposal(
+    proposalId, "COMMITTED", outcome.reasonCode, outcome.value)
+  if not marked then
+    return buildResult(false, nil, { reasonCode = markReason or "PROPOSAL_COMMIT_RECORD_FAILED" }, markReason or "PROPOSAL_COMMIT_RECORD_FAILED")
+  end
+  return buildResult(true, outcome.value, decision)
 end
 
 local function executeAdminList(actor, payload, decision)

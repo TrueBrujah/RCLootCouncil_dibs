@@ -189,6 +189,26 @@ describe("RF-0045 PreDibs request integrity", function()
       "the request left its original ledger")
   end)
 
+  for _, method in ipairs({ "UpsertFromSync", "ApplyVerifiedSyncRecord" }) do
+    for _, fromSecondary in ipairs({ false, true }) do
+      it("preserves all stored state on a cross-ledger replay via " .. method .. " from secondary=" .. tostring(fromSecondary), function()
+        local dibs = setup()
+        local proposed = assert(dibs.MultiLedger.ProposeLedger("Tester-Realm", "Scope regression"))
+        assert_true(dibs.MultiLedger.ApproveLedger("Tester-Realm", proposed.ledgerId).ok)
+        local origin = fromSecondary and proposed.ledgerId or "guild-primary"
+        local target = fromSecondary and "guild-primary" or proposed.ledgerId
+        local record = requestRecord(dibs, { ledgerId = origin })
+        assert_not_nil(dibs.PreDibs[method](record, "Tester-Realm"))
+        local before = dibs.Sync.CalculateContentHash(dibs.GetDB())
+        local moved = requestRecord(dibs, { ledgerId = target, revision = 2, status = "confirmed" })
+        local applied, reason = dibs.PreDibs[method](moved, "Tester-Realm")
+        assert_nil(applied)
+        assert_equal("LEDGER_SCOPE_MISMATCH", reason)
+        assert_equal(before, dibs.Sync.CalculateContentHash(dibs.GetDB()))
+      end)
+    end
+  end
+
   it("A14 refuses an invalid status transition", function()
     local dibs = setup()
     local record = requestRecord(dibs)
@@ -203,6 +223,28 @@ describe("RF-0045 PreDibs request integrity", function()
       assert_equal("INVALID_STATUS_TRANSITION", reason)
     end
   end)
+
+  for _, method in ipairs({ "UpsertFromSync", "ApplyVerifiedSyncRecord" }) do
+    it("preserves an untagged legacy request in an aliased secondary store via " .. method, function()
+      local dibs = setup()
+      local proposed = assert(dibs.MultiLedger.ProposeLedger("Tester-Realm", "Legacy secondary"))
+      assert_true(dibs.MultiLedger.ApproveLedger("Tester-Realm", proposed.ledgerId).ok)
+      assert_true(dibs.PreDibs.SetLedgerContext(proposed.ledgerId))
+      local record = requestRecord(dibs, { requestId = "legacy-secondary-request" })
+      record.ledgerId = nil -- The partition key is the surviving scope before lazy migration.
+      local root = dibs.GetDB().preDibs
+      table.insert(root.ledgers[proposed.ledgerId].requests, record)
+      assert_true(root.requests == root.ledgers[proposed.ledgerId].requests)
+      local updated = requestRecord(dibs, { requestId = record.requestId, ledgerId = proposed.ledgerId,
+        revision = 2, status = "confirmed" })
+      local result, reason = dibs.PreDibs[method](updated, "Tester-Realm")
+      assert_not_nil(result, tostring(reason))
+      assert_equal(proposed.ledgerId, result.ledgerId)
+      assert_equal(record.requestId, result.requestId)
+      assert_equal(1, #root.ledgers[proposed.ledgerId].requests)
+      assert_equal(0, #root.ledgers["guild-primary"].requests)
+    end)
+  end
 
   it("A15 refuses a terminal record that has no original", function()
     local dibs = setup()

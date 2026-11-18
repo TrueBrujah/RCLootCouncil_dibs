@@ -2,6 +2,11 @@
 
 Status: pending two-client Retail execution.
 
+For the current 0.8.12 candidate, use V04–V07 of the
+[French Retail test campaign](0.8.12-TESTS-RETAIL-FR.md) to collect the real
+player-to-Officer evidence. Record actual results below; the capture repair
+and its automated tests do not close this two-client gate.
+
 Automated protocol, privacy, recovery, isolation, and conflict evidence is
 recorded in [B13_Implementation_Evidence.md](B13_Implementation_Evidence.md).
 This document records the live roster and addon-message checks that Fengari

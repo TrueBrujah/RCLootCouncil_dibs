@@ -553,6 +553,12 @@ describe("RCLootCouncil DIB response projection", function()
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildMembers = { "Tester-Realm" } } })
     local canonicalCalls, projectionCalls = {}, {}
     local originalCanonical = dibs.Ledger.GetCanonicalPlayerDibsState
+    local originalSummary = dibs.Ledger.GetPlayerHistorySummary
+    local summaryCalls = {}
+    dibs.Ledger.GetPlayerHistorySummary = function(identity, seasonId)
+      summaryCalls[#summaryCalls + 1] = { identity = identity, seasonId = seasonId }
+      return { balance = 2, allocation = 3, seasonUsed = 1 }
+    end
     local originalProjection = dibs.Ledger.GetPlayerDibsProjection
     dibs.Ledger.GetCanonicalPlayerDibsState = function(seasonId, identity)
       table.insert(canonicalCalls, { seasonId = seasonId, identity = identity })
@@ -569,10 +575,11 @@ describe("RCLootCouncil DIB response projection", function()
     assert_equal(2, summary.balance)
     assert_equal("1/3", value)
     assert_equal(1, sortValue)
-    assert_equal(1, #canonicalCalls)
+    assert_equal(0, #canonicalCalls)
+    assert_equal(1, #summaryCalls)
     assert_equal(1, #projectionCalls)
-    assert_equal(canonicalCalls[1].seasonId, projectionCalls[1].seasonId)
-    assert_equal(canonicalCalls[1].identity, "Tester-Realm")
+    assert_equal(summaryCalls[1].seasonId, projectionCalls[1].seasonId)
+    assert_equal(summaryCalls[1].identity, "Tester-Realm")
     assert_equal(projectionCalls[1].identity, "Tester-Realm")
     local tooltip = dibs.RCLootCouncil.GetDibsColumnTooltip({ name = "Tester-Realm" })
     assert_true(tooltip:find("Available balance: 1", 1, true) ~= nil)
@@ -580,6 +587,7 @@ describe("RCLootCouncil DIB response projection", function()
     assert_true(tooltip:find("Awaiting coordinator commit: 1 Dibs", 1, true) ~= nil)
     assert_true(tooltip:find("Rank maximum: 3", 1, true) ~= nil)
     dibs.Ledger.GetCanonicalPlayerDibsState = originalCanonical
+    dibs.Ledger.GetPlayerHistorySummary = originalSummary
     dibs.Ledger.GetPlayerDibsProjection = originalProjection
   end)
 

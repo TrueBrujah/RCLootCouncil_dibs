@@ -1,14 +1,27 @@
-RCLootCouncil_dibs 0.8.11
+RCLootCouncil_dibs 0.9.0
+
+Working candidate renumbered from 0.8.12 on 2026-11-18; not a publication or completed Retail certification.
 
 Highlights
-- Improved Player and Officer page responsiveness by reusing resolved guild, roster, ledger, and history data instead of repeating broad scans.
-- Improved large Officer pages with more efficient rendering and scrolling behavior.
-- Added safer, idempotent ledger corrections with audit history and recovery for interrupted or retried operations.
-- Made historical Ledger and Pre-Dibs collection paginated and resumable; incomplete collections cannot be approved as complete.
-- Made imported data changes safer by validating before applying changes to SavedVariables.
-- Preserved duplicate guild roster entries so ambiguous player identities remain safely distinguishable.
-- Added an in-game build identifier in the window footer and with /dibs build, including the deployed commit and source-worktree state.
+- Adds seasonal raid roster drafts, player registration, Officer review, and a read-only public roster.
+- Adds versioned season rules and raid status definitions, including Raider and Core Raider signup paths.
+- Adds explicit Main/Alt review, allocation preview and confirmed activation for approved season participants.
+- Adds initial seasonal allocations, active-season allocation reconciliation preserving spent Dibs, and completion/archive with retained history.
+- Adds an in-game calendar control for season dates and registration scheduling.
+- Replaces the old guild-wide allocation path with season-scoped workflows for approved participants.
+- Keeps the Player and Officer interfaces responsive and fixes the Retail Officer UI upvalue warning.
+- Repairs Great Vault capture for supplemental reward bundles, localized self-loot without a sender GUID and delayed item data.
+- Shows Great Vault capture state and its latest runtime result in PlayerUI; confirmed acquisitions synchronize to authorized Officer Vault Review views.
+- Preserves deleted-ledger tombstones through restore/import and prevents presentation profiles from changing guild authority.
 
-Compatibility
-- Existing 0.8.10 SavedVariables remain loadable. This release adds fields for pending ledger proposals and resumable historical collection progress; no reset is required.
-- Synchronization now negotiates support for canonical ledger operations. Those operations are enabled only when peers advertise the required capability.
+Compatibility and current limits
+- Renumbering to 0.9.0 adds no data/protocol migration and does not activate canonical corrections. Performance, recovery and Retail qualification remain open.
+- Synchronization already requires matching major/minor addon versions. Peers advertising 0.8.x must update to 0.9.x; coordinate the guild's client update.
+- Existing ledger and historical records are preserved. The seasonal roster uses an additive SavedVariables subtree.
+- Seasonal roster synchronization uses Guild chat and requires clients to support the seasonal roster capability.
+- Activation is available through the reviewed preview, reason and explicit confirmation by the authorized accounting coordinator. A preview alone allocates nothing.
+- Activation manifests carry compact dependencies within the existing 8,192-byte quota; incomplete dependencies must not activate a season.
+- Guild-wide allocation reconciliation is hidden; do not use rank changes to reconcile the entire guild roster.
+- Great Vault capture requires Dibs active at claim time and the Pre-Dibs module enabled. Offered choices and old unobserved claims are not recorded automatically; Vault acquisitions do not spend Dibs.
+- Real Retail single/two-client validation remains pending. Canonical dispute correction writes remain disabled with outstanding implementation/recovery tasks; this candidate does not certify that feature.
+- Test procedure: docs/audits/0.8.12-TESTS-RETAIL-FR.md (repository).

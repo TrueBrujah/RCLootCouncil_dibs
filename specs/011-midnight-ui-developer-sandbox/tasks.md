@@ -290,3 +290,12 @@ T019 src/ui/WindowState.lua
 - Every implementation task includes an exact repository path and all task lines use the required checkbox, sequential ID, optional `[P]`, and story-label format.
 - Tests are written before each story's implementation tasks and map to the independent test criteria in the specification.
 - No task changes B00-B10 production semantics; any conflict with ledger, governance, SyncV2, RC evidence, or combat-safety contracts must stop implementation for review.
+
+## Approved consolidation — 2026-11-16
+
+- [x] T067 Add failing tests for truthful dashboard state, service/action priority, localized no-correction decisions and role-safe read-only navigation in existing B11/Requests suites. P01–P05/P10/P14. New state/layout regressions failed before implementation; closure, reply scope and existing authority tests pass after it.
+- [x] T068 Extract the authorized dashboard renderer to `src/ui/OfficerDashboard.lua`, preserve load/profiling contracts, and implement localized operational-first layout and contextual actions without new authority or unbounded reads. P01/P02/P04/P05/P08/P13. No controller dependency in the renderer; original total/projection timing retained.
+- [x] T069 Complete critical localized request/player delivery wording using existing ACK and decision state, preserving personal scope and production accounting gates. P03/P04/P06/P09. Localized owner reply shortcut and no-correction explanation tested; canonical release defaults remain closed.
+- [x] T070 Complete existing data UI recovery/export explanations and consent/context regressions without treating ordinary full import as canonical recovery. P10/P11; recovery implementation remains 007 T036/026 T049–T050. Independent-copy warning added; export/consent/privacy suites pass unchanged.
+- [x] T071 Validate focused native/Fengari UI/security suites, supported Lua compilation, load-graph/documentation checks; update the existing Retail campaign, guides and checkpoint with actual evidence. P07/P08/P10/P14/P15. 334/334 across 31 suites on Fengari, Lua 5.4.6 and Lua 5.1.5; 112 sources compile under 5.1, 121 required files verified. Documentation generates with zero errors/10 inherited warnings. This is not a full-suite or Retail result.
+- [ ] T072 Observe Retail N16–N18 and the applicable pre-existing seasonal/combat/privacy matrices on the installed candidate. No checkbox can be closed from automated mocks alone.

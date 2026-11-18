@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 describe("Anonymous audit export UI", function()
   it("offers a copyable export on the authorized Officer Diagnostics page", function()

@@ -190,6 +190,7 @@ describe("Guild setup and raid readiness split", function()
 
   it("renders the guild checks and raid readiness on separate routes", function()
     local dibs = load()
+    require("helpers.configured_addon").configure(dibs)
     local frame = dibs.OfficerUI.CreateWindow("guildSetup")
     assert_equal("guildSetup", frame.activeTab)
     local function texts()

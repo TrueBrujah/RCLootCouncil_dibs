@@ -31,6 +31,19 @@ local function findById(features, id)
 end
 
 describe("Feature registry catalogue", function()
+  it("exposes seasonal roster as an optional enabled-by-default feature", function()
+    local dibs = load()
+    local definition = dibs.FeatureRegistry.GetDefinition("seasonalRoster")
+    local state = dibs.FeatureRegistry.GetEffectiveState("seasonalRoster")
+
+    assert_not_nil(definition)
+    assert_false(definition.required)
+    assert_true(definition.configurable)
+    assert_equal("guild", definition.scope)
+    assert_true(state.known)
+    assert_true(state.enabled)
+  end)
+
   it("exposes every core and optional feature from the canonical catalogue", function()
     local dibs = load()
     local registry = dibs.FeatureRegistry

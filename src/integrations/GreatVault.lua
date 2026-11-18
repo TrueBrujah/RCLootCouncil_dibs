@@ -14,6 +14,41 @@ local rewardChoices = {}
 local pendingClaim
 local hookedAPI
 local eventFrame
+local captureScope
+local lastCapture
+local refreshingCapture = false
+
+local function refreshCapture()
+  if refreshingCapture or not Dibs.PlayerUI or type(Dibs.PlayerUI.RefreshVaultCapture) ~= "function" then return end
+  refreshingCapture = true
+  local ok, reason = pcall(Dibs.PlayerUI.RefreshVaultCapture)
+  refreshingCapture = false
+  if not ok and type(Dibs.Message) == "function" then
+    Dibs.Message("[GreatVault] capture refresh failed: " .. tostring(reason), { chat = false })
+  end
+end
+
+local function currentScope()
+  return table.concat({
+    tostring(Dibs.GetGuildKey and Dibs.GetGuildKey() or ""),
+    tostring(Dibs.GetPlayerName and Dibs.GetPlayerName() or ""),
+    tostring(Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or ""),
+  }, "\001")
+end
+
+local function setCaptureResult(reasonCode, itemID)
+  local scope = currentScope()
+  local changed = not lastCapture or lastCapture.scope ~= scope
+    or lastCapture.reasonCode ~= reasonCode or lastCapture.itemID ~= itemID
+  lastCapture = { scope = scope, reasonCode = reasonCode, itemID = itemID }
+  if changed then refreshCapture() end
+end
+
+local function choiceCount(choices)
+  local count = 0
+  for _ in pairs(choices) do count = count + 1 end
+  return count
+end
 
 local function trim(value)
   return tostring(value or ""):match("^%s*(.-)%s*$")
@@ -32,6 +67,21 @@ function GreatVault.GetCapability()
     return { status = "OPERATIONAL", reasonCode = "CLAIM_SIGNAL_AVAILABLE" }
   end
   return { status = "UNAVAILABLE", reasonCode = "CLAIM_SIGNAL_UNAVAILABLE" }
+end
+
+-- Runtime diagnostics only; never turn offered rewards into acquisition history.
+function GreatVault.GetCaptureStatus()
+  local status = GreatVault.GetCapability()
+  local scope = currentScope()
+  status.choiceCount = 0
+  if Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled() then return status end
+  if captureScope == scope then
+    status.choiceCount = choiceCount(rewardChoices)
+  end
+  if lastCapture and lastCapture.scope == scope then
+    status.lastReasonCode, status.lastItemID = lastCapture.reasonCode, lastCapture.itemID
+  end
+  return status
 end
 
 local function result(status, confidence, reasonCode, observation)
@@ -117,6 +167,7 @@ function GreatVault.RecordClaim(observation)
 end
 
 local function reportFailure(reason)
+  setCaptureResult(reason)
   local text = Dibs.L and Dibs.L["VAULT_REASON_" .. tostring(reason)]
   if Dibs.Message then Dibs.Message("[GreatVault] " .. tostring(text or reason)) end
 end
@@ -249,19 +300,43 @@ function GreatVault.ResolveItemDifficulty(itemLink)
   return nil
 end
 
+local function isSupplementalReward(reward)
+  local itemType = _G.Enum and Enum.CachedRewardType and Enum.CachedRewardType.Item
+  if itemType and isReadable(reward.type) and reward.type ~= nil and reward.type ~= itemType then return true end
+  local api = _G.C_Item
+  if type(api) ~= "table" or not isReadable(reward.id) or type(reward.id) ~= "number" then return false end
+  if type(api.IsItemKeystoneByID) == "function" then
+    local ok, keystone = pcall(api.IsItemKeystoneByID, reward.id)
+    if ok and isReadable(keystone) and keystone == true then return true end
+  end
+  if type(api.IsEquippableItem) == "function" then
+    local ok, equippable = pcall(api.IsEquippableItem, reward.id)
+    if ok and isReadable(equippable) and equippable == false then return true end
+  end
+  return false
+end
+
 local function cacheRewardChoices()
   local api = _G.C_WeeklyRewards
-  if not hasClaimSignal() or not api.CanClaimRewards() then return end
+  if not hasClaimSignal() then return end
+  if not api.CanClaimRewards() then
+    local changed = next(rewardChoices) ~= nil or captureScope ~= currentScope()
+    rewardChoices, captureScope = {}, currentScope()
+    if changed then refreshCapture() end
+    return
+  end
   local choices = {}
   for _, activity in ipairs(api.GetActivities() or {}) do
     if isReadable(activity.claimID) and activity.claimID then
       local choice
       local itemCount = 0
       for _, reward in ipairs(activity.rewards or {}) do
-        if isReadable(reward.itemDBID) and reward.itemDBID then
-          local link = api.GetItemHyperlink(reward.itemDBID)
+        if not isSupplementalReward(reward) then
+          -- An unresolved candidate is still a candidate; do not mistake a
+          -- partially loaded bundle for a unique, fully identified item.
+          itemCount = itemCount + 1
+          local link = isReadable(reward.itemDBID) and reward.itemDBID and api.GetItemHyperlink(reward.itemDBID)
           if isReadable(link) and type(link) == "string" and link:match("item:(%d+)") then
-            itemCount = itemCount + 1
             choice = {
               itemLink = link, itemID = tonumber(link:match("item:(%d+)")),
               difficulty = GreatVault.ResolveItemDifficulty(link),
@@ -269,10 +344,13 @@ local function cacheRewardChoices()
           end
         end
       end
-      if itemCount == 1 then choices[activity.claimID] = choice end
+      if itemCount == 1 and choice then choices[activity.claimID] = choice end
     end
   end
+  local changed = captureScope ~= currentScope() or choiceCount(rewardChoices) ~= choiceCount(choices)
   rewardChoices = choices
+  captureScope = currentScope()
+  if changed then refreshCapture() end
 end
 
 local function finishPendingClaim()
@@ -288,17 +366,25 @@ local function finishPendingClaim()
     return
   end
   if not claim.received or C_WeeklyRewards.CanClaimRewards() ~= false then return end
-  pendingClaim = nil
   claim.claimComplete = true
   local recorded = GreatVault.RecordClaim(claim)
-  if recorded.status ~= "CONFIRMED" then reportFailure(recorded.reasonCode) end
+  if recorded.status ~= "CONFIRMED" then
+    if claim.lastFailure ~= recorded.reasonCode then reportFailure(recorded.reasonCode) end
+    claim.lastFailure = recorded.reasonCode
+    -- Tooltip data may still be loading when the loot and rewards events fire.
+    -- Keep the same proven receipt until item data arrives or its context expires.
+    if recorded.reasonCode ~= "DIFFICULTY_UNAVAILABLE" then pendingClaim = nil end
+  else
+    pendingClaim = nil
+    setCaptureResult("CLAIM_CONFIRMED", claim.itemID)
+  end
 end
 
 local function onClaimRequested(claimID)
   pendingClaim = nil
   if not isReadable(claimID) then return reportFailure("CLAIM_ID_UNAVAILABLE") end
   if Dibs.DeveloperMode and Dibs.DeveloperMode.IsEnabled() then return end
-  local choice = rewardChoices[claimID]
+  local choice = captureScope == currentScope() and rewardChoices[claimID] or nil
   if not choice then return reportFailure("CLAIM_ITEM_UNAVAILABLE") end
   local seconds = C_DateAndTime.GetSecondsUntilWeeklyReset()
   if type(seconds) ~= "number" or seconds <= 0 then return reportFailure("RESET_ID_UNAVAILABLE") end
@@ -312,6 +398,24 @@ local function onClaimRequested(claimID)
     claimedAt = claimedAt, playerName = Dibs.GetPlayerName(),
     guildKey = Dibs.GetGuildKey(), seasonId = Dibs.GetCurrentSeasonId(),
   }
+  setCaptureResult("CLAIM_PENDING", choice.itemID)
+end
+
+local function isLocalLoot(message, senderGUID)
+  if not isReadable(message) or type(message) ~= "string" or not isReadable(senderGUID) then return false end
+  if senderGUID and senderGUID ~= "" then return senderGUID == UnitGUID("player") end
+  -- Some system loot lines have no sender GUID. In that case only Blizzard's
+  -- localized self-receipt formats establish ownership, never an arbitrary link.
+  for _, key in ipairs({ "LOOT_ITEM_SELF", "LOOT_ITEM_SELF_MULTIPLE",
+    "LOOT_ITEM_PUSHED_SELF", "LOOT_ITEM_PUSHED_SELF_MULTIPLE" }) do
+    local format = _G[key]
+    if isReadable(format) and type(format) == "string" then
+      local pattern = format:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+      pattern = pattern:gsub("%%%%s", ".+"):gsub("%%%%d", "%%d+")
+      if message:match("^" .. pattern .. "$") then return true end
+    end
+  end
+  return false
 end
 
 local function onEvent(_, event, ...)
@@ -320,8 +424,7 @@ local function onEvent(_, event, ...)
   elseif event == "CHAT_MSG_LOOT" and pendingClaim then
     local message = ...
     local senderGUID = select(12, ...)
-    if isReadable(message) and isReadable(senderGUID) and type(message) == "string"
-      and senderGUID == UnitGUID("player") then
+    if isLocalLoot(message, senderGUID) then
       -- Match the full reward variant, not an unrelated drop with the same item ID.
       local itemString = message:match("|H(item:[^|]+)|h")
       local selectedString = pendingClaim.itemLink:match("|H(item:[^|]+)|h")
@@ -331,6 +434,12 @@ local function onEvent(_, event, ...)
   elseif event == "WEEKLY_REWARDS_UPDATE" or event == "WEEKLY_REWARDS_ITEM_CHANGED" then
     finishPendingClaim()
     cacheRewardChoices()
+  elseif event == "GET_ITEM_INFO_RECEIVED" then
+    local itemID, success = ...
+    if isReadable(itemID) and isReadable(success) and success == true then
+      if pendingClaim and itemID == pendingClaim.itemID then finishPendingClaim() end
+      cacheRewardChoices()
+    end
   end
 end
 
@@ -347,7 +456,7 @@ function GreatVault.Initialize()
   if not eventFrame and type(CreateFrame) == "function" then
     eventFrame = CreateFrame("Frame")
     for _, event in ipairs({ "PLAYER_LOGIN", "ADDON_LOADED", "CHAT_MSG_LOOT",
-      "WEEKLY_REWARDS_UPDATE", "WEEKLY_REWARDS_ITEM_CHANGED" }) do
+      "WEEKLY_REWARDS_UPDATE", "WEEKLY_REWARDS_ITEM_CHANGED", "GET_ITEM_INFO_RECEIVED" }) do
       eventFrame:RegisterEvent(event)
     end
     eventFrame:SetScript("OnEvent", onEvent)

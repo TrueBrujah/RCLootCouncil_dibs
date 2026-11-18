@@ -2,6 +2,13 @@
 
 Status: pending one-client Retail execution.
 
+2026-11-15: Current 0.8.12 capture repairs also handle equipment bundles with
+supplemental rewards, localized self-loot without a GUID, and delayed item data.
+PlayerUI exposes capture state and its last runtime result. Use the French
+[0.8.12 test campaign](0.8.12-TESTS-RETAIL-FR.md), especially V01–V05 and V08,
+for today's execution and evidence. These additions have automated coverage;
+this Retail checklist remains pending.
+
 2026-10-14: A reported claim showed an item receipt in chat but an empty Player
 Vault history. Code inspection found that the adapter had no Retail event or
 claim hook wiring. The adapter now correlates a cached selected reward, a
@@ -34,7 +41,9 @@ replace these client checks.
 
 ## Manual fallback and ledger boundary
 
-- [ ] `/dibs vault <itemID> [difficulty]` creates one labeled manual record.
+- [ ] `/dibs vault <item link>` with readable classification, or
+      `/dibs vault <itemID> <difficulty>` with explicit difficulty, creates one
+      labeled manual record.
 - [ ] Repeating the command is idempotent.
 - [ ] The player view shows status, source, reset, sync state, and eligibility
       explanation without private evidence.

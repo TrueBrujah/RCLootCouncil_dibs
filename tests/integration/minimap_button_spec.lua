@@ -1,5 +1,5 @@
 local wow = require("helpers.wow_api")
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 describe("Minimap button", function()
   before_each(function()

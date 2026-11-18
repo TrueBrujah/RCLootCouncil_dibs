@@ -8,9 +8,8 @@ Non-responsibilities: It is not a second readiness engine, not a second
 authorization model, and not a second ledger/governance/reconciliation
 system. Every step status is derived from an existing authoritative or
 readiness projection; this module owns no configuration truth of its own.
-SavedVariables: None (guild-scoped). Persists only the last-viewed step index
-in the existing per-character local UI-state store (Dibs.GetLocalSettings),
-matching the precedent already used for developerModeEnabled.
+SavedVariables: None (guild-authoritative). Keeps allowlisted resumable form
+and navigation state per guild in the existing character-local UI store.
 ]]
 
 local Dibs = _G.Dibs
@@ -277,29 +276,13 @@ local function stepRankRules(seasonId, rows, dbOverride, syncBehind)
   return { status = "READY", summary = "Rank Rules are configured and synchronized through SEASON_CATALOG revision " .. tostring(revision) .. ".", rows = rows }
 end
 
-local function stepAllocationReconciliation(rankRows)
-  rankRows = type(rankRows) == "table" and rankRows or {}
-  if #rankRows == 0 then
-    return { status = "WARNING", summary = "Member allocation reconciliation cannot be verified from the current roster." }
+local function stepAllocationReconciliation(hasConfiguredSeason)
+  if hasConfiguredSeason ~= true then
+    return { status = "OPTIONAL", summary = text("WIZARD_ALLOCATION_RECONCILIATION_DEFERRED",
+      "Create the first seasonal raid roster before reconciling member allocations.") }
   end
-  local needed, retained = 0, 0
-  local allDisabled = true
-  for _, row in ipairs(rankRows) do
-    if row.enabled ~= false then allDisabled = false end
-    needed = needed + (tonumber(row.pendingReconciliation) or 0)
-    retained = retained + (tonumber(row.surplusMembers) or 0)
-  end
-  if allDisabled then
-    return { status = "OPTIONAL", summary = "All current guild ranks have Dibs allocation disabled." }
-  end
-  if needed > 0 then
-    return { status = "ACTION_REQUIRED", summary = tostring(needed) .. " players need starting-allocation reconciliation.",
-      detail = { needsReconciliation = needed, keepGranted = retained } }
-  end
-  return { status = "READY", summary = retained > 0
-      and (tostring(retained) .. " existing allocations are retained after rank decreases.")
-      or "No member allocation top-ups are currently required.",
-    detail = { needsReconciliation = 0, keepGranted = retained } }
+  return { status = "OPTIONAL", summary = text("WIZARD_SEASONAL_RECONCILIATION_PENDING",
+    "Seasonal reconciliation is not available yet; it must use only approved participants in the active season.") }
 end
 
 local function stepDibsRules(report)
@@ -407,6 +390,7 @@ local function computeSteps(dbOverride)
   end
   local steps = {}
   local seasonId, rankRows = call(Dibs.GetCurrentSeasonId, dbOverride), nil
+  local hasConfiguredSeason = call(Dibs.SeasonalRoster and Dibs.SeasonalRoster.HasConfiguredSeason, dbOverride)
   local policySummaryStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
   local policySummary = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetPreDibSummary,
     seasonId, activeLedgerId, dbOverride)
@@ -438,7 +422,7 @@ local function computeSteps(dbOverride)
       local computed = stepRankRules(seasonId, rankRows, dbOverride, syncBehind)
       steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail or computed.rows }
     elseif definition.id == "allocationReconciliation" then
-      local computed = stepAllocationReconciliation(rankRows)
+      local computed = stepAllocationReconciliation(hasConfiguredSeason)
       steps[#steps + 1] = { id = definition.id, label = definition.label, status = computed.status, summary = computed.summary, detail = computed.detail or computed.rows }
     elseif definition.id == "dibsRules" then
       local computed = stepDibsRules(report)
@@ -523,6 +507,128 @@ function Wizard.GetStatus(actor, dbOverride)
   return status, installation
 end
 
+-- Navigation is a read-only projection, not an authorization or readiness
+-- engine. Use compact installation/configuration snapshots; opening a page
+-- must not re-run SetupAssistant or per-member allocation reconciliation.
+function Wizard.GetNavigationAccess(actor, dbOverride)
+  local db = type(dbOverride) == "table" and dbOverride
+    or (Dibs.GetDB and Dibs.GetDB() or {})
+  local install = call(Dibs.Installation and Dibs.Installation.GetStatus, actor, db) or {}
+  local foundationReady = type(install.governance) == "table" and install.governance.ready == true
+    and type(install.baseline) == "table" and install.baseline.ready == true
+  local catalog = type(db.seasonCatalog) == "table" and db.seasonCatalog or {}
+  local revision = tonumber(catalog.catalogRevision) or 0
+  local record = type(catalog.records) == "table" and catalog.records[tostring(revision)] or nil
+  local rosterStore = type(db.seasonalRoster) == "table" and db.seasonalRoster or {}
+  local rosterSeasons = type(rosterStore.seasons) == "table" and rosterStore.seasons or {}
+  local preDibs = type(db.preDibs) == "table" and db.preDibs or {}
+  local disputes = type(db.disputes) == "table" and db.disputes or {}
+  local hasAcquisitions = type(preDibs.acquisitions) == "table" and next(preDibs.acquisitions) ~= nil
+  local hasRequests = type(disputes.requests) == "table" and next(disputes.requests) ~= nil
+  local rosterConfigured = false
+  for _, saved in pairs(rosterSeasons) do
+    local current = type(saved) == "table" and type(saved.revisions) == "table"
+      and saved.revisions[tostring(saved.currentRevision)] or nil
+    if type(current) == "table" and (current.registrationState == "OPEN" or current.registrationState == "CLOSED") then
+      rosterConfigured = true
+      break
+    end
+  end
+  local preservedHistory = install.installType == "UPGRADE" or revision > 0
+    or next(rosterSeasons) ~= nil
+    or hasAcquisitions or hasRequests
+    or (type(install.legacy) == "table" and (tonumber(install.legacy.evidenceCount) or 0) > 0)
+  local result = {
+    firstInstall = not foundationReady and not preservedHistory,
+    foundationReady = foundationReady,
+    preservedHistory = preservedHistory,
+    sections = {}, routes = {},
+    dependencies = { seasonConfigured = false, rosterConfigured = rosterConfigured,
+      ranksPublished = false, ledgerReady = false },
+    reasonCode = foundationReady and "SEASON_CONFIGURATION_REQUIRED" or "GUILD_FOUNDATION_REQUIRED",
+  }
+  local function allow(section, ...)
+    result.sections[section] = true
+    for index = 1, select("#", ...) do result.routes[select(index, ...)] = true end
+  end
+  allow("GUILD SETUP", "wizard")
+  if preservedHistory then
+    allow("DIBS", "history")
+    allow("GUILD SETUP", "installation", "reconciliation")
+    if next(rosterSeasons) ~= nil then allow("GUILD SETUP", "seasonalRoster") end
+    if hasAcquisitions then allow("REQUESTS", "vault") end
+  end
+  if not foundationReady then return result end
+
+  local moduleValues = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleValues, db) or {}
+  local features = call(Dibs.FeatureRegistry and Dibs.FeatureRegistry.GetEffectiveStates, moduleValues) or {}
+  local function enabled(key)
+    return type(features[key]) == "table" and features[key].enabled == true
+  end
+  allow("GUILD SETUP", "guildSetup", "installation")
+  allow("GUILD RULES", "seasons", "ranks")
+  allow("SYSTEM", "settings", "modules", "sync", "diagnostics", "developer", "debug")
+  if enabled("seasonalRoster") or next(rosterSeasons) ~= nil then
+    allow("GUILD SETUP", "seasonalRoster")
+  end
+  if enabled("lootEligibility") then allow("GUILD RULES", "eligibility") end
+  if enabled("lootRules") then allow("GUILD RULES", "lootTypes") end
+  if enabled("preDibs") then allow("GUILD RULES", "preDibs") end
+  if enabled("announcements") then allow("GUILD RULES", "announcements") end
+  if enabled("rclootcouncil") then allow("INTEGRATIONS", "integration") end
+  if enabled("independentRaid") then allow("INTEGRATIONS", "independentRaid") end
+
+  local seasonId = db.currentSeasonId
+  local season = type(db.seasons) == "table" and db.seasons[seasonId] or nil
+  local catalogSeason = type(record) == "table" and type(record.seasons) == "table"
+    and record.seasons[seasonId] or nil
+  local configured = type(season) == "table" and season.isActive == true
+    and season.isDraft ~= true and season.isArchived ~= true
+    and type(catalogSeason) == "table" and record.currentSeasonId == seasonId
+  local rosterSeason = rosterSeasons[seasonId]
+  local rosterConfig = type(rosterSeason) == "table" and type(rosterSeason.revisions) == "table"
+    and rosterSeason.revisions[tostring(rosterSeason.currentRevision)] or nil
+  if type(rosterConfig) == "table" then
+    -- Activation commits an immutable manifest; the configuration revision may
+    -- intentionally remain REVIEW/READY (GetSeasonLifecycle derives ACTIVE).
+    local lifecycle = rosterConfig.lifecycleState
+    local activeLifecycle = lifecycle == "ACTIVE" or lifecycle == "READY" or lifecycle == "REVIEW"
+    local now = call(Dibs.GetTimestamp) or (type(time) == "function" and time()) or 0
+    configured = type(season) == "table" and season.isActive == true and season.isArchived ~= true
+      and activeLifecycle and rosterSeason.activationAdopted == true
+      and (not tonumber(rosterConfig.endAt) or now < tonumber(rosterConfig.endAt))
+  end
+  result.dependencies.seasonConfigured = configured == true
+  local publishedRules = type(rosterConfig) == "table" and type(rosterConfig.rankAllocationSnapshot) == "table"
+    and rosterConfig.rankAllocationSnapshot.rules
+    or (type(record) == "table" and type(record.rankRules) == "table" and record.rankRules[tostring(seasonId)])
+  local rules = type(db.rankRules) == "table" and db.rankRules[seasonId] or nil
+  local hasher = Dibs.Sync and Dibs.Sync.CalculateContentHash
+  local currentHash = type(rules) == "table" and next(rules) ~= nil and call(hasher, rules) or nil
+  local publishedHash = type(publishedRules) == "table" and call(hasher, publishedRules) or nil
+  local ranksPublished = currentHash ~= nil and currentHash == publishedHash
+  result.dependencies.ranksPublished = ranksPublished
+  local ledgerId = db.activeLedgerId
+  local ledger = type(db.ledgers) == "table" and db.ledgers[ledgerId] or nil
+  local authorityState = type(install.technical) == "table" and install.technical.authorityState or nil
+  local ledgerReady = type(ledger) == "table" and ledger.status == "APPROVED"
+    and type(ledger.transactions) == "table" and install.state ~= "RECOVERY_REQUIRED"
+    and install.state ~= "BLOCKED" and authorityState ~= "RECOVERY_PENDING"
+  result.dependencies.ledgerReady = ledgerReady
+  if not configured then return result end
+  if not ranksPublished then result.reasonCode = "RANK_RULES_PUBLICATION_REQUIRED"; return result end
+  if not ledgerReady then result.reasonCode = "GUILD_LEDGER_REQUIRED"; return result end
+  result.reasonCode = nil
+  allow("OVERVIEW", "overview")
+  if enabled("readiness") then allow("OVERVIEW", "setup") end
+  allow("DIBS", "automaticDibs", "dibsAdmin", "history", "statistics")
+  allow("REQUESTS", "pendingAwards")
+  if enabled("greatVault") or hasAcquisitions then allow("REQUESTS", "vault") end
+  if enabled("requests") then allow("REQUESTS", "disputes") end
+  if enabled("preDibs") then allow("REQUESTS", "preDibRequests") end
+  return result
+end
+
 function Wizard.GetInitialOperationalPolicyValues()
   return initialOperationalPolicyValues()
 end
@@ -539,13 +645,159 @@ function Wizard.GetProfiles()
   return copy(profiles)
 end
 
-function Wizard.GetCurrentStage()
-  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
-  local stage = tostring(settings.turnkeyWizardStage or "choose")
-  for _, allowed in ipairs(TURNKEY_STAGES) do
-    if stage == allowed then return stage end
+local SETUP_RESUME_ROUTES = {
+  wizard = true, installation = true, settings = true, seasons = true,
+  seasonalRoster = true, ranks = true, automaticDibs = true, lootTypes = true,
+  preDibs = true, integration = true, sync = true, guildSetup = true, modules = true,
+}
+
+local function setupScope()
+  local key = call(Dibs.GetGuildKey)
+  if type(key) == "string" and key ~= "" then return key end
+  return nil
+end
+
+local function validSetupStage(stage)
+  for _, allowed in ipairs(TURNKEY_STAGES) do if stage == allowed then return true end end
+  return false
+end
+
+-- These bounds match the season form's existing domain bounds. Incomplete
+-- strings are retained while typing; creation still uses ValidateSeasonInput.
+local DRAFT_TEXT_LIMITS = { name = 80, categories = 16 * 62, raidRules = 8000, timeZone = 64,
+  operationId = 128 }
+for _, field in ipairs({ "Start", "End", "RegistrationStart", "RegistrationEnd" }) do
+  DRAFT_TEXT_LIMITS["seasonalRosterNew" .. field .. "Date"] = 10
+  DRAFT_TEXT_LIMITS["seasonalRosterNew" .. field .. "Hour"] = 2
+  DRAFT_TEXT_LIMITS["seasonalRosterNew" .. field .. "Minute"] = 2
+end
+
+local function resumeRaidDifficulties(values)
+  if type(values) ~= "table" or getmetatable(values) ~= nil or #values > 3 then return nil end
+  local valid, seen, count = { NORMAL = true, HEROIC = true, MYTHIC = true }, {}, 0
+  for key in pairs(values) do
+    if type(key) ~= "number" or key < 1 or key > 3 or key ~= math.floor(key) then return nil end
+    count = count + 1
   end
-  return "choose"
+  if count ~= #values then return nil end
+  local result = {}
+  for index = 1, count do
+    local difficulty = values[index]
+    if not valid[difficulty] or seen[difficulty] then return nil end
+    seen[difficulty] = true
+    result[index] = difficulty
+  end
+  return result
+end
+
+local function resumeSchedule(rows)
+  if type(rows) ~= 'table' or getmetatable(rows) ~= nil or #rows > 7 then return nil end
+  local result, count = {}, 0
+  for key, row in pairs(rows) do
+    if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > #rows
+      or type(row) ~= "table" or getmetatable(row) ~= nil then return nil end
+    count = count + 1
+    local entry = {}
+    for field, value in pairs(row) do
+      if field == "weekday" then
+        if type(value) ~= "number" or value % 1 ~= 0 or value < 1 or value > 7 then return nil end
+      elseif field == "durationMinutes" then
+        if type(value) ~= "number" or value % 1 ~= 0 or value < 30 or value > 600 then return nil end
+      elseif field == "startTime" or field == "timeZone" then
+        if type(value) ~= "string" or #value > (field == "startTime" and 5 or 64) then return nil end
+      elseif field == "difficulty" then
+        if value ~= "NORMAL" and value ~= "HEROIC" and value ~= "MYTHIC" then return nil end
+      else return nil end
+      entry[field] = value
+    end
+    result[key] = entry
+  end
+  if count ~= #rows then return nil end
+  return result
+end
+
+local function resumeDraft(draft)
+  if type(draft) ~= "table" or getmetatable(draft) ~= nil then return nil end
+  local result = {}
+  for key, value in pairs(draft) do
+    if key == "enabled" then
+      if type(value) ~= "boolean" then return nil end
+      result[key] = value
+    elseif key == "scheduleRows" then
+      result[key] = resumeSchedule(value)
+      if result[key] == nil then return nil end
+    elseif key == "raidDifficulties" then
+      result[key] = resumeRaidDifficulties(value)
+      if result[key] == nil then return nil end
+    elseif DRAFT_TEXT_LIMITS[key] then
+      if type(value) ~= "string" or #value > DRAFT_TEXT_LIMITS[key] then return nil end
+      if key == "operationId" and (#value == 0 or not value:match("^[%w_:%-%.]+$")) then return nil end
+      result[key] = value
+    else return nil end
+  end
+  return result
+end
+
+local function validateSetupPatch(patch)
+  if type(patch) ~= "table" or getmetatable(patch) ~= nil then return nil end
+  local result = {}
+  for key, value in pairs(patch) do
+    if key == "stage" then
+      if not validSetupStage(value) then return nil end
+    elseif key == "profileId" then
+      if type(value) ~= "string" or not PROFILE_DEFINITIONS[value] then return nil end
+    elseif key == "correctionRoute" then
+      if value ~= false and (type(value) ~= "string" or not SETUP_RESUME_ROUTES[value]) then return nil end
+    elseif key == "issueId" then
+      if value ~= false and (type(value) ~= "string" or #value > 64
+        or not value:match("^[%w_%-]+$")) then return nil end
+    elseif key == "seasonDraft" then
+      if value ~= false then
+        value = resumeDraft(value)
+        if not value then return nil end
+      end
+    else return nil end
+    result[key] = value
+  end
+  return result
+end
+
+function Wizard.GetSetupProgress()
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
+  local scopes, key = settings.turnkeySetupProgressByGuild, setupScope()
+  local saved = type(scopes) == "table" and key and scopes[key]
+  local progress = saved and validateSetupPatch(saved) or nil
+  if not progress then
+    progress = {}
+    -- Legacy UI preferences contain no season data. Migrate only the first
+    -- scope; a subsequent guild starts fresh instead of inheriting that stage.
+    if type(scopes) ~= "table" or next(scopes) == nil then
+      progress.stage = validSetupStage(settings.turnkeyWizardStage) and settings.turnkeyWizardStage or nil
+      progress.profileId = PROFILE_DEFINITIONS[settings.turnkeyWizardProfileId] and settings.turnkeyWizardProfileId or nil
+    end
+  end
+  progress.stage, progress.profileId = progress.stage or "choose", progress.profileId or "progression"
+  return progress
+end
+
+function Wizard.SaveSetupProgress(patch)
+  local validated = validateSetupPatch(patch)
+  local key = setupScope()
+  if not validated then return nil, "INVALID_SETUP_PROGRESS" end
+  if not key then return nil, "SETUP_SCOPE_UNAVAILABLE" end
+  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings()
+  if not settings then return nil, "LOCAL_SETTINGS_UNAVAILABLE" end
+  local progress = Wizard.GetSetupProgress()
+  for field, value in pairs(validated) do
+    if value == false and field ~= "enabled" then progress[field] = nil else progress[field] = value end
+  end
+  if type(settings.turnkeySetupProgressByGuild) ~= "table" then settings.turnkeySetupProgressByGuild = {} end
+  settings.turnkeySetupProgressByGuild[key] = progress
+  return true
+end
+
+function Wizard.GetCurrentStage()
+  return Wizard.GetSetupProgress().stage
 end
 
 function Wizard.SetCurrentStage(stage)
@@ -555,22 +807,18 @@ function Wizard.SetCurrentStage(stage)
     if stage == allowed then valid = true break end
   end
   if not valid then stage = "choose" end
-  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings()
-  if settings then settings.turnkeyWizardStage = stage end
+  Wizard.SaveSetupProgress({ stage = stage })
   return stage
 end
 
 function Wizard.GetSelectedProfileId()
-  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings() or {}
-  local profileId = tostring(settings.turnkeyWizardProfileId or "progression")
-  return PROFILE_DEFINITIONS[profileId] and profileId or "progression"
+  return Wizard.GetSetupProgress().profileId
 end
 
 function Wizard.SetSelectedProfileId(profileId)
   profileId = tostring(profileId or "")
   if not PROFILE_DEFINITIONS[profileId] then return nil, "UNKNOWN_SETUP_PROFILE" end
-  local settings = Dibs.GetLocalSettings and Dibs.GetLocalSettings()
-  if settings then settings.turnkeyWizardProfileId = profileId end
+  Wizard.SaveSetupProgress({ profileId = profileId })
   return profileId
 end
 
@@ -585,7 +833,56 @@ local function previewAction(id, disposition, titleKey, explanationKey, outcomeK
   }
 end
 
-function Wizard.PreviewProfile(profileId, actor)
+local function seasonDraftInput(options)
+  if options == nil then return nil end
+  if type(options) ~= "table" then return nil, "INVALID_INPUT" end
+  if options.seasonDraft == nil then return nil end
+  local roster = Dibs.SeasonalRoster
+  if not roster or type(roster.ValidateSeasonInput) ~= "function"
+    or type(roster.GetPreservedHistory) ~= "function" or type(roster.CreateSeason) ~= "function" then
+    return nil, "SEASON_SERVICE_UNAVAILABLE"
+  end
+  local operationId = options.seasonOperationId
+  if type(options.seasonDraft) ~= "table" or type(operationId) ~= "string"
+    or #operationId < 1 or #operationId > 128 or not operationId:match("^[%w_:%-%.]+$") then
+    return nil, "INVALID_INPUT"
+  end
+  local input = copy(options.seasonDraft)
+  if input.lifecycleState == nil then input.lifecycleState = "DRAFT" end
+  if input.registrationState == nil then input.registrationState = "DRAFT" end
+  local valid, normalized = roster.ValidateSeasonInput(input, true)
+  if not valid then return nil, normalized end
+  if normalized.lifecycleState ~= "DRAFT" or normalized.registrationState ~= "DRAFT" then
+    return nil, "INITIAL_STATE_MUST_BE_DRAFT"
+  end
+  if not normalized.startAt or not normalized.registrationStartAt then return nil, "SEASON_DATES_REQUIRED" end
+  return normalized
+end
+
+local function seasonDraftAction(actor)
+  local history, reason = Dibs.SeasonalRoster.GetPreservedHistory(actor)
+  local disposition = "APPLY"
+  if type(history) ~= "table" then
+    disposition, reason = "FAILED", reason or "SEASON_SERVICE_UNAVAILABLE"
+  elseif #history > 0 then
+    disposition = "ALREADY_READY"
+  else
+    local modules = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleValues) or {}
+    local states = call(Dibs.FeatureRegistry and Dibs.FeatureRegistry.GetEffectiveStates, modules) or {}
+    if not states.seasonalRoster or states.seasonalRoster.enabled ~= true then
+      disposition, reason = "DEFERRED", "MODULE_DISABLED"
+    end
+  end
+  local action = previewAction("seasonDraft", disposition, "WIZARD_ACTION_SEASON_DRAFT_TITLE",
+    "WIZARD_ACTION_SEASON_DRAFT_EXPLANATION", disposition == "ALREADY_READY"
+      and "WIZARD_ACTION_SEASON_DRAFT_PRESERVED" or "WIZARD_ACTION_SEASON_DRAFT_OUTCOME", reason)
+  if type(history) == "table" and history[1] then
+    action.value, action.revision = history[1].seasonId, history[1].revision
+  end
+  return action
+end
+
+function Wizard.PreviewProfile(profileId, actor, options)
   local profile = buildProfile(profileId)
   if not profile then return nil, "UNKNOWN_SETUP_PROFILE" end
   if profileId == "custom" then
@@ -599,6 +896,14 @@ function Wizard.PreviewProfile(profileId, actor)
       preserved = copy(profile.preserves),
       deferred = {},
     }
+  end
+
+  local draft, draftReason = seasonDraftInput(options)
+  if draftReason then
+    return { profileId = profileId, canApply = false, reasonCode = draftReason,
+      actions = { previewAction("seasonDraft", "FAILED", "WIZARD_ACTION_SEASON_DRAFT_TITLE",
+        "WIZARD_ACTION_SEASON_DRAFT_EXPLANATION", "WIZARD_ACTION_SEASON_DRAFT_OUTCOME", draftReason) },
+      preserved = copy(profile.preserves), deferred = {} }
   end
 
   local status = installationStatus()
@@ -629,20 +934,32 @@ function Wizard.PreviewProfile(profileId, actor)
     if disposition == "DEFERRED" then deferred[#deferred + 1] = copy(action) end
   end
 
+  local seasonAction = draft and seasonDraftAction(actor) or nil
+  if seasonAction then
+    actions[#actions + 1] = seasonAction
+    if seasonAction.disposition == "DEFERRED" then deferred[#deferred + 1] = copy(seasonAction) end
+  end
   return {
     profileId = profileId,
-    canApply = true,
+    canApply = not seasonAction or seasonAction.disposition ~= "FAILED",
+    reasonCode = seasonAction and seasonAction.disposition == "FAILED" and seasonAction.reasonCode or nil,
     actions = actions,
     preserved = copy(profile.preserves),
     deferred = deferred,
   }
 end
 
-function Wizard.ApplyProfile(profileId, actor)
-  local preview, previewReason = Wizard.PreviewProfile(profileId, actor)
+function Wizard.ApplyProfile(profileId, actor, options)
+  local preview, previewReason = Wizard.PreviewProfile(profileId, actor, options)
   if not preview then return { ok = false, profileId = profileId, actions = {}, reasonCode = previewReason } end
   if profileId == "custom" then
     return { ok = true, profileId = profileId, actions = { { id = "advanced", outcome = "ADVANCED_ONLY" } } }
+  end
+  if not preview.canApply then
+    return { ok = false, profileId = profileId, actions = {
+      { id = "seasonDraft", outcome = "FAILED", reasonCode = preview.reasonCode, route = "seasonalRoster",
+        title = text("WIZARD_ACTION_SEASON_DRAFT_TITLE") },
+    }, reasonCode = preview.reasonCode }
   end
 
   local results, failed = {}, false
@@ -650,32 +967,53 @@ function Wizard.ApplyProfile(profileId, actor)
     local result = { id = action.id, title = action.title }
     if action.disposition == "ALREADY_READY" then
       result.outcome = "ALREADY_READY"
+      result.value, result.revision = action.value, action.revision
     elseif action.disposition == "DEFERRED" then
       result.outcome, result.reasonCode = "DEFERRED", action.reasonCode
     elseif action.id == "initialize" then
       local initialized = Dibs.Installation and Dibs.Installation.Initialize
         and Dibs.Installation.Initialize(actor, {}) or { ok = false, reasonCode = "INSTALLATION_UNAVAILABLE" }
       result.outcome = initialized.ok and "APPLIED" or "FAILED"
-      result.reasonCode = initialized.ok and nil or initialized.reasonCode
+      if not initialized.ok then result.reasonCode = initialized.reasonCode end
       result.stage = initialized.stage
     elseif action.id == "lootRules" then
       local apply = Dibs.RCOptions and Dibs.RCOptions.ApplyInstallationPreset
       local applied, applyReason
       if type(apply) == "function" then
-        applied, applyReason = apply(PROFILE_DEFINITIONS[profileId].presetKey)
+        applied, applyReason = apply(PROFILE_DEFINITIONS[profileId].presetKey, { silent = true })
       end
       applied = applied == true
       result.outcome = applied and "APPLIED" or "FAILED"
-      result.reasonCode = applied and nil or applyReason or "LOOT_RULE_PRESET_FAILED"
+      if not applied then result.reasonCode = applyReason or "LOOT_RULE_PRESET_FAILED" end
     elseif action.id == "guildPolicy" then
       local adopted, reason = Wizard.AdoptOperationalPolicy(actor)
       result.outcome = adopted and "APPLIED" or "FAILED"
-      result.reasonCode = adopted and nil or reason
+      if not adopted then result.reasonCode = reason end
+    elseif action.id == "seasonDraft" then
+      -- Re-read after foundation actions: a successful Officer proposal is not
+      -- adoption, and a concurrent season must never be duplicated or replaced.
+      local current = seasonDraftAction(actor)
+      if current.disposition ~= "APPLY" then
+        result.outcome, result.reasonCode = current.disposition, current.reasonCode
+        result.value, result.revision = current.value, current.revision
+      elseif failed then
+        result.outcome, result.reasonCode = "DEFERRED", "SETUP_FOUNDATION_FAILED"
+      elseif not Wizard.GetNavigationAccess(actor).foundationReady then
+        result.outcome, result.reasonCode = "DEFERRED", "GUILD_FOUNDATION_REQUIRED"
+      else
+        local draft, reason = seasonDraftInput(options)
+        local created = draft and Dibs.SeasonalRoster.CreateSeason(draft, options.seasonOperationId, actor)
+          or { ok = false, code = reason }
+        result.outcome = created.ok and "APPLIED" or "FAILED"
+        if not created.ok then result.reasonCode = created.code end
+        result.value, result.revision, result.idempotent = created.value, created.revision, created.idempotent
+      end
     end
     result.route = result.reasonCode == "SYNC_BEHIND" and "sync"
       or action.id == "lootRules" and "lootTypes"
       or action.id == "guildPolicy" and "installation"
       or action.id == "initialize" and "installation"
+      or action.id == "seasonDraft" and "seasonalRoster"
       or nil
     if result.outcome == "FAILED" then failed = true end
     results[#results + 1] = result
@@ -760,19 +1098,14 @@ function Wizard.GetTurnkeyStatus(actor, dbOverride)
         local selectedFinding
         for _, finding in ipairs(step.detail.checks or {}) do
           if finding.state ~= "ready" and finding.state ~= "skipped" then
-            if finding.required == true then
-              selectedFinding = finding
-              break
-            elseif not selectedFinding then
-              selectedFinding = finding
-            end
+            selectedFinding = selectedFinding or finding
+            if finding.required == true then selectedFinding = finding; break end
           end
         end
         if selectedFinding then
           result.explanation = tostring(selectedFinding.impact or selectedFinding.reasonCode or result.explanation)
           result.impact = tostring(selectedFinding.impact or result.impact)
-          result.nextAction = Dibs.SetupAssistant.GetGuidance(selectedFinding.id,
-            selectedFinding.reasonCode, selectedFinding.remediation)
+          result.nextAction = Dibs.SetupAssistant.GetGuidance(selectedFinding.id, selectedFinding.reasonCode, selectedFinding.remediation)
         end
       end
       verification[#verification + 1] = result
@@ -821,6 +1154,112 @@ function Wizard.GetTurnkeyStatus(actor, dbOverride)
     Dibs.UIRenderStats.Record("Wizard data", "turnkey-status", renderStartedAt)
   end
   return result
+end
+
+local NEXT_STEP_COPY = {
+  rankRules = { "RANK", "Set the Dibs allocation for each guild rank",
+    "Choose which ranks receive Dibs and their starting allocation, then publish your choices.", "Configure rank allocations" },
+  dibsRules = { "LOOT", "Confirm which loot uses Dibs",
+    "Review the allowed loot types and have the Guild Master publish the guild's choices.", "Review loot rules" },
+  sync = { "SYNC", "Receive the latest guild settings",
+    "Keep an authorized guild member online and request the current guild settings before continuing.", "Open synchronization" },
+  ledger = { "LEDGER", "Finish the shared Dibs account setup",
+    "Review the shared guild account and resolve the reported setup requirement before continuing.", "Review guild account" },
+  readiness = { "READINESS", "Review the remaining guild setup requirement",
+    "Open the guild checks and follow the recommended correction for the remaining requirement.", "Review guild checks" },
+  operationalPolicy = { "GUILD_POLICY", "Confirm the guild's operating choices",
+    "The Guild Master must review and adopt the guild's choices before everyone can use them.", "Review guild policy" },
+}
+
+-- Guidance only: no stored completed flags, implicit publication or alternate
+-- readiness verdict. Always recompute from authoritative reads after returning.
+function Wizard.GetNextSetupStep(status, actor)
+  status = status or Wizard.GetTurnkeyStatus(actor)
+  local verification, completed = status.verification or {}, 0
+  local byId = {}
+  for _, finding in ipairs(verification) do
+    byId[finding.id] = finding
+    if finding.severity == "READY" or finding.severity == "OPTIONAL" then completed = completed + 1 end
+  end
+  local function project(finding, extra)
+    local result = {
+      id = finding.id, title = finding.title, explanation = finding.explanation,
+      nextAction = finding.nextAction, route = finding.route, stage = "verify",
+      severity = finding.severity, reasonCode = finding.reasonCode,
+      tone = finding.severity == "BLOCKING" and "error" or "warning",
+      index = math.min(completed + 1, #verification + (extra and 1 or 0)),
+      total = #verification + (extra and 1 or 0), completed = completed, done = false,
+    }
+    local words = NEXT_STEP_COPY[finding.id]
+    if words then
+      result.title = text("WIZARD_NEXT_" .. words[1] .. "_TITLE", words[2])
+      result.explanation = text("WIZARD_NEXT_" .. words[1] .. "_EXPLANATION", words[3])
+      result.nextAction = text("WIZARD_NEXT_" .. words[1] .. "_ACTION", words[4])
+    end
+    return result
+  end
+  local access = Wizard.GetNavigationAccess(actor)
+  if not access.foundationReady then
+    local first = byId[status.primaryIssueId]
+    local issue = project(first or { id = "installation", severity = "BLOCKING" })
+    issue.title = text("WIZARD_NEXT_FOUNDATION_TITLE", "Prepare your guild's Dibs setup")
+    issue.explanation = text("WIZARD_NEXT_FOUNDATION_EXPLANATION",
+      "Choose a starting profile and apply it to prepare the shared guild foundation.")
+    issue.nextAction = text("WIZARD_NEXT_FOUNDATION_ACTION", "Continue setup")
+    issue.route, issue.stage = "wizard", "configure"
+    return issue
+  end
+  -- Existing authority/recovery blockers precede any seasonal guidance.
+  for _, id in ipairs({ "installation", "sync", "ledger" }) do
+    if byId[id] and byId[id].severity == "BLOCKING" then return project(byId[id]) end
+  end
+  local module = call(Dibs.OperationalPolicy and Dibs.OperationalPolicy.GetModuleStatus, "seasonalRoster")
+  if type(module) == "table" and module.enabled == true then
+    local roster = Dibs.SeasonalRoster
+    local history = call(roster and roster.GetPreservedHistory, actor)
+    if type(history) == "table" and #history == 0 then
+      local result = project({ id = "seasonDraft", severity = "WARNING",
+        title = text("WIZARD_NEXT_SEASON_TITLE", "Prepare your raid season"),
+        explanation = text("WIZARD_NEXT_SEASON_EXPLANATION",
+          "Give the season a name and choose when registration and raiding begin. Your choices are saved as a draft."),
+        nextAction = text("WIZARD_NEXT_SEASON_ACTION", "Configure the season"), route = "wizard" }, true)
+      result.stage, result.prepareSeason = "configure", true
+      return result
+    end
+    local seasons = type(history) == "table" and #history > 0 and call(roster and roster.ListSeasons)
+    local draft, published
+    for _, season in ipairs(seasons or {}) do
+      local lifecycle = season.lifecycle or {}
+      local state = lifecycle.seasonStatus or lifecycle.lifecycleState or season.persistedLifecycleState
+      if state ~= "ARCHIVED" and state ~= "COMPLETED" then
+        if season.registrationState ~= "DRAFT" then published = true end
+        if season.registrationState == "DRAFT" and not draft then draft = season end
+      end
+    end
+    if draft and not published then
+      local result = project({ id = "seasonPublication", severity = "WARNING",
+        title = text("WIZARD_NEXT_SEASON_PUBLISH_TITLE", "Review and publish your raid season"),
+        explanation = text("WIZARD_NEXT_SEASON_PUBLISH_EXPLANATION",
+          "Your season draft is saved. Review it and explicitly open registration before configuring the next seasonal steps."),
+        nextAction = text("WIZARD_NEXT_SEASON_PUBLISH_ACTION", "Review the season draft"), route = "seasonalRoster" }, true)
+      result.seasonId = draft.seasonId
+      return result
+    end
+  end
+  -- Retain the authoritative primary blocker, then the authoritative warning.
+  local primary = byId[status.primaryIssueId]
+  if primary and primary.severity == "BLOCKING" then return project(primary) end
+  for _, finding in ipairs(verification) do
+    if finding.severity == "BLOCKING" then return project(finding) end
+  end
+  if primary and primary.severity == "WARNING" then return project(primary) end
+  for _, finding in ipairs(verification) do
+    if finding.severity == "WARNING" then return project(finding) end
+  end
+  return { id = "done", title = text("WIZARD_NEXT_DONE_TITLE", "Your guild setup is ready"),
+    explanation = text("WIZARD_NEXT_DONE_EXPLANATION", "All required setup checks are complete. You can return here whenever guild settings change."),
+    nextAction = text("WIZARD_NEXT_DONE_ACTION", "View setup details"), route = "wizard", stage = "verify",
+    index = #verification, total = #verification, completed = completed, done = true, tone = "success", severity = "READY" }
 end
 
 function Wizard.GetSteps()

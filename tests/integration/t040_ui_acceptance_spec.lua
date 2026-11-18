@@ -99,6 +99,46 @@ describe("T040 canonical correction UI acceptance", function()
     assert_true(containsAny(parts, "Persistence is confirmed only after a later reload observes it"),
       "the outcome reason is not visible in the request detail view")
   end)
+  it("distinguishes live acceptance from an operation actually observed after reload", function()
+    local dibs = setup()
+    local _, request = installRequest(dibs)
+    require("helpers.canonical_writer").activate(dibs)
+    local corrected, reason = dibs.Disputes.CorrectBalance(request.requestId,
+      { confirmed = true, reason = "Verified original debit" })
+    assert_not_nil(corrected, tostring(reason))
+    request = corrected.request
+    assert_equal("PERSISTENCE_UNCONFIRMED", dibs.OfficerUI.GetRequestOperationState(request))
+    local saved = dibs.DeepCopy(dibs.GetDB())
+    local _, reloaded = loader.load({ savedVariables = saved, withAce3 = true, wow = { guildLeader = true,
+      guildMembers = { "Tester-Realm", "Officer-Realm", "Player-Realm" }, guildRankIndices = { 0, 1, 3 } } })
+    request = reloaded.Disputes.GetRequest(request.requestId)
+    assert_equal("RECOVERED_AFTER_RELOAD", reloaded.OfficerUI.GetRequestOperationState(request))
+    local frame = reloaded.OfficerUI.CreateWindow()
+    assert_true(frame.OpenRequestDetail(request))
+    assert_true(containsAny(collectText(frame.requestDetailRoot), "Observed After Reload"))
+    local before = reloaded.Sync.CalculateContentHash(reloaded.GetDB())
+    reloaded.OfficerUI.GetRequestOperationState(request)
+    assert_equal(before, reloaded.Sync.CalculateContentHash(reloaded.GetDB()))
+  end)
+
+  it("shows missing projections, sync gaps and incompatibility without claiming persistence", function()
+    local dibs = setup()
+    local _, request = installRequest(dibs)
+    require("helpers.canonical_writer").activate(dibs)
+    local corrected = assert(dibs.Disputes.CorrectBalance(request.requestId,
+      { confirmed = true, reason = "Verified original debit" }))
+    request = corrected.request
+    dibs.Sync.MarkSyncBehind("LEDGER_GAP")
+    assert_equal("BEHIND", dibs.OfficerUI.GetRequestOperationState(request))
+    dibs.Sync.ClearSyncBehind()
+    dibs.Sync.MarkSyncBehind("OPERATION_PEER_INCOMPATIBLE")
+    assert_equal("INCOMPATIBLE", dibs.OfficerUI.GetRequestOperationState(request))
+    local ledger = dibs.GetDB().ledgers["guild-primary"]
+    ledger.transactions[request.correctionTransactionId] = nil
+    assert_equal("PROJECTION_INCOMPLETE", dibs.OfficerUI.GetRequestOperationState(request))
+    assert_nil(dibs.OfficerUI.GetRequestOperationState({ status = "Resolved" }))
+  end)
+
   it("keeps the historical report read-only and separates every classification", function()
     local dibs = setup()
     local report = dibs.Disputes.BuildLegacyCorrectionReport("guild-primary")

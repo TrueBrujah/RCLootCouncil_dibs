@@ -10,7 +10,20 @@ local function load(player, guildLeader, saved)
 end
 
 describe("Installation readiness projection", function()
-  it("scopes legacy status checks to the primary ledger without reading the UI active ledger", function()
+  it("reports missing ledger collection even when another source already has evidence", function()
+    local dibs = load("Tester-Realm", true)
+    dibs.Ledger.HasNonAllocationTransactions = function() return true end
+    dibs.HistoricalBaseline.GetInstallationSummary = function()
+      return { evidenceCount = 1, openFindings = 0, incompleteSources = false,
+        sources = { ["installation-wizard:predibs"] = { sourceType = "PREDIB_REQUEST", complete = true, evidenceCount = 1 } },
+        collectionProgress = {} }
+    end
+    local status = dibs.Installation.GetStatus()
+    assert_true(status.legacy.hasUncollectedEvidence)
+    assert_equal("ledger", status.legacy.missingScanSources[1])
+  end)
+
+  it("keeps initial legacy detection on the primary ledger independently of the active view", function()
     local dibs = load("Tester-Realm", true)
     local resolvedGuildDB = dibs.GetDB()
     local originalActiveLedger = dibs.Ledger.GetActiveLedgerId
@@ -286,6 +299,20 @@ describe("P0 regression: Governance.ActivateV2 never silently acknowledges incom
 end)
 
 describe("Guild Configuration next steps after activation", function()
+  -- These cases exercise management after setup, not first-install access.
+  -- Establish the real foundation and publish ranks instead of bypassing the
+  -- progressive navigation projection with a mocked READY label.
+  local loadUnconfigured = load
+  local function load(...)
+    local dibs = loadUnconfigured(...)
+    assert_true(dibs.Installation.Initialize(nil).ok)
+    local season = dibs.Seasons.GetCurrent()
+    local published = dibs.ProtectedActions.Execute("rank.set", nil, {
+      seasonId = season.id, rankIndex = 0, rankName = "Guild Master", allocation = 10, enabled = true,
+    })
+    assert_true(published.ok)
+    return dibs
+  end
   local function findLatestWidget(predicate)
     for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
       local widget = _G.__dibsAceWidgets[index]
@@ -326,6 +353,9 @@ describe("Guild Configuration next steps after activation", function()
 
   it("opens the existing installation route from the renamed Guild Configuration link", function()
     local dibs = load("Tester-Realm", true)
+    -- Retain the configured foundation while testing the compatibility link
+    -- shown when protocol enforcement is not currently running.
+    dibs.Governance.IsV2Enforced = function() return false end
     local frame = dibs.OfficerUI.CreateWindow("sync")
     frame:ActivateRoute("sync")
     clickLatestButton("Open Guild Ledgers")
@@ -457,7 +487,6 @@ describe("Guild Configuration next steps after activation", function()
 
   local function prepareActivation()
     local dibs = load("Tester-Realm", true)
-    assert_true(dibs.Governance.AdoptInitial(nil, { reason = "activation test" }))
     local proposal = dibs.MultiLedger.ProposeLedger(nil, "Raid Two")
     assert_true(proposal.ok)
     assert_true(dibs.MultiLedger.ApproveLedger(nil, proposal.ledgerId).ok)
@@ -503,14 +532,14 @@ describe("Guild Configuration next steps after activation", function()
   it("shows the viewed ledger contents on the dashboard without activating it", function()
     local dibs, _, target, sends = prepareActivation()
     local requestedLedgers = {}
-    local originalGetActivity = dibs.Ledger.GetSeasonActivitySummary
-    dibs.Ledger.GetSeasonActivitySummary = function(seasonId, ledgerId, ...)
+    local originalStatistics = dibs.OfficerUI.BuildSeasonStatistics
+    dibs.OfficerUI.BuildSeasonStatistics = function(seasonId, ledgerId, ...)
       requestedLedgers[#requestedLedgers + 1] = ledgerId or "active"
-      return originalGetActivity(seasonId, ledgerId, ...)
+      return originalStatistics(seasonId, ledgerId, ...)
     end
     selectDropdown("View ledger", target)
     local projection = dibs.OfficerUI.GetDashboardProjection()
-    dibs.Ledger.GetSeasonActivitySummary = originalGetActivity
+    dibs.OfficerUI.BuildSeasonStatistics = originalStatistics
     assert_equal(target, projection.viewLedger.id)
     assert_true(projection.viewLedger.readOnly)
     assert_equal(target, requestedLedgers[#requestedLedgers])

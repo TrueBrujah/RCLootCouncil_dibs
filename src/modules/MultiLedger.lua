@@ -82,7 +82,12 @@ local function validateProposalMetadata(options)
   if not PROPOSAL_PURPOSES[options.purpose] then return nil, "INVALID_PROPOSAL_PURPOSE" end
   local function validateSources(list, reason)
     if type(list) ~= "table" then return nil, reason end
-    local found = {}
+    local found, size = {}, 0
+    for index in pairs(list) do
+      if type(index) ~= "number" or index < 1 or index % 1 ~= 0 or index > 2 then return nil, reason end
+      size = size + 1
+    end
+    for index = 1, size do if list[index] == nil then return nil, reason end end
     for _, source in ipairs(list) do
       if not PROPOSAL_SOURCES[source] or found[source] then return nil, reason end
       found[source] = true
@@ -91,6 +96,7 @@ local function validateProposalMetadata(options)
   end
   local discovered, scopeReason = validateSources(options.discoveredSources, "INVALID_PROPOSAL_SCOPE")
   if not discovered then return nil, scopeReason end
+  if next(discovered) == nil then return nil, "INVALID_PROPOSAL_SCOPE" end
   local unreadable, unreadableReason = validateSources(options.unreadableSources or {}, "INVALID_PROPOSAL_COMPLETENESS")
   if not unreadable then return nil, unreadableReason end
   if type(options.discoveredCounts) ~= "table" then return nil, "INVALID_PROPOSAL_VOLUME" end
@@ -120,9 +126,14 @@ end
 
 local function sourceProgress(db, sourceName)
   local baseline = db.legacyBaseline or {}
+  local completed
   for sourceId, progress in pairs(baseline.collectionProgress or {}) do
-    if type(sourceId) == "string" and sourceId:match(":" .. sourceName .. "$") then return progress end
+    if type(sourceId) == "string" and sourceId:match(":" .. sourceName .. "$") and type(progress) == "table" then
+      if progress.state ~= "COMPLETE" then return progress end
+      completed = completed or progress
+    end
   end
+  return completed
 end
 
 local function actualSourceCount(db, sourceName, progress)
@@ -515,6 +526,8 @@ function MultiLedger.UpdateProposal(actor, proposalId, options)
   if not decision or not decision.allowed then
     return { ok = false, reasonCode = decision and decision.reasonCode or "GUILD_ADMIN_REQUIRED" }
   end
+  local metadata, reason = validateProposalMetadata(options)
+  if not metadata then return { ok = false, reasonCode = reason } end
   local proposal = db.ledgerProposals[proposalId]
   if not proposal then
     local legacyLedger = db.ledgers[proposalId]
@@ -529,12 +542,10 @@ function MultiLedger.UpdateProposal(actor, proposalId, options)
     end
   end
   if not proposal or proposal.status ~= "PROPOSED" then return { ok = false, reasonCode = "PROPOSAL_NOT_FOUND" } end
-  local metadata, reason = validateProposalMetadata(options)
-  if not metadata then return { ok = false, reasonCode = reason } end
   proposal.metadata = metadata
   local ledger = db.ledgers[proposal.ledgerId]
   if ledger then ledger.proposal = {
-    proposalId = proposalId, purpose = metadata.purpose, discoveredSources = copy(metadata.discoveredSources),
+    proposalId = proposal.proposalId, purpose = metadata.purpose, discoveredSources = copy(metadata.discoveredSources),
     discoveredCounts = copy(metadata.discoveredCounts), unreadableSources = copy(metadata.unreadableSources),
     scanComplete = metadata.scanComplete,
   } end
@@ -569,6 +580,7 @@ function MultiLedger.ApproveLedger(actor, ledgerId)
         reason = "PROPOSAL_UNREADABLE_SOURCES", actor = actor })
       return { ok = false, reasonCode = "PROPOSAL_UNREADABLE_SOURCES" }
     end
+    if metadata.scanComplete ~= true then return { ok = false, reasonCode = "PROPOSAL_SOURCE_INCOMPLETE" } end
     local discovered = {}
     for _, source in ipairs(metadata.discoveredSources) do discovered[source] = true end
     for _, source in ipairs({ "ledger", "predibs" }) do

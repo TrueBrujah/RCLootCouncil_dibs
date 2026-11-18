@@ -8,6 +8,8 @@
 
 ## Summary
 
+Approved consolidation P12 (2026-11-16) continues T049: startup recovery classifies every approved/archived ledger independently, retains the primary diagnostic alias and a guild/ledger-scoped runtime result map, and rebuilds only the targeted ledger's operation-state projection. Cross-ledger operation identities and foreign projections must never be silently overwritten. Runtime recovery is not external snapshot adoption and does not open release gates.
+
 Represent each balance-changing Dispute Center correction as one immutable `Canonical Ledger Operation`, validate every leg and reference before accepting it, and append the complete operation as one coordinator-accepted record to the ledger's existing ordered canonical history. Reuse the current per-ledger commit sequence, hash chain, `LEDGER_DIGEST` gap detection, `DETAIL_FETCH`, and coordinator validation rather than introducing another accounting journal or local correction path.
 
 The canonical commit log is the source of truth for accepted new correction effects. Existing `AWARD_COMMIT` records remain authoritative under their unchanged contract; preserved pre-feature local transaction rows without a canonical commit remain legacy history and are counted once, but are never promoted into new canonical operations. Operation/transaction indexes, balances, histories, and correction status are projections wherever a source record exists. A pending Governance proposal is not a commit. A Lua write sequence is not a disk transaction: an operation accepted in the current session remains persistence-unconfirmed until a later reload observes and verifies it.

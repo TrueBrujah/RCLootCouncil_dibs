@@ -452,7 +452,7 @@ function M.installEncounterJournalContext(opts)
     _G.EJ_GetEncounterInfoByIndex = function(index, instanceID)
       local list = journalEncounters[tonumber(instanceID)] or journalEncounters[tostring(instanceID)] or {}
       local entry = list[index]
-      if type(entry) == "table" then return entry.id or entry.encounterID, entry.name end
+      if type(entry) == "table" then return entry.name, entry.description, entry.id or entry.encounterID end
       return nil
     end
     _G.EJ_GetNumLoot = function()

@@ -1,5 +1,199 @@
 # Changelog
 
+## Unreleased — 0.9.0 working candidate
+
+- (2026-11-18) Renumber the unreleased 0.8.12 working candidate to 0.9.0 at the
+  user's request. Align runtime/TOC metadata, current guides and candidate notes.
+  This version-only change adds no SavedVariables or protocol migration, does not
+  enable canonical corrections, and does not certify the pending performance,
+  recovery or Retail gates. Existing 0.8.12 installation evidence remains historical.
+  The existing major/minor synchronization rule requires 0.9.x peers: clients
+  advertising 0.8.x must update together before participating in the new family.
+
+- (2026-11-17) Integrate dev's additive schema-8 migration, bounded Fengari CI,
+  package-name sanitization and honest candidate manifests. Bind pending canonical
+  proposals to their authority epoch/coordinator and refuse stale acceptance/retry;
+  preserve the actual Ledger refusal code through protected use. Replace placeholder
+  proposal checks with real persisted-store tests. Final merged suites: 2,189/2,189
+  each on Lua 5.1.5 and Lua 5.4, focused Fengari 186/186, Pester 47/47. Canonical
+  corrections remain disabled pending the documented implementation and Retail gates.
+
+- (2026-11-17) Restore the missing historical collection/proposal fixes from the
+  approved implementation, and harden malformed scopes and legacy proposal updates.
+  Announce coordinator closures immediately and require the actual predecessor
+  chain before handoff. Restore localized correction outcomes, a paginated read-only
+  historical report, and operation states verified after reload. Keep non-accounting
+  request closure available while canonical correction release gates stay closed.
+  Align explicit UI fixtures with Guided Setup, prioritize required readiness
+  findings, and remove duplicate roster/navigation work. Full Lua 5.1.5 and Lua 5.4
+  suites: 2,181 passed, zero failed each; focused Fengari: 767/767. Repair the private
+  delivery simulator's Lua 5.1 chunk loading. Sources only; no deployment or Retail
+  certification.
+
+- (2026-11-17) Preserve the public Pre-Dib policy on slash, Player UI, loot
+  pipeline and Adventure Guide fallback routes; an unavailable public service
+  cannot fall back to the internal creator. Reject synchronized request IDs
+  claimed in another ledger before initializing that ledger's request store.
+- (2026-11-17) Release rejected/stale award reservations locally and through
+  separately hashed optional release pages. Retain bounded tombstones across
+  reload/reconnection; verify origin and immutable scope, reject invalid pages
+  atomically, and keep accounting history unchanged. Existing pending-only
+  senders remain supported; older receivers do not gain release convergence.
+  Repair roster revision/history and pending-proposal test fixtures. These
+  changes are validated offline, not redeployed or Retail-certified in this lot.
+
+- (2026-11-16) Validate registration chronology in new seasons, draft edits and
+  publication: registration opens before the season starts and, when both ends
+  are configured, closes no later than the season ends. Share validation with
+  Guided Setup and the localized FR/EN form; preserve historical dates, sync,
+  operation receipts, optional ends and existing lifecycle transitions.
+
+- (2026-11-16) Consolidate the operational dashboard with a separate authorized
+  renderer, localized service/action-first layout, truthful season/recovery states,
+  explicit non-accounting closure, an owner-scoped Player reply shortcut and clearer
+  delivery/backup boundaries. Preserve route IDs, business authority and optional RC.
+  Recover approved/archived secondary ledgers at startup without discarding other
+  ledgers' operation-state evidence; test serialized receiver interruptions/replay.
+  Fix a Lua 5.1 display error for historical enrollments with missing status, repair
+  outdated route/rank fixtures and replace diagnostic-only actor-spoof cases with
+  assertions. Release gates remain closed; external recovery authority and Retail
+  observation are separate outstanding requirements. No installation or publication.
+
+- (2026-11-16) Replace the unassigned canonical readiness probe with runtime
+  checks for scoped recovery, verified authority/coordinator, transport, protocol,
+  journal integrity and online-peer capabilities. Preserve primary-ledger recovery
+  from mixed non-empty history, including receipt by a non-coordinator. Unknown or
+  mismatched recovery fails closed. The canonical release gate stays disabled;
+  secondary/multi-ledger startup, received-commit fault cuts and independent-client
+  recovery were incomplete at that checkpoint and are extended by the consolidation
+  above. No publication or Retail certification.
+
+- (2026-11-16) Put remaining Dibs and active Pre-Dibs before optional Main/Alt
+  controls in PlayerUI. Load the full eligibility summary only when those controls
+  are opened, retain selections across folding, and keep active probation visible
+  with a readable end date. Localize Player navigation and identity actions/feedback
+  in English/French without changing route IDs, approval or accounting policy.
+  No migration or release; Retail layout and interaction remain unverified.
+
+- (2026-11-16) Make Player History details discoverable by left-clicking a row;
+  keep right-click access and provide English/French interaction hints. Reuse the
+  existing report workflow without changing privacy, review or accounting.
+  No migration is required; Retail interaction/layout remains unverified.
+
+- (2026-11-16) Unify new/draft season registration categories and raid difficulties
+  into one required Normal/Heroic/Mythic checkbox group, removing duplicate text
+  input and the competing draft catalog editor. Save identical choices for player
+  signup and raid configuration, retain local resume and require saving selections
+  before opening registration. Players can explicitly choose among the published
+  unified raid categories without changing requested paths or Officer review.
+  Published seasons, historical descriptors and existing enrollments are preserved;
+  no service schema or accounting migration.
+
+- (2026-11-16) Redesign season preparation around a consistent essential-first
+  form with summarized optional sections. Prioritize selected-season management,
+  make creation/history/technical details explicit, and retain input when folding
+  sections. Preserve published custom signup categories and independent nightly
+  difficulty hints; the later unified-choice refinement applies to new/draft forms.
+  Keep separate save/publish/registration/activation actions. No schema, rules library
+  or timezone/DST conversion changes; actual Retail layout remains unverified.
+
+- (2026-11-15) Let progression and standard Guided Setup profiles optionally
+  prepare a raid-season draft with explicit dates, categories and raid nights in
+  Configure. Validate before applying, reuse existing seasonal service authority
+  and replay, preserve existing seasons and disabled modules. Publication,
+  registration opening and activation remain explicit. Clarify foundation copy.
+
+- (2026-11-15) Require progressive guided setup on a fresh guild installation;
+  hide menus and direct routes until their configuration prerequisites are met.
+  Preserve upgrade history, repair access and optional integrations. Members see
+  safe setup waiting, while seasonal enrollment remains available before activation.
+  Replace numeric raid schedule strings with named day/time controls and use guild
+  category names without a universal progression weekday or Officer/Core assertion.
+- (2026-11-15) Restore the missing approved LibAceGUIWidgets calendar bundle,
+  including assets and licenses, without new vendor code changes. Validate
+  TOC/XML references and required calendar resources before local deployment
+  or CI packaging; fail before modifying an existing installation if incomplete.
+- (2026-11-15) Add versioned compressed portable export/import around unchanged
+  package bytes, using native WoW capabilities or the existing bundled LibDeflate.
+  Validate DEFLATE expansion before decompression; preserve the 250,000-character
+  encoded limit and existing 32 MiB raw budget. Keep legacy imports/exports, store
+  optional compressed originals for new large backups, and retain local restore
+  without a codec. Native Retail execution and full canonical recovery remain open.
+- (2026-11-15) Export the selected historical backup's retained original package,
+  preserving content, source metadata and checksum. Recheck character ownership,
+  guild context, permissions, integrity and the existing portable size limit;
+  full scope requires sensitive-data consent. Historical configurations retain the
+  existing validated import workflow. External restore-point registration and fresh
+  canonical recovery remain incomplete; no package schema or recovery gate changes.
+- (2026-11-15) Bound abandoned import/restore previews to 16 per type and 30 minutes,
+  and capture each backup payload once for a consistent detached snapshot/checksum.
+  Clarify local restore versus current-state export and the unfinished portable
+  snapshot recovery workflow; canonical recovery restrictions remain unchanged.
+- (2026-11-15) Keep only one active profile per owner/scope after successful
+  confirmation, preserve legacy profile selection and character isolation, and
+  repair the independent-raid start button's text reader. Remove an unreachable
+  legacy PlayerUI constructor while preserving the current window and fallback.
+- (2026-11-15) Complete the seasonal roster activation workflow with explicit
+  preview, reason and confirmation, initial allocations for approved participants,
+  immutable Main/Alt identity snapshots, and dependency-checked guild propagation.
+  Compact activation manifests keep the existing 8,192-byte Sync limit.
+- (2026-11-15) Add separate active-season allocation reconciliation that preserves
+  spent Dibs, season completion/archive, and read-only preserved history when
+  seasonal roster is disabled. Historical Main/Alt balance review remains explicit.
+- (2026-11-15) Repair Great Vault capture for equipment bundled with keystones or
+  supplemental items, localized self-loot messages without a sender GUID, and
+  delayed item tooltip data. PlayerUI now displays capture state and its latest
+  runtime result and refreshes after a confirmed receipt. Offered rewards are
+  not acquisitions; missed past claims are not reconstructed and no Dibs are spent.
+- (2026-11-15) Update the FR/EN player and Officer guides and provide the
+  [0.8.12 Retail test checklist](docs/audits/0.8.12-TESTS-RETAIL-FR.md).
+  Automated focused suites pass, but real-client/two-client gates remain open.
+  The canonical dispute correction release path remains disabled; its outstanding
+  implementation/recovery tasks are not declared complete by this candidate.
+
+- (2026-11-14) Prevent imported presentation settings from changing guild
+  authority, preserve deleted-ledger tombstones through import and restore,
+  and keep draft seasons outside active-season selection. Existing ledger
+  history and guild policy remain authoritative.
+- (2026-11-14) Repair runtime event fallback and shared event delivery, correct
+  EncounterJournal event arguments and encounter tuples, and reject invalid
+  or oversized sync input before retaining state or deserializing it.
+- (2026-11-14) Fix stable table sorting for equivalent case/numeric values and
+  fluid-column sizing when weights are unspecified. Add repeatable projection
+  work-budget checks for 20, 60, 500 and 1,000 enrollments. These checks do not
+  certify Retail layout or performance.
+- (2026-11-14) Align the constitution footer with its already approved 2.8.0
+  amendment. No governance rule, addon version or release is changed by this
+  metadata correction.
+
+## 0.8.12 - 2026-11-09
+
+Initial implementation scope recorded on November 9. The current working
+candidate includes the additional changes in **Unreleased** above; this older
+entry does not describe the final activation or Vault behavior now under test.
+
+- (2026-11-09) Add the optional seasonal raid roster workflow: dated season drafts,
+  player registration, officer review, a privacy-safe public roster, and
+  versioned season rules and status definitions. Seasonal roster data uses an
+  additive SavedVariables subtree and a Guild-only SyncV2 entity; old ledger,
+  season, and history records are preserved. The initial November 9 implementation
+  provided a read-only allocation preview; activation and initial allocation
+  commits were completed later in the working candidate described above.
+- (2026-11-09) Hide legacy guild-wide allocation reconciliation in the setup
+  wizard and Automatic Dibs. Before a seasonal roster exists, direct officers
+  to create one; afterward, explain that reconciliation awaits the season-scoped
+  workflow for approved participants. No legacy allocation is changed.
+- (2026-11-09) Keep the Officer route renderer below WoW Retail's 60-upvalue
+  limit by storing shared route helpers on its frame. This prevents a Lua
+  warning from appearing when the Officer UI loads; page behavior is unchanged.
+- (2026-11-09) Keep specific ledger failure codes in protected grant, use, and
+  refund results so officers and callers can distinguish coordinator and
+  validation failures from a generic rejected action. Close registration at
+  its configured end timestamp, including the exact boundary. Add read-only
+  preparation and freshness validation for a season activation manifest; this
+  does not activate a season. Main/Alt balance review is explicit and retains
+  the selected Main balance instead of summing character balances.
+
 ## 0.8.11 - 2026-11-03
 
 - (2026-11-03) Raise the addon version to 0.8.11 for the unreleased UI performance,

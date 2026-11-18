@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 local uiMocks = require("helpers.b11_ui_mocks")
 
 describe("Great Vault UI acceptance", function()

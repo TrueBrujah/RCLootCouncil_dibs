@@ -9,6 +9,41 @@ manquantes ; ils ne constituent pas une validation du client actuel.
 
 ## A quoi sert Dibs ?
 
+### Consolidation de la gestion — candidat 0.9.0
+
+Le tableau de bord présente d’abord l’état des services et une prochaine action,
+puis l’activité et les statistiques. « Saison disponible » décrit la disponibilité
+des données, pas une certification de leur intégrité comptable. Une récupération
+nécessaire renvoie vers le diagnostic; l’historique reste accessible selon vos droits.
+RCLootCouncil reste facultatif et sa seule absence ne bloque pas Dibs autonome.
+
+« Clore sans correction » annonce une conclusion sans changement de solde. Cette
+action garde les prérequis canoniques et peut rester refusée dans ce candidat,
+dont les flags de release ne sont pas ouverts. Une proposition envoyée ou un accusé
+de réception ne prouve pas l’application d’une correction chez tous les membres.
+Les sauvegardes locales partagent les fichiers SavedVariables : conserver une
+copie indépendante avant nettoyage. La récupération externe vierge n’est pas
+encore un parcours complet autorisé. Vérifications Retail : N16–N18.
+
+### Première installation et menus progressifs — candidat 0.9.0
+
+Une nouvelle installation montre uniquement **Guided Setup**. Choisissez un
+profil, examinez les changements puis configurez la fondation de guilde avec les
+droits requis. Le profil personnalisé permet aussi de préparer cette fondation
+dans l'assistant. Les outils de configuration apparaissent ensuite; les pages
+opérationnelles attendent leurs propres prérequis (saison configurée, règles de
+rang publiées, ledger prêt). Un simple changement d'étape ou la saison comptable
+initiale ne termine pas le setup. Les intégrations facultatives restent facultatives.
+
+Les anciennes données et parcours de réparation restent disponibles lors d'une
+mise à niveau. Les membres voient un message d'attente lorsque la guilde n'est pas
+prête; leurs inscriptions deviennent accessibles avant l'activation de la saison.
+Les règles et noms de statuts publiés appartiennent à votre guilde : aucun jeudi
+de progression ni lien de statut Officer/Core n'est imposé par le formulaire.
+Pour les horaires, ajoutez une soirée, choisissez le jour et saisissez l'heure.
+
+Contrôles en jeu de ce nouveau parcours : [N01–N07](../audits/0.8.12-TESTS-RETAIL-FR.md).
+
 Dibs fournit un ledger saisonnier, des demandes Pre-Dib, des controles
 d'eligibilite et des preuves d'audit autour du butin de guilde. RCLootCouncil
 reste optionnel et, lorsqu'il est installe, reste l'interface de vote et de
@@ -32,6 +67,30 @@ Important :
 - Raid Leader, Raid Assistant ou membre du conseil ne suffisent pas a donner les droits Dibs ;
 - une identite inconnue ou impossible a verifier est refusee ;
 - les transactions existantes ne sont jamais reecrites silencieusement.
+
+La préparation de saison suit une organisation commune dans **Configurer**, la
+création et l'édition : nom, dates indispensables et un seul groupe de cases
+**Normal / Heroic / Mythic** en premier. Ces choix définissent à la fois les
+catégories proposées aux joueurs et les difficultés; au moins un choix est requis.
+À l'ouverture des inscriptions, le joueur choisit l'une de ces catégories s'il y
+en a plusieurs; le parcours demandé et la revue Officer restent distincts. Les soirées facultatives, dates de
+fin, règlement et paramètres complémentaires passent par des sections repliables
+avec résumé. Replier une section ne supprime pas sa saisie; une erreur doit ouvrir
+la section à corriger. Enregistrez ces choix avant d'ouvrir les inscriptions du
+brouillon. Les catégories personnalisées des saisons publiées et les inscriptions
+existantes restent inchangées; le catalogue technique reste accessible uniquement
+pour les saisons déjà publiées. Les anciens descripteurs retirés d'un brouillon
+sont conservés inactifs, jamais supprimés.
+
+Dans **Configurer**, les profils progression et standard peuvent aussi préparer
+un brouillon de saison de raid. Cochez **Préparer un brouillon de saison avec cette
+configuration**, renseignez nom, dates saison/inscriptions, catégories et soirées
+ou règles facultatives, puis **Appliquer cette configuration** une seule fois.
+La saisie est facultative; aucun jour de raid, critère de promotion ou montant
+Dibs n'est deviné. Une saisie invalide reste dans Configurer. Le résultat propose
+d'ouvrir le roster saisonnier : publication, ouverture des inscriptions et
+activation restent explicites. Les saisons existantes sont conservées; un module
+de roster désactivé ne sera pas activé par ce parcours.
 
 ## 2. Premiere configuration
 
@@ -226,7 +285,7 @@ indique un snapshot valide ; `GUILD_LOOT_RULES_NOT_CONFIGURED` et
 `GUILD_LOOT_RULES_SYNC_BEHIND` conserve le dernier snapshot recu pendant la
 reprise ; `GUILD_LOOT_RULES_INCOMPATIBLE` exige une mise a jour ; `UNAVAILABLE`
 signifie que la source dynamique des types n'a pas pu etre chargee. SyncV2
-refuse les clients 0.7.x face a la famille 0.8.x. Demandez leur mise a jour au
+refuse les pairs annoncant 0.8.x ou plus ancien face a la famille 0.9.x. Demandez leur mise a jour au
 lieu de compenser en modifiant les valeurs locales.
 
 Le dry-run permet de tester un objet, un joueur, une reponse et un statut de finalisation sans modifier le ledger :
@@ -418,6 +477,34 @@ Les scopes complets peuvent contenir des identites et l'historique des gains. Ne
 
 Une importation repete deux fois doit rester sans doublon. Une annulation de preview ne change ni les soldes, ni l'historique, ni les reglages.
 
+Les sauvegardes sont des snapshots locaux dans les SavedVariables. **Import /
+Export** exporte l'etat courant. Pour une copie historique, selectionnez-la dans
+**Backups**, puis cliquez sur **Exporter la sauvegarde sélectionnée**. Copiez vous-meme
+le texte affiche dans un fichier ou canal prive : l'addon n'ecrit aucun fichier
+externe. Le paquet original et ses attestations doivent etre conserves. L'export
+prefere le format compresse `DIBS-COMP-1` lorsqu'un codec est disponible; l'interface
+affiche les tailles et explique le repli vers le texte classique. La limite portable
+reste 250 000 caracteres encodes, avec un budget original de 32 Mio verifie avant
+decompression. Les nouvelles grosses sauvegardes peuvent conserver leur paquet
+original compresse; les anciennes copies sans original conserve/atteste restent
+non exportables. La restauration locale d'un contenu et checksum valides reste
+disponible sans codec. L'export complet demande un consentement explicite pour les
+donnees sensibles : la compression ne les chiffre pas.
+
+Pour reimporter une configuration historique locale/guilde, collez ce paquet dans
+**Import / Export**, choisissez son perimetre et merge/replace, validez, relisez
+l'apercu, puis confirmez. Cela n'enregistre pas un snapshot externe comme nouveau
+point de restauration. Les paquets compresses et les anciens paquets texte sont
+reconnus automatiquement. L'enregistrement d'un nouveau point de restauration
+externe reste incomplet. L'import complet conserve ses
+restrictions legacy et refuse l'historique canonique inconnu; un export complet ne
+prouve pas une recuperation sur une installation neuve.
+
+Chaque type conserve au maximum 16 previews pendant 30 minutes. Si un preview
+expire ou disparait, regenerez-le et relisez-le avant confirmation. Une activation
+de profil reussie selectionne uniquement ce profil dans son perimetre/proprietaire;
+un refus conserve la selection precedente.
+
 ## 11. Synchronisation, coordinateur et reconciliation
 
 La synchronisation partage uniquement l'etat Dibs necessaire a la guilde et les metadonnees de recuperation.
@@ -429,12 +516,32 @@ legacy a migrer et les conflits qui exigent une decision. Une confirmation,
 un rejet ou un classement en reference demande une raison et conserve la preuve
 originale. Un conflit d'identite n'est jamais resolu par un simple last-write-wins.
 
+Chaque membre doit avoir Dibs actif au moment de reclamer sa recompense et le
+module **Pre-Dibs** active. Sa page **Grand coffre** indique la capture active,
+indisponible ou desactivee, le nombre de choix d'equipement lisibles et le
+dernier resultat de capture de la session. Ce diagnostic temporaire n'est pas
+un historique. Les cles mythiques et autres supplements reconnus sont exclus
+des choix d'equipement; les donnees d'infobulle chargees en retard peuvent
+relancer une capture deja prouvee tant que son contexte reste valide.
+
+Apres enregistrement, la sync periodique permet aux officiers de retrouver
+l'objet et le membre dans **Vault Review**. L'addon ne lit pas directement le
+coffre personnel des autres membres et ne recupere pas automatiquement les
+anciens retraits jamais enregistres. Le transfert exige une identite de
+proprietaire autorisee; les decisions de revue restent reservees aux officiers
+autorises. Une acquisition est une preuve et ne change pas les soldes Dibs.
+
 Les messages `VAULT_DIGEST`, `VAULT_FETCH`, `VAULT_DETAIL` et `VAULT_ACK` sont
 bornes, controles par guilde et filtres par confidentialite. Les candidats,
 votes, reponses RCLootCouncil et sessions de butin ne sont jamais transmis.
 Une reconnexion peut relancer une demande manquante, sans doublon ni transfert
 partiel. Un changement de guilde ne fusionne pas l'ancien historique; un
 personnage sans guilde conserve son propre scope local.
+
+La reception n'est pas necessairement instantanee et doit encore etre validee
+avec deux clients Retail. Utilisez la
+[liste des tests Retail du candidat](../audits/0.8.12-TESTS-RETAIL-FR.md)
+pour verifier le trajet joueur vers officier et le rattrapage apres reconnexion.
 
 _Capture Retail en attente : revue Officer du Grand Coffre —
 `docs/assets/guides/screenshots/fr/officer/officer-vault-review.png`._
@@ -591,3 +698,42 @@ doivent echouer proprement, et la reactivation restaure l'acces.
 
 La preuve historique est incomplete ou ambigue. Ne confirmez pas sans verifier
 l'identite, l'objet, le gagnant, la date, la reponse et la raison.
+
+## Cycle du roster saisonnier
+
+La page affiche d'abord la saison sélectionnée et ses actions. **Nouvelle saison**
+ouvre le formulaire de création; l'historique et le catalogue de catégories/statuts
+restent accessibles par des contrôles explicites. Fermer ces sections ne supprime
+pas les données existantes. **Enregistrer la configuration** ne publie ni n'active
+la saison. Une révision distante ne remplace pas silencieusement la saisie locale :
+une sauvegarde périmée est refusée, et le rechargement est une action explicite.
+Les états repliés sont locaux à l'affichage; la reprise après rechargement du client
+utilise uniquement la persistance déjà prévue du brouillon Guided Setup.
+
+1. Activez le module dans **System > Modules**. Creez un brouillon avec le debut
+   de saison et d'inscription, puis revisez regles, statuts, criteres manuels
+   Core et allocations par rang. Les dates facultatives peuvent etre effacees.
+2. Ouvrez les inscriptions et examinez les personnages, les declarations
+   Main/Alt et les changements de Main. La voie Core demandee ne vaut pas
+   promotion. Un changement de Main approuve commence 14 jours de probation Dibs.
+3. Fermez les inscriptions, approuvez les participants et publiez les
+   allocations de rang. Configurez explicitement le cas sans rang de guilde.
+4. Revisez l'apercu et ses blocages. Rapprochez les soldes historiques dans une
+   operation distincte : conserver le solde du Main choisi et confirmer chaque
+   correction Alt avec un motif, sans sommer les soldes par defaut.
+5. Activez avec motif et confirmation explicite depuis le coordinateur
+   comptable autorise. Seules les personnes approuvees recoivent l'allocation
+   de la nouvelle saison; l'ancien historique reste intact.
+6. Pour les ecarts de rang/allocation actifs, revisez et confirmez la
+   reconciliation de saison. Les ajustements conservent les Dibs deja depenses
+   et n'incluent pas les autres personnages de la guilde.
+7. Terminez la saison puis archivez-la apres sept jours. Fermer les
+   inscriptions ne termine ni n'archive la saison.
+
+Actualisez un apercu perime. Une dependance de synchronisation manquante
+conserve l'ancienne saison courante. La desactivation garde l'historique en
+lecture seule et bloque les ecritures. Les validations Retail restent
+distinctes des tests automatises : voir la [matrice de validation](../../specs/029-seasonal-raid-roster/quickstart.md).
+La [liste des tests Retail du candidat](../audits/0.8.12-TESTS-RETAIL-FR.md)
+regroupe les verifications a effectuer en jeu; T053 reste ouverte jusqu'a une
+validation reelle a deux clients.

@@ -11,6 +11,7 @@ For every UI change, follow the project-wide [Midnight UI Design System](../../d
 - Use Dashboard as the reference for status summaries, section hierarchy, and compact operational actions.
 - Use Guided Setup as the reference for ordered workflows, explanations, and primary actions.
 - Preserve the shared Midnight shell, navigation, typography, spacing, semantic status treatment, table geometry, and stable footer. Do not invent page-specific themes or visual systems.
+- An approved shared design evolution may update these reference components and rules together; apply the smallest complete, coherent change across affected pages rather than accumulating page-specific exceptions. Existing authorization covers ordinary implementation and regression work within that scope.
 - Before implementing a page, choose the closest reference pattern and reuse its existing AceGUI helpers and layout conventions.
 - For list pages, prefer the shared table page, fluid columns, bounded scrolling, and pagination. Keep empty, unavailable, and error states explicit.
 - Keep design and data scope distinct: presentation selectors must not silently change synchronization, permissions, or policy behavior.

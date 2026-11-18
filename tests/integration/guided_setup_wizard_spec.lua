@@ -377,17 +377,17 @@ describe("Dibs.Wizard status derivation", function()
     end
   end)
 
-  it("keeps a warning in Review when SetupAssistant is ready", function()
+  it("defers allocation reconciliation until a seasonal roster exists", function()
     local dibs, season = configuredGuild()
     dibs.SetupAssistant.Evaluate = function() return { status = "READY_FOR_RAID", checks = {} } end
     publishRule(dibs, season.id, 1, 1)
     local status = dibs.Wizard.GetStatus()
     assert_equal("READY", stepById(status, "rankRules").status)
-    assert_equal("ACTION_REQUIRED", stepById(status, "allocationReconciliation").status)
-    assert_true(stepById(status, "allocationReconciliation").summary:find("players need starting-allocation reconciliation", 1, true) ~= nil)
-    assert_equal("WARNING", stepById(status, "review").status)
+    assert_equal("OPTIONAL", stepById(status, "allocationReconciliation").status)
+    assert_true(stepById(status, "allocationReconciliation").summary:find("seasonal raid roster", 1, true) ~= nil)
+    assert_equal("READY", stepById(status, "review").status)
     assert_equal("READY", stepById(status, "readiness").status)
-    assert_equal("PARTIALLY_CONFIGURED", status.overallState)
+    assert_equal("READY_FOR_RAID", status.overallState)
   end)
 
   it("recomputes raid readiness after a refresh when SetupAssistant changes", function()
@@ -423,7 +423,7 @@ describe("Dibs.Wizard status derivation", function()
   end)
 
   it("keeps the readiness check and safe report on Raid Readiness", function()
-    local dibs = load("Tester-Realm", true)
+    local dibs = configuredGuild()
     local runCount, reportMode = 0, nil
     dibs.Readiness.Run = function()
       runCount = runCount + 1
@@ -462,7 +462,7 @@ describe("Dibs.Wizard status derivation", function()
     assert_true(officer.pendingReconciliation > 0)
     local status = dibs.Wizard.GetStatus()
     assert_equal("READY", stepById(status, "rankRules").status)
-    assert_equal("ACTION_REQUIRED", stepById(status, "allocationReconciliation").status)
+    assert_equal("OPTIONAL", stepById(status, "allocationReconciliation").status)
 
     rules = dibs.RankRules.GetRulesForSeason(season.id)
     rules["1"] = { rankIndex = 1, rankName = "Officer" }
@@ -474,31 +474,32 @@ describe("Dibs.Wizard status derivation", function()
     assert_equal("OPTIONAL", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
   end)
 
-  it("warns when rank reconciliation cannot be projected or the roster is empty", function()
+  it("keeps legacy allocation reconciliation deferred regardless of the guild roster", function()
     local dibs, season = configuredGuild()
     dibs.RankRules.GetAllocationReconciliation = function() error("reconciliation unavailable") end
     assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
-    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
-
     dibs.RankRules.GetAllocationReconciliation = function() return {} end
     assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
     assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
-
-    local getRosterSnapshot = dibs.Identity.GetRosterSnapshot
-    dibs.Identity.GetRosterSnapshot = function() return {} end
+    assert_equal("OPTIONAL", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
+    dibs.RankRules.GetAllocationReconciliation = function()
+      return { { rankIndex = 0, status = "UNKNOWN" } }
+    end
+    assert_equal("READY", rankByIndex(dibs.RankRules.GetRankConfigurationSummary(season.id), 0).status)
+    assert_equal("OPTIONAL", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
+    _G.GetNumGuildMembers = function() return 0 end
     assert_equal("READY", stepById(dibs.Wizard.GetStatus(), "rankRules").status)
-    assert_equal("WARNING", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
-    dibs.Identity.GetRosterSnapshot = getRosterSnapshot
+    assert_equal("OPTIONAL", stepById(dibs.Wizard.GetStatus(), "allocationReconciliation").status)
   end)
 
-  it("does not warn when Dibs allocation is disabled for every current rank", function()
+  it("keeps legacy allocation reconciliation deferred even when all ranks are disabled", function()
     local dibs, season = configuredGuild()
     for _, rankIndex in ipairs({ 0, 1, 3 }) do
       publishRule(dibs, season.id, rankIndex, 0, false)
     end
     local step = stepById(dibs.Wizard.GetStatus(), "allocationReconciliation")
     assert_equal("OPTIONAL", step.status)
-    assert_true(step.summary:find("disabled", 1, true) ~= nil)
+    assert_true(step.summary:find("seasonal", 1, true) ~= nil)
   end)
 
   it("distinguishes healthy, unavailable, behind, and unknown Sync states", function()
@@ -609,7 +610,7 @@ describe("Guided Setup Wizard UI", function()
 
     routeCount = frame.routeDispatchCount or 0
     profileCalls = 0
-    clickLatestButton("3 Verify")
+    clickLatestButton("3 Next steps")
     assert_equal(0, profileCalls, "Verify does not display or need profile models")
 
     dibs.Wizard.SetCurrentStage("configure")
@@ -642,7 +643,7 @@ describe("Guided Setup Wizard UI", function()
     clickLatestButton("Selected: Progression raid")
     assert_equal(0, statusCalls)
     assert_equal(0, evaluationCalls)
-    clickLatestButton("3 Verify")
+    clickLatestButton("3 Next steps")
     assert_equal(1, statusCalls)
     assert_equal(1, evaluationCalls)
     dibs.Wizard.GetTurnkeyStatus = originalGetStatus
@@ -658,7 +659,7 @@ describe("Guided Setup Wizard UI", function()
     assert_equal("configure", dibs.Wizard.GetCurrentStage())
     clickLatestButton("Back to profiles")
     assert_equal("choose", dibs.Wizard.GetCurrentStage())
-    clickLatestButton("3 Verify")
+    clickLatestButton("3 Next steps")
     assert_equal("verify", dibs.Wizard.GetCurrentStage())
   end)
 
@@ -666,15 +667,16 @@ describe("Guided Setup Wizard UI", function()
     local dibs = load("Tester-Realm", true)
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
-    clickLatestButton("3 Verify")
+    clickLatestButton("3 Next steps")
+    clickLatestButton("View setup details")
     assert_not_nil(findLatestWidget(function(widget)
       return widget.kind == "Label" and widget.text == "[X] BLOCKING"
         and widget.dibsMidnightStatus == "danger" and widget.dibsMidnightColor
         and widget.dibsMidnightColor[1] > widget.dibsMidnightColor[2]
     end))
     clickLatestButton("Fix first blocking issue")
-    assert_equal("installation", frame.activeTab)
-    assert_equal("verify", dibs.Wizard.GetCurrentStage())
+    assert_equal("wizard", frame.activeTab, "foundation must be completed inside Guided Setup")
+    assert_equal("configure", dibs.Wizard.GetCurrentStage())
   end)
 
   it("keeps detailed verification results inside a bounded responsive scroll frame", function()
@@ -682,6 +684,7 @@ describe("Guided Setup Wizard UI", function()
     dibs.Wizard.SetCurrentStage("verify")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
+    clickLatestButton("View setup details")
     local scroll = findLatestWidget(function(widget)
       return widget.kind == "ScrollFrame" and widget._dibsResizeOffset == 300
     end)
@@ -696,6 +699,7 @@ describe("Guided Setup Wizard UI", function()
 
   it("shows the exact failed setup action and routes SYNC_BEHIND to Synchronization", function()
     local dibs = load("Tester-Realm", true)
+    assert_true(dibs.Installation.Initialize(nil).ok)
     dibs.Wizard.SetSelectedProfileId("progression")
     dibs.Wizard.SetCurrentStage("configure")
     dibs.Wizard.ApplyProfile = function()
@@ -714,6 +718,7 @@ describe("Guided Setup Wizard UI", function()
     frame:ActivateRoute("wizard")
     clickLatestButton("Apply this setup")
     assert_true(frame.statusMessage:find("Guild foundation - SYNC_BEHIND", 1, true) ~= nil)
+    clickLatestButton("View setup details")
     assert_not_nil(findLatestWidget(function(widget)
       return widget.kind == "Label" and widget.text == "Reason: SYNC_BEHIND"
     end))
@@ -727,12 +732,14 @@ describe("Guided Setup Wizard UI", function()
     dibs.Wizard.SetCurrentStage("verify")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
+    clickLatestButton("View setup details")
     clickLatestButton("Open Allocation Reconciliation")
     assert_equal("automaticDibs", frame.activeTab)
   end)
 
   it("keeps custom setup mutation-free and opens advanced settings", function()
     local dibs = load("Tester-Realm", true)
+    assert_true(dibs.Installation.Initialize(nil).ok)
     dibs.Wizard.SetSelectedProfileId("custom")
     dibs.Wizard.SetCurrentStage("configure")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
@@ -755,7 +762,7 @@ describe("Guided Setup Wizard UI", function()
     local officerFrame = officer.OfficerUI.CreateWindow("wizard")
     officerFrame:ActivateRoute("wizard")
     assert_not_nil(findLatestWidget(function(widget)
-      return widget.kind == "Label" and widget.text == "[!] DEFERRED"
+      return widget.kind == "Label" and widget.text:find(officer.L.WIZARD_DISPOSITION_DEFERRED, 1, true) ~= nil
     end))
 
     gm = load("Tester-Realm", true, saved)
@@ -774,6 +781,7 @@ describe("Guided Setup Wizard UI", function()
     dibs.Wizard.SetCurrentStage("verify")
     local frame = dibs.OfficerUI.CreateWindow("wizard")
     frame:ActivateRoute("wizard")
+    clickLatestButton("View setup details")
     assert_not_nil(findLatestWidget(function(widget)
       return widget.kind == "Label" and widget.text:find("Transport unavailable", 1, true) ~= nil
     end))

@@ -19,16 +19,16 @@ describe("RF-0014 security verification matrix", function()
     return dibs
   end
 
-  local function establishTesterGroup(dibs)
+  local function linkCharacters(dibs, main, alt)
     local relationship = assert(dibs.CharacterEligibility.DeclareRelationship({
-      mainCharacterId = "Tester-Realm", altCharacterId = "Officer-Realm",
-    }, "Tester-Realm"))
+      mainCharacterId = main, altCharacterId = alt,
+    }, main))
     assert(dibs.CharacterEligibility.ReviewRelationship(relationship.relationshipId, "approved", "Tester-Realm"))
   end
 
   it("refuses a main change requested by a member without the required authority", function()
     local dibs = setup()
-    establishTesterGroup(dibs)
+    linkCharacters(dibs, "Plain-Realm", "Officer-Realm")
     local request, reason = dibs.CharacterEligibility.RequestMainChange({
       oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "unauthorized",
     }, "Plain-Realm")
@@ -45,7 +45,7 @@ describe("RF-0014 security verification matrix", function()
 
   it("refuses the approval of a main change by a non-GM", function()
     local dibs = setup()
-    establishTesterGroup(dibs)
+    linkCharacters(dibs, "Tester-Realm", "Officer-Realm")
     local request = assert(dibs.CharacterEligibility.RequestMainChange({
       oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "role change",
     }, "Tester-Realm"))
@@ -56,7 +56,7 @@ describe("RF-0014 security verification matrix", function()
 
   it("keeps the request pending until it is explicitly approved", function()
     local dibs = setup()
-    establishTesterGroup(dibs)
+    linkCharacters(dibs, "Tester-Realm", "Officer-Realm")
     local request = assert(dibs.CharacterEligibility.RequestMainChange({
       oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "role change",
     }, "Tester-Realm"))
@@ -68,7 +68,7 @@ describe("RF-0014 security verification matrix", function()
 
   it("keeps a refused main change refused and inactive", function()
     local dibs = setup()
-    establishTesterGroup(dibs)
+    linkCharacters(dibs, "Tester-Realm", "Officer-Realm")
     local request = assert(dibs.CharacterEligibility.RequestMainChange({
       oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "role change",
     }, "Tester-Realm"))

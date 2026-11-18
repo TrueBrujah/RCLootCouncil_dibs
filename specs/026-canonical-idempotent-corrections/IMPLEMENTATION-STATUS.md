@@ -1,28 +1,83 @@
 # Implementation Status: Canonical Ledger Operations & Idempotent Dispute Corrections
 Feature: `026-canonical-idempotent-corrections`
 
-## Current Phase: US1 — canonical operation foundation
-Status: **INCOMPLETE — the previous completion report does not describe the source at this candidate HEAD.**
+## Current Phase: Canonical readiness, recovery and release validation
+Status: **PARTIAL IMPLEMENTATION — RECOVERY AND RELEASE GATES OPEN**
 
-### Candidate HEAD re-audit (2026-11-04)
+Candidate metadata is **0.9.0 as of 2026-11-18**, explicitly requested by the user;
+this is not release acceptance or canonical activation. Full native Lua 5.1.5 and
+Lua 5.4 qualification is now **2,190/2,190 across 274 files each**, with one new
+previous-minor-family refusal test; focused Fengari version/gate checks pass 25/25.
+Peers advertising 0.8.x require an update under the existing compatibility policy.
+No additional data/protocol migration is introduced. Retail and T047–T050 stay open.
 
-The historical verification notes below were present in this checkout, but their claims do not match the code now audited on `fix/pr25-fengari-memory` at `81ca714`. At that revision, the operation APIs, canonical operation commit path, protected action, SyncV2 protocol, and recovery APIs were absent despite the old task checkboxes and success totals. Do not use the historical totals below as release evidence for this candidate.
+Current source of truth: [tasks.md](./tasks.md), convergence T046–T050, and the
+[project checkpoint](../../docs/ai/CHECKPOINT.md). T046 readiness is implemented;
+T047/T048 remain subject to their full acceptance evidence, T049 recovery is
+partial and T050 depends on it. External recovery on a fresh installation remains
+Feature 007 T036. Release flags remain disabled; Retail is not certified.
 
-Work completed in this isolated candidate so far:
-- Implemented the staged additive guild schema 7→8 / dispute projection 2→3 migration; old correction keys and canonical ledger evidence are preserved. Targeted migration and recovery suites pass 14/14.
-- Implemented deterministic operation payload hashing, stable-ID builder, pure whole-operation validation, and replay/conflict checks in `src/modules/Ledger.lua`.
-- Implemented the default-off canonical operation commit and replayable transaction projection path in `src/modules/Ledger.lua`.
-- Added the protected `ledger.operation` dispatch and officer/GM permission entry.
-- Added/resettable test-only failure injection helpers.
-- Validation: `tests/unit/ledger_operation_spec.lua` — 8 passed, 0 failed. `tests/integration/canonical_dispute_operation_spec.lua` — 13 passed, 11 failed after adding a V2 legacy-write fallback regression; the new regression passes and remaining failures cover Disputes routing and recovery/reconstruction. SyncV2, backup/restore/import, and full-suite validation are still outstanding.
-- Canonical operation writes remain disabled by default. No in-game multi-client validation has been performed.
+Latest dev-integration qualification (2026-11-17): **2,189/2,189 on 274 files under
+each native Lua 5.1.5 and Lua 5.4**, focused Fengari **186/186 on 18 suites**, and
+Pester **47/47**. The approved additive schema-8 migration and representative
+history-preservation tests are retained. Pending operation proposals now bind
+their epoch/coordinator and fail closed when that authority changes; six actual
+proposal-store cases replace T014's former placeholder assertions. The current
+proposal-ID-only protected path remains authoritative. Reconciling the earlier
+proposal/ACK wire contract is still T048 work, not a second writer or a completed
+transport claim. Release gates remain closed and T047–T050 remain open.
+Audit guard: 238 application differences, zero protected differences, exit 1;
+baseline unchanged. Other preflight/doc/compilation results below remain valid.
 
-## Task Progress (current candidate)
+Earlier repair evidence (2026-11-17): full native Lua 5.1.5 and Lua 5.4 suites
+each pass **2,181/2,181 across 274 files**; focused Fengari passes **767/767 across
+65 files**. The private-delivery fixture's last Lua 5.1 loader mismatch is fixed,
+with its 17 cases rechecked under all three runtimes. Missing historical-report
+and outcome APIs are restored, with visible read-only report/reload states and
+configured UI fixtures that preserve fresh Guided Setup and authority guards.
+T016/T029/T030/T040 are complete for offline acceptance. T047–T050 remain open for
+the complete phase-exit/recovery matrix; no external fresh-recovery authority is
+implied. Sources have not been redeployed. Both release gates remain false.
+Lua 5.1 compilation: 112/112; addon preflight: 121 files; documentation: 29 concepts,
+zero errors and 10 inherited orphan-help warnings, cross-version output 8/8 MATCH.
+Audit guard: exit 1 with 234 application differences, zero protected-library
+differences; the existing baseline is unchanged. This is not a global integrity
+PASS or Retail certification.
 
-- Verified in this candidate: T007-T010 operation builder, whole-operation validation, guild-wide replay/conflict scan, and default-off canonical commit/replay path; T011 explicit approved-ledger original-transaction resolution.
-- Incomplete: T013 shared protected readiness gate; T014-T040 Governance ownership, Disputes routing, SyncV2, recovery, backup/restore/import, documentation/UI acceptance, and complete regression gates.
-- Pending external gate: T041 Retail multi-client validation. Therefore T042 version/release note and T043 activation must remain closed.
-- Current focused evidence: `tests/unit/ledger_operation_spec.lua` 8 passed, 0 failed; `tests/integration/canonical_dispute_operation_spec.lua` 13 passed, 11 failed. See the re-audit above for the failure areas.
+Earlier consolidation evidence (2026-11-16): 334/334 on 31 focused suites under
+Fengari, Lua 5.4.6 and Lua 5.1.5; secondary-ledger and interrupted-receiver recovery
+coverage extended. The fresh **full** Lua 5.1.5 run is **1,914 passed / 221 failed
+across 272 files**, not a globally green result. Failure triage is incomplete and
+includes absent historical-report/outcome APIs and fixtures that do not establish
+current setup/canonical prerequisites. No blanket pre-existing attribution is made.
+That failing full-suite result is superseded by the repair evidence above.
+
+The results and task numbering below are historical evidence from an earlier
+implementation pass. They do not supersede the current convergence tasks or
+constitute a fresh full-suite result. In particular, the older T046 UI fix below
+is not the current T046 canonical-readiness task.
+
+## Historical Task Progress
+- [x] T001-T030: Completed (all of US1, US2, and US3)
+- [x] T031: Completed (Backup, restore, and import fixtures)
+- [x] T032: Completed (Complete canonical operation history serialization)
+- [x] T033: Completed (Restore through the verified recovery boundary)
+- [x] T034: Completed (Preview-time operation identity checks)
+- [x] T035: Completed (Legacy-compatibility assertions across migration, B06, backup, and import)
+- [x] T036: Completed (Focused feature regression set: 128 passed, 0 failed across 14 suites)
+- [x] T037: Completed (Complete repository suite)
+- [x] T038: Completed (Developer documentation: architecture, saved-variables, sync-protocol, testing)
+- [x] T039: Completed (Source-driven documentation: 0 errors, 29 concepts, cross-version 8/8 MATCH)
+- [x] T040: Completed (UI acceptance coverage: `t040_ui_acceptance_spec.lua`, 8 passed, 0 failed)
+- [ ] T041: BLOCKED — manual Retail multi-client validation (`PENDING_MANUAL_VALIDATION`)
+- [ ] T042: PARTIAL — changelog note added; the TOC version increment waits for T041
+- [ ] T043: BLOCKED — release activation stays closed until T041 passes
+- [x] T044: Completed (Final library and changed-path verification)
+- [x] T045: Completed (Retail readiness: Lua 5.1 compilation restored, release flag made
+      genuinely release-controlled, operator runbook produced)
+- [x] T046: Completed (OfficerUI runtime error `attempt to call a nil value` at
+      `src/ui/OfficerUI.lua:3632` diagnosed and fixed)
+
 ## Verification Log
 - [x] Complete repository suite (T037, T045, T046): **1201 passed, 0 failed** across 175 `*_spec.lua` files.
       The runner needs `NODE_OPTIONS=--max-old-space-size=8192`; the default Node heap aborts
@@ -178,10 +233,3 @@ T041 — Execute the manual multi-client Retail validation in
 one non-coordinator Officer, one compatible follower, and one offline/reconnecting member. Then
 complete the T042 `## Version` increment, the T043 release activation, and record the result.
 
-### 2026-11-04 incremental guard fix
-
-- Disputes.Resolve now fails closed for target and balance corrections in V2 instead of falling through to legacy ledger.adjust writes while canonical operations are disabled or unavailable. Legacy-local mode is unchanged.
-- Added regression `does not fall back to legacy target-transfer writes when V2 operation writes are disabled` in `tests/integration/canonical_dispute_operation_spec.lua`.
-- Focused suite: 13 passed, 11 failed. The new guard regression passes; remaining failures confirm the unimplemented canonical Disputes route and recovery APIs. This candidate is not releasable.
-
-- The candidate worktree has no local baseline, so its `audit_guard.py verify` command cannot run in place; no baseline capture was performed. A pre-existing schema-v2 baseline was found read-only in the main worktree at `C:/Users/yc58/OneDrive/Documents/GitHub/RCLootCouncil_dibs/docs/code-audit/BASELINE.json` (untracked there; created 2026-10-18). Full verification in that worktree reports historical application-Lua additions/changes, so it is not a clean whole-repository pass. Comparing only its protected-library hashes with this candidate using the guard's own functions found 77 expected, 77 current, and 0 protected-library differences. The baseline was not copied or modified.

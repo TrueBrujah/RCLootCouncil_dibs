@@ -10,6 +10,31 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
+### Approved navigation revision — 2026-11-15
+
+The user requires setup to control feature visibility, rather than leaving an
+unconfigured application full of disabled or misleading pages.
+
+- **FR-025**: A genuinely fresh guild installation MUST expose only Guided Setup
+  in Officer navigation. Old tab selections and direct route requests MUST resolve
+  to Guided Setup until the installation foundation is configured.
+- **FR-026**: Navigation MUST derive completion from existing authoritative
+  installation, published season/rank configuration, ledger and feature state.
+  A locally selected wizard stage, a bootstrap Season 1, or a clicked button MUST
+  NOT count as completed guild setup. No new persisted completion flag is required.
+- **FR-027**: After foundation setup, configuration routes MUST remain available
+  so the administrator can configure the next part. Operational sections become
+  visible only when their own prerequisites are satisfied. Missing optional RC,
+  disabled optional modules, or temporary coordinator unavailability MUST NOT
+  become a global setup requirement.
+- **FR-028**: An existing installation MUST retain safe access to preserved history
+  and migration/recovery workflows. Hiding a page MUST NOT change permissions,
+  erase data, perform setup, or bypass a domain mutation gate. A normal member
+  sees a public setup-waiting state, never administrative details or actions.
+- **FR-029**: Visibility MUST be refreshed after configuration/context changes;
+  empty navigation groups and hidden-page renderers MUST not remain accessible
+  through stale selection, aliases or direct routes. Setup itself remains reachable.
+
 ### User Story 1 - Complete a Turnkey Setup (Priority: P1)
 
 As a Guild Master or authorized Officer, I want a short guided setup that applies a coherent starting configuration, so that I can prepare DIBS for a raid without understanding every internal catalog, revision, or synchronization state.
@@ -115,7 +140,32 @@ As an experienced administrator, I want access to advanced configuration, so tha
 - **FR-023**: Guided Setup MUST preserve current setup progress when the administrator follows a correction link and returns.
 - **FR-024**: No active or historical ledger transactions may be rewritten, removed, or reset by turnkey setup.
 
+### Approved inline season preparation — 2026-11-15
+
+- **FR-030**: Configure MUST offer an optional raid-season draft form for progression and standard profiles when no seasonal roster exists, with explicit name, required start/registration dates, one required Normal/Heroic/Mythic checkbox group defining both signup categories and raid difficulties, optional raid nights with an optional expected difficulty, and rules text. Selecting a profile alone MUST NOT create a season. Published legacy categories and registrations remain unchanged (029 FR-056–057, approved 2026-11-16).
+- **FR-031**: Confirming the profile with this option MUST delegate creation to SeasonalRoster only after foundation readiness, using a stable operation ID. Validate the requested draft before applying any setup action; invalid input MUST leave setup unchanged. Reapplication or concurrently discovered existing seasons MUST NOT create duplicates or edit existing seasons.
+- **FR-032**: The preview MUST distinguish technical foundation from raid-season preparation. Disabled Seasonal Roster stays disabled with an explicit deferred result. Custom remains manual. Draft preparation MUST NOT publish registration, activate a season, allocate balances or infer guild promotion criteria or raid nights.
+
 ### Key Entities
+
+### Approved resumable guided completion — 2026-11-15
+
+- **FR-033**: The default completion screen MUST show one ordered next action in plain language with completed/pending progress. Full technical verification remains available through an explicit details control; unchanged readiness and permission gates stay authoritative. A missing raid-season draft/publication must precede later seasonal configuration.
+- **FR-034**: Setup MUST retain selected profile, stage, pending season-form fields and correction context across window closure and reload in existing character-local settings, isolated by guild. Store only bounded allowlisted data, never widgets, authoritative completion flags or ledger data. Recompute the next action from current state on resume.
+- **FR-035**: Setup action feedback MUST appear inside the addon with green success, yellow warning/pending and red failure plus text labels. Successful actions MUST NOT contain failure reason codes. Guided profile application must suppress redundant preset chat notices while preserving direct options behavior.
+- **FR-036**: Already-open PlayerUI MUST update its setup/navigation presentation after local setup and synchronized prerequisite changes without closing/reopening; preserve current inputs and selections when visible sections are unchanged, and avoid polling expensive full readiness reports.
+
+### Approved season presentation redesign — 2026-11-16
+
+- **FR-037**: Configure MUST present a compact profile summary and clear primary
+  action, with secondary technical details available explicitly. The optional season
+  form MUST share the organization used in direct season creation and draft editing:
+  essential fields first, summarized expandable optional sections, no loss of input
+  when sections collapse, and validation revealing the affected section. Internal
+  result codes MUST use understandable localized labels in the presentation without
+  changing serialized identifiers, profile effects or authoritative service gates.
+
+### Entities
 
 - **Setup Profile**: A named, documented collection of recommended starting choices, including its intended guild type, effects, exclusions, and confirmation summary.
 - **Setup Stage**: One of the three user-facing phases—choose, configure, or verify—with concise guidance and optional expanded documentation.

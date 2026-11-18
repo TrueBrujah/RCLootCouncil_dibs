@@ -1,7 +1,18 @@
 # RCLootCouncil_dibs
 
-Development compatibility baseline: **0.8.x**. Latest published stable release:
-**0.8.11**. The source declares **0.8.11**.
+Development compatibility family: **0.9.x**. Latest published stable release:
+**0.8.11**. The source declares **0.9.0** (unreleased working candidate).
+
+The current candidate includes seasonal roster activation/reconciliation and
+Great Vault capture repairs. Real-client validation remains pending; use the
+[current Retail test checklist (French)](docs/audits/0.8.12-TESTS-RETAIL-FR.md)
+and the [current change notes](CHANGELOG.md). An earlier 0.8.12 installation
+may not contain these repairs. Canonical dispute correction writes
+remain disabled with outstanding implementation/recovery work.
+
+The existing synchronization policy requires matching major/minor addon versions:
+0.9.x clients reject peers advertising 0.8.x with an update-required diagnostic.
+Coordinate the guild's client update; renumbering adds no data or protocol migration.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -18,8 +29,8 @@ guild Dibs ledger, reservations, permissions, and audit history.
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.11 is
-the latest stable publication. Development builds use the 0.8.x compatibility
-family and reject 0.7.x peers until they update. These guides describe the
+the latest stable publication. This working candidate uses the 0.9.x compatibility
+family and rejects peers advertising 0.8.x or older until they update. These guides describe the
 current source, not proof that every feature has passed Retail validation.
 The [v0.8.0 checklist](B12_Release_Candidate_Checklist.md) and
 [v0.8.0 evidence](docs/audits/DIBS_0.8.0_Release_Candidate_Evidence.md) are
@@ -55,7 +66,7 @@ certify v0.8.11.
   pending rather than being reported as delivered.
 - History search, descriptive player activity statistics, data-health review,
   local player notifications, and separate anonymized audit export.
-- Backup, restore, configuration profiles, and portable import/export packages with previews, checksums, retention, and append-only ledger deduplication.
+- Local backup/restore, selected historical backup export, configuration profiles, and current-state import/export packages with previews, checksums and retention. External snapshot registration and full canonical recovery remain incomplete.
 - Character Eligibility for Curio and Tier Set progression across approved main/alt links, with seasonal policy, probation and bounded exceptions.
 - Great Vault acquisition tracking with automatic claim evidence, `/dibs vault` manual fallback, Officer review, guild-scoped sync, recovery, and legacy migration.
 - SavedVariables migrations and localized English/French runtime strings.
@@ -207,16 +218,39 @@ the catalogue can identify them.
 `/dibs data` (or the **Data** group in `/dibs options`) opens a separate modeless window with three small workspaces:
 
 - **Backups** creates dated local recovery points, shows scope, size and checksum,
-  and keeps the configured retention count. Restore always creates a safety
-  snapshot, then shows a preview before applying it.
+  and keeps the configured retention count. Restore requires a preview and
+  confirmation, then creates a safety snapshot before applying changes.
 - **Profiles** manages named local presentation profiles and guild policy
   profiles. Create, copy, activate, reset and delete operations never remove
   ledger transactions. Guild policy activation remains GM/Officer protected.
 - **Import / Export** produces a versioned `DIBS-PKG-1` text package. Local,
   guild-configuration and full-data scopes are labelled; sensitive scopes can be
   redacted. Packages are size, schema and checksum validated and imported as data
-  only. Configuration uses explicit merge/replace, while full history uses
-  append-and-deduplicate semantics and reports conflicts in the preview.
+  only. Configuration uses explicit merge/replace. Full import is a legacy
+  compatibility path; it refuses unknown canonical history and cannot recover a
+  fresh installation from such a package.
+
+The transfer workspace exports current state. In **Backups**, select a snapshot and
+use **Export selected backup** to copy its original historical package. The original
+text and attestations must be retained. Export prefers a versioned compressed
+DEFLATE/Base64 envelope when available; imports accept both this format and legacy
+`DIBS-PKG-1` text. The encoded limit remains 250,000 characters, with a 32 MiB
+uncompressed budget checked before decompression. Newly created large snapshots
+may retain their original package compressed. Older unattested snapshots or snapshots
+whose original package was not retained remain unavailable for historical export.
+Full scope requires explicit sensitive-data consent and retains its compatibility-only
+recovery restriction. Historical local/guild configurations use the existing
+**Import / Export** preview and confirmation workflow.
+
+Importing an external snapshot as a new recovery point and full canonical recovery
+on a fresh installation remain incomplete. Local snapshots stay in SavedVariables;
+import/restore previews are limited to 16 per type and expire after 30 minutes.
+Recreate an unavailable preview before confirming.
+
+Compression uses checked native WoW capabilities or the existing bundled LibDeflate
+fallback. Without a codec, the UI explains the limitation and offers legacy export.
+Compression does not encrypt private data; local restore remains available from a
+valid retained payload even without the optional transport codec.
 
 Copy packages through a private channel or file. Full-data packages contain
 player identities and award history; do not publish them. A cancelled preview

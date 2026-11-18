@@ -294,6 +294,7 @@ Describe 'DIBS source-driven documentation foundation' {
     @($model.Concepts | Select-Object -ExpandProperty id -Unique).Count | Should Be 29
     $summary.Errors | Should Be 0
     $legacyOrphanHelpKeys = @(
+      'UI_HELP_AUTOMATIC_DIBS_FILTER',
       'UI_HELP_REQUEST_ID',
       'UI_HELP_SYNC_ADDON',
       'UI_HELP_SYNC_CATALOG',

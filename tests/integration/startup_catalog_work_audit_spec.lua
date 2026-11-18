@@ -26,6 +26,7 @@ describe("Startup catalog work audit", function()
     local ok, err = pcall(dibs.Initialize)
     assert_true(ok, tostring(err))
     assert_true(dibs.initialized)
+    require("helpers.configured_addon").configure(dibs)
     local officer = assert(_G.DibsOfficerFrame)
     assert_false(officer:IsShown())
     print("AUDIT_STARTUP officer-window-shown=false catalog-calls=" .. catalogCalls

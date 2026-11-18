@@ -32,6 +32,14 @@ Cross-guild full sensitive import is blocked by default.
 
 ## Rejected alternatives
 
+- Rebuild a historical export from current data or invented source metadata: rejected
+  because it no longer represents the selected snapshot. Export only retained,
+  attested original packages within the portable limit.
+- Store an external package directly as a restorable snapshot: rejected because local
+  restore does not apply the same allowed-key filtering as configuration import.
+  Historical configuration packages must use Preview/Apply; full canonical recovery
+  stays under Feature 026 rather than introducing another writer.
+
 - Replace the entire SavedVariables root on restore: rejected because it can destroy newer
   transactions and bypass guild isolation.
 - Trust package text because it came from an Officer: rejected because copied text can be

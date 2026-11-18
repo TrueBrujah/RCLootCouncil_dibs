@@ -30,6 +30,34 @@ M.MAX_BACKUP_SIZE = 32 * 1024 * 1024
 M.MAX_DEPTH = 24
 M.MAX_NODES = 50000
 M.MAX_BACKUP_NODES = 500000
+M.MAX_PENDING_PREVIEWS = 16
+M.PREVIEW_TTL_SECONDS = 30 * 60
+
+-- Only disposable preview records are eligible for expiry or capacity eviction.
+-- Historical snapshots, audit records and accounting state are never pruned here.
+function M.PrunePendingPreviews(db, key, now)
+  if key ~= "pendingImports" and key ~= "pendingRestores" then return nil end
+  local pending = db[key]
+  if type(pending) ~= "table" then db[key] = {}; return db[key] end
+  now = now or time()
+  local ordered = {}
+  for id, record in pairs(pending) do
+    local preview = type(record) == "table" and record.preview
+    local createdAt = type(preview) == "table" and preview.createdAt
+    if type(id) ~= "string" or type(createdAt) ~= "number" or createdAt ~= createdAt
+      or createdAt < 0 or createdAt > now or now - createdAt >= M.PREVIEW_TTL_SECONDS then
+      pending[id] = nil
+    else
+      ordered[#ordered + 1] = { id = id, createdAt = createdAt }
+    end
+  end
+  table.sort(ordered, function(a, b)
+    if a.createdAt ~= b.createdAt then return a.createdAt < b.createdAt end
+    return a.id < b.id
+  end)
+  for index = 1, #ordered - M.MAX_PENDING_PREVIEWS do pending[ordered[index].id] = nil end
+  return pending
+end
 
 local function trim(v) return tostring(v or ""):match("^%s*(.-)%s*$") end
 
@@ -274,12 +302,19 @@ function M.Export(scope, options)
     -- ImportExport packages remain compatibility/diagnostic imports only.
     recoveryClass = scope == "full" and "LEGACY_DIAGNOSTIC_ONLY" or nil }
   local body, err = encodeValue(package); if not body then return nil, err end
-  local sizeLimit = options.allowOversize == true and M.MAX_BACKUP_SIZE or M.MAX_PACKAGE_SIZE
+  local sizeLimit = (options.allowOversize == true or options.compressed == true) and M.MAX_BACKUP_SIZE or M.MAX_PACKAGE_SIZE
   if #body > sizeLimit then return nil, "PACKAGE_TOO_LARGE" end
   package.checksum = checksum(body); body, err = encodeValue(package); if not body then return nil, err end
   if #body > sizeLimit then return nil, "PACKAGE_TOO_LARGE" end
+  local text, transportInfo = M.PACKAGE_PREFIX .. body, nil
+  if options.compressed == true then
+    if not Dibs.BackupTransport then return nil, "COMPRESSION_UNAVAILABLE" end
+    local reason
+    text, transportInfo = Dibs.BackupTransport.Wrap(text)
+    if not text then reason = transportInfo; return nil, reason end
+  end
   M.RecordAudit("export", scope, true, options.reason, actor)
-  return M.PACKAGE_PREFIX .. body, package
+  return text, package, transportInfo
 end
 
 ---@param text string Encoded package text.
@@ -287,10 +322,19 @@ end
 ---@return string|nil reasonCode
 function M.Decode(text, options)
   options = options or {}
-  local maxSize = options.allowOversize == true and M.MAX_BACKUP_SIZE or M.MAX_PACKAGE_SIZE
+  if type(text) ~= "string" then return nil, "INVALID_PACKAGE_SIZE" end
+  text = trim(text)
+  local compressed = text:sub(1, 10) == "DIBS-COMP-"
+  if compressed then
+    if not Dibs.BackupTransport then return nil, "COMPRESSION_UNAVAILABLE" end
+    local raw, reason = Dibs.BackupTransport.Unwrap(text)
+    if not raw then return nil, reason end
+    text = raw
+  end
+  local maxSize = (options.allowOversize == true or compressed) and M.MAX_BACKUP_SIZE or M.MAX_PACKAGE_SIZE
   text = trim(text); if #text == 0 or #text > maxSize + #M.PACKAGE_PREFIX + 200 then return nil, "INVALID_PACKAGE_SIZE" end
   if text:sub(1, #M.PACKAGE_PREFIX) ~= M.PACKAGE_PREFIX then return nil, "INVALID_PACKAGE_PREFIX" end
-  local package, err = parser(text:sub(#M.PACKAGE_PREFIX + 1), options.allowOversize == true and M.MAX_BACKUP_NODES or M.MAX_NODES); if not package then return nil, err end
+  local package, err = parser(text:sub(#M.PACKAGE_PREFIX + 1), (options.allowOversize == true or compressed) and M.MAX_BACKUP_NODES or M.MAX_NODES); if not package then return nil, err end
   if type(package) ~= "table" or tonumber(package.packageVersion) ~= M.PACKAGE_VERSION then return nil, "UNSUPPORTED_PACKAGE_VERSION" end
   if tonumber(package.schemaVersion) ~= M.SCHEMA_VERSION then return nil, "UNSUPPORTED_SCHEMA" end
   if type(package.payload) ~= "table" or type(package.scope) ~= "string" or type(package.checksum) ~= "string" then return nil, "MISSING_REQUIRED_FIELD" end
@@ -321,6 +365,94 @@ local function describeMapDiff(changes, additions, source, target, prefix)
   end
 end
 
+local function sameCanonicalValue(first, second, seen)
+  if type(first) ~= type(second) then return false end
+  if type(first) ~= "table" then return first == second end
+  seen = seen or {}
+  if seen[first] == second then return true end
+  seen[first] = second
+  for key, value in pairs(first) do
+    if not sameCanonicalValue(value, second[key], seen) then return false end
+  end
+  for key in pairs(second) do if first[key] == nil then return false end end
+  return true
+end
+
+-- Import packages are diagnostic/compatibility inputs, never a second writer
+-- for the canonical ledger chain. An operation may be present only when the
+-- exact immutable commit is already in local history; unseen commits require
+-- the normal coordinator-validated Sync or a full Backup restore.
+local function canonicalImportStatus(incomingLedger, localLedgers)
+  if type(incomingLedger) ~= "table" then return true, 0 end
+  local incomingCanonical = type(incomingLedger.canonical) == "table" and incomingLedger.canonical or {}
+  local incomingCommits = type(incomingCanonical.commits) == "table" and incomingCanonical.commits or {}
+  local localByOperation, localByPosition = {}, {}
+  for ledgerId, ledger in pairs(type(localLedgers) == "table" and localLedgers or {}) do
+    local canonical = type(ledger) == "table" and type(ledger.canonical) == "table" and ledger.canonical or {}
+    for position, commit in pairs(type(canonical.commits) == "table" and canonical.commits or {}) do
+      if type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT" then
+        local operation = type(commit.operation) == "table" and commit.operation or {}
+        local operationId = operation.operationId
+        if type(operationId) == "string" and operationId ~= "" then
+          localByOperation[operationId] = { commit = commit, ledgerId = ledgerId }
+        end
+        localByPosition[tostring(ledgerId) .. "\0" .. tostring(position)] = commit
+      end
+    end
+  end
+
+  local duplicates = 0
+  for position, commit in pairs(incomingCommits) do
+    if type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT" then
+      local operation = type(commit.operation) == "table" and commit.operation or nil
+      if not operation or type(operation.operationId) ~= "string" or operation.operationId == "" then
+        return nil, "INVALID_OPERATION_COMMIT"
+      end
+      local ledgerId = operation.ledgerId or commit.ledgerId or incomingLedger.id or "guild-primary"
+      if Dibs.Ledger and Dibs.Ledger.CalculateDisputeOperationPayloadHash then
+        local expectedHash = Dibs.Ledger.CalculateDisputeOperationPayloadHash(operation)
+        if type(expectedHash) ~= "string" or expectedHash ~= operation.payloadHash or expectedHash ~= commit.payloadHash then
+          return nil, "PAYLOAD_HASH_MISMATCH"
+        end
+      end
+      local existing = localByOperation[operation.operationId]
+      if existing then
+        if existing.ledgerId ~= ledgerId or existing.commit.commitHash ~= commit.commitHash
+          or not sameCanonicalValue(existing.commit, commit) then
+          return nil, "OPERATION_ID_CONFLICT"
+        end
+        duplicates = duplicates + 1
+      else
+        local samePosition = localByPosition[tostring(ledgerId) .. "\0" .. tostring(position)]
+        if samePosition and samePosition.commitHash ~= commit.commitHash then return nil, "CANONICAL_POSITION_CONFLICT" end
+        return nil, "CANONICAL_LEDGER_IMPORT_UNAVAILABLE"
+      end
+    end
+  end
+  return true, duplicates
+end
+
+local function canonicalTransactionRowsStatus(incomingLedger, localLedger)
+  if type(incomingLedger) ~= "table" then return true end
+  local commits = type(incomingLedger.canonical) == "table" and incomingLedger.canonical.commits or {}
+  local includedOperations = {}
+  for _, commit in pairs(type(commits) == "table" and commits or {}) do
+    local operation = type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT"
+      and type(commit.operation) == "table" and commit.operation or nil
+    if operation and type(operation.operationId) == "string" then includedOperations[operation.operationId] = true end
+  end
+  local incomingRows = type(incomingLedger.transactions) == "table" and incomingLedger.transactions or {}
+  local existingRows = type(localLedger) == "table" and type(localLedger.transactions) == "table" and localLedger.transactions or {}
+  for transactionId, transaction in pairs(incomingRows) do
+    if type(transaction) == "table" and transaction.operationId then
+      if not includedOperations[transaction.operationId] and existingRows[transactionId] == nil then
+        return nil, "CANONICAL_LEDGER_IMPORT_UNAVAILABLE"
+      end
+    end
+  end
+  return true
+end
+
 ---@param text string|table Encoded package or decoded envelope.
 ---@param targetScope "local"|"guild"|"full"|nil Target scope.
 ---@param strategy "merge"|"replace"|"append"|nil Apply strategy.
@@ -338,31 +470,6 @@ function M.Preview(text, targetScope, strategy, actor)
   if not roleAllowed(targetScope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
   if package.scope == "full" and package.sourceGuild ~= Dibs.currentGuildKey then return nil, "CROSS_GUILD_FULL_BLOCKED" end
   local db = Dibs.GetDB(); local current = targetScope == "local" and (db.settings or {}) or db
-  if package.scope == "full" then
-    local importedLedger = package.payload and package.payload.ledger
-    local canonical = type(importedLedger) == "table" and importedLedger.canonical or nil
-    local commits = type(canonical) == "table" and canonical.commits or nil
-    if type(commits) == "table" then
-      for _, commit in pairs(commits) do
-        if type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT" then
-          local operation = commit.operation
-          if type(operation) ~= "table" or type(Dibs.Ledger) ~= "table"
-            or type(Dibs.Ledger.CalculateDisputeOperationPayloadHash) ~= "function"
-            or type(Dibs.Ledger.GetCanonicalOperationCommitHash) ~= "function" then
-            return nil, "CANONICAL_OPERATION_VALIDATOR_UNAVAILABLE"
-          end
-          local payloadHash = Dibs.Ledger.CalculateDisputeOperationPayloadHash(operation)
-          if not payloadHash or payloadHash ~= operation.payloadHash or payloadHash ~= commit.payloadHash then
-            return nil, "PAYLOAD_HASH_MISMATCH"
-          end
-          local commitHash = Dibs.Ledger.GetCanonicalOperationCommitHash(commit)
-          if not commitHash or commitHash ~= commit.commitHash then
-            return nil, "PAYLOAD_HASH_MISMATCH"
-          end
-        end
-      end
-    end
-  end
   local preview = { previewId = Dibs.NewId("preview"), packageId = package.checksum, targetScope = targetScope, strategy = strategy, additions = 0, changes = {}, omissions = {}, conflicts = {}, migrations = {}, sensitiveFields = package.sensitivity == "sensitive" and { "player identities", "ledger history" } or {}, expectedLedgerImpact = { additions = package.scope == "full" and count(package.payload.ledger and package.payload.ledger.transactions or {}) or 0, duplicates = 0 }, createdAt = time(), actor = Dibs.Permissions and Dibs.Permissions.CanonicalPlayerId and Dibs.Permissions.CanonicalPlayerId(actor) or Dibs.GetPlayerName(), decision = "pending" }
   if package.scope == "full" then
     preview.recoveryClass = "LEGACY_DIAGNOSTIC_ONLY"
@@ -370,10 +477,22 @@ function M.Preview(text, targetScope, strategy, actor)
   end
   local newFields = {}
   if targetScope == "local" then
-    describeMapDiff(preview.changes, newFields, package.payload.presentation, current, "presentation")
+    local presentation = type(package.payload.presentation) == "table" and package.payload.presentation or {}
+    for key in pairs(presentation) do
+      if pick(presentation, PRESENTATION_KEYS)[key] == nil then
+        preview.omissions[#preview.omissions + 1] = "presentation." .. tostring(key) .. " (outside local scope)"
+      end
+    end
+    describeMapDiff(preview.changes, newFields, pick(presentation, PRESENTATION_KEYS), current, "presentation")
     describeMapDiff(preview.changes, newFields, package.payload.profile, db.profiles and db.profiles["local"] and db.profiles["local"][characterKey()], "profile")
   elseif targetScope == "guild" then
-    describeMapDiff(preview.changes, newFields, package.payload.settings, db.settings, "settings")
+    local settings = type(package.payload.settings) == "table" and package.payload.settings or {}
+    for key in pairs(settings) do
+      if pick(settings, POLICY_KEYS)[key] == nil then
+        preview.omissions[#preview.omissions + 1] = "settings." .. tostring(key) .. " (outside guild scope)"
+      end
+    end
+    describeMapDiff(preview.changes, newFields, pick(settings, POLICY_KEYS), db.settings, "settings")
     describeMapDiff(preview.changes, newFields, package.payload.rankRules, db.rankRules, "rankRules")
     describeMapDiff(preview.changes, newFields, package.payload.seasons, db.seasons, "seasons")
     describeMapDiff(preview.changes, newFields, package.payload.profiles, db.profiles and db.profiles.guild, "profiles")
@@ -386,16 +505,24 @@ function M.Preview(text, targetScope, strategy, actor)
     for key in pairs(package.payload) do
       if key ~= "ledger" then preview.changes[#preview.changes + 1] = tostring(key) end
     end
+    local incomingLedger = package.payload.ledger
+    local canonicalOk, canonicalResult = canonicalImportStatus(incomingLedger, db.ledgers)
+    if not canonicalOk then return nil, canonicalResult end
+    local rowsOk, rowsReason = canonicalTransactionRowsStatus(incomingLedger, db.ledger)
+    if not rowsOk then return nil, rowsReason end
+    preview.expectedLedgerImpact.canonicalDuplicates = canonicalResult
   end
   preview.additions = #newFields + (preview.expectedLedgerImpact.additions or 0)
   if package.sensitivity == "redacted" then preview.omissions[#preview.omissions + 1] = "sensitive fields (redacted by exporter)" end
-  db.pendingImports = db.pendingImports or {}; db.pendingImports[preview.previewId] = { preview = preview, package = package }
+  if type(db.pendingImports) ~= "table" then db.pendingImports = {} end
+  db.pendingImports[preview.previewId] = { preview = preview, package = package }
+  M.PrunePendingPreviews(db, "pendingImports", preview.createdAt)
   M.RecordAudit("import_preview", package.scope, true, nil, actor); return preview
 end
 
-local function mergeInto(target, source, replace)
-  if replace then for k in pairs(target) do target[k] = nil end end
-  for k, v in pairs(source or {}) do target[k] = clone(v) end
+local function mergeInto(target, source, replace, keys)
+  if replace then for _, key in ipairs(keys) do target[key] = nil end end
+  for key, value in pairs(pick(source or {}, keys)) do target[key] = value end
 end
 
 local function vaultIdentity(record)
@@ -455,7 +582,7 @@ end
 ---@return string|nil reasonCode
 -- Side effects: Applies only a previously validated preview and records audit/safety snapshot data.
 function M.Apply(previewId, confirm, reason, actor)
-  local db = Dibs.GetDB(); local pending = db.pendingImports and db.pendingImports[previewId]; if not pending then return nil, "PREVIEW_NOT_FOUND" end
+  local db = Dibs.GetDB(); local pending = M.PrunePendingPreviews(db, "pendingImports")[previewId]; if not pending then return nil, "PREVIEW_NOT_FOUND" end
   if confirm ~= true then
     pending.preview.decision = "cancelled"
     db.pendingImports[previewId] = nil
@@ -464,9 +591,6 @@ function M.Apply(previewId, confirm, reason, actor)
   end
   local package, preview = pending.package, pending.preview
   if not roleAllowed(preview.targetScope, actor) then return nil, "GUILD_ADMIN_REQUIRED" end
-  -- Preview can be backed by a decoded envelope or a caller-provided Lua
-  -- package. Validate every collection Apply consumes before any replace-mode
-  -- merge or SavedVariables write.
   local payload = package and package.payload
   if type(payload) ~= "table" then return nil, "INVALID_PAYLOAD" end
   local mapFields = package.scope == "local" and { "presentation", "profile" }
@@ -491,6 +615,10 @@ function M.Apply(previewId, confirm, reason, actor)
   end
   if package.scope == "full" then
     if package.sourceGuild ~= Dibs.currentGuildKey then return nil, "CROSS_GUILD_FULL_BLOCKED" end
+    local canonicalOk, canonicalReason = canonicalImportStatus(payload.ledger, db.ledgers)
+    if not canonicalOk then return nil, canonicalReason end
+    local rowsOk, rowsReason = canonicalTransactionRowsStatus(payload.ledger, db.ledger)
+    if not rowsOk then return nil, rowsReason end
     if db.preDibs ~= nil and type(db.preDibs) ~= "table" then return nil, "INVALID_TARGET_PREDIBS" end
     local vaultAdds, vaultReason = planVaultMerge((db.preDibs or {}).acquisitions, (payload.preDibs or {}).acquisitions, Dibs.currentGuildKey)
     if not vaultAdds then return nil, vaultReason end
@@ -521,7 +649,9 @@ function M.Apply(previewId, confirm, reason, actor)
       -- B03 local-canonical transactions are never imported as a second durable
       -- write path. Existing identical IDs remain idempotent; a future baseline
       -- reconciliation batch owns any cross-client canonical ledger adoption.
-      if not existing and tx.classification == "LOCAL_CANONICAL" then return nil, "CANONICAL_LEDGER_IMPORT_UNAVAILABLE" end
+      if not existing and (tx.classification == "LOCAL_CANONICAL" or tx.operationId ~= nil) then
+        return nil, "CANONICAL_LEDGER_IMPORT_UNAVAILABLE"
+      end
       if not existing then staged[id] = tx end
     end
     for ref, id in pairs(ledger.awardTransactions or {}) do
@@ -546,9 +676,33 @@ function M.Apply(previewId, confirm, reason, actor)
     for k, v in pairs(ledger.evidenceTransactions or {}) do targetLedger.evidenceTransactions[k] = targetLedger.evidenceTransactions[k] or v end
     local stagedFields = {}
     for key, value in pairs(payload) do
-      if key ~= "ledger" and key ~= "ledgers" and key ~= "activeLedgerId" and key ~= "preDibs" then
+      if key ~= "ledger" and key ~= "ledgers" and key ~= "activeLedgerId" and key ~= "preDibs"
+        and key ~= "ledgerDeletionTombstones" and key ~= "backups" and key ~= "backupRetention"
+        and key ~= "pendingImports" and key ~= "pendingRestores" and key ~= "auditLog" then
         stagedFields[key] = clone(value)
       end
+    end
+    if type(db.governance) == "table" then
+      local governance = stagedFields.governance or clone(db.governance)
+      for _, field in ipairs({ "ledgerDeletionRequests", "ledgerDeletionRecords" }) do
+        if type(db.governance[field]) == "table" then
+          governance[field] = governance[field] or {}
+          for ledgerId, record in pairs(db.governance[field]) do
+            governance[field][ledgerId] = clone(record)
+          end
+        end
+      end
+      governance.auditLog = governance.auditLog or {}
+      for _, event in ipairs(db.governance.auditLog or {}) do
+        if event.action == "LEDGER_DELETED" or event.action == "LEDGER_DELETION_AUTHORIZED" then
+          local found = false
+          for _, existing in ipairs(governance.auditLog) do
+            if existing.action == event.action and existing.ledgerId == event.ledgerId then found = true; break end
+          end
+          if not found then table.insert(governance.auditLog, clone(event)) end
+        end
+      end
+      stagedFields.governance = governance
     end
     local stagedPreDibs
     if payload.preDibs then
@@ -576,11 +730,11 @@ function M.Apply(previewId, confirm, reason, actor)
     end
   elseif preview.targetScope == "local" then
     local stagedSettings = clone(db.settings or {})
-    mergeInto(stagedSettings, payload.presentation or {}, preview.strategy == "replace")
+    mergeInto(stagedSettings, payload.presentation or {}, preview.strategy == "replace", PRESENTATION_KEYS)
     db.settings = stagedSettings
   else
     local stagedSettings = clone(db.settings or {})
-    mergeInto(stagedSettings, payload.settings or {}, preview.strategy == "replace")
+    mergeInto(stagedSettings, payload.settings or {}, preview.strategy == "replace", POLICY_KEYS)
     local stagedRankRules = payload.rankRules and clone(payload.rankRules)
     local stagedSeasons = payload.seasons and clone(payload.seasons)
     local stagedProfiles

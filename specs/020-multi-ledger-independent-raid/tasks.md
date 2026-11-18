@@ -126,9 +126,25 @@
 - [X] T037 [P] Add dated entry in `CHANGELOG.md` documenting multi-ledger, officer setup empowerment, and independent raid sessions
 - [X] T038 Verify git diff, format consistency, and whitespace validation via `git diff --check`
 
+## Phase 8: Confirmed restore-tombstone correction — 2026-11-15
+
+- [x] T039 [P] Add normal-service restore regressions for an archived ledger deleted after a full backup, repeated restore, and importing state created before deletion. **Validated 2026-11-15:** new regression plus existing restore-safety suite passes 8/8; `Backup.lua` compiles under Lua 5.1.
+- [x] T040 Preserve live tombstones and deletion evidence across restore so deleted ledgers remain absent; retain append-only history and existing deletion authority. The additive tombstone merge was already present in the shared pending `Backup.lua` diff; T039 now protects its behavior against regression.
+- [x] T041 Repair the Officer independent-session start button to read title/points through the existing control helper rather than a missing AceGUI API. **Validated 2026-11-15:** 4/4 actual button/service tests under Fengari, Lua 5.4.6 and Lua 5.1.5; independent QA 4/4 under Lua 5.4.6. No session or accounting contract changed.
+
 ---
 
 ## Dependencies & Execution Order
+
+- [x] T042 Refuse an existing Pre-Dib request ID claimed in another ledger through
+  both `PreDibs.UpsertFromSync` and `ApplyVerifiedSyncRecord`; inspect existing
+  guild-scoped storage before initializing the claimed store. Preserve the
+  `LEDGER_NOT_APPROVED` contract and all original data. RF-0045 now covers both
+  directions and both paths with full-state hashes; existing ledger-boundary,
+  migration and synchronization suites remain green in **383/383 on 36 suites
+  under Lua 5.1.5 and Fengari**, 2026-11-17. Two additional legacy-alias regressions
+  preserve lazy ledger tagging of untagged records in an aliased secondary store.
+  No new historical request migration.
 
 ### Phase Dependencies
 

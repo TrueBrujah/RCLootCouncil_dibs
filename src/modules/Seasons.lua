@@ -159,6 +159,12 @@ local function validateCatalog(record)
   end
   local seasons, seasonReason = normalizeCatalogSeasons(record.seasons)
   if not seasons then return false, seasonReason end
+  if record.currentSeasonId then
+    local current = seasons[record.currentSeasonId]
+    if not current or current.isActive ~= true or current.isArchived then
+      return false, "INVALID_SEASON_CATALOG_CURRENT_SEASON"
+    end
+  end
   local guildLootRules = record.guildConfiguration and record.guildConfiguration.guildLootRules
   if guildLootRules ~= nil then
     if not (Dibs.LootRules and Dibs.LootRules.NormalizeSnapshot) then
@@ -187,8 +193,9 @@ end
 ---@doc.audit false
 ---@doc.help-key UI_HELP_SEASON
 ---@doc.label-key DOC_SEASON_LABEL
-function Dibs.Seasons.Create(name, dbOverride)
+local function createSeason(name, dbOverride, options)
   ensureState(dbOverride)
+  options = type(options) == "table" and options or {}
 
   local count = 0
   for _ in pairs(Dibs.db.seasons) do
@@ -208,14 +215,16 @@ function Dibs.Seasons.Create(name, dbOverride)
     return tostring(candidate)
   end
 
-  local seasonId = nextSeasonId()
+  local seasonId = options.seasonId or nextSeasonId()
+  if type(seasonId) ~= "string" or seasonId == "" or #seasonId > 96 then return nil end
+  if Dibs.db.seasons[seasonId] then return nil end
   local guard = 0
-  while Dibs.db.seasons[seasonId] and guard < 10 do
+  while not options.seasonId and Dibs.db.seasons[seasonId] and guard < 10 do
     seasonId = nextSeasonId()
     guard = guard + 1
   end
 
-  if Dibs.db.seasons[seasonId] then
+  if not options.seasonId and Dibs.db.seasons[seasonId] then
     seasonId = seasonId .. "-" .. tostring(time())
   end
 
@@ -223,14 +232,25 @@ function Dibs.Seasons.Create(name, dbOverride)
     id = seasonId,
     name = seasonName,
     createdAt = time(),
-    isActive = true,
+    isActive = options.draft ~= true,
+    isDraft = options.draft == true,
     isArchived = false,
     note = "Created by Dibs",
   }
 
   Dibs.db.seasons[season.id] = season
-  setCurrentSeason(season.id)
+  if options.draft ~= true then setCurrentSeason(season.id) end
   return season
+end
+
+function Dibs.Seasons.Create(name, dbOverride)
+  return createSeason(name, dbOverride)
+end
+
+-- Creates a native season identity for a prepared raid season without making
+-- it current or changing the active Dibs ledger.
+function Dibs.Seasons.CreateDraft(name, seasonId, dbOverride)
+  return createSeason(name, dbOverride, { draft = true, seasonId = seasonId })
 end
 
 function Dibs.Seasons.GetById(seasonId, dbOverride)
@@ -244,15 +264,20 @@ end
 
 function Dibs.Seasons.GetCurrent(dbOverride)
   ensureState(dbOverride)
-  if Dibs.db.currentSeasonId and Dibs.db.seasons[Dibs.db.currentSeasonId] and not Dibs.db.seasons[Dibs.db.currentSeasonId].isArchived then
-    return Dibs.db.seasons[Dibs.db.currentSeasonId]
+  local selected = Dibs.db.currentSeasonId and Dibs.db.seasons[Dibs.db.currentSeasonId]
+  if selected and selected.isActive == true and not selected.isArchived and not selected.isDraft then
+    return selected
   end
 
   if not next(Dibs.db.seasons) then
+    if Dibs.db.currentSeasonId then
+      setCurrentSeason(nil)
+      return nil
+    end
     return Dibs.Seasons.Create("Season 1", dbOverride)
   end
   for _, season in pairs(Dibs.db.seasons) do
-    if not season.isArchived then
+    if season.isActive == true and not season.isArchived and not season.isDraft then
       setCurrentSeason(season.id)
       return season
     end
@@ -274,12 +299,15 @@ end
 
 function Dibs.Seasons.SetCurrent(seasonId)
   ensureState()
-  if Dibs.db.seasons[seasonId] and not Dibs.db.seasons[seasonId].isArchived then
+  local season = Dibs.db.seasons[seasonId]
+  local roster = Dibs.db.seasonalRoster and Dibs.db.seasonalRoster.seasons[seasonId]
+  if roster and roster.activationAdopted ~= true then return false, "ACTIVATION_MANIFEST_REQUIRED" end
+  if season and season.isActive == true and not season.isDraft and not season.isArchived then
     setCurrentSeason(seasonId)
     return true
   end
 
-  return false
+  return false, "SEASON_NOT_FOUND"
 end
 
 function Dibs.Seasons.List(includeArchived, dbOverride)
@@ -509,7 +537,12 @@ function Dibs.Seasons.ApplyCatalog(record, sender)
   Dibs.db.seasons = mergedSeasons
   if type(record.rankRules) == "table" then Dibs.db.rankRules = copy(record.rankRules) end
   applyGuildConfiguration(record.guildConfiguration)
-  if record.currentSeasonId and Dibs.db.seasons[record.currentSeasonId] and not Dibs.db.seasons[record.currentSeasonId].isArchived then
+  local rosterSeason = Dibs.db.seasonalRoster and Dibs.db.seasonalRoster.seasons[record.currentSeasonId]
+  local activation = rosterSeason and rosterSeason.activationManifest
+  if not record.currentSeasonId then
+    setCurrentSeason(nil)
+  elseif Dibs.db.seasons[record.currentSeasonId] and not Dibs.db.seasons[record.currentSeasonId].isArchived
+    and (not rosterSeason or (activation and activation.state == "COMMITTED" and rosterSeason.activationAdopted == true)) then
     setCurrentSeason(record.currentSeasonId)
   end
   state.catalogRevision, state.hash = record.catalogRevision, record.contentHash
@@ -519,4 +552,18 @@ function Dibs.Seasons.ApplyCatalog(record, sender)
     pcall(Dibs.RCLootCouncil.RefreshConfigProjection)
   end
   return true, "SEASON_CATALOG_APPLIED", copy(record)
+end
+
+-- A seasonal visibility commit is one guild-bucket assignment. All validation
+-- and domain staging must complete before entering this non-yielding boundary.
+function Dibs.Seasons.CommitSeasonGuildBucket(expected, staged)
+  local root = _G.RCLootCouncil_dibsDB
+  local guildKey = Dibs.GetGuildKey()
+  if type(root) ~= "table" or type(root.guilds) ~= "table" or root.guilds[guildKey] ~= expected
+    or Dibs.GetDB() ~= expected or type(staged) ~= "table" then return false, "STALE_GUILD_BUCKET" end
+  local changed = expected.currentSeasonId ~= staged.currentSeasonId
+  root.guilds[guildKey] = staged
+  Dibs.db, _G.DibsDB = staged, staged
+  if changed then currentSeasonGeneration = currentSeasonGeneration + 1 end
+  return true
 end

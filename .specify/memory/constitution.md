@@ -516,4 +516,4 @@ XIX: add a dated changelog note and increment the addon TOC version when the add
 or behavior changes. Specifications, plans, tasks, release notes, and code reviews MUST
 check compliance with the current constitution before implementation is accepted.
 
-**Version**: 2.7.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-10-10
+**Version**: 2.8.0 | **Ratified**: TODO(RATIFICATION_DATE): original adoption date unknown | **Last Amended**: 2026-10-10

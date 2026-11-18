@@ -1,6 +1,32 @@
 local clients = require("helpers.canonical_operation_clients")
 local fixtures = require("helpers.dispute_fixtures")
 
+local function openOperationTransportGate(dibs)
+  local writer = dibs.Ledger.CommitDisputeOperation
+  assert_true(type(writer) == "function", "canonical operation writer is unavailable")
+  for index = 1, 64 do
+    local name = debug.getupvalue(writer, index)
+    if name == nil then break end
+    if name == "DISPUTE_OPERATION_WRITES_ENABLED" then debug.setupvalue(writer, index, true) end
+    if name == "operationReadinessProbe" then debug.setupvalue(writer, index, function() return true end) end
+  end
+  dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+end
+
+local function captureAccountingState(dibs, names, seasonId, ledgerId)
+  ledgerId = ledgerId or "guild-primary"
+  local ledger = dibs.GetDB().ledgers[ledgerId]
+  local balances = {}
+  for _, name in ipairs(names or {}) do
+    balances[name] = dibs.Ledger.GetBalance(name, seasonId or dibs.GetCurrentSeasonId(), ledgerId)
+  end
+  return {
+    transactions = clients.DeepCopy(ledger and ledger.transactions or {}),
+    balances = balances,
+    canonical = clients.DeepCopy(dibs.Ledger.GetCanonicalState(ledgerId)),
+  }
+end
+
 describe("RF-0012 isolated canonical-operation clients", function()
   it("converges through serialized SyncV2 dispatch without shared client state", function()
     local world = clients.new()
@@ -123,16 +149,11 @@ describe("RF-0012 isolated canonical-operation clients", function()
     }
     -- The coordinator gate is open so the record reaches the receivers. The
     -- receivers stay closed, which is what this case proves.
-    coordinator.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    openOperationTransportGate(coordinator.dibs)
     local before = {}
     for _, follower in ipairs(followers) do
-      before[follower.name] = fixtures.captureAccountingState(
-        follower.dibs,
-        nil,
-        world.names,
-        follower.dibs.GetCurrentSeasonId(),
-        "guild-primary"
-      )
+      before[follower.name] = captureAccountingState(follower.dibs, world.names,
+        follower.dibs.GetCurrentSeasonId(), "guild-primary")
     end
 
     assert_true(coordinator.dibs.Sync.Send({
@@ -161,13 +182,8 @@ describe("RF-0012 isolated canonical-operation clients", function()
       gateReasons[#gateReasons + 1] = gateReason ~= nil
     end
     for _, follower in ipairs(followers) do
-      local after = fixtures.captureAccountingState(
-        follower.dibs,
-        nil,
-        world.names,
-        follower.dibs.GetCurrentSeasonId(),
-        "guild-primary"
-      )
+      local after = captureAccountingState(follower.dibs, world.names,
+        follower.dibs.GetCurrentSeasonId(), "guild-primary")
       assert_true(clients.DeepEqual(before[follower.name], after), "disabled receiver changed accounting state")
     end
     for index, gateReason in ipairs(gateReasons) do
@@ -185,21 +201,94 @@ local function newWorld()
 end
 
 local function captureFollower(follower, world)
-  return fixtures.captureAccountingState(
-    follower.dibs,
-    nil,
-    world.names,
-    follower.dibs.GetCurrentSeasonId(),
-    "guild-primary"
-  )
+  return captureAccountingState(follower.dibs, world.names,
+    follower.dibs.GetCurrentSeasonId(), "guild-primary")
 end
 
 describe("RF-0012 SyncV2 canonical operation protocol", function()
+  for _, cutAfterRows in ipairs({ 0, 1, 2 }) do
+    it("recovers a serialized receiver interruption after " .. cutAfterRows .. " projected rows without double application", function()
+      local world = newWorld()
+      local coordinator = world:Load("Coordinator-Realm")
+      local dibs = coordinator.dibs
+      local seasonId = dibs.GetCurrentSeasonId()
+      local operationId = "receiver-cut-" .. tostring(cutAfterRows)
+      local original = assert(dibs.Ledger.AddTransaction(fixtures.transaction(coordinator.name, seasonId, {
+        transactionId = operationId .. "-original",
+      }), "guild-primary"))
+      local request = assert(dibs.Disputes.CreateReport({ category = "wrong_item_player", transactionRef = original.transactionId }))
+      world:ActivateV2()
+      local follower = world:Load("Player-Realm", world:Snapshot(coordinator))
+      local before = captureAccountingState(follower.dibs, world.names, seasonId)
+      local actor = assert(dibs.Identity.CreateSnapshot(coordinator.name))
+      local recipient = assert(dibs.Identity.CreateSnapshot("Player-Realm"))
+      local evidenceId = request.evidence[1].evidenceId or false
+      local entries = {}
+      for index, memberKey in ipairs({ actor.memberKey, recipient.memberKey }) do
+        entries[index] = {
+          operationId = operationId, entryIndex = index, transactionId = operationId .. "-e" .. index,
+          guildKey = dibs.GetGuildKey(), ledgerId = "guild-primary", memberKey = memberKey,
+          seasonId = seasonId, actionType = "DIB_ADMIN_ADJUSTMENT", quantityDelta = index == 1 and 1 or -1,
+          evidenceId = evidenceId, originalTransactionId = original.transactionId,
+          requestId = request.requestId, requestRevision = request.revision,
+        }
+      end
+      local operation = assert(dibs.Ledger.BuildDisputeOperation({
+        schemaVersion = 1, operationId = operationId, operationType = "DISPUTE_TARGET_TRANSFER",
+        guildKey = dibs.GetGuildKey(), ledgerId = "guild-primary", requestId = request.requestId,
+        requestRevision = request.revision, evidenceId = evidenceId, originalTransactionId = original.transactionId,
+        actor = actor, reason = "Interrupted receiver regression", timestamp = 1700000000, signedEntries = entries,
+      }))
+      openOperationTransportGate(dibs)
+      openOperationTransportGate(follower.dibs)
+      world:TakePackets()
+      local receiver = follower.dibs.Ledger.ApplyDisputeOperationCommit
+      local seamIndex, append
+      for index = 1, 64 do
+        local name, value = debug.getupvalue(receiver, index)
+        if not name then break end
+        if name == "appendValidated" then seamIndex, append = index, value; break end
+      end
+      assert_not_nil(seamIndex)
+      local rows = 0
+      debug.setupvalue(receiver, seamIndex, function(...)
+        if rows == cutAfterRows then error("intentional receiver cut") end
+        rows = rows + 1
+        local result = append(...)
+        if cutAfterRows == 2 and rows == 2 then error("intentional receiver cut") end
+        return result
+      end)
+      local accepted = dibs.Ledger.CommitDisputeOperation({ actor = coordinator.name, ledgerId = "guild-primary" }, operation)
+      assert_true(accepted.accepted, tostring(accepted.reasonCode))
+      local delivered, failure = pcall(function() world:Pump() end)
+      debug.setupvalue(receiver, seamIndex, append)
+      assert_false(delivered)
+      assert_true(tostring(failure):find("intentional receiver cut", 1, true) ~= nil)
+      local interrupted = world:Snapshot(follower)
+      world:TakePackets()
+      world.clients["Player-Realm"] = nil -- Drop the interrupted process; retain only its serialized SavedVariables.
+      local restarted = world:Load("Player-Realm", interrupted)
+      assert_true(restarted.dibs.canonicalOperationRecoveryStatus.rebuilt)
+      local recovered = captureAccountingState(restarted.dibs, world.names, seasonId)
+      assert_equal(accepted.value.commitHash, recovered.canonical.rootHash)
+      assert_equal(accepted.value.sequence + 1, recovered.canonical.nextSeq)
+      assert_equal(before.balances[coordinator.name] + 1, recovered.balances[coordinator.name])
+      assert_equal(before.balances["Player-Realm"] - 1, recovered.balances["Player-Realm"])
+      assert_not_nil(restarted.dibs.GetDB().disputes.operationStates[operationId])
+      openOperationTransportGate(restarted.dibs)
+      world:TakePackets()
+      assert_true(dibs.Sync.SendDisputeOperationCommit(accepted.value))
+      world:Pump()
+      assert_true(clients.DeepEqual(recovered, captureAccountingState(restarted.dibs, world.names, seasonId)),
+        "replay changed the recovered balances, identifiers, sequence or root")
+    end)
+  end
+
   it("advertises the ledger operation capability with an independent version", function()
     local world = newWorld()
     local coordinator = world:ActivateV2()
     -- T021: the capability is advertised only while the shared gate is open.
-    coordinator.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    openOperationTransportGate(coordinator.dibs)
     local envelope = assert(coordinator.dibs.Sync.BuildEnvelope({
       type = "LEDGER_DIGEST",
       ledgerId = "guild-primary",
@@ -228,7 +317,7 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
       contentHash = "synthetic",
       chunkCount = 1,
     }, "GUILD")
-    assert_false(sent == true, "an unsupported operation entity was accepted for sending")
+    assert_true(sent == true, "the transfer fixture was not sent to exercise receiver allowlists")
     assert_true(world:Pump() >= 0)
 
     local after = captureFollower(follower, world)
@@ -268,8 +357,8 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
     local savedVariables = coordinator.env.RCLootCouncil_dibsDB
     local follower = world:Load("Player-Realm", savedVariables)
     -- The gate is open on both sides so the sender check is the one exercised.
-    coordinator.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
-    follower.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    openOperationTransportGate(coordinator.dibs)
+    openOperationTransportGate(follower.dibs)
     local before = captureFollower(follower, world)
 
     -- A forged record claiming a coordinator that is not the local one.
@@ -496,7 +585,7 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
   it("advertises the operation capability only when the shared gate is open", function()
     local world = newWorld()
     local coordinator = world:ActivateV2()
-    coordinator.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    openOperationTransportGate(coordinator.dibs)
     local envelope = assert(coordinator.dibs.Sync.BuildEnvelope({
       type = "LEDGER_DIGEST",
       ledgerId = "guild-primary",
@@ -569,7 +658,7 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
     local before = dibs.Ledger.GetCanonicalState()
     local result = dibs.Ledger.CommitDisputeOperation({ actor = coordinator.name, ledgerId = "guild-primary" }, built)
     assert_false(result.accepted, "the coordinator accepted an operation while the gate is closed")
-    assert_equal("CANONICAL_DISPUTE_OPERATIONS_DISABLED", result.reasonCode)
+    assert_equal("CANONICAL_OPERATION_WRITES_DISABLED", result.reasonCode)
     local after = dibs.Ledger.GetCanonicalState()
     assert_equal(before.nextSeq, after.nextSeq, "a refused acceptance advanced the sequence")
     assert_equal(before.rootHash, after.rootHash, "a refused acceptance changed the root hash")
@@ -592,7 +681,7 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
     local savedVariables = coordinator.env.RCLootCouncil_dibsDB
     local player = world:Load("Player-Realm", savedVariables)
     local officer = world:Load("Officer-Realm", savedVariables)
-    local clients = { player, officer }
+    local replicas = { player, officer }
 
     local actor = assert(dibs.Identity.CreateSnapshot(coordinator.name))
     local recipient = assert(dibs.Identity.CreateSnapshot(world.names[2]))
@@ -629,19 +718,36 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
       if name == "DISPUTE_OPERATION_WRITES_ENABLED" then debug.setupvalue(writer, index, true) end
       if name == "operationReadinessProbe" then debug.setupvalue(writer, index, function() return true end) end
     end
-    dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
-    for _, client in ipairs(clients) do
-      client.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    openOperationTransportGate(dibs)
+    for _, client in ipairs(replicas) do
+      openOperationTransportGate(client.dibs)
     end
 
     local result = writer({ actor = coordinator.name, ledgerId = "guild-primary" }, built)
     assert_true(result.accepted, tostring(result.reasonCode))
+    local alteredReplay = clients.DeepCopy(result.value)
+    alteredReplay.operation.reason = alteredReplay.operation.reason .. " altered"
+    local alteredResult = player.dibs.Ledger.ApplyDisputeOperationCommit(
+      alteredReplay, coordinator.name, "guild-primary")
+    assert_false(alteredResult.accepted, "receiver acknowledged altered content under a known commit hash")
+    assert_equal("CANONICAL_OPERATION_HASH_MISMATCH", alteredResult.reasonCode)
+    -- A remote receive must not create/reconcile canonical state when its
+    -- persisted ledger is missing that state; the queued Sync delivery below
+    -- succeeds after the fixture restores the valid pre-commit snapshot.
+    local followerLedger = player.dibs.GetDB().ledgers["guild-primary"]
+    local followerCanonical = followerLedger.canonical
+    followerLedger.canonical = nil
+    local refused = player.dibs.Ledger.ApplyDisputeOperationCommit(result.value, coordinator.name, "guild-primary")
+    assert_false(refused.accepted)
+    assert_equal("CANONICAL_STATE_MISSING", refused.reasonCode)
+    assert_nil(followerLedger.canonical, "receiver mutated missing canonical state before the recovery gate")
+    followerLedger.canonical = followerCanonical
     assert_true(world:Pump() > 0, "the operation commit was not delivered")
 
     -- Every client converges on the same canonical state.
     local expected = dibs.Ledger.GetCanonicalState()
     local expectedBalance = dibs.Ledger.GetBalance(coordinator.name, seasonId, "guild-primary")
-    for _, client in ipairs(clients) do
+    for _, client in ipairs(replicas) do
       local state = client.dibs.Ledger.GetCanonicalState()
       assert_equal(expected.epoch, state.epoch, client.name .. " epoch mismatch")
       assert_equal(expected.nextSeq, state.nextSeq, client.name .. " sequence mismatch")
@@ -655,7 +761,7 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
 
     -- Exactly 100 duplicate/retry deliveries must change nothing.
     local before = {}
-    for _, client in ipairs(clients) do
+    for _, client in ipairs(replicas) do
       before[client.name] = {
         state = client.dibs.Ledger.GetCanonicalState(),
         balance = client.dibs.Ledger.GetBalance(coordinator.name, seasonId, "guild-primary"),
@@ -672,7 +778,7 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
       world:Pump()
     end
 
-    for _, client in ipairs(clients) do
+    for _, client in ipairs(replicas) do
       local state = client.dibs.Ledger.GetCanonicalState()
       assert_equal(before[client.name].state.nextSeq, state.nextSeq,
         "a retry advanced the sequence on " .. client.name)
@@ -751,7 +857,8 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
     if commitHash then commit.commitHash = commitHash end
 
     local before = follower.dibs.Ledger.GetCanonicalState()
-    local applied = follower.dibs.Ledger.ApplyOperationCommit(commit, coordinator.name, "guild-primary")
+    openOperationTransportGate(follower.dibs)
+    local applied = follower.dibs.Ledger.ApplyDisputeOperationCommit(commit, coordinator.name, "guild-primary")
     assert_false(applied.accepted, "a stale epoch commit was accepted")
     assert_equal("STALE_EPOCH", applied.reasonCode)
     local after = follower.dibs.Ledger.GetCanonicalState()
@@ -814,7 +921,7 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
       if name == "DISPUTE_OPERATION_WRITES_ENABLED" then debug.setupvalue(writer, index, true) end
       if name == "operationReadinessProbe" then debug.setupvalue(writer, index, function() return true end) end
     end
-    dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+    openOperationTransportGate(dibs)
     local result = writer({ actor = coordinator.name, ledgerId = "guild-primary" }, built)
     assert_true(result.accepted, tostring(result.reasonCode))
 
@@ -826,5 +933,34 @@ describe("RF-0012 SyncV2 canonical operation protocol", function()
     assert_equal(before.nextSeq, after.nextSeq, "an incompatible peer advanced its sequence")
     assert_equal(before.rootHash, after.rootHash, "an incompatible peer changed its root hash")
     assert_equal(beforeBalance, afterBalance, "an incompatible peer changed a balance")
+  end)
+
+  it("sends operation commits as serialized GUILD detail only when the shared gate is open", function()
+    local world = newWorld()
+    local coordinator = world:ActivateV2()
+    local dibs = coordinator.dibs
+    local sentWhileClosed, closedReason = dibs.Sync.SendDisputeOperationCommit({
+      recordClass = "LEDGER_OPERATION_COMMIT", ledgerEpoch = 7, sequence = 1,
+      commitHash = "synthetic-commit-hash", ledgerId = "guild-primary",
+    })
+    assert_false(sentWhileClosed == true)
+    assert_equal("CANONICAL_DISPUTE_OPERATIONS_DISABLED", closedReason)
+
+    -- Open only the private test seam; no production SavedVariables/UI switch exists.
+    openOperationTransportGate(dibs)
+    local sent, reason = dibs.Sync.SendDisputeOperationCommit({
+      recordClass = "LEDGER_OPERATION_COMMIT", ledgerEpoch = 7, sequence = 1,
+      commitHash = "synthetic-commit-hash", ledgerId = "guild-primary",
+    })
+    assert_true(sent, tostring(reason))
+    local packets = world:TakePackets()
+    assert_true(#packets >= 3, "the commit detail transfer was not serialized")
+    local begin = assert(dibs.Ace3.Deserialize(packets[1].payload))
+    assert_equal("GUILD", packets[1].channel)
+    assert_equal("TRANSFER_BEGIN", begin.type)
+    assert_equal("LEDGER_OPERATION_COMMIT", begin.entityType)
+    assert_equal(true, begin.protocol.capabilities.ledgerOperationCommit)
+    assert_equal(1, begin.protocol.operationProtocolVersion)
+    assert_equal(1, begin.protocol.operationSchemaVersion)
   end)
 end)

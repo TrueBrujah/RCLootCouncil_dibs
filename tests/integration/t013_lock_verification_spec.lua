@@ -56,8 +56,8 @@ describe("T013 Readiness Lock Verification", function()
     -- Verify the Ledger API is gated by the feature flag
     -- DISPUTE_OPERATION_WRITES_ENABLED should be false by default
     local result = dibs.Ledger.CommitDisputeOperation({}, {})
-    assert_equal(false, result.canonicalAccepted, "Internal API must be blocked when feature is disabled")
-    assert_equal("CANONICAL_DISPUTE_OPERATIONS_DISABLED", result.reasonCode)
+    assert_equal(false, result.accepted, "Internal API must be blocked when feature is disabled")
+    assert_equal("CANONICAL_OPERATION_WRITES_DISABLED", result.reasonCode)
   end)
 
   it("Keeps the release flag out of the local SavedVariables settings", function()

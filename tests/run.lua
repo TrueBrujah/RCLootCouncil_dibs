@@ -103,20 +103,6 @@ local function discoverTests()
   error("No test discovery backend available. Set DIBS_TEST_FILES.")
 end
 
-local files = discoverTests()
-for _, path in ipairs(files) do
-  local chunk, loadError = loadfile(path)
-  if not chunk then
-    io.stderr:write("Unable to load " .. path .. ": " .. tostring(loadError) .. "\n")
-    os.exit(1)
-  end
-  local ok, declarationError = pcall(chunk)
-  if not ok then
-    io.stderr:write("Unable to declare " .. path .. ": " .. tostring(declarationError) .. "\n")
-    os.exit(1)
-  end
-end
-
 local passed, failed = 0, 0
 local function runSuite(suite, prefix, inheritedBefore, inheritedAfter)
   local name = prefix == "" and suite.name or (prefix .. " / " .. suite.name)
@@ -151,7 +137,26 @@ local function runSuite(suite, prefix, inheritedBefore, inheritedAfter)
   end
 end
 
-for _, suite in ipairs(suites) do runSuite(suite, "", {}, {}) end
+local files = discoverTests()
+for _, path in ipairs(files) do
+  local chunk, loadError = loadfile(path)
+  if not chunk then
+    io.stderr:write("Unable to load " .. path .. ": " .. tostring(loadError) .. "\n")
+    os.exit(1)
+  end
+  local ok, declarationError = pcall(chunk)
+  if not ok then
+    io.stderr:write("Unable to declare " .. path .. ": " .. tostring(declarationError) .. "\n")
+    os.exit(1)
+  end
+
+  -- Specs are independent files. Execute them as they are declared so a full
+  -- run does not retain every test closure and fixture until the end.
+  local declaredSuites = suites
+  for _, suite in ipairs(declaredSuites) do runSuite(suite, "", {}, {}) end
+  suites = {}
+  currentSuite = nil
+end
 
 io.write(string.format("\n%d passed, %d failed (%d files)\n", passed, failed, #files))
 if failed > 0 then os.exit(1) end

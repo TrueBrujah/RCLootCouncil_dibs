@@ -836,12 +836,12 @@ end
 
 local function getJournalEncounterDetails(index, instanceID)
   if type(EJ_GetEncounterInfoByIndex) ~= "function" then return nil end
-  local ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index, instanceID)
+  local ok, name, description, encounterID = pcall(EJ_GetEncounterInfoByIndex, index, instanceID)
   if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
     if tostring(name or "") == "" then return nil end
     return tonumber(encounterID), tostring(name)
   end
-  ok, encounterID, name = pcall(EJ_GetEncounterInfoByIndex, index)
+  ok, name, description, encounterID = pcall(EJ_GetEncounterInfoByIndex, index)
   if ok and tonumber(encounterID) and tonumber(encounterID) > 0 then
     if tostring(name or "") == "" then return nil end
     return tonumber(encounterID), tostring(name)
@@ -1307,7 +1307,7 @@ function Dibs.EncounterJournal.DumpVisibleLootDebug()
       local previousEncounter = type(currentInfo) == "table" and tonumber(currentInfo["encounterID"]) or nil
 
       for encounterIndex = 1, 200 do
-        local okEncounter, encounterID = pcall(EJ_GetEncounterInfoByIndex, encounterIndex, instanceID)
+        local okEncounter, encounterName, encounterDescription, encounterID = pcall(EJ_GetEncounterInfoByIndex, encounterIndex, instanceID)
         if not okEncounter or not tonumber(encounterID) or tonumber(encounterID) <= 0 then
           break
         end
@@ -2011,7 +2011,7 @@ function Dibs.EncounterJournal.SubmitPreDib(itemID, itemName)
 end
 
 do
-  local function handleBootstrapEvent(event, loadedAddon)
+  local function handleBootstrapEvent(_, event, loadedAddon)
     if event == "ADDON_LOADED" and loadedAddon ~= "Blizzard_EncounterJournal" then
       return
     end
@@ -2026,7 +2026,7 @@ do
     end
   end
 
-  local function handleEncounterEvent(event, encounterID, encounterName, difficultyID, groupSize, success)
+  local function handleEncounterEvent(_, event, encounterID, encounterName, difficultyID, groupSize, success)
     local id = tonumber(encounterID)
     if event == "ENCOUNTER_START" and id and id > 0 then
       activeEncounter = {
@@ -2042,11 +2042,11 @@ do
   end
 
   local registeredWithAce = Dibs.Ace3 and type(Dibs.Ace3.RegisterEvent) == "function"
-      and Dibs.Ace3.RegisterEvent("PLAYER_LOGIN", handleBootstrapEvent)
-      and Dibs.Ace3.RegisterEvent("ADDON_LOADED", handleBootstrapEvent)
+      and Dibs.Ace3.RegisterEvent("PLAYER_LOGIN", function(event, ...) handleBootstrapEvent(nil, event, ...) end)
+      and Dibs.Ace3.RegisterEvent("ADDON_LOADED", function(event, ...) handleBootstrapEvent(nil, event, ...) end)
   if registeredWithAce then
-    Dibs.Ace3.RegisterEvent("ENCOUNTER_START", handleEncounterEvent)
-    Dibs.Ace3.RegisterEvent("ENCOUNTER_END", handleEncounterEvent)
+    Dibs.Ace3.RegisterEvent("ENCOUNTER_START", function(event, ...) handleEncounterEvent(nil, event, ...) end)
+    Dibs.Ace3.RegisterEvent("ENCOUNTER_END", function(event, ...) handleEncounterEvent(nil, event, ...) end)
   else
     local bootstrap = CreateFrame("Frame")
     bootstrap:RegisterEvent("PLAYER_LOGIN")
@@ -2055,9 +2055,9 @@ do
     bootstrap:RegisterEvent("ENCOUNTER_END")
     bootstrap:SetScript("OnEvent", function(frame, event, ...)
       if event == "ENCOUNTER_START" or event == "ENCOUNTER_END" then
-        handleEncounterEvent(event, ...)
+        handleEncounterEvent(frame, event, ...)
       else
-        handleBootstrapEvent(event, ...)
+        handleBootstrapEvent(frame, event, ...)
       end
     end)
   end

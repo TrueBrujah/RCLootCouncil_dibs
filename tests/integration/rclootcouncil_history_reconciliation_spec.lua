@@ -274,6 +274,7 @@ describe("RCLootCouncil history reconciliation", function()
       },
     } })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true }, withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     local frame = dibs.OfficerUI.CreateWindow()
     assert_true(frame ~= nil)
     local originalAddTable = dibs.AceGUI.AddTable
@@ -364,6 +365,7 @@ describe("RCLootCouncil history reconciliation", function()
     }
     local rc = loader.makeRCLootCouncil({ enabled = true, historyDB = { ["Tester-Realm"] = nonDibHistory } })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true }, withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     local frame = dibs.OfficerUI.CreateWindow()
     frame.SelectTab("reconciliation")
     local function findWidget(widget, kind, text)
@@ -389,6 +391,7 @@ describe("RCLootCouncil history reconciliation", function()
     end
     rc = loader.makeRCLootCouncil({ enabled = true, historyDB = { ["Tester-Realm"] = manyRows } })
     local _, pagedDibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true }, withAce3 = true })
+    require("helpers.configured_addon").configure(pagedDibs)
     local pagedFrame = pagedDibs.OfficerUI.CreateWindow()
     local originalAddTable = pagedDibs.AceGUI.AddTable
     local renderedRows
@@ -420,6 +423,7 @@ describe("RCLootCouncil history reconciliation", function()
       },
     } })
     local _, dibs = loader.load({ rclootcouncil = rc, wow = { guildLeader = true }, withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     local frame = dibs.OfficerUI.CreateWindow()
     frame.SelectTab("reconciliation")
 
@@ -487,6 +491,7 @@ describe("RCLootCouncil history reconciliation", function()
       if type(value) == "table" then return os.time(value) end
       return fakeTime()
     end
+    require("helpers.configured_addon").configure(dibs)
     local frame = dibs.OfficerUI.CreateWindow()
     frame.SelectTab("reconciliation")
 

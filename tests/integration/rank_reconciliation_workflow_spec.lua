@@ -383,6 +383,7 @@ describe("Rank allocation reconciliation workflow", function()
       if index == 3 then return "Alice-Realm", "Officer", 1 end
       return getRosterInfo(index)
     end
+    dibs.Identity.OnRosterChanged()
     local result = dibs.Ledger.CommitAwardProposal({ actor = "Tester-Realm" }, proposal.proposalId, {})
     assert_false(result.accepted)
     assert_equal("STALE_RANK", result.reasonCode)
@@ -443,7 +444,7 @@ describe("Rank allocation reconciliation workflow", function()
       if index == 2 then return "Officer-Realm", "Member", 3 end
       return getRosterInfo(index)
     end
-    dibs.Identity.InvalidateRoster("test roster rank change")
+    dibs.Identity.OnRosterChanged()
     local result = dibs.Ledger.CommitAwardProposal({ actor = "Tester-Realm" }, proposal.proposalId, {})
     assert_false(result.accepted)
     assert_equal("REQUESTER_AUTHORITY_CHANGED", result.reasonCode)
@@ -505,7 +506,7 @@ describe("Rank allocation reconciliation workflow", function()
     dibs.Ledger.GetRankReconciliationSnapshot = original
   end)
 
-  it("builds rank snapshots only for the visible Automatic Dibs page", function()
+  it("does not validate legacy guild-wide rank allocations when rendering the seasonal page", function()
     local members, ranks = { "Tester-Realm" }, { [1] = 0 }
     for index = 2, 26 do
       members[index], ranks[index] = "Member" .. index .. "-Realm", 3
@@ -522,7 +523,7 @@ describe("Rank allocation reconciliation workflow", function()
     local frame = dibs.OfficerUI.CreateWindow("overview")
     frame:ActivateRoute("automaticDibs")
     assert_equal("automaticDibs", frame.activeTab)
-    assert_equal(10, snapshotCalls, "the default page should validate only its visible rows")
+    assert_equal(0, snapshotCalls, "the seasonal page must not validate guild-wide legacy allocations")
     dibs.Ledger.GetRankReconciliationSnapshot = original
   end)
 

@@ -19,7 +19,6 @@ local SCHEMA = 1
 local GENESIS_HASH = "GENESIS"
 local AUTHORITY_SCHEMA = 1
 local MAX_AUTHORITY_AUDIT, MAX_PROPOSALS, MAX_ORPHANS, MAX_RELAY_ATTEMPT_COUNT = 100, 100, 100, 5
-local MAX_DISPUTE_PROPOSALS = 100
 local awardProposalGenerations = {}
 
 local function bumpAwardProposalGeneration(proposal)
@@ -120,6 +119,13 @@ local function boundedInsert(list, value, maximum)
   while #list > maximum do table.remove(list, 1) end
 end
 
+local function persistedProposalCount(authority)
+  local count = 0
+  for _ in pairs(authority.proposals or {}) do count = count + 1 end
+  for _ in pairs(authority.disputeOperationProposals or {}) do count = count + 1 end
+  return count
+end
+
 local function defaultState()
   return {
     schema = SCHEMA,
@@ -132,14 +138,12 @@ local function defaultState()
     aliases = { schema = 1, records = {} },
     approvedLedgers = { ["guild-primary"] = { id = "guild-primary", name = "Primary", approvedAt = 0, approvedBy = "SYSTEM", status = "APPROVED" } },
     future = { coordinator = nil, ledgerEpoch = nil, protocolState = "LEGACY_LOCAL", baseline = nil },
-    authority = { schema = AUTHORITY_SCHEMA, state = "LEGACY_LOCAL", proposals = {}, disputeProposals = {},
-      disputeProposalIndex = {}, acceptedDisputeRevisions = {}, orphanedEvidence = {}, auditLog = {} },
+    authority = { schema = AUTHORITY_SCHEMA, state = "LEGACY_LOCAL", proposals = {}, orphanedEvidence = {}, auditLog = {} },
   }
 end
 
 local function legacyAuthority()
-  return { schema = AUTHORITY_SCHEMA, state = "LEGACY_LOCAL", proposals = {}, disputeProposals = {},
-    disputeProposalIndex = {}, acceptedDisputeRevisions = {}, orphanedEvidence = {}, auditLog = {} }
+  return { schema = AUTHORITY_SCHEMA, state = "LEGACY_LOCAL", proposals = {}, orphanedEvidence = {}, auditLog = {} }
 end
 
 local function authorityState(state)
@@ -151,9 +155,7 @@ local function authorityState(state)
     authority = legacyAuthority(); state.authority = authority
   end
   if type(authority.proposals) ~= "table" then authority.proposals = {} end
-  if type(authority.disputeProposals) ~= "table" then authority.disputeProposals = {} end
-  if type(authority.disputeProposalIndex) ~= "table" then authority.disputeProposalIndex = {} end
-  if type(authority.acceptedDisputeRevisions) ~= "table" then authority.acceptedDisputeRevisions = {} end
+  if type(authority.disputeOperationProposals) ~= "table" then authority.disputeOperationProposals = {} end
   if type(authority.orphanedEvidence) ~= "table" then authority.orphanedEvidence = {} end
   if type(authority.auditLog) ~= "table" then authority.auditLog = {} end
   return authority
@@ -194,7 +196,8 @@ local function readResolvedState()
     and (authority.state == "LEGACY_LOCAL" or authority.state == "ACTIVE"
       or authority.state == "HANDOFF_CLOSING" or authority.state == "COORDINATOR_UNAVAILABLE"
       or authority.state == "RECOVERY_PENDING")
-    and type(authority.proposals) == "table" and type(authority.orphanedEvidence) == "table"
+    and type(authority.proposals) == "table" and type(authority.disputeOperationProposals) == "table"
+    and type(authority.orphanedEvidence) == "table"
     and type(authority.auditLog) == "table"
   if guildKey and Dibs.currentGuildKey == guildKey and type(state) == "table"
     and state.schema == SCHEMA and validStatus and type(state.revision) == "number" and state.revision >= 0
@@ -238,16 +241,6 @@ local function approvedBaseline(hash)
   return baseline and baseline.legacyBaselineHash == hash
 end
 
-local function hasBlockingSyncBehind()
-  if not (Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind()) then return false end
-  local reasons = Dibs.Sync.GetSyncBehindReasons and Dibs.Sync.GetSyncBehindReasons() or {}
-  for _, entry in ipairs(reasons) do
-    local code = type(entry) == "table" and entry.code or entry
-    if code ~= "GOVERNANCE_PARENT_MISSING" and code ~= "AUTHORITY_DETAIL_MISSING" then return true end
-  end
-  return #reasons == 0
-end
-
 local function authorityContent(value, current)
   if value == nil then return nil end
   if type(value) ~= "table" or value.schema ~= AUTHORITY_SCHEMA or value.state ~= "ACTIVE" then return nil, "INVALID_AUTHORITY_STATE" end
@@ -261,11 +254,19 @@ local function authorityContent(value, current)
   local normalized = { schema = AUTHORITY_SCHEMA, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = value.ledgerEpoch,
     transition = copy(value.transition), protocolState = requestedProtocol }
   local kind, prior = normalized.transition.kind, current or legacyAuthority()
+  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then
+    -- Receiving this next governance record must be able to resolve its own
+    -- detail request. Every unrelated gap still prevents an authority change.
+    local reasons = Dibs.Sync.GetSyncBehindReasons and Dibs.Sync.GetSyncBehindReasons() or {}
+    if #reasons == 0 then return nil, "SYNC_BEHIND" end
+    for _, entry in ipairs(reasons) do
+      local code = type(entry) == "table" and entry.code or entry
+      if code ~= "GOVERNANCE_PARENT_MISSING" and code ~= "AUTHORITY_DETAIL_MISSING" then return nil, "SYNC_BEHIND" end
+    end
+  end
   if kind == "INITIAL" then
-    if hasBlockingSyncBehind() then return nil, "SYNC_BEHIND" end
     if prior.state ~= "LEGACY_LOCAL" or not trim(normalized.transition.baselineHash) or not approvedBaseline(normalized.transition.baselineHash) then return nil, "AUTHORITY_BASELINE_REQUIRED" end
   elseif kind == "NORMAL_HANDOFF" then
-    if hasBlockingSyncBehind() then return nil, "SYNC_BEHIND" end
     local closure, reason = normalized.transition.parentClosure, nil
     if prior.state ~= "HANDOFF_CLOSING" then return nil, "HANDOFF_CLOSURE_REQUIRED" end
     if not closure then return nil, "HANDOFF_CLOSURE_REQUIRED" end
@@ -280,7 +281,6 @@ local function authorityContent(value, current)
     end
     if requestedProtocol == "V2_ENFORCED" and prior.protocolState ~= "V2_ENFORCED" then return nil, "PROTOCOL_CUTOVER_REQUIRED" end
   elseif kind == "FORCED_RECOVERY" then
-    if hasBlockingSyncBehind() then return nil, "SYNC_BEHIND" end
     if prior.state ~= "RECOVERY_PENDING" or normalized.ledgerEpoch ~= (prior.ledgerEpoch or 0) + 1 then return nil, "RECOVERY_PENDING_REQUIRED" end
     if not trim(normalized.transition.baselineHash) or not approvedBaseline(normalized.transition.baselineHash)
       or type(normalized.transition.recoveryAudit) ~= "table" or not trim(normalized.transition.recoveryAudit.reason) then return nil, "AUTHORITY_BASELINE_REQUIRED" end
@@ -317,7 +317,7 @@ local function governanceContent(proposal, currentAuthority)
       if not compatible then return nil, compatibleReason or "WRITER_COMPATIBILITY_REQUIRED" end
     end
     local authority = copy(current)
-    authority.proposals, authority.orphanedEvidence, authority.auditLog = nil, nil, nil
+    authority.proposals, authority.disputeOperationProposals, authority.orphanedEvidence, authority.auditLog = nil, nil, nil, nil
     authority.protocolState = "V2_ENFORCED"
     return {
       officerAuthorityRule = copy(proposal.officerAuthorityRule or { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 }),
@@ -431,7 +431,7 @@ function Governance.GetSynchronizationSummary()
   local authority = authorityState(state)
   local pendingAwardProposals = 0
   for _, proposal in pairs(authority.proposals) do
-    if type(proposal) == "table" and (proposal.status == "PENDING_RECONCILIATION" or proposal.status == "PENDING") then
+    if type(proposal) == "table" and proposal.status == "PENDING_RECONCILIATION" then
       pendingAwardProposals = pendingAwardProposals + 1
     end
   end
@@ -522,7 +522,8 @@ function Governance.ApplyRecord(record, sender)
   if record.content.future.authority then
     local nextAuthority = copy(record.content.future.authority)
     local previous = authorityState(state)
-    nextAuthority.proposals, nextAuthority.orphanedEvidence, nextAuthority.auditLog = previous.proposals, previous.orphanedEvidence, previous.auditLog
+    nextAuthority.proposals, nextAuthority.disputeOperationProposals = previous.proposals, previous.disputeOperationProposals
+    nextAuthority.orphanedEvidence, nextAuthority.auditLog = previous.orphanedEvidence, previous.auditLog
     state.authority = nextAuthority
     boundedInsert(state.authority.auditLog, { action = nextAuthority.transition.kind, transitionHash = nextAuthority.transitionHash,
       governanceRevision = record.governanceRevision, author = copy(record.authorSnapshot), timestamp = record.timestamp }, MAX_AUTHORITY_AUDIT)
@@ -712,7 +713,7 @@ function Governance.RecordAwardProposal(actor, details)
     actorSnapshot = actorSnapshot, reconciliation = projection.reconciliation, ledgerId = proposalLedgerId,
     createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(), authorityState = authority.state }
   proposal.contentHash = authorityHash("PROPOSAL", proposalHashContent(proposal))
-  if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
+  if persistedProposalCount(authority) >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
   authority.proposals[proposalId] = proposal
   bumpAwardProposalGeneration(proposal)
   boundedInsert(authority.auditLog, { action = "AWARD_PROPOSAL", proposalId = proposalId, timestamp = proposal.createdAt }, MAX_AUTHORITY_AUDIT)
@@ -765,7 +766,7 @@ function Governance.MarkAwardProposalCommitted(proposalId, commit)
   bumpAwardProposalGeneration(proposal)
   proposal.commitHash = type(commit) == "table" and commit.commitHash or proposal.commitHash
   proposal.committedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
-  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then Dibs.Sync.ClearAwardReservation(proposalId, commit) end
+  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then Dibs.Sync.ClearAwardReservation(proposalId, commit, proposal) end
   return true
 end
 
@@ -780,14 +781,16 @@ function Governance.ResolveAwardProposal(proposalId, status, reasonCode)
   proposal.status, proposal.resolutionReason = status, trim(reasonCode) or "PROPOSAL_REJECTED"
   bumpAwardProposalGeneration(proposal)
   proposal.resolvedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
-  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then
-    Dibs.Sync.ClearAwardReservation(proposalId, proposal)
-    if Dibs.Sync.AnnounceAwardReservationDigest then Dibs.Sync.AnnounceAwardReservationDigest() end
-  end
   boundedInsert(authorityState(ensureState()).auditLog, {
     action = "AWARD_PROPOSAL_" .. status, proposalId = proposalId,
     reasonCode = proposal.resolutionReason, timestamp = proposal.resolvedAt,
   }, MAX_AUTHORITY_AUDIT)
+  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then
+    Dibs.Sync.ClearAwardReservation(proposalId, nil, proposal)
+  end
+  if Dibs.Sync and Dibs.Sync.AnnounceAwardReservationDigest then
+    Dibs.Sync.AnnounceAwardReservationDigest()
+  end
   return true, status
 end
 
@@ -822,7 +825,7 @@ function Governance.ReceiveRelayedProposal(proposal, senderDisplayName)
     if existing.contentHash == proposal.contentHash then return true, "IDEMPOTENT_PROPOSAL" end
     return false, "PROPOSAL_ID_CONFLICT"
   end
-  if (function() local n=0; for _ in pairs(authority.proposals) do n=n+1 end; return n end)() >= MAX_PROPOSALS then return false, "PROPOSAL_LIMIT_EXCEEDED" end
+  if persistedProposalCount(authority) >= MAX_PROPOSALS then return false, "PROPOSAL_LIMIT_EXCEEDED" end
   local stored = copy(proposal)
   stored.status, stored.relayStatus = "PENDING_RECONCILIATION", nil
   if type(stored.ledgerId) ~= "string" or stored.ledgerId == "" or #stored.ledgerId > 64 then stored.ledgerId = nil end
@@ -847,345 +850,114 @@ function Governance.GetAwardProposals()
   table.sort(values, function(a, b) return a.proposalId < b.proposalId end); return values
 end
 
-local function disputeProposalContent(proposal)
-  return {
-    schema = proposal.schema, recordClass = proposal.recordClass, proposalId = proposal.proposalId,
-    intentHash = proposal.intentHash, intent = proposal.intent, guildKey = proposal.guildKey, coordinator = proposal.coordinator,
-    ledgerEpoch = proposal.ledgerEpoch, proposer = proposal.proposer, operation = proposal.operation,
-    status = proposal.status, resolutionReason = proposal.resolutionReason,
-    committedAt = proposal.committedAt, createdAt = proposal.createdAt,
-  }
-end
-
-local function disputeProposalValid(proposal)
-  return type(proposal) == "table" and proposal.schema == 1
-    and proposal.recordClass == "LEDGER_OPERATION_PROPOSAL"
-    and type(proposal.proposalId) == "string" and type(proposal.operation) == "table"
-    and type(proposal.contentHash) == "string"
-    and proposal.contentHash == authorityHash("DISPUTE_PROPOSAL", disputeProposalContent(proposal))
-end
-
-local function verifiedDisputeProposer(actorSnapshot)
-  if type(actorSnapshot) ~= "table" or type(actorSnapshot.displayName) ~= "string"
-    or type(actorSnapshot.memberKey) ~= "string" then return nil, "INVALID_PROPOSER" end
-  local member = Dibs.Identity and Dibs.Identity.ResolveRosterMember(actorSnapshot.displayName)
-  if type(member) ~= "table" or member.status ~= "RESOLVED" or member.memberKey ~= actorSnapshot.memberKey then
-    return nil, type(member) == "table" and member.status or "ROSTER_UNAVAILABLE"
+-- Store one complete immutable canonical dispute intent before it is handed to
+-- the protected writer. Generated identities live here so a retry can never
+-- allocate a different operation or transaction ID.
+function Governance.CreateDisputeOperationProposal(intent)
+  if type(intent) ~= "table" or type(intent.signedEntries) ~= "table" then return nil, "INVALID_OPERATION" end
+  local blocked, sandboxReason = rejectSandbox(); if blocked then return nil, sandboxReason end
+  local actor = intent.actor
+  if type(actor) ~= "table" then return nil, "PROPOSER_NOT_AUTHORIZED" end
+  local proposer, identityReason = snapshot(actor.displayName)
+  if not proposer or proposer.memberKey ~= actor.memberKey then return nil, identityReason or "PROPOSER_NOT_AUTHORIZED" end
+  local rosterMember = Dibs.Identity and Dibs.Identity.ResolveRosterMember and Dibs.Identity.ResolveRosterMember(proposer.displayName)
+  if not rosterMember or rosterMember.status ~= "RESOLVED" or (rosterMember.role ~= "gm" and rosterMember.role ~= "officer") then
+    return nil, "PROPOSER_NOT_AUTHORIZED"
   end
-  if member.role ~= "gm" and member.role ~= "officer" then return nil, "PROPOSER_NOT_AUTHORIZED" end
-  return { memberKey = member.memberKey, displayName = member.displayName, guidWitness = actorSnapshot.guidWitness }
-end
-
-local function currentDisputeProposer(actor)
-  local actorSnapshot, reason = snapshot(actor)
-  if not actorSnapshot then return nil, reason end
-  local localSnapshot, localReason = snapshot(Dibs.GetPlayerName and Dibs.GetPlayerName())
-  if not localSnapshot then return nil, localReason end
-  if actorSnapshot.memberKey ~= localSnapshot.memberKey then return nil, "PROPOSER_IDENTITY_MISMATCH" end
-  return verifiedDisputeProposer(actorSnapshot)
-end
-
-local function disputeProposalCount(proposals)
-  local count = 0
-  for _ in pairs(proposals or {}) do count = count + 1 end
-  return count
-end
-
-local function disputeRevisionKey(requestId, revision)
-  return tostring(requestId) .. "|" .. tostring(revision)
-end
-
--- Governance owns the immutable pending intent and all stable IDs. The caller
--- supplies semantic entry fields only; Ledger validates the completed payload
--- before Governance persists it.
-function Governance.CreateDisputeProposal(actor, details)
-  local blocked, blockedReason = rejectSandbox(); if blocked then return nil, blockedReason end
-  if type(details) ~= "table" then return nil, "INVALID_OPERATION" end
-  local proposer, proposerReason = currentDisputeProposer(actor)
-  if not proposer then return nil, proposerReason end
-  local authority = authorityState(ensureState())
-  if authority.state ~= "ACTIVE" or not isInteger(authority.ledgerEpoch) or authority.ledgerEpoch < 1
-    or type(authority.coordinator) ~= "table" then return nil, "COORDINATOR_UNAVAILABLE" end
-  if not Governance.IsV2Enforced() then return nil, "V2_ENFORCEMENT_REQUIRED" end
-
-  local requestId, ledgerId = trim(details.requestId), trim(details.ledgerId)
-  local requestRevision = tonumber(details.requestRevision)
-  local reason = trim(details.reason)
-  local operationType = trim(details.operationType)
-  if not requestId or #requestId > 128 or not ledgerId or #ledgerId > 64
-    or not isInteger(requestRevision) or requestRevision < 1 or not reason or #reason > 500 then
+  if type(intent.requestId) ~= "string" or intent.requestId == "" or type(intent.requestRevision) ~= "number" then
     return nil, "INVALID_OPERATION"
   end
-  if operationType ~= "DISPUTE_BALANCE_CORRECTION" and operationType ~= "DISPUTE_TARGET_TRANSFER"
-    and operationType ~= "DISPUTE_ATTRIBUTION_RESOLUTION" then return nil, "UNSUPPORTED_OPERATION_TYPE" end
-  local evidenceId = details.evidenceId == nil and false or details.evidenceId
-  local originalTransactionId = details.originalTransactionId == nil and false or details.originalTransactionId
-  if evidenceId ~= false and (type(evidenceId) ~= "string" or evidenceId == "") then return nil, "INVALID_OPERATION" end
-  if originalTransactionId ~= false and (type(originalTransactionId) ~= "string" or originalTransactionId == "") then return nil, "INVALID_OPERATION" end
-  if type(details.signedEntries) ~= "table" then return nil, "INVALID_OPERATION" end
-
-  local entryCount = 0
-  for key in pairs(details.signedEntries) do
-    if not isInteger(key) or key < 1 then return nil, "INVALID_ENTRY" end
-    entryCount = entryCount + 1
+  local authority = authorityState(ensureState())
+  local operationProposals = authority.disputeOperationProposals
+  local intentContent = copy(intent)
+  intentContent.operationId, intentContent.payloadHash = nil, nil
+  -- The timestamp is captured on first creation and belongs to the stable
+  -- operation. A retry may arrive later, but must reuse that stored snapshot.
+  intentContent.timestamp = nil
+  for _, entry in ipairs(intentContent.signedEntries) do
+    entry.operationId, entry.transactionId, entry.entryIndex = nil, nil, nil
   end
-  if entryCount ~= #details.signedEntries or entryCount > 2 then return nil, "INVALID_ENTRY" end
-
-  local intentEntries = {}
-  for index, entry in ipairs(details.signedEntries) do
-    if type(entry) ~= "table" or type(entry.memberKey) ~= "string" or entry.memberKey == ""
-      or type(entry.seasonId) ~= "string" or entry.seasonId == ""
-      or type(entry.actionType) ~= "string" or not isInteger(tonumber(entry.quantityDelta)) then
-      return nil, "INVALID_ENTRY"
+  local intentHash = authorityHash("DISPUTE_OPERATION_INTENT", intentContent)
+  for _, existing in pairs(operationProposals) do
+    if type(existing) == "table" and existing.operation.requestId == intent.requestId
+      and existing.operation.requestRevision == intent.requestRevision then
+      if existing.intentHash == intentHash and canonicalText(existing.intentContent) == canonicalText(intentContent) then
+        if existing.ledgerEpoch ~= authority.ledgerEpoch or type(existing.coordinator) ~= "table"
+          or type(authority.coordinator) ~= "table"
+          or existing.coordinator.memberKey ~= authority.coordinator.memberKey then return nil, "STALE_AUTHORITY" end
+        return copy(existing), "IDEMPOTENT_PROPOSAL"
+      end
+      if existing.status == "COMMITTED" then return nil, "DISPUTE_REVISION_ALREADY_CORRECTED" end
     end
-    intentEntries[index] = {
-      memberKey = entry.memberKey, seasonId = entry.seasonId,
-      actionType = entry.actionType, quantityDelta = tonumber(entry.quantityDelta),
-    }
   end
-
-  local intent = {
-    guildKey = Dibs.GetGuildKey(), ledgerId = ledgerId, requestId = requestId,
-    requestRevision = requestRevision, operationType = operationType,
-    evidenceId = evidenceId, originalTransactionId = originalTransactionId,
-    actor = proposer, reason = reason, signedEntries = intentEntries,
-  }
-  local intentHash = authorityHash("DISPUTE_INTENT", intent)
-  local proposals = authority.disputeProposals
-  local existingId = authority.disputeProposalIndex[intentHash]
-  if existingId then
-    local existing = proposals[existingId]
-    if not disputeProposalValid(existing) or existing.intentHash ~= intentHash
-      or canonicalText(existing.intent) ~= canonicalText(intent) then return nil, "PROPOSAL_ID_CONFLICT" end
-    if existing.coordinator.memberKey ~= authority.coordinator.memberKey
-      or existing.ledgerEpoch ~= authority.ledgerEpoch then return nil, "STALE_AUTHORITY" end
-    return copy(existing), "IDEMPOTENT_PROPOSAL"
+  if persistedProposalCount(authority) >= MAX_PROPOSALS then return nil, "PROPOSAL_LIMIT_EXCEEDED" end
+  if type(Dibs.Ledger) ~= "table" or type(Dibs.Ledger.BuildDisputeOperation) ~= "function" then
+    return nil, "CANONICAL_OPERATION_UNAVAILABLE"
   end
-
-  local revisionKey = disputeRevisionKey(requestId, requestRevision)
-  local acceptedId = authority.acceptedDisputeRevisions[revisionKey]
-  if acceptedId then return nil, "DISPUTE_REVISION_ALREADY_CORRECTED" end
-  if disputeProposalCount(proposals) >= MAX_DISPUTE_PROPOSALS then return nil, "DISPUTE_PROPOSAL_LIMIT_EXCEEDED" end
-
-  local proposalId = "DP1-" .. intentHash
-  local operationId = "DOP1-" .. intentHash
-  local signedEntries = {}
-  for index, entry in ipairs(intentEntries) do
-    signedEntries[index] = {
-      operationId = operationId, entryIndex = index,
-      transactionId = operationId .. "-" .. tostring(index),
-      guildKey = intent.guildKey, ledgerId = ledgerId,
-      requestId = requestId, requestRevision = requestRevision,
-      evidenceId = evidenceId, originalTransactionId = originalTransactionId,
-      memberKey = entry.memberKey, seasonId = entry.seasonId,
-      actionType = entry.actionType, quantityDelta = entry.quantityDelta,
-    }
+  local operation = copy(intent)
+  operation.schemaVersion = 1
+  operation.guildKey = Dibs.GetGuildKey()
+  operation.operationId = Dibs.NewId and Dibs.NewId("ledger-operation")
+    or ("ledger-operation-" .. tostring(time()) .. "-" .. tostring(math.random(100000, 999999)))
+  operation.actor = copy(proposer)
+  for index, entry in ipairs(operation.signedEntries) do
+    entry.operationId = operation.operationId
+    entry.entryIndex = index
+    entry.transactionId = Dibs.NewId and Dibs.NewId("ledger-operation-entry")
+      or (operation.operationId .. "-entry-" .. tostring(index))
   end
-  local operation, buildReason = Dibs.Ledger and Dibs.Ledger.BuildDisputeOperation and Dibs.Ledger.BuildDisputeOperation({
-    schemaVersion = 1, operationId = operationId, operationType = operationType,
-    guildKey = intent.guildKey, ledgerId = ledgerId, requestId = requestId,
-    requestRevision = requestRevision, evidenceId = evidenceId,
-    originalTransactionId = originalTransactionId, actor = proposer,
-    reason = reason, timestamp = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
-    signedEntries = signedEntries,
-  })
-  if not operation then return nil, buildReason or "INVALID_OPERATION" end
-  local valid, validationReason = Dibs.Ledger.ValidateDisputeOperation(operation)
-  if not valid then return nil, validationReason or "INVALID_OPERATION" end
-
+  local built, buildReason = Dibs.Ledger.BuildDisputeOperation(operation)
+  if not built then return nil, buildReason or "INVALID_OPERATION" end
+  local proposalId = Dibs.NewId and Dibs.NewId("ledger-operation-proposal")
+    or ("ledger-operation-proposal-" .. tostring(time()) .. "-" .. tostring(math.random(100000, 999999)))
   local proposal = {
     schema = 1, recordClass = "LEDGER_OPERATION_PROPOSAL", proposalId = proposalId,
-    intentHash = intentHash, intent = copy(intent), guildKey = intent.guildKey,
-    coordinator = copy(authority.coordinator), ledgerEpoch = authority.ledgerEpoch,
-    proposer = copy(proposer), operation = copy(operation), status = "PENDING",
-    relayAttempts = 0, createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
+    intentHash = intentHash, intentContent = intentContent, operation = copy(built),
+    ledgerEpoch = authority.ledgerEpoch, coordinator = copy(authority.coordinator),
+    status = "PENDING", relayAttempts = 0, createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
   }
-  proposal.contentHash = authorityHash("DISPUTE_PROPOSAL", disputeProposalContent(proposal))
-  proposals[proposalId] = proposal
-  authority.disputeProposalIndex[intentHash] = proposalId
-  boundedInsert(authority.auditLog, {
-    action = "DISPUTE_OPERATION_PROPOSED", proposalId = proposalId,
-    requestId = requestId, requestRevision = requestRevision, timestamp = proposal.createdAt,
-  }, MAX_AUTHORITY_AUDIT)
+  operationProposals[proposalId] = proposal
+  boundedInsert(authority.auditLog, { action = "DISPUTE_OPERATION_PROPOSED", proposalId = proposalId,
+    operationId = built.operationId, timestamp = proposal.createdAt }, MAX_AUTHORITY_AUDIT)
   return copy(proposal), "PENDING"
 end
 
-function Governance.GetDisputeProposal(proposalId)
-  local authority = authorityState(ensureState())
-  local proposal = authority.disputeProposals[proposalId]
-  if not proposal then
-    for _, candidate in pairs(authority.disputeProposals) do
-      if candidate.operation and candidate.operation.operationId == proposalId then proposal = candidate; break end
-    end
-  end
-  if not proposal then return nil, "PROPOSAL_NOT_FOUND" end
-  if not disputeProposalValid(proposal) then return nil, "PROPOSAL_HASH_MISMATCH" end
-  return copy(proposal)
+function Governance.GetDisputeOperationProposal(proposalId)
+  local proposal = authorityState(ensureState()).disputeOperationProposals[proposalId]
+  return type(proposal) == "table" and copy(proposal) or nil
 end
 
-function Governance.GetPendingDisputeProposals(actor)
-  local proposer, reason = currentDisputeProposer(actor)
-  if not proposer then return {}, reason end
-  local authority = authorityState(ensureState())
-  local proposals = {}
-  for _, proposal in pairs(authority.disputeProposals) do
-    if type(proposal) == "table" and proposal.status == "PENDING"
-      and proposal.proposer and proposal.proposer.memberKey == proposer.memberKey then
-      proposals[#proposals + 1] = copy(proposal)
-    end
-  end
-  table.sort(proposals, function(a, b) return a.proposalId < b.proposalId end)
-  return proposals
+function Governance.GetDisputeOperationProposals()
+  local values = {}
+  for _, proposal in pairs(authorityState(ensureState()).disputeOperationProposals) do values[#values + 1] = copy(proposal) end
+  table.sort(values, function(a, b) return a.proposalId < b.proposalId end)
+  return values
 end
 
-function Governance.ResumeDisputeProposal(actor, proposalId)
-  local proposer, proposerReason = currentDisputeProposer(actor)
-  if not proposer then return nil, proposerReason end
-  local proposal, reason = Governance.GetDisputeProposal(proposalId)
-  if not proposal then return nil, reason end
-  if proposal.proposer.memberKey ~= proposer.memberKey then return nil, "PROPOSER_IDENTITY_MISMATCH" end
-  if proposal.status ~= "PENDING" then return nil, "PROPOSAL_NOT_PENDING" end
-  local authority = authorityState(ensureState())
-  if authority.state ~= "ACTIVE" or authority.coordinator.memberKey ~= proposal.coordinator.memberKey
-    or authority.ledgerEpoch ~= proposal.ledgerEpoch then return nil, "STALE_AUTHORITY" end
-  local valid, validationReason = Dibs.Ledger.ValidateDisputeOperation(proposal.operation)
-  if not valid then return nil, validationReason or "INVALID_OPERATION" end
-  return proposal, "RESUMED"
-end
-
-function Governance.NoteDisputeProposalRelayAttempt(actor, proposalId)
-  local proposer, proposerReason = currentDisputeProposer(actor)
-  if not proposer then return nil, proposerReason end
-  local authority = authorityState(ensureState())
-  local proposal = authority.disputeProposals[proposalId]
-  if not proposal or not disputeProposalValid(proposal) then return nil, "PROPOSAL_NOT_FOUND" end
-  if proposal.proposer.memberKey ~= proposer.memberKey then return nil, "PROPOSER_IDENTITY_MISMATCH" end
-  if proposal.status ~= "PENDING" then return nil, "PROPOSAL_NOT_PENDING" end
-  local attempts = tonumber(proposal.relayAttempts) or 0
-  if attempts >= MAX_RELAY_ATTEMPT_COUNT then return nil, "RELAY_ATTEMPTS_EXHAUSTED" end
-  proposal.relayAttempts = attempts + 1
-  proposal.relayStatus = "RELAY_PENDING"
+function Governance.NoteDisputeOperationRelayAttempt(proposalId)
+  local proposal = authorityState(ensureState()).disputeOperationProposals[proposalId]
+  if not proposal or proposal.status ~= "PENDING" then return nil, "PROPOSAL_NOT_PENDING" end
+  if proposal.relayAttempts >= MAX_RELAY_ATTEMPT_COUNT then return nil, "RELAY_ATTEMPT_LIMIT_EXCEEDED" end
+  proposal.relayAttempts = proposal.relayAttempts + 1
   proposal.relayAttemptAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
-  return proposal.relayAttempts, "RELAY_PENDING"
+  return proposal.relayAttempts
 end
 
--- A receipt only confirms that the coordinator persisted the proposal. It
--- never changes the proposal to accepted or committed.
-function Governance.AcknowledgeDisputeProposal(actor, proposalId, coordinatorMemberKey)
-  local proposer, proposerReason = currentDisputeProposer(actor)
-  if not proposer then return false, proposerReason end
-  local authority = authorityState(ensureState())
-  local proposal = authority.disputeProposals[proposalId]
-  if not proposal or not disputeProposalValid(proposal) then return false, "PROPOSAL_NOT_FOUND" end
-  if proposal.proposer.memberKey ~= proposer.memberKey then return false, "PROPOSER_IDENTITY_MISMATCH" end
-  if not authority.coordinator or authority.coordinator.memberKey ~= coordinatorMemberKey
-    or proposal.coordinator.memberKey ~= coordinatorMemberKey
-    or proposal.ledgerEpoch ~= authority.ledgerEpoch then return false, "STALE_AUTHORITY" end
-  proposal.relayStatus = "RELAY_ACKED"
-  return true, "RECEIVED"
-end
-
-function Governance.ReceiveDisputeProposal(proposal, senderDisplayName)
-  if type(proposal) ~= "table" or not disputeProposalValid(proposal)
-    or proposal.status ~= "PENDING" or proposal.guildKey ~= Dibs.GetGuildKey() then
-    return false, "INVALID_DISPUTE_PROPOSAL"
+function Governance.ResolveDisputeOperationProposal(proposalId, status, reasonCode, commit)
+  if status ~= "COMMITTED" and status ~= "STALE" and status ~= "REJECTED" then return false, "INVALID_PROPOSAL_STATUS" end
+  local proposal = authorityState(ensureState()).disputeOperationProposals[proposalId]
+  if not proposal then return false, "PROPOSAL_NOT_FOUND" end
+  if proposal.status ~= "PENDING" then
+    return proposal.status == status and proposal.resolutionReason == reasonCode, "PROPOSAL_ALREADY_RESOLVED"
   end
-  local sender = Dibs.Identity and Dibs.Identity.ResolveRosterMember(senderDisplayName)
-  if type(sender) ~= "table" or sender.status ~= "RESOLVED" then
-    return false, type(sender) == "table" and sender.status or "ROSTER_UNAVAILABLE"
-  end
-  if sender.role ~= "gm" and sender.role ~= "officer" then return false, "PROPOSER_NOT_AUTHORIZED" end
-  if sender.memberKey ~= proposal.proposer.memberKey then return false, "PROPOSER_SENDER_MISMATCH" end
-
-  local authority = authorityState(ensureState())
-  local localSnapshot, localReason = snapshot(Dibs.GetPlayerName and Dibs.GetPlayerName())
-  if not localSnapshot then return false, localReason end
-  if authority.state ~= "ACTIVE" or not Governance.IsV2Enforced()
-    or not authority.coordinator or authority.coordinator.memberKey ~= localSnapshot.memberKey then
-    return false, "CURRENT_COORDINATOR_REQUIRED"
-  end
-  if proposal.coordinator.memberKey ~= authority.coordinator.memberKey
-    or proposal.ledgerEpoch ~= authority.ledgerEpoch then return false, "STALE_AUTHORITY" end
-  local proposer, proposerReason = verifiedDisputeProposer(proposal.proposer)
-  if not proposer then return false, proposerReason end
-  local valid, validationReason = Dibs.Ledger.ValidateDisputeOperation(proposal.operation)
-  if not valid then return false, validationReason or "INVALID_OPERATION" end
-
-  local proposals = authority.disputeProposals
-  local existing = proposals[proposal.proposalId]
-  if existing then
-    if disputeProposalValid(existing) and existing.contentHash == proposal.contentHash then
-      return true, "IDEMPOTENT_PROPOSAL"
-    end
-    return false, "PROPOSAL_ID_CONFLICT"
-  end
-  if authority.acceptedDisputeRevisions[disputeRevisionKey(proposal.operation.requestId,
-    proposal.operation.requestRevision)] then return false, "DISPUTE_REVISION_ALREADY_CORRECTED" end
-  if disputeProposalCount(proposals) >= MAX_DISPUTE_PROPOSALS then return false, "DISPUTE_PROPOSAL_LIMIT_EXCEEDED" end
-
-  local stored = copy(proposal)
-  stored.receivedFrom = sender.displayName
-  stored.receivedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
-  proposals[stored.proposalId] = stored
-  authority.disputeProposalIndex[stored.intentHash] = stored.proposalId
-  boundedInsert(authority.auditLog, {
-    action = "DISPUTE_OPERATION_PROPOSAL_RECEIVED", proposalId = stored.proposalId,
-    requestId = stored.operation.requestId, requestRevision = stored.operation.requestRevision,
-    timestamp = stored.receivedAt,
+  proposal.status, proposal.resolutionReason = status, trim(reasonCode)
+  proposal.resolvedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  if status == "COMMITTED" and type(commit) == "table" then proposal.commitHash = commit.commitHash end
+  boundedInsert(authorityState(ensureState()).auditLog, {
+    action = "DISPUTE_OPERATION_" .. status, proposalId = proposalId,
+    reasonCode = proposal.resolutionReason, timestamp = proposal.resolvedAt,
   }, MAX_AUTHORITY_AUDIT)
-  return true, "PROPOSAL_RECEIVED"
-end
-
-function Governance.AcceptDisputeProposal(actor, proposalId)
-  local actorSnapshot, actorReason = snapshot(actor)
-  if not actorSnapshot then return nil, actorReason end
-  local localSnapshot, localReason = snapshot(Dibs.GetPlayerName and Dibs.GetPlayerName())
-  if not localSnapshot then return nil, localReason end
-  if localSnapshot.memberKey ~= actorSnapshot.memberKey then return nil, "COORDINATOR_IDENTITY_MISMATCH" end
-  local proposal, proposalReason = Governance.GetDisputeProposal(proposalId)
-  if not proposal then return nil, proposalReason end
-  local authority = authorityState(ensureState())
-  proposal = authority.disputeProposals[proposalId]
-  if type(proposal) ~= "table" or not disputeProposalValid(proposal) then return nil, "PROPOSAL_HASH_MISMATCH" end
-  if proposal.status ~= "PENDING" and proposal.status ~= "ACCEPTED_IN_SESSION" then return nil, "PROPOSAL_NOT_PENDING" end
-  if authority.state ~= "ACTIVE" or not Governance.IsV2Enforced()
-    or not authority.coordinator or authority.coordinator.memberKey ~= actorSnapshot.memberKey
-    or authority.coordinator.memberKey ~= proposal.coordinator.memberKey
-    or authority.ledgerEpoch ~= proposal.ledgerEpoch then return nil, "STALE_AUTHORITY" end
-  local proposer, proposerReason = verifiedDisputeProposer(proposal.proposer)
-  if not proposer or proposer.memberKey ~= proposal.proposer.memberKey then return nil, proposerReason or "PROPOSER_NOT_AUTHORIZED" end
-  local valid, validationReason = Dibs.Ledger.ValidateDisputeOperation(proposal.operation)
-  if not valid then
-    proposal.status, proposal.resolutionReason = "STALE", validationReason or "INVALID_OPERATION"
-    proposal.contentHash = authorityHash("DISPUTE_PROPOSAL", disputeProposalContent(proposal))
-    return nil, proposal.resolutionReason
-  end
-  local result = Dibs.ProtectedActions and Dibs.ProtectedActions.Execute
-    and Dibs.ProtectedActions.Execute("ledger.operation", actor, {
-      operation = copy(proposal.operation), proposalId = proposal.proposalId,
-    })
-  local acceptedRevision = disputeRevisionKey(proposal.operation.requestId, proposal.operation.requestRevision)
-  local operationResult = result and result.value
-  if not result or result.ok ~= true then
-    if type(operationResult) ~= "table" or operationResult.canonicalAccepted ~= true then
-      return nil, result and result.reasonCode or "CANONICAL_OPERATION_REJECTED"
-    end
-    proposal.status = "ACCEPTED_IN_SESSION"
-    proposal.resolutionReason = "PROJECTION_INCOMPLETE"
-  else
-    proposal.status = "ACCEPTED_IN_SESSION"
-    proposal.resolutionReason = nil
-  end
-  authority.acceptedDisputeRevisions[acceptedRevision] = proposal.proposalId
-  proposal.committedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
-  proposal.contentHash = authorityHash("DISPUTE_PROPOSAL", disputeProposalContent(proposal))
-  boundedInsert(authority.auditLog, {
-    action = "DISPUTE_OPERATION_ACCEPTED_IN_SESSION", proposalId = proposal.proposalId,
-    requestId = proposal.operation.requestId, requestRevision = proposal.operation.requestRevision,
-    timestamp = proposal.committedAt,
-  }, MAX_AUTHORITY_AUDIT)
-  if not result or result.ok ~= true then return copy(operationResult), "PROJECTION_INCOMPLETE" end
-  return copy(result.value), "ACCEPTED_IN_SESSION"
+  return true, status
 end
 
 function Governance.GetOrphanedEvidence()

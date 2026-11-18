@@ -237,10 +237,17 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
   end)
 
   it("S002-11: Replayed authorized transaction does not create duplicates", function()
-    local dibs = load({ wow = { guildLeader = true, playerName = "Tester-Realm", guildMembers = { "Tester-Realm" } } })
+    local dibs = load({ 
+      wow = { 
+        guildLeader = true,
+        playerName = "GM-Realm",
+        guildMembers = { "GM-Realm", "Tester-Realm" },
+        guildRankIndices = { 0, 3 },
+      } 
+    })
     
     -- First grant via ProtectedActions as GM
-    local result1 = dibs.ProtectedActions.Execute("ledger.grant", "Tester-Realm", {
+    local result1 = dibs.ProtectedActions.Execute("ledger.grant", "GM-Realm", {
       playerName = "Tester-Realm",
       amount = 5,
       reason = "Test",
@@ -251,10 +258,12 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
     local txId = result1.value.transactionId
     local count1 = #dibs.Ledger.GetAllTransactions()
     
-    -- Replay via direct API is a no-op for an already committed authorized transaction.
+    -- The authenticated GM replay must recognize the same immutable row.
     local tx2, reason2 = dibs.Ledger.Grant("Tester-Realm", 5, "Test", "replay-test", dibs.GetCurrentSeasonId(), 
       { transactionId = txId })
-    assert_true(tx2 ~= nil, "the exact authorized replay should return its existing record")
+    
+    assert_not_nil(tx2, tostring(reason2))
+    assert_equal(txId, tx2.transactionId)
     assert_equal("IDEMPOTENT_REPLAY", reason2)
     
     -- Count should not change
@@ -340,7 +349,7 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
     local before = dibs.Ledger.GetBalance("Tester-Realm")
     
     -- Normal use through ProtectedActions should work
-    local result = dibs.ProtectedActions.Execute("ledger.use", "Tester-Realm", {
+    local result = dibs.ProtectedActions.Execute("ledger.use", nil, {
       playerName = "Tester-Realm",
       amount = 1,
       reason = "Regression test",

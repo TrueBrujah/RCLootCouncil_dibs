@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.8.11",
+  "addonVersion": "0.9.0",
   "concepts": [
     {
       "id": "guild.ledger.status",
@@ -85,8 +85,8 @@
       },
       "source": {
         "file": "src/modules/Seasons.lua",
-        "line": 190,
-        "symbol": "Dibs.Seasons.Create"
+        "line": 196,
+        "symbol": "createSeason"
       }
     },
     {
@@ -173,7 +173,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 282,
+        "line": 283,
         "symbol": "executeLedgerAdjust"
       }
     },
@@ -218,7 +218,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 1659,
+        "line": 1763,
         "symbol": "Ledger.AdminAdjust"
       }
     },
@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 2211,
+        "line": 2423,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -306,53 +306,8 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 1766,
-        "symbol": "Ledger.GetBalance"
-      }
-    },
-    {
-      "id": "ledger.operation",
-      "module": "ProtectedActions",
-      "category": "ledger",
-      "lifecycle": {
-        "since": "0.9.0",
-        "changed": [],
-        "deprecated": null,
-        "removed": null
-      },
-      "audience": [
-        "gm",
-        "officer"
-      ],
-      "permission": [
-        "ledger.operation"
-      ],
-      "scope": "guild-season",
-      "audit": true,
-      "reasonRequired": true,
-      "helpKeys": {
-        "label": "DOC_LEDGER_OPERATION_LABEL",
-        "shortHelp": "UI_HELP_LEDGER_OPERATION",
-        "reference": ""
-      },
-      "content": {
-        "label": {
-          "enUS": "Canonical ledger correction",
-          "frFR": "Correction canonique du ledger"
-        },
-        "shortHelp": {
-          "enUS": "Review and commit a validated canonical ledger correction. The action requires guild authority and a reason.",
-          "frFR": "Examinez et appliquez une correction canonique validee du ledger. L'action exige une autorite de guilde et une raison."
-        },
-        "reference": {
-          "enUS": "",
-          "frFR": ""
-        }
-      },
-      "source": {
-        "file": "src/modules/ProtectedActions.lua",
-        "line": 310,
-        "symbol": "executeLedgerOperation"
+        "line": 1870,
+        "symbol": "Ledger.PrepareSeasonAllocationBatch"
       }
     },
     {
@@ -395,7 +350,7 @@
       },
       "source": {
         "file": "src/ui/OfficerUI.lua",
-        "line": 546,
+        "line": 1451,
         "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
       }
     },
@@ -439,7 +394,7 @@
       },
       "source": {
         "file": "src/modules/Disputes.lua",
-        "line": 1518,
+        "line": 1630,
         "symbol": "Disputes.GetTimeline"
       }
     },
@@ -482,7 +437,7 @@
       },
       "source": {
         "file": "src/modules/Disputes.lua",
-        "line": 671,
+        "line": 827,
         "symbol": "Disputes.ListForOfficer"
       }
     },
@@ -568,7 +523,7 @@
       },
       "source": {
         "file": "src/ui/PlayerUI.lua",
-        "line": 508,
+        "line": 660,
         "symbol": "Dibs.PlayerUI.GetStatusPresentation"
       }
     },
@@ -611,7 +566,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 638,
+        "line": 651,
         "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
@@ -655,7 +610,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 616,
+        "line": 629,
         "symbol": "Dibs.PreDibs.ValidatePublicRequest"
       }
     },
@@ -699,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 801,
+        "line": 814,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },
@@ -744,7 +699,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 156,
+        "line": 157,
         "symbol": "executeRankSet"
       }
     },
@@ -789,7 +744,7 @@
       },
       "source": {
         "file": "src/modules/ProtectedActions.lua",
-        "line": 183,
+        "line": 184,
         "symbol": "executeRankReconcile"
       }
     },
@@ -1007,7 +962,7 @@
       },
       "source": {
         "file": "src/modules/Governance.lua",
-        "line": 548,
+        "line": 549,
         "symbol": "Governance.GetAuthorityState"
       }
     },
@@ -1050,7 +1005,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 498,
+        "line": 516,
         "symbol": "Sync.RepairGuild"
       }
     },
@@ -1093,7 +1048,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 623,
+        "line": 641,
         "symbol": "Sync.GetPeerStatuses"
       }
     },
@@ -1135,7 +1090,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 1241,
+        "line": 1259,
         "symbol": "Sync.SetProtocolState"
       }
     },
@@ -1264,7 +1219,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 3493,
+        "line": 4019,
         "symbol": "Sync.RequestResync"
       }
     },
@@ -1310,7 +1265,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 538,
+        "line": 556,
         "symbol": "Sync.GetStatus"
       }
     }

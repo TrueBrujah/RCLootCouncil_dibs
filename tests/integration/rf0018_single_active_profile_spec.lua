@@ -67,4 +67,64 @@ describe("RF-0018 exactly one profile is active per scope", function()
     assert_nil(dibs.Profiles.GetActive("guild"),
       "a deleted profile is still reported as active")
   end)
+
+  it("preserves the active profile when policy confirmation is missing", function()
+    local dibs = setup()
+    assert(dibs.Profiles.Create("Current", "guild", { authoritativePolicy = {} }, "Tester-Realm"))
+    assert(dibs.Profiles.Create("Next", "guild", { authoritativePolicy = { defaultAllocation = 17 } }, "Tester-Realm"))
+    assert(dibs.Profiles.Activate("Current", "guild", "Tester-Realm", true))
+
+    local activated, reason = dibs.Profiles.Activate("Next", "guild", "Tester-Realm", false)
+    assert_nil(activated)
+    assert_equal("POLICY_CONFIRM_REQUIRED", reason)
+    assert_equal("Current", dibs.Profiles.GetActive("guild").name)
+    assert_true(dibs.Profiles.Get("Current", "guild").active)
+    assert_false(dibs.Profiles.Get("Next", "guild").active)
+  end)
+
+  it("preserves the active profile when adopted policy rejects activation", function()
+    local dibs = setup()
+    assert(dibs.Profiles.Create("Current", "guild", { authoritativePolicy = {} }, "Tester-Realm"))
+    assert(dibs.Profiles.Create("Next", "guild", { authoritativePolicy = { defaultAllocation = 17 } }, "Tester-Realm"))
+    assert(dibs.Profiles.Activate("Current", "guild", "Tester-Realm", true))
+    dibs.OperationalPolicy.IsAdopted = function() return true end
+
+    local activated, reason = dibs.Profiles.Activate("Next", "guild", "Tester-Realm", true)
+    assert_nil(activated)
+    assert_equal("PROFILE_SHARED_POLICY_UNSUPPORTED", reason)
+    assert_equal("Current", dibs.Profiles.GetActive("guild").name)
+    assert_true(dibs.Profiles.Get("Current", "guild").active)
+    assert_false(dibs.Profiles.Get("Next", "guild").active)
+  end)
+
+  it("keeps local active selection isolated between character owners", function()
+    local dibs = setup()
+    local owner = "First"
+    dibs.GetPlayerName = function() return owner end
+    assert(dibs.Profiles.Create("Shared name", "local"))
+    assert(dibs.Profiles.Create("First choice", "local"))
+    assert(dibs.Profiles.Activate("First choice", "local"))
+
+    owner = "Second"
+    assert(dibs.Profiles.Create("Shared name", "local"))
+    assert_nil(dibs.Profiles.GetActive("local"))
+    assert(dibs.Profiles.Activate("Shared name", "local"))
+    assert_equal("Shared name", dibs.Profiles.GetActive("local").name)
+
+    owner = "First"
+    assert_equal("First choice", dibs.Profiles.GetActive("local").name)
+    assert_false(dibs.Profiles.Get("Shared name", "local").active)
+    assert_true(dibs.Profiles.Delete("Shared name", "local"))
+    owner = "Second"
+    assert_equal("Shared name", dibs.Profiles.GetActive("local").name)
+  end)
+
+  it("reads legacy local selection without an explicit profile active flag", function()
+    local dibs = setup()
+    local profile = assert(dibs.Profiles.Create("Legacy", "local"))
+    local profiles = dibs.GetDB().profiles
+    profiles["local"][profile.ownerScope].Legacy.active = nil
+    profiles.active["local:Legacy"] = true
+    assert_equal("Legacy", dibs.Profiles.GetActive("local").name)
+  end)
 end)

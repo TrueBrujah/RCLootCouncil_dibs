@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 describe("Officer setup page help cache", function()
   it("reuses setup evaluation while navigating and refreshes it on demand", function()
@@ -13,19 +13,15 @@ describe("Officer setup page help cache", function()
       return originalEvaluate(...)
     end
 
-    -- Ordinary pages use no full setup scan. The first supported guidance
-    -- route builds the report; later routes reuse it until explicit refresh.
-    local frame = dibs.OfficerUI.CreateWindow("settings")
+    local frame = dibs.OfficerUI.CreateWindow("automaticDibs")
+    assert_equal(0, evaluations)
+    frame:ActivateRoute("settings")
     local afterOpen = evaluations
-    assert_equal(0, afterOpen)
-    frame:ActivateRoute("installation")
-    assert_true(evaluations > 0)
-    local afterBuild = evaluations
-    frame:ActivateRoute("ranks")
-    assert_equal(afterBuild, evaluations)
-    frame:ActivateRoute("installation")
-    assert_equal(afterBuild, evaluations)
+    assert_true(afterOpen > 0)
+    frame:ActivateRoute("automaticDibs")
+    frame:ActivateRoute("settings")
+    assert_equal(afterOpen, evaluations)
     frame:Refresh()
-    assert_equal(afterBuild + 1, evaluations)
+    assert_equal(afterOpen + 1, evaluations)
   end)
 end)

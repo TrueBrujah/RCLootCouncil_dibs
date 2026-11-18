@@ -18,6 +18,46 @@ pairing color with labels, explanations, impact, and corrective actions.
 
 ## Technical Context
 
+### Approved resumable completion follow-up
+
+Wizard adds a read-only ordered next-step projection over existing verification
+and seasonal-service reads, plus bounded guild-scoped character-local draft and
+correction-context storage. OfficerUI shows one next-step card by default and an
+explicit technical report toggle; correction pages offer return-to-setup. Persist
+editable form values on change/close, never controls or authoritative completion.
+Use in-addon semantic feedback and an opt-in silent preset call for guided setup.
+PlayerUI watches only a cheap navigation prerequisite signature while visible,
+refreshing on changes without rebuilding unchanged forms. No synchronization,
+permission, ledger, recovery or third-party code contract changes.
+
+### Approved inline season preparation — 2026-11-15
+
+Extend PreviewProfile/ApplyProfile with optional third argument
+`{seasonDraft = <existing CreateSeason input>, seasonOperationId = <stable ID>}`.
+Keep existing two-argument behavior. Validate before any profile mutation; use
+GetPreservedHistory for read-only existing-season detection and existing feature
+gates. CreateSeason owns persistence, authority and replay. No schema or recovery
+contract changes. OfficerUI reuses the calendar/time and named raid-night helpers,
+holds draft fields/operation ID only in its window, and retains errors in Configure.
+Parent owns UI/locales/docs, service worker owns Wizard/new service tests, QA is
+independent after stabilization. Existing seasons and disabled modules are preserved.
+
+### Approved progressive navigation slice — 2026-11-15
+
+Add `Wizard.GetNavigationAccess(actor, dbOverride)` as a cheap, read-only projection
+of existing Installation/configuration/module state. OfficerUI uses the same route
+set for menu construction and route validation; a closed route goes to Guided
+Setup. Foundation setup reveals the configuration tools needed for subsequent
+steps, while seasonal Dibs operations require an explicitly configured published
+season, rank rules and the existing ledger prerequisites. Preserve historical
+review during migration. PlayerUI consumes only safe derived readiness and shows
+setup waiting rather than administrative state. No SavedVariables migration,
+authority-policy change, forced optional integration or release-flag change.
+
+Ownership: Wizard projection/tests; PlayerUI guild language/waiting state/tests;
+OfficerUI schedule/navigation and locale integration by parent; independent QA
+after implementation. Existing noncommitted calendar/cleanup fixes are preserved.
+
 <!--
   ACTION REQUIRED: Replace the content in this section with the technical details
   for the project. The structure here is presented in advisory capacity to guide

@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 -- Model the documented AceGUI container contract missing from the basic GUI
 -- double: AddChild performs a full layout, and PauseLayout suppresses it.
@@ -37,6 +37,7 @@ local function setup(memberCount)
     members[index], ranks[index] = "Audit" .. index .. "-Realm", 3
   end
   ranks[memberCount] = 1
+  if memberCount > 1 then ranks[1] = 0 end
   local _, dibs = loader.load({ savedVariables = {}, withAce3 = true, wow = {
     guildLeader = false, playerName = members[memberCount],
     guildMembers = members, guildRankIndices = ranks,

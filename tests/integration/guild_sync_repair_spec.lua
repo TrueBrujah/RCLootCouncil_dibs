@@ -455,7 +455,9 @@ describe("Recovery of missing revision chains", function()
   end)
 
   it("exposes non-destructive peer and guild repair buttons to an Officer", function()
-    local dibs = load("Officer-Realm")
+    local dibs = select(2, require("helpers.configured_addon").load({ withAce3 = true, wow = {
+      playerName = "Officer-Realm", guildLeader = false, guildMembers = roster, guildRankIndices = ranks,
+    } }))
     dibs.OfficerUI.CreateWindow("sync")
     local buttons = {}
     for _, widget in ipairs(_G.__dibsAceWidgets or {}) do

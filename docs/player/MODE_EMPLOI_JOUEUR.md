@@ -9,6 +9,23 @@ inventorient des images Retail manquantes, pas des preuves de validation.
 
 ## A quoi sert Dibs ?
 
+### Répondre à un officier — candidat 0.9.0
+
+Quand un officier attend des informations sur votre signalement, Mes Dibs propose
+« Répondre à un officier » après le résumé du solde. Le raccourci ouvre votre dossier;
+il n’envoie aucune réponse et ne change pas vos Dibs à lui seul. Une réception
+confirmée signifie livraison à un responsable autorisé, pas acceptation de la
+demande, correction du solde ou réception par toute la guilde. Rendu Retail à vérifier.
+
+### Configuration initiale de la guilde
+
+Si vous ne voyez que « Configuration de guilde », le maître de guilde ou un
+officier doit terminer les étapes requises de Guided Setup. Les pages apparaissent
+ensuite selon leur configuration. Une inscription saisonnière peut être ouverte
+avant l'activation comptable; les noms et descriptions de statuts proviennent du
+catalogue publié par votre guilde. Une voie demandée n'accorde pas automatiquement
+un statut approuvé. Aucun jour de progression n'est imposé par le formulaire.
+
 Dibs est un registre saisonnier de priorite de butin gere par la guilde. Il
 affiche votre solde, conserve les demandes Pre-Dib et ajoute un debit lorsqu'un
 gain eligible est valide.
@@ -68,7 +85,7 @@ finalisation du butin.
 
 ## Regles de butin de guilde
 
-Avec DIBS 0.8.x, le maitre de guilde adopte explicitement les regles de butin
+Dans DIBS, le maitre de guilde adopte explicitement les regles de butin
 de guilde et publie leurs modifications. Les officiers verifies peuvent
 modifier un brouillon local et appliquer le preset Dibs, mais seul le GM peut
 adopter ou publier les regles de guilde. Les anciennes valeurs locales ne
@@ -84,8 +101,8 @@ constituent pas une autorite de guilde. Raid Readiness distingue les etats suiva
 	regles partagees ;
 - `UNAVAILABLE` : les types de butin pris en charge n'ont pas pu etre charges.
 
-La synchronisation exige la famille 0.8.x des deux cotes. Les clients en
-0.7.x doivent passer en 0.8.x pour se synchroniser avec la guilde.
+La synchronisation de ce candidat exige la famille 0.9.x des deux cotes. Les
+clients en 0.8.x ou plus anciens doivent passer en 0.9.x pour rejoindre ces pairs.
 
 ## Allocations par rang
 
@@ -162,6 +179,15 @@ montrent la date, l'objet, la difficulte et la verification; survolez une ligne
 pour la source, la semaine de reset, la synchronisation et l'explication des
 preuves. Les preuves privees des officiers ne sont pas affichees.
 
+Le haut de la page indique si la capture automatique est **active**,
+**indisponible sur ce client** ou **desactivee par la politique de guilde**.
+Quand elle est active, le compteur indique les choix d'equipement lisibles du
+coffre actuellement ouvert, pas le nombre d'objets deja acquis. Une cle
+mythique ou un autre supplement reconnu ne compte pas comme un choix
+d'equipement et ne bloque pas la capture de l'objet choisi.
+La ligne **Derniere capture** explique la derniere tentative de la session;
+c'est un diagnostic temporaire, pas un historique conserve apres rechargement.
+
 La fenetre Joueur affiche les acquisitions du Grand Coffre avec l'objet, la
 source, la semaine de reset, l'etat de verification, l'explication
 d'eligibilite et l'etat de synchronisation. Ouvrir le coffre ou regarder un
@@ -170,8 +196,20 @@ La detection automatique exige le choix effectivement reclame, la reception
 du meme objet par votre personnage et la fin de disponibilite des recompenses.
 Elle doit etre active avant le retrait; elle ne reconstruit pas les retraits
 passes a partir du chat ou du contenu des sacs. Si une de ces preuves manque,
-utilisez le secours manuel ci-dessous. La validation sur client Retail reste
-en attente.
+utilisez le secours manuel ci-dessous. Si l'infobulle de l'objet charge en
+retard, Dibs reessaie la meme capture prouvee lorsque les donnees arrivent,
+tant que son contexte reste valide. L'historique ouvert se rafraichit apres
+l'enregistrement.
+
+Chaque membre doit avoir Dibs actif lors du retrait et le module **Pre-Dibs**
+active. L'acquisition enregistree est ensuite synchronisee periodiquement
+dans la guilde vers **OfficerUI > Vault Review**; elle n'apparait donc pas
+necessairement instantanement chez les officiers. La transmission respecte
+l'identite du proprietaire et les autorisations de revue des officiers.
+Les anciens retraits jamais enregistres ne sont pas recuperes automatiquement.
+La validation reelle joueur vers officier reste en attente : suivez la
+[liste des tests Retail du candidat](../audits/0.8.12-TESTS-RETAIL-FR.md).
+
 Les filtres de l'historique du Grand Coffre portent sur l'objet, la source, le
 statut et les dates enregistres. Les dates `YYYY-MM-DD` sont inclusives. Une
 metadonnee absente ne correspond pas a une valeur de remplacement; effacer un
@@ -250,7 +288,19 @@ _Capture Retail en attente : action Pre-Dib ou Drop-Dib —
 
 ## 4. Gerer ses demandes
 
-Dans **My Dibs** (Pre-Dibs actifs, Pre-Dibs gagnes et Pre-Dibs passes), vous pouvez :
+Dans **Mes Dibs** (**My Dibs** sur le client EN), le résumé affiche d'abord vos
+**Dibs restants**, puis les Dibs de saison et les Dibs utilisés. Les Pre-Dibs actifs
+restent devant la gestion des personnages.
+
+**Gérer mon Main et mes alts** ouvre les contrôles uniquement au besoin; **Masquer
+Main et alts** les replie sans envoyer de demande ni perdre le personnage choisi.
+Une déclaration reste soumise à l'approbation d'un officier. Une probation active
+reste visible près du solde même lorsque les contrôles sont repliés; sa fin est
+présentée comme une date, pas comme un nombre technique. Le pliage n'enregistre
+aucun changement comptable. Navigation, commandes Main/Alt et retours d'envoi
+sont disponibles en FR/EN; aucun règlement ni délai de probation ne change.
+
+Dans cette page (Pre-Dibs actifs, Pre-Dibs gagnés et Pre-Dibs passés), vous pouvez :
 
 - consulter le statut d'une demande ;
 - annuler votre propre demande active ;
@@ -321,7 +371,7 @@ Avec RCLootCouncil, le Master Looter finalise le gain. Dibs enregistre ensuite l
 
 ## 6. Signaler un probleme
 
-Ouvrez **Signalements** dans la fenetre Joueur, ou utilisez `/dibs requests`, puis remplissez **Signaler un probleme** : type de probleme (par exemple debit incorrect ou objet/joueur incorrect), entree du registre concernee si possible, et note. Depuis **Historique**, les details d'une entree proposent aussi **Signaler un probleme sur cette operation**, qui preselectionne la transaction. Vos signalements apparaissent ensuite dans **Mes demandes de revision**.
+Ouvrez **Signalements** dans la fenetre Joueur, ou utilisez `/dibs requests`, puis remplissez **Signaler un probleme** : type de probleme (par exemple debit incorrect ou objet/joueur incorrect), entree du registre concernee si possible, et note. Dans **Historique**, un clic gauche sur une ligne ouvre ses details; le clic droit conserve **Voir les details**. Les details proposent **Signaler un probleme sur cette operation**, qui preselectionne la transaction. Vos signalements apparaissent ensuite dans **Mes demandes de revision**.
 
 Ajoutez si possible :
 
@@ -379,3 +429,22 @@ pas de contourner l'etat ; demandez une verification GM/Officer.
 - N'envoyez pas de donnees de guilde ou d'historique dans un canal public.
 - Consultez votre historique apres un gain ou une correction.
 - Contactez un Officer avec l'heure, l'objet et le contexte si un resultat semble incorrect.
+
+## Inscription au roster saisonnier
+
+Selectionnez la saison et lisez ses regles publiees. Pendant les inscriptions,
+vous pouvez soumettre ou modifier votre personnage, ses specialisations, ses
+roles et la voie demandee. Si la saison propose plusieurs categories de raid
+unifiees, choisissez Normal, Heroic ou Mythic parmi ses choix publies. Demander
+la progression Core ne donne pas le statut Core Raider : une decision distincte
+GM/Officer est necessaire. L'inscription ne change jamais vos Dibs.
+
+Declarez explicitement les relations Main/Alt et demandez les changements de
+Main dans le formulaire de saison. Une approbation commence une probation Dibs
+de 14 jours, sans modifier les reponses ordinaires de RCLootCouncil. Le roster
+public reste en lecture seule; les filtres s'appliquent aux lignes et aux totaux.
+Changer de saison recharge son inscription avant toute sauvegarde.
+
+La desactivation du module conserve l'historique et bloque les ecritures. Une
+synchronisation incomplete ne confirme pas l'activation; un apercu seul
+n'alloue aucun Dib.

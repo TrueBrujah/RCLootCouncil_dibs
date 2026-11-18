@@ -1,0 +1,161 @@
+# Implementation Plan: Roster saisonnier et inscriptions aux raids
+
+**Branch**: `029-seasonal-raid-roster` | **Date**: 2026-11-07 | **Spec**: [spec.md](spec.md)
+
+## Summary
+
+Make one canonical raid season the owner of its registration window, rules and policy versions, approved roster, Main/Alt snapshot, rank allocations, reconciliation, Dibs ledger, and archive state. Keep those records in their existing domain modules where practical, but use the same `seasonId` and a revisioned activation manifest to prevent a roster, ruleset, and ledger from referring to different seasons. Preparation and registration never change the active ledger. A verified GM/Officer previews and explicitly activates a ready season. Season allocation and reconciliation process only approved participants, not every guild character.
+
+## Technical Context
+
+**Approved date validation (2026-11-16)**: Enforce FR-058 for creation, explicit
+draft saves and registration publication. Reuse the season-input validator in
+the shared form and Guided Setup, with an explicit strict chronology mode;
+historical schema validation and sync remain compatible. Compare timestamps,
+allow equal end dates and optional ends, and retain existing lifecycle closure
+and idempotent receipts. Test rejected writes for complete state preservation,
+UI localization, setup preflight, exact boundaries and historical sync.
+
+**Language/Version**: Lua supported by WoW Retail; addon restrictions apply.
+**Primary Dependencies**: Existing Dibs modules, Ace3/AceGUI, SyncV2, CharacterEligibility, Permissions, FeatureRegistry, and the append-only Ledger. RCLootCouncil remains optional.
+
+**Date entry dependency**: The Officer date editor already references `LAGW-DatePicker`.
+Restore the exact approved embedded subset of LibAceGUIWidgets v0.12.0 (LibStub
+minor 50) recorded in the consolidation worktree, including its existing three
+asset-path adaptations, assets and licenses. Do not edit the third-party code or
+choose a new version. Preserve the current text-entry fallback. The local
+[vendoring record](../../docs/developer/libaceguiwidgets-vendoring.md) records the
+approved bytes; deployment and package checks must reject missing TOC/XML files
+and missing library assets before creating a misleading successful candidate.
+Retail calendar rendering and LibStub coexistence remain runtime checks.
+**Storage**: Guild-scoped SavedVariables; additive, versioned schema and migrations.
+
+**Approved UI refinement (2026-11-15)**: Create/edit schedule forms share named
+weekday and HH:MM controls; preserve existing duration/time-zone metadata and the
+seven-entry service bound. Display published guild category names/descriptions
+and neutral progression language. Persisted IDs, manual approval, grants,
+activation manifests and Sync limits stay unchanged. Officer and Player navigation
+use the progressive setup projection documented in Feature 021; registration
+must remain available before accounting activation, and upgrade history stays
+accessible. Automated behavioral checks and a separate QA review precede the
+N01–N06 Retail campaign; no manual gate is closed by offline tests.
+**Unified categories approval (2026-11-16)**: In new/draft forms, reuse the existing
+three difficulty checkboxes as the sole signup-category selector. Supply identical
+`categories` and `raidDifficulties` lists to existing create/update APIs; build the
+catalog from those choices while retaining removed historical descriptors inactive.
+Keep Guided Setup local persistence compatible with its existing fields. Hide the
+competing technical catalog editor only for drafts; require a saved selection before
+UI publication. PlayerUI offers a single-category dropdown only while registration
+is open and multiple supported categories match the published difficulty list;
+legacy custom catalogs keep their existing reviewed-status workflow. Published
+seasons, enrollment records, optional nightly difficulty, wire schema and domain
+APIs remain unchanged. Validate creation, edits, reload, empty selection, player
+selection/submission and published legacy preservation with the existing Lua doubles.
+
+**Testing**: Existing Lua unit/integration harness (Fengari); two-client Retail validation for live authority, sync and UI.
+**Target Platform**: WoW Retail addon sandbox, offline-capable and synchronized through addon messages.
+**Project Type**: WoW addon feature across data services, UI, permissions, sync, localization, docs, tests.
+**Performance Goals**: Season activation/reconciliation cost scales with approved enrollment count, not total guild roster. Keep UI work bounded and preserve responsive paginated lists. Establish measurable budgets in tests using representative 20–60 raid participants and hundreds/thousands of guild members.
+**Constraints**: No external identity service; no protected action automation; bounded messages/staging; multi-writer conflict detection; no destructive migration; no silent balance carry-over; preserve optional RCLootCouncil and module gating.
+**Scale/Scope**: Guild with roughly 900 characters, 20–60 active raid participants, several seasons of history, and hundreds of enrollment/audit records.
+
+## Constitution Check
+
+- Seasonal, independent guild-rank allocations: **PASS** — allocation rules remain data for each season and preserve rank-at-transaction snapshots.
+- Append-only ledger/audit: **PASS** — activation and reconciliation append idempotent events; no historical transaction rewrite.
+- Verified GM/Officer authority: **PASS** — serverless authority is checked at each local and received mutation; roster rank is current and guild-scoped.
+- WoW API and optional RCLootCouncil: **PASS** — no protected gameplay automation; feature works without RCLootCouncil.
+- Bounded sync and multi-writer safety: **PASS with design gate** — compatible revisions/manifests, bounded staging and stale-write rejection required before implementation.
+- Additive migration and SavedVariables preservation: **PASS with design gate** — existing Dibs seasons, roster records, aliases, and ledgers are preserved; no guessed identity merge.
+- Performance and UI responsiveness: **PASS with design gate** — only approved cohort is reconciled; lists are paginated and expensive work is measured.
+
+No constitution exception requested. Re-check these gates after implementation design and before implementation.
+
+## Design
+
+### Phase 0: Research
+
+- Trace the current season catalog, seasonal roster, ledger, per-season RankRules, character identity, permissions, module policy, and SyncV2 revisions in the active branch.
+- Decide the canonical season identity and preserve older roster-to-Dibs identifiers as explicit aliases.
+- Define the activation commit point, manifest requirements, stale revision behavior, and recovery semantics.
+- Define rank lookup and a configured no-WoW-rank policy for external participants.
+- Verify migration behavior from the existing schema without deleting or rewriting SavedVariables.
+- Determine concrete limits from the existing SyncV2 constants and stress-test roster/manifest sizes before implementation.
+
+### Phase 1: Data model and contracts
+
+- Define the season lifecycle and legal transitions.
+- Define independently versioned season rules, status catalog, enrollment, Main/Alt relationship snapshot, approval, allocation, reconciliation preview, and activation manifest.
+- Keep informative raid rules distinct from settings the addon actually enforces.
+- Specify player and officer service operations plus authority, idempotency, expected revision, and error behavior.
+- Specify digest/detail synchronization by bounded entities; no single unbounded roster payload.
+- Provide executable validation scenarios and manual Retail checks.
+
+### Phase 2: Implementation order
+
+1. Add additive canonical season identity and migration/alias reads.
+2. Implement service validation, lifecycle transitions, audit, revision conflicts, and module gating.
+3. Add versioned season rules/statuses and player signup/public read-only roster.
+4. Add officer review, Main/Alt integration, and manual Core promotion.
+5. Add per-season rank allocation, explicit no-rank behavior, and separate historical balance reconciliation.
+6. Add previewed, idempotent activation with an atomic visibility/manifest commit point.
+7. Add bounded SyncV2 propagation and recovery for season dependencies.
+8. Add responsive UI, localization, docs, tests, and Retail comparison evidence.
+
+## Project Structure
+
+```text
+src/
+  Core.lua
+  modules/
+    SeasonalRoster.lua
+    Seasons.lua
+    CharacterEligibility.lua
+    Ledger.lua
+    Permissions.lua
+    OperationalPolicy.lua
+    SyncV2.lua
+  ui/
+    PlayerUI.lua
+    OfficerUI.lua
+  locales/
+    enUS.lua
+    frFR.lua
+tests/
+  unit/
+  integration/
+specs/029-seasonal-raid-roster/
+  spec.md
+  plan.md
+  research.md
+  data-model.md
+  quickstart.md
+  contracts/
+```
+
+**Structure Decision**: Extend the existing single-addon architecture and domain services. Do not create a second season subsystem or modify RCLootCouncil core. Storage may remain split by domain for bounded sync and ownership, but canonical identity and activation coherence are shared.
+
+## Risks and Release Gates
+
+### Authorized completion design — 2026-11-14
+
+The completion request authorizes the existing feature, not new governance or a release. Integrate missing Dibs-owned sources from the verified consolidation worktree without overwriting local changes; external libraries remain untouched.
+
+Activation retains the already approved ledger identity and creates an independent seasonal allocation space keyed by the canonical `seasonId`. It does not create an unapproved ledger or change the guild-imposed active-ledger policy. The existing V2 coordinator and canonical writer remain authoritative. A non-coordinator officer receives a recoverable refusal rather than bypassing the writer.
+
+Prepare allocations in a detached copy through the ledger domain; validate all rows, authority, preview freshness and dependencies before a single guild-bucket visibility commit. Publish notifications only after commit. Network delivery failure does not erase a committed operation. The activation manifest is a compact separate entity referencing configuration, the approved cohort, canonical identities, the published allocation snapshot and the canonical ledger sequence/root; it never transports ledger transactions inside roster data. Local guild-roster generations are freshness tokens, not portable network identities: cross-client validation uses content hashes and canonical revisions.
+
+Reconciliation compares assigned seasonal allocations against the reviewed cohort's current rank/configuration. It appends signed allocation adjustments with actor, reason and operation identity, never resets a spent balance. Completion/archive preserves the committed activation identity and all history; archive is an audited transition after the existing seven-day grace period. Main-change probation retains the feature's explicitly approved fourteen-day rule without changing unrelated global eligibility configuration.
+
+Automated completion and Retail release readiness are separate gates. Do not publish or increment the release version during this completion pass; real two-client Retail observations remain required before release.
+
+- Old roster seasons and Dibs seasons may not map one-to-one. Migrations must preserve IDs and require an explicit reviewed alias before activation if association is uncertain.
+- Synchronization can deliver a season, roster, rules, and ledger at different times. Clients must expose a season as active only after the manifest dependencies match.
+- Guild rank can change during registration. Allocation preview and apply must use the same roster/rank snapshot revision or require a refreshed preview.
+- Out-of-guild characters have no native guild rank. The season must explicitly configure their allocation or exclude them.
+- Manual Core promotion records an officer decision; it is not attendance/performance evidence.
+- Live two-client sync, combat safety, real addon memory/CPU, and visual behavior cannot be established by static tests alone.
+
+## Complexity Tracking
+
+No constitution violations or extra projects are introduced.

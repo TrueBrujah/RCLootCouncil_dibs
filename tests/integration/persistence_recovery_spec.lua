@@ -40,6 +40,21 @@ local function hasQuarantine(root, scope, original)
   return false
 end
 
+local function sameValue(first, second, seen)
+  if type(first) ~= type(second) then return false end
+  if type(first) ~= "table" then return first == second end
+  seen = seen or {}
+  if seen[first] == second then return true end
+  seen[first] = second
+  for key, value in pairs(first) do
+    if not sameValue(value, second[key], seen) then return false end
+  end
+  for key in pairs(second) do
+    if first[key] == nil then return false end
+  end
+  return true
+end
+
 describe("SavedVariables validation and recovery", function()
   it("accepts a valid current schema without rewriting valid ledger evidence", function()
     local source = currentRoot()
@@ -52,6 +67,47 @@ describe("SavedVariables validation and recovery", function()
     assert_equal(transaction.playerName, db.ledger.transactions["legacy-tx-1"].playerName)
     assert_equal(false, db.settings.allowPublicPreDibs)
     assert_equal(0, #_G.RCLootCouncil_dibsDB.persistenceRecovery.backups)
+  end)
+
+  it("adds the seasonal roster subtree without changing existing or historical guild data", function()
+    local source = currentRoot()
+    local existingGuild = source.guilds["realm:testguild"]
+    existingGuild.seasonalRoster = {
+      schema = 1,
+      seasons = { ["season-legacy"] = { seasonId = "season-legacy", revision = 3,
+        revisions = { ["1"] = { identitySeasonId = "dibs-old-id" } },
+        enrollments = { enrollmentA = { enrollmentId = "enrollmentA" } } } },
+      auditLog = { { eventId = "event-1", action = "ENROLLMENT_CREATED" } },
+    }
+    source.guilds["realm:oldguild"] = { version = 7, seasons = { preserved = { id = "preserved" } }, marker = "historical" }
+    local rosterBefore = existingGuild.seasonalRoster
+    local oldGuildBefore = source.guilds["realm:oldguild"]
+
+    local _, dibs = loader.load({ savedVariables = source })
+    local db = dibs.GetDB()
+
+    assert_equal("MIGRATABLE", dibs.GetPersistenceStatus().state)
+    assert_equal(2, db.seasonalRoster.schema)
+    assert_equal(rosterBefore.seasons["season-legacy"].revision, db.seasonalRoster.seasons["season-legacy"].revision)
+    assert_equal("season-legacy", db.seasonalRoster.seasonAliases.records["season-legacy"].canonicalSeasonId)
+    assert_equal("dibs-old-id", db.seasonalRoster.seasonAliases.records["season-legacy"].legacyDibsSeasonIds[1])
+    assert_equal("event-1", db.seasonalRoster.auditLog[1].eventId)
+    assert_equal("historical", _G.RCLootCouncil_dibsDB.guilds["realm:oldguild"].marker)
+    assert_equal(oldGuildBefore.seasons.preserved.id, _G.RCLootCouncil_dibsDB.guilds["realm:oldguild"].seasons.preserved.id)
+  end)
+
+  it("preserves a future seasonal-roster schema for fail-closed service handling", function()
+    local source = currentRoot()
+    source.guilds["realm:testguild"].seasonalRoster = {
+      schema = 99,
+      marker = "must-not-be-downgraded",
+      opaque = { nested = true },
+    }
+    local _, dibs = loader.load({ savedVariables = source })
+
+    assert_equal(99, dibs.GetDB().seasonalRoster.schema)
+    assert_equal("must-not-be-downgraded", dibs.GetDB().seasonalRoster.marker)
+    assert_true(dibs.GetDB().seasonalRoster.opaque.nested)
   end)
 
   it("migrates every supported historical guild schema deterministically", function()
@@ -206,6 +262,64 @@ describe("SavedVariables validation and recovery", function()
     assert_equal(1, #root.persistenceRecovery.backups)
     assert_equal(backupId, root.persistenceRecovery.backups[1].backupId)
     assert_equal("legacy-tx-1", dibs.GetDB().ledger.transactions["legacy-tx-1"].transactionId)
+  end)
+
+  it("leaves unrecoverable canonical history untouched during startup recovery", function()
+    local source = currentRoot()
+    local ledger = source.guilds["realm:testguild"].ledger
+    ledger.canonical = {
+      schema = 1,
+      epoch = 7,
+      nextSeq = 2,
+      rootHash = "unverifiable-root",
+      commits = {},
+      transactionIndex = {},
+      positions = {},
+    }
+    local _, dibs = loader.load({ savedVariables = source, skipInitialize = true })
+    local db = dibs.GetDB()
+    local canonicalBefore = dibs.DeepCopy(db.ledger.canonical)
+    local transactionsBefore = dibs.DeepCopy(db.ledger.transactions)
+
+    assert_true(dibs.Initialize())
+
+    assert_equal("CANONICAL_SEQUENCE_GAP", dibs.canonicalOperationRecoveryStatus.reasonCode)
+    assert_true(sameValue(canonicalBefore, db.ledger.canonical),
+      "startup modified unrecoverable canonical history or its indexes")
+    assert_true(sameValue(transactionsBefore, db.ledger.transactions),
+      "startup modified transaction projections for unrecoverable history")
+  end)
+
+  it("records an explicit recovery-unavailable diagnostic when Disputes is missing", function()
+    local _, dibs = loader.load({ savedVariables = currentRoot(), skipInitialize = true })
+    dibs.Disputes = nil
+
+    assert_true(dibs.Initialize())
+
+    assert_equal("CANONICAL_RECOVERY_UNAVAILABLE", dibs.canonicalOperationRecoveryStatus.reasonCode)
+  end)
+
+  it("fails closed when startup recovery returns no verifiable result", function()
+    local _, dibs = loader.load({ savedVariables = currentRoot(), skipInitialize = true })
+    dibs.Disputes.ReconstructOperationStates = function() return nil end
+    assert_true(dibs.Initialize())
+    assert_false(dibs.canonicalOperationRecoveryStatus.rebuilt)
+    assert_equal("CANONICAL_RECOVERY_FAILED", dibs.canonicalOperationRecoveryStatus.reasonCode)
+    assert_equal("guild-primary", dibs.canonicalOperationRecoveryStatus.ledgerId)
+    assert_equal(dibs.GetGuildKey(), dibs.canonicalOperationRecoveryStatus.guildKey)
+  end)
+
+  it("records successful validation of an empty canonical history at startup", function()
+    local _, dibs = loader.load({ savedVariables = currentRoot(), skipInitialize = true })
+    local canonical = assert(dibs.Ledger.GetCanonicalState("guild-primary"))
+    local nextSeq, rootHash = canonical.nextSeq, canonical.rootHash
+
+    assert_true(dibs.Initialize())
+
+    assert_true(dibs.canonicalOperationRecoveryStatus.rebuilt)
+    assert_equal("OPERATION_STATES_REBUILT", dibs.canonicalOperationRecoveryStatus.reasonCode)
+    assert_equal(nextSeq, dibs.Ledger.GetCanonicalState("guild-primary").nextSeq)
+    assert_equal(rootHash, dibs.Ledger.GetCanonicalState("guild-primary").rootHash)
   end)
 
   it("does not commit a partial migration when the staged migration fails", function()

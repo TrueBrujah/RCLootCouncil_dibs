@@ -10,6 +10,16 @@ local function countText(widget, text)
   return count
 end
 
+local function countRegisteredHeading(text)
+  local count = 0
+  for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+    if widget.kind == "Heading" and tostring(widget.text or "") == text then
+      count = count + 1
+    end
+  end
+  return count
+end
+
 local function findControl(widget, label)
   if type(widget) ~= "table" then return nil end
   if widget.kind == "Dropdown" and tostring(widget.label or "") == label then return widget end
@@ -29,8 +39,8 @@ local function findWidget(widget, predicate)
   end
 end
 
-local function setup()
-  return loader.load({
+local function setup(fresh)
+  return (fresh and loader or require("helpers.configured_addon")).load({
     wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Officer-Realm" } },
     withAce3 = true,
   })
@@ -508,11 +518,13 @@ describe("B11 Retail UI-004 ownership", function()
     local _, dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow()
     local expected = {
-      overview = "Officer dashboard", preDibs = "Pre-Dibs", settings = "Settings",
+      overview = "Officer dashboard", preDibs = "Pre-Dibs", settings = "Settings", lootTypes = "Loot Rules",
     }
-    for _, route in ipairs({ "overview", "preDibs", "settings", "overview" }) do
+    for _, route in ipairs({ "overview", "preDibs", "settings", "lootTypes", "overview" }) do
       frame.SelectTab(route)
-      assert_equal(1, countText(frame.contentHost, expected[route]), route)
+      local titleCount = countText(frame.contentHost, expected[route])
+      if route == "lootTypes" then titleCount = countRegisteredHeading(expected[route]) end
+      assert_equal(1, titleCount, route)
       assert_true(countText(frame.contentHost, "Active season request mode") <= 1)
       assert_false(countText(frame.contentHost, "Pre-Dibs") > 1)
     end
@@ -573,7 +585,7 @@ describe("B11 Retail UI-004 ownership", function()
   end)
 
   it("keeps public Pre-Dib availability on the legacy fallback before policy adoption", function()
-    local _, dibs = setup()
+    local _, dibs = setup(true)
     local toggle = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.officer.args.preDibs.args.allowPublicPreDibs
     assert_false(dibs.OperationalPolicy.IsAdopted())
     assert_true(toggle.get())
@@ -583,7 +595,7 @@ describe("B11 Retail UI-004 ownership", function()
   end)
 
   it("updates adopted public Pre-Dib availability through a protected action", function()
-    local _, dibs = setup()
+    local _, dibs = setup(true)
     assert_true(dibs.Governance.AdoptInitial(nil, {
       reason = "Public Pre-Dib authority test",
       officerAuthorityRule = { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 },

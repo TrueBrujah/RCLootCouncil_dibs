@@ -1,5 +1,51 @@
 # Dependances et flux Lua / WoW
 
+## Dashboard extrait — 16 novembre 2026
+
+[OfficerUI](../../src/ui/OfficerUI.lua) conserve la projection autorisée et transmet
+son résultat à [OfficerDashboard](../../src/ui/OfficerDashboard.lua), chargé avant
+le contrôleur. Le renderer compose uniquement les composants Midnight/AceGUI et
+les actions de navigation du frame; il n’appelle pas OfficerUI et ne devient pas
+une autorité métier. Les phases de profilage et les routes restent compatibles.
+La récupération au démarrage parcourt les ledgers approuvés/archivés et conserve
+des résultats runtime séparés par guilde/ledger; la reconstruction Disputes préserve
+les projections des autres ledgers. Aucun contenu de bibliothèque modifié.
+
+## Calendrier embarqué rétabli — 15 novembre 2026
+
+- Erreur Retail réelle : `embeds.xml` référençait les deux fichiers Lua de
+  LibAceGUIWidgets alors que le bundle était absent du dépôt actif et du jeu.
+  Une compilation du code Dibs ne détectait pas cette omission de livraison.
+- Les sept fichiers du sous-ensemble v0.12.0 déjà approuvé ont été copiés sans
+  changement depuis le worktree de consolidation, y compris les adaptations
+  de chemins préexistantes. Aucun nouveau patch tiers. Version, provenance,
+  licences et SHA-256 : [registre](../developer/libaceguiwidgets-vendoring.md).
+  L'attribut Git `-text` conserve les octets approuvés de ce seul bundle.
+- [Contrôle de livraison](../../scripts/Test-DibsAddonFiles.ps1) : parcours du
+  TOC et des inclusions XML, vérification des ressources/licences du calendrier,
+  refus des chemins sortant de l'addon. Exécuté avant la copie locale et avant
+  le packaging CI. Test de non-régression reproduisant les deux absences et
+  vérification des sept empreintes; rendu réel et coexistence restent à retester.
+
+## Transport de sauvegarde intégré — 15 novembre 2026
+
+- [BackupTransport](../../src/modules/BackupTransport.lua) préfère les capacités
+  `C_EncodingUtil` vérifiées à l'exécution; [embeds](../../src/embeds.xml) charge
+  également le [LibDeflate existant](../../src/libs/LibDeflate/LibDeflate.lua),
+  version `1.0.2-release`, minor LibStub 3, copyright Haoqian He, licence zlib
+  incluse dans son fichier. Version inchangée, aucun patch interne ni nouvelle copie.
+- SHA-256 du fichier intégré :
+  `8a8805a63a74e97e97212115b24cc5e426a06c7376866505c7f414216f25f99c`.
+- Adaptation uniquement dans le module Dibs : enveloppe DEFLATE/Base64 standard,
+  contrôle structurel et budget d'expansion avant décompression. L'API native et
+  le fallback partagent le même format. Compression ne signifie pas chiffrement.
+- Le helper de test isole la bibliothèque et émule les doubles Lua 5.1 pour ses
+  lectures d'octets sous Fengari (entiers 32 bits). Aucun remplacement de fonction
+  globale de production, aucune modification du source tiers. Fixtures Node/zlib
+  indépendantes et exécution des vrais codecs; pas de codec identité.
+- La coexistence LibStub et l'exécution réelle de `C_EncodingUtil`/UI restent à
+  vérifier dans les builds Retail ciblés; les tests hors jeu ne les certifient pas.
+
 ## Liens runtime revérifiés le 28 octobre 2026
 
 - TOC → Sync.lua → SyncV2.lua : même table Dibs.Sync, redéfinitions actives

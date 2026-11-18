@@ -108,7 +108,7 @@ describe("B03 local canonical ledger", function()
       if transaction.transactionId == "legacy-b03" and transaction.playerName == "Legacy-Realm" then readable = true end
     end
     assert_true(readable)
-    local tx, reason = dibs.Ledger.Grant("Unknown-Realm", 1, "must validate", "test", dibs.GetCurrentSeasonId())
+    local tx, reason = dibs.Ledger.Grant("Unknown-Realm", 1, "must validate", "test", "season-legacy")
     assert_nil(tx); assert_equal("UNKNOWN_ROSTER_MEMBER", reason)
   end)
 

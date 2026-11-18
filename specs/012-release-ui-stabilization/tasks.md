@@ -283,6 +283,22 @@ Task: T038 tests/unit/b12_historical_candidate_projection_spec.lua
 - Two-client validation is conditional only on a B12 cross-client behavior change.
 - A remaining `SANDBOX_STORE_TOO_LARGE` limitation may be accepted only under the documented developer-only isolation conditions.
 
+## Regression follow-up — 2026-11-17
+
+- [x] T066 Qualify navigation failures in `tests/contract/b11_officer_navigation_spec.lua`,
+  `tests/integration/automatic_dibs_log_spec.lua`,
+  `tests/integration/module_management_spec.lua` and related post-setup UI suites.
+  Supply explicit configured-guild fixtures where required; preserve the real
+  fresh/partial Guided Setup tests, module gates and verified role checks. Separate
+  stale fixture expectations from application defects; do not bypass readiness in
+  accounting or authority tests.
+  - Completed 2026-11-17: the opt-in configured fixture establishes foundation
+    and publishes the catalog through real services, then reloads the subject
+    role. Default fresh installation, partial setup, module/role guards and
+    canonical readiness remain exercised. Required Wizard findings take priority;
+    roster and navigation reads reuse their existing snapshots. Full Lua 5.4:
+    2,181 passed, zero failed on 274 files. Retail gates stay open.
+
 ## Notes
 
 - Every task uses the required checkbox, sequential ID, optional `[P]`, story label where applicable, and a concrete repository path.

@@ -273,4 +273,147 @@ describe("Great Vault Retail capability", function()
     assert_equal("Heroic", records[1].difficulty)
     assert_equal("MANUAL_RECORDED", records[1].verificationState)
   end)
+
+  it("captures the selected equipment when its reward bundle also includes a keystone", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    C_Item.IsItemKeystoneByID = function(id) return id == 180653 end
+    C_WeeklyRewards.GetActivities = function()
+      return { { claimID = 77, rewards = {
+        { id = 21016, itemDBID = 9001 }, { id = 180653, itemDBID = 9002 },
+      } } }
+    end
+    C_WeeklyRewards.GetItemHyperlink = function(id)
+      if id == 9002 then return "|Hitem:180653::::::::::::|h[Keystone]|h" end
+      return "|cffa335ee|Hitem:21016::::::::::::|h[Vault Ring]|h|r"
+    end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    local before = #dibs.Ledger.GetAllTransactions()
+    claim()
+    complete()
+    loot()
+    local records = dibs.PreDibs.GetAcquisitions()
+    assert_equal(1, #records)
+    assert_equal(21016, records[1].itemID)
+    assert_equal("AUTOMATIC_CONFIRMED", records[1].verificationState)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
+  end)
+
+  it("excludes non-equippable supplemental items but never guesses a missing reward link", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    C_Item.IsEquippableItem = function(id) return id == 21016 end
+    C_WeeklyRewards.GetActivities = function()
+      return { { claimID = 77, rewards = {
+        { id = 21016, itemDBID = 9001 }, { id = 12345, itemDBID = 9002 },
+      } } }
+    end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    claim()
+    complete()
+    loot()
+    assert_equal(1, #dibs.PreDibs.GetAcquisitions())
+
+    _, dibs = loader.load()
+    claim, loot, complete = installRetail(dibs)
+    C_WeeklyRewards.GetActivities = function()
+      return { { claimID = 77, rewards = { { itemDBID = 9001 }, { itemDBID = 9002 } } } }
+    end
+    C_WeeklyRewards.GetItemHyperlink = function(id)
+      if id == 9001 then return "|cffa335ee|Hitem:21016::::::::::::|h[Vault Ring]|h|r" end
+    end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    claim()
+    complete()
+    loot()
+    assert_equal(0, #dibs.PreDibs.GetAcquisitions())
+  end)
+
+  it("recognizes localized self loot with an empty GUID without accepting another player's loot", function()
+    local previous = _G.LOOT_ITEM_SELF
+    for _, format in ipairs({ "You receive loot: %s.", "Vous recevez le butin : %s." }) do
+      local _, dibs = loader.load()
+      local claim, _, complete = installRetail(dibs)
+      _G.LOOT_ITEM_SELF = format
+      local link = "|cffa335ee|Hitem:21016::::::::::::|h[Vault Ring]|h|r"
+      claim()
+      complete()
+      wow.dispatch("CHAT_MSG_LOOT", "Other receives loot: " .. link, "Other-Realm")
+      assert_equal(0, #dibs.PreDibs.GetAcquisitions())
+      wow.dispatch("CHAT_MSG_LOOT", string.format(format, link), "", "", "", "", "", 0, 0, "", 0, 1, "")
+      assert_equal(1, #dibs.PreDibs.GetAcquisitions())
+    end
+    _G.LOOT_ITEM_SELF = previous
+  end)
+
+  it("recovers a proven receipt when its difficulty loads after the loot event", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    C_TooltipInfo.GetHyperlink = function() return nil end
+    wow.dispatch("WEEKLY_REWARDS_UPDATE")
+    claim()
+    complete()
+    loot()
+    assert_equal(0, #dibs.PreDibs.GetAcquisitions())
+    assert_equal("DIFFICULTY_UNAVAILABLE", dibs.GreatVault.GetCaptureStatus().lastReasonCode)
+    C_TooltipInfo.GetHyperlink = function()
+      return { lines = { { leftText = "Vault Ring" }, { leftText = "Heroic" },
+        { leftText = "Upgrade Level: Hero 1/6" } } }
+    end
+    wow.dispatch("GET_ITEM_INFO_RECEIVED", 21016, true)
+    wow.dispatch("GET_ITEM_INFO_RECEIVED", 21016, true)
+    assert_equal(1, #dibs.PreDibs.GetAcquisitions())
+    assert_equal("CLAIM_CONFIRMED", dibs.GreatVault.GetCaptureStatus().lastReasonCode)
+    assert_equal(21016, dibs.GreatVault.GetCaptureStatus().lastItemID)
+  end)
+
+  it("isolates runtime capture diagnostics and cached reward choices by guild", function()
+    local _, dibs = loader.load()
+    local claim, loot, complete = installRetail(dibs)
+    assert_equal(1, dibs.GreatVault.GetCaptureStatus().choiceCount)
+    claim()
+    assert_equal("CLAIM_PENDING", dibs.GreatVault.GetCaptureStatus().lastReasonCode)
+    local original = dibs.GetGuildKey
+    dibs.GetGuildKey = function() return "another-guild" end
+    local status = dibs.GreatVault.GetCaptureStatus()
+    assert_equal(0, status.choiceCount)
+    assert_nil(status.lastReasonCode)
+    claim()
+    complete()
+    loot()
+    assert_equal(0, #dibs.PreDibs.GetAcquisitions())
+    dibs.GetGuildKey = original
+  end)
+
+  it("refreshes pending and failed diagnostics and displays the claimed item in the open Player Vault page", function()
+    local _, dibs = loader.load({ withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
+    local claim, loot, complete = installRetail(dibs)
+    local rows, labels = nil, {}
+    local addTable, addLabel = dibs.AceGUI.AddTable, dibs.AceGUI.AddLabel
+    dibs.AceGUI.AddTable = function(shell, parent, columns, values, ...)
+      if columns[4] and columns[4].title == dibs.L.PLAYER_VAULT_STATUS then rows = values end
+      return addTable(shell, parent, columns, values, ...)
+    end
+    dibs.AceGUI.AddLabel = function(shell, parent, text, ...)
+      labels[text] = true
+      return addLabel(shell, parent, text, ...)
+    end
+    local frame = dibs.PlayerUI.CreateWindow()
+    frame.SelectTab("vault")
+    frame:Show()
+    assert_equal(0, #rows)
+    claim()
+    assert_true(labels[string.format(dibs.L.PLAYER_VAULT_CAPTURE_LAST, dibs.L.VAULT_REASON_CLAIM_PENDING)])
+    for _, hook in ipairs(C_WeeklyRewards.__secureHooks.ClaimReward) do hook(999) end
+    assert_true(labels[string.format(dibs.L.PLAYER_VAULT_CAPTURE_LAST, dibs.L.VAULT_REASON_CLAIM_ITEM_UNAVAILABLE)])
+    claim()
+    local before = #dibs.Ledger.GetAllTransactions()
+    complete()
+    loot()
+    assert_equal(1, #rows)
+    assert_true(rows[1][2]:find("Vault Ring", 1, true) ~= nil)
+    assert_true(rows[1][4]:find(dibs.L.VAULT_STATUS_AUTOMATIC_CONFIRMED, 1, true) ~= nil)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
+  end)
 end)

@@ -114,7 +114,6 @@ describe("Guild Loot Rules normalization", function()
       playerName = "Player-Realm", guildLeader = false,
       guildMembers = { "Player-Realm" }, guildRankIndices = { [1] = 3 },
     } })
-    player.Permissions.Can = function() return false end
     setSupportedKeys(player, { TOKEN = "Curio" })
     local priorSettings = player.GetDB().settings.dibAllowedTypes
     local changed, reason = player.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
@@ -126,14 +125,14 @@ describe("Guild Loot Rules normalization", function()
       playerName = "Officer-Realm", guildLeader = false,
       guildMembers = { "Officer-Realm" }, guildRankIndices = { [1] = 1 },
     } })
-    officer.Permissions.Can = function() return true end
     setSupportedKeys(officer, { TOKEN = "Curio" })
     officer.GetDB()
     changed, reason = officer.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
     assert_true(changed, tostring(reason))
     assert_equal(false, officer.GetDB().settings.dibAllowedTypes.TOKEN)
 
-    dibs.Permissions.Can = function() return true end
+    dibs = load()
+    setSupportedKeys(dibs, { TOKEN = "Curio" })
     changed, reason = dibs.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
     assert_true(changed, tostring(reason))
     assert_equal(false, dibs.GetDB().settings.dibAllowedTypes.TOKEN)
@@ -154,9 +153,9 @@ describe("Guild Loot Rules normalization", function()
     local dibs = load()
     setSupportedKeys(dibs, { TOKEN = "Curio" })
     assert_equal(false, dibs.LootRules.HasDraftChanges())
-    dibs.Permissions.Can = function() return true end
     assert_true(dibs.LootRules.SetDraftValue("TOKEN", "adventureGuide", false))
     assert_equal(false, dibs.LootRules.HasDraftChanges())
+    dibs.Seasons.GetCatalogState = function() return { catalogRevision = 1 } end
     dibs.Seasons.GetCatalogRevision = function() return 1 end
     dibs.Seasons.GetCatalogRecord = function()
       return { guildConfiguration = { guildLootRules = {

@@ -18,6 +18,7 @@ local TOC_FILES = {
   "modules/Permissions.lua",
   "modules/ProtectedActions.lua",
   "modules/Notifications.lua",
+  "modules/BackupTransport.lua",
   "modules/ImportExport.lua",
   "modules/AuditExport.lua",
   "modules/Profiles.lua",
@@ -29,6 +30,7 @@ local TOC_FILES = {
   "modules/LootPipeline.lua",
   "modules/Sync.lua",
   "modules/SyncV2.lua",
+  "modules/SeasonalRoster.lua",
   "modules/RequestDelivery.lua",
   "modules/HistoricalBaseline.lua",
   "modules/Installation.lua",
@@ -59,6 +61,7 @@ local TOC_FILES = {
   "ui/LogsUI.lua",
   "ui/DataUI.lua",
   "ui/PlayerUI.lua",
+  "ui/OfficerDashboard.lua",
   "ui/OfficerUI.lua",
   "ui/MinimapButton.lua",
   "integrations/RCLootCouncilOptions.lua",
@@ -112,12 +115,7 @@ local function makeAce3()
   end
   local event = { handlers = {} }
   function event:Embed(target)
-    target.RegisterEvent = function(owner, eventName, callback)
-      event.handlers[eventName] = function(receivedEvent, ...)
-        return callback(target, receivedEvent, ...)
-      end
-      return true
-    end
+    target.RegisterEvent = function(owner, eventName, callback) event.handlers[eventName] = callback return true end
   end
   local timer = { scheduled = {} }
   function timer:Embed(target)
@@ -236,6 +234,17 @@ local function makeRC(opts)
   }
 end
 
+local function loadInEnvironment(path, environment)
+  local chunk, err
+  if _VERSION == "Lua 5.1" then
+    chunk, err = loadfile(path)
+    if chunk and type(setfenv) == "function" then setfenv(chunk, environment) end
+  else
+    chunk, err = loadfile(path, "t", environment)
+  end
+  return chunk, err
+end
+
 function M.makeRCLootCouncil(opts)
   return makeRC(opts)
 end
@@ -269,10 +278,7 @@ function M.load(opts)
   local tocFiles = TOC_FILES
   for _, relative in ipairs(tocFiles) do
     local sourcePath = "src/" .. relative
-    -- Respect an optional sandbox/client environment. Without the explicit
-    -- environment, Lua loads each addon chunk into the host _G, collapsing
-    -- supposedly isolated clients onto one shared addon instance.
-    local chunk, err = loadfile(sourcePath, "t", _G)
+    local chunk, err = loadInEnvironment(sourcePath, _G)
     if not chunk then
       error("failed to load " .. sourcePath .. ": " .. tostring(err))
     end

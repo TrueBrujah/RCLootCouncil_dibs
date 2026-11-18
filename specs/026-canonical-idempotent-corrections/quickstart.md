@@ -2,6 +2,19 @@
 
 This guide is for the future implementation and its review. It provides validation scenarios; it does not implement or certify the feature.
 
+### Approved consolidation checkpoint — 2026-11-16
+
+The working candidate now includes ledger-scoped startup recovery for approved and
+archived secondary ledgers and preservation of other ledgers' operation-state
+projections. Added tests restart a nonempty secondary history and interrupt a
+serialized receiver at three projection/index cut points, then rebuild and replay
+without changing accepted IDs, balances, sequence or root. A targeted 31-suite
+UI/security/canonical slice passes 334/334 on Fengari, Lua 5.4.6 and Lua 5.1.5.
+This does not close the full release/recovery matrix, approve external canonical
+snapshot adoption, open release flags, or establish Retail persistence/convergence.
+The historical audit guard remains non-PASS (209 application differences, no
+protected-library difference), with its original baseline preserved.
+
 ## Prerequisites
 
 - Work from repository root on the implementation branch.
@@ -96,6 +109,27 @@ must be attributable either to the recorded pre-existing worktree or to the
 phase's declared source paths. Preserve pre-existing changes; stop for explicit
 integration guidance if a phase touches one. A nonzero guard exit is never
 reported as a pass.
+
+## Automated progress — 2026-11-16
+
+T046 is closed for automated readiness evidence: the runtime derives recovery,
+ledger scope, authority/coordinator, transport, V2 enforcement, journal integrity,
+epoch and known online-peer capabilities without replacing readiness with a test
+stub. Primary-ledger restart from mixed legacy, award and correction history
+preserves commits, hashes, IDs, sequence/root and independently calculated balances.
+Non-coordinator reception and the next write after recovery are covered.
+
+The six canonical suites pass **77/77** under Fengari and Lua 5.4.6. Integration
+with the four Player/eligibility suites passes **142/142 on ten suites** under both
+engines. These are synthetic-fixture results, not Retail or Lua 5.1 certification.
+T049 remains open for secondary/multi-ledger startup, fault cuts on received
+commits and the complete recovery matrix across independent clients. The release
+gate remains disabled; this evidence does not authorize enabling it.
+
+The owner explicitly approved restoring only the historical baseline from
+`b59a3f3` and adding the seven registered LibAceGUIWidgets v0.12.0 hashes. The
+agent's final guard reports **exit 1**, 206 application differences and no protected
+differences. This is not a guard pass, nor permission to recapture the baseline.
 
 ## Manual World of Warcraft Retail validation
 

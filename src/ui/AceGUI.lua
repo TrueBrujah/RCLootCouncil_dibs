@@ -234,7 +234,7 @@ function Adapter.AllocateFluidColumnWidths(columns, contentWidth, options)
   for index, column in ipairs(definitions) do
     local minimum = math.max(0, tonumber(column.minWidth) or 0)
     local width = math.max(minimum, tonumber(column.width) or minimum)
-    local weight = not column.fixed and math.max(0, tonumber(column.weight) or 0) or 0
+    local weight = not column.fixed and math.max(0, tonumber(column.weight) or (column.weight == nil and 1 or 0)) or 0
     if weight > 0 then
       widths[index] = minimum
       flexible[#flexible + 1] = { index = index, weight = weight }
@@ -254,7 +254,8 @@ function Adapter.AllocateFluidColumnWidths(columns, contentWidth, options)
     end
   end
 
-  local used = fixedTotal + flexibleMinimumTotal + math.max(0, remaining)
+  local used = 0
+  for _, width in ipairs(widths) do used = used + width end
   return widths, used > available, used + insets
 end
 
@@ -266,7 +267,7 @@ local function fluidColumnBudget(columns, options, preferred)
     + math.max(0, tonumber(options.scrollbarReserve) or 0)
   for _, column in ipairs(definitions) do
     local minimum = math.max(0, tonumber(column.minWidth) or 0)
-    local isFlexible = not column.fixed and (tonumber(column.weight) or 0) > 0
+    local isFlexible = not column.fixed and (tonumber(column.weight) or (column.weight == nil and 1 or 0)) > 0
     if preferred or not isFlexible then
       width = width + math.max(minimum, tonumber(column.width) or minimum)
     else
@@ -1443,28 +1444,31 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
             and (options.tooltipOnlyWhenTruncated ~= true or tooltip or cellWasTruncated) then
             Adapter.AddTooltip(cell, value, tooltip)
           end
-          if not header and record and (rowSelectionEnabled or rowContextEnabled) then
-            attachGridScript(cell, "OnMouseUp", function(_, mouseButton)
-              if mouseButton == "RightButton" then
-                if options.disableContextMenu then return true end
-                return showDataGridContextMenu(record)
-              end
-              if not rowSelectionEnabled then return false end
-              if mouseButton and mouseButton ~= "LeftButton" then return false end
-              gridState.selectedRow = gridState.selectedRow == record.source and nil or record.source
-              updateGridSelection()
-              if options.onRowClick then options.onRowClick(record.source, index) end
-              return true
-            end)
-            if cell.frame and cell.frame.EnableMouse then cell.frame:EnableMouse(true) end
-            if cell.frame and cell.frame.RegisterForClicks then cell.frame:RegisterForClicks("AnyUp") end
+          if not header and record then
+            if rowSelectionEnabled or rowContextEnabled then
+              attachGridScript(cell, "OnMouseUp", function(_, mouseButton)
+                if mouseButton == "RightButton" then
+                  if options.disableContextMenu then return true end
+                  return showDataGridContextMenu(record)
+                end
+                if not rowSelectionEnabled then return false end
+                if mouseButton and mouseButton ~= "LeftButton" then return false end
+                gridState.selectedRow = gridState.selectedRow == record.source and nil or record.source
+                updateGridSelection()
+                if options.onRowClick then options.onRowClick(record.source, index) end
+                return true
+              end)
+              if cell.frame and cell.frame.EnableMouse then cell.frame:EnableMouse(true) end
+              if cell.frame and cell.frame.RegisterForClicks then cell.frame:RegisterForClicks("AnyUp") end
+            end
+            -- Item tooltips are presentation behavior and must work even in
+            -- read-only tables that do not enable row selection or menus.
+            if options.disableCellTooltips ~= true and type(value) == "string" and value:find("|Hitem:", 1, true) then
+              attachGridScript(cell, "OnEnter", function(frame)
+                showTableCellTooltip(frame, value)
+              end)
+            end
           end
-        end
-        if not header and options.disableCellTooltips ~= true
-          and type(value) == "string" and value:find("|Hitem:", 1, true) then
-          attachGridScript(cell, "OnEnter", function(frame)
-            showTableCellTooltip(frame, value)
-          end)
         end
       end
     end
@@ -1523,10 +1527,17 @@ function Adapter.AddTable(shell, parent, columns, rows, height, rowActions, opti
         if rightOk then rightValue = rightSorted end
       end
       local leftNumber, rightNumber = tonumber(leftValue), tonumber(rightValue)
-      local less
-      if leftNumber and rightNumber then less = leftNumber < rightNumber
-      else less = string.lower(tostring(leftValue or "")) < string.lower(tostring(rightValue or "")) end
-      local equal = leftValue == rightValue or tostring(leftValue or "") == tostring(rightValue or "")
+      if leftNumber ~= leftNumber then leftNumber = nil end
+      if rightNumber ~= rightNumber then rightNumber = nil end
+      local leftKey, rightKey = string.lower(tostring(leftValue or "")), string.lower(tostring(rightValue or ""))
+      local less, equal
+      if leftNumber and rightNumber then
+        less, equal = leftNumber < rightNumber, leftNumber == rightNumber
+      elseif leftNumber or rightNumber then
+        less, equal = leftNumber ~= nil, false
+      else
+        less, equal = leftKey < rightKey, leftKey == rightKey
+      end
       if equal then return left.originalIndex < right.originalIndex end
       if direction == "asc" then return less end
       return not less

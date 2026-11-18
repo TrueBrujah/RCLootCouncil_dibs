@@ -180,7 +180,110 @@ local function ensureState(dbOverride)
   db.disputes.requests = db.disputes.requests or {}
   db.disputes.order = db.disputes.order or {}
   db.disputes.corrections = db.disputes.corrections or {}
+  db.disputes.operationStates = db.disputes.operationStates or {}
   return db.disputes
+end
+
+-- Rebuild the mutable dispute-operation view from the verified canonical
+-- journal. The journal remains authoritative; request revisions determine
+-- whether an accepted operation may still be linked to its current dossier.
+function Disputes.ReconstructOperationStates(targetLedgerId)
+  local ledgerModule = Dibs.Ledger
+  if not ledgerModule or type(ledgerModule.ClassifyCanonicalRecovery) ~= "function"
+    or type(ledgerModule.RebuildLedgerProjections) ~= "function" then
+    return { rebuilt = false, reasonCode = "CANONICAL_RECOVERY_UNAVAILABLE" }
+  end
+  local ledgerId = targetLedgerId or ledgerModule.GetActiveLedgerId()
+  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
+  local ledger = db.ledgers and db.ledgers[ledgerId]
+  if not ledger and ledgerId == "guild-primary" then ledger = db.ledger end
+  local recovery = ledgerModule.ClassifyCanonicalRecovery(ledgerId)
+  if type(recovery) == "table" and (recovery.classification == "VALID"
+    or recovery.classification == "INCOMPLETE_PROJECTION" or recovery.classification == "INDEX_MISMATCH") then
+    -- Detect foreign ownership before RebuildLedgerProjections can repair even
+    -- one row. A conflict refusal must not leave a partial repair behind.
+    local existing = db.disputes and db.disputes.operationStates or {}
+    for _, commit in pairs(ledger and ledger.canonical and ledger.canonical.commits or {}) do
+      local operation = type(commit) == "table" and commit.operation
+      if type(operation) == "table" then
+        local prior = existing[operation.operationId]
+        if prior ~= nil and (type(prior) ~= "table" or prior.ledgerId ~= ledgerId) then
+          return { rebuilt = false, reasonCode = "OPERATION_ID_CONFLICT", operationId = operation.operationId }
+        end
+      end
+    end
+  end
+  if recovery.classification == "INCOMPLETE_PROJECTION" or recovery.classification == "INDEX_MISMATCH" then
+    local rebuilt = ledgerModule.RebuildLedgerProjections(ledgerId)
+    if not rebuilt or rebuilt.rebuilt ~= true then
+      return { rebuilt = false, reasonCode = rebuilt and rebuilt.reasonCode or "CANONICAL_REBUILD_FAILED" }
+    end
+    recovery = ledgerModule.ClassifyCanonicalRecovery(ledgerId)
+  end
+  if type(recovery) ~= "table" or recovery.classification ~= "VALID" then
+    return { rebuilt = false, reasonCode = recovery and recovery.reasonCode or "CANONICAL_HISTORY_UNRECOVERABLE" }
+  end
+  if type(ledger) ~= "table" or type(ledger.canonical) ~= "table" then
+    return { rebuilt = false, reasonCode = "CANONICAL_STATE_MISSING" }
+  end
+  local staged, byOperationId = {}, {}
+  local requestState = db.disputes and db.disputes.requests or {}
+  for sequence = 1, (tonumber(ledger.canonical.nextSeq) or 1) - 1 do
+    local commit = ledger.canonical.commits[tostring(ledger.canonical.epoch) .. ":" .. tostring(sequence)]
+    if type(commit) ~= "table" then
+      return { rebuilt = false, reasonCode = "CANONICAL_SEQUENCE_GAP", sequence = sequence }
+    end
+    if commit.recordClass == "LEDGER_OPERATION_COMMIT" then
+      local operation = commit.operation
+      if type(operation) ~= "table" or type(operation.operationId) ~= "string"
+        or type(operation.requestId) ~= "string" or not tonumber(operation.requestRevision) then
+        return { rebuilt = false, reasonCode = "INVALID_OPERATION_COMMIT", sequence = sequence }
+      end
+      local known = byOperationId[operation.operationId]
+      if known and known.payloadHash ~= operation.payloadHash then
+        return { rebuilt = false, reasonCode = "OPERATION_ID_CONFLICT", operationId = operation.operationId }
+      end
+      local request = requestState[operation.requestId]
+      local transactionIds = {}
+      for _, entry in ipairs(operation.signedEntries or {}) do transactionIds[#transactionIds + 1] = entry.transactionId end
+      -- A successful resolution increments the dossier revision after the
+      -- operation is accepted. Preserve the revision that authorized the
+      -- operation separately so recovery can distinguish that expected
+      -- transition from a later edit/reopen of the dossier.
+      local linked = type(request) == "table" and tonumber(request.correctionRevision) == tonumber(operation.requestRevision)
+      local state = {
+        operationId = operation.operationId,
+        requestId = operation.requestId,
+        requestRevision = operation.requestRevision,
+        operationType = operation.operationType,
+        ledgerId = ledgerId,
+        ledgerEpoch = commit.ledgerEpoch,
+        sequence = commit.sequence,
+        commitHash = commit.commitHash,
+        payloadHash = operation.payloadHash,
+        entryTransactionIds = transactionIds,
+        status = linked and "ACCEPTED" or "UNLINKED",
+        linked = linked == true,
+        reasonCode = linked and nil or (request and "OPERATION_REVISION_MISMATCH" or "REQUEST_NOT_FOUND"),
+      }
+      byOperationId[operation.operationId] = state
+      staged[operation.operationId] = state
+    end
+  end
+  -- This is a guild-wide projection. Rebuilding one ledger must preserve the
+  -- accepted evidence belonging to every other ledger, including unknown legacy
+  -- state that cannot safely be assigned to this recovery scope.
+  for operationId, state in pairs(db.disputes and db.disputes.operationStates or {}) do
+    if type(state) ~= "table" or state.ledgerId ~= ledgerId then
+      if staged[operationId] ~= nil then
+        return { rebuilt = false, reasonCode = "OPERATION_ID_CONFLICT", operationId = operationId }
+      end
+      staged[operationId] = state
+    end
+  end
+  local disputes = ensureState(db)
+  disputes.operationStates = staged
+  return { rebuilt = true, reasonCode = "OPERATION_STATES_REBUILT", states = copy(staged) }
 end
 
 local function normalizeCategory(category)
@@ -225,25 +328,16 @@ end
 
 local function findTransaction(reference)
   if not reference or reference == "" then return nil end
-  local expectedLedgerId = Dibs.MultiLedger and Dibs.MultiLedger.GetActiveLedgerId
-    and Dibs.MultiLedger.GetActiveLedgerId() or nil
-  if Dibs.MultiLedger and type(Dibs.MultiLedger.ResolveOriginalTransaction) == "function" then
-    local resolved, resolveReason = Dibs.MultiLedger.ResolveOriginalTransaction(tostring(reference), expectedLedgerId)
-    if resolved then return resolved.transaction, nil, resolved.ledgerId end
-    if resolveReason == "LEDGER_SCOPE_MISMATCH" or resolveReason == "ORIGINAL_TRANSACTION_AMBIGUOUS" then
-      return nil, resolveReason
-    end
-  end
   if Dibs.Ledger and type(Dibs.Ledger.GetTransactionForAward) == "function" then
     local ok, transaction = pcall(Dibs.Ledger.GetTransactionForAward, reference)
-    if ok and transaction then return transaction, nil, expectedLedgerId end
+    if ok and transaction then return transaction end
   end
   if Dibs.Ledger and type(Dibs.Ledger.GetAllTransactions) == "function" then
     for _, transaction in ipairs(Dibs.Ledger.GetAllTransactions()) do
-      if tostring(transaction.transactionId or "") == tostring(reference) then return transaction, nil, expectedLedgerId end
+      if tostring(transaction.transactionId or "") == tostring(reference) then return transaction end
     end
   end
-  return nil, "ORIGINAL_TRANSACTION_NOT_FOUND"
+  return nil
 end
 
 local function transactionForPayload(payload)
@@ -481,6 +575,68 @@ local function canReadRequest(requestId, actor)
   if isOfficer(actor) then return request, true end
   if isLocalActor(actor) and isLocalIdentity(requestOwner(request)) then return request, false end
   return nil, "REQUEST_NOT_FOUND"
+end
+
+-- A historical description is never evidence of canonical acceptance. Inspect
+-- existing maps directly: ensureState would create projections during a read.
+function Disputes.BuildLegacyCorrectionReport(ledgerId, actor)
+  if not isOfficer(actor) then return nil, "OFFICER_REQUIRED" end
+  local db = Dibs.GetDB()
+  local ledger = type(db.ledgers) == "table" and db.ledgers[ledgerId]
+  if type(ledger) ~= "table" then return nil, "UNKNOWN_LEDGER" end
+  local report = { readOnly = true, ledgerId = ledgerId, entries = {},
+    summary = { complete = 0, partial = 0, ambiguous = 0, localOnly = 0, unverifiable = 0 } }
+  local counts = {}
+  for _, storedLedger in pairs(db.ledgers) do
+    for id in pairs(type(storedLedger) == "table" and storedLedger.transactions or {}) do
+      counts[id] = (counts[id] or 0) + 1
+    end
+  end
+  local summaryKeys = { COMPLETE = "complete", PARTIAL = "partial", AMBIGUOUS = "ambiguous",
+    LOCAL_ONLY = "localOnly", UNVERIFIABLE = "unverifiable" }
+  for id, transaction in pairs(ledger.transactions or {}) do
+    local marker = type(transaction) == "table" and string.lower(tostring(transaction.source or "")
+      .. " " .. tostring(transaction.reason or "")) or ""
+    if type(transaction) == "table" and (transaction.correctionKey or transaction.originalTransactionId
+      or transaction.reviewRequestId or transaction.type == "DIB_REFUNDED" or transaction.type == "DIB_REVOKED"
+      or transaction.type == "DIB_ADMIN_ADJUSTMENT" or marker:find("correction", 1, true)) then
+      local canonical = ledger.canonical or {}
+      local indexed = (canonical.transactionIndex or {})[id]
+      -- Operation projections belong to their accepted record, not to legacy
+      -- correction heuristics. Award debits remain inspectable local history.
+      if not transaction.operationId then
+        local originalId = transaction.originalTransactionId
+        local original = originalId and (ledger.transactions or {})[originalId]
+        local classification, reason = "LOCAL_ONLY", "NO_CORRECTION_LINK"
+        if (counts[id] or 0) > 1 or originalId and (counts[originalId] or 0) > 1 then
+          classification, reason = "AMBIGUOUS", "MULTIPLE_LEDGER_MATCHES"
+        elseif originalId == id or original and (type(original) ~= "table"
+          or original.seasonId ~= transaction.seasonId) then
+          classification, reason = "UNVERIFIABLE", "INVALID_ORIGINAL_REFERENCE"
+        elseif originalId and not original then
+          classification, reason = "PARTIAL", "ORIGINAL_TRANSACTION_MISSING"
+        elseif original and not transaction.reviewRequestId then
+          classification, reason = "PARTIAL", "REQUEST_REFERENCE_MISSING"
+        elseif original then
+          classification, reason = "COMPLETE", "LOCAL_REFERENCES_PRESENT"
+        elseif transaction.correctionKey then
+          classification, reason = "UNVERIFIABLE", "CORRECTION_KEY_IS_NOT_PROOF"
+        end
+        report.entries[id] = {
+          transactionId = id, ledgerId = ledgerId, seasonId = transaction.seasonId,
+          requestId = transaction.reviewRequestId, evidenceId = transaction.evidenceId,
+          originalTransactionId = originalId, correctionKey = transaction.correctionKey,
+          classification = classification, reasonCode = reason,
+          rollbackCandidate = type(transaction.correctionKey) == "string"
+            and transaction.correctionKey:sub(-9) == ":rollback" or false,
+          canonicalReference = copy(indexed),
+        }
+        local key = summaryKeys[classification]
+        report.summary[key] = report.summary[key] + 1
+      end
+    end
+  end
+  return report
 end
 
 function Disputes.GetCategories()
@@ -857,9 +1013,7 @@ end
 local function correctionDetails(request, action, options)
   options = options or {}
   local evidence = primaryEvidence(request) or {}
-  local original, originalReason
-  if evidence.transactionRef then original, originalReason = findTransaction(evidence.transactionRef) end
-  if evidence.transactionRef and not original then return nil, originalReason or "ORIGINAL_TRANSACTION_NOT_FOUND" end
+  local original = evidence.transactionRef and findTransaction(evidence.transactionRef) or nil
   local amount = tonumber(options.amount or options.delta)
   local ledgerAction = action
   if action == Disputes.ACTIONS.CORRECT_BALANCE then
@@ -889,6 +1043,12 @@ local function correctionDetails(request, action, options)
   end
   if ledgerAction == "ledger.use" then amount = math.abs(amount) end
   if ledgerAction == "ledger.refund" then amount = math.abs(amount) end
+  -- A wrong-debit correction must reverse a real ledger transaction. Without
+  -- this check, a stale or fabricated transaction reference could create a
+  -- refund and increase the balance without an auditable debit to reverse.
+  if request.category == "wrong_debit" and ledgerAction == "ledger.refund" and not original then
+    return nil, "ORIGINAL_TRANSACTION_REQUIRED"
+  end
   return {
     amount = amount,
     ledgerAction = ledgerAction,
@@ -908,9 +1068,7 @@ end
 local function targetCorrectionDetails(request, options)
   options = options or {}
   local evidence = primaryEvidence(request) or {}
-  local original, originalReason
-  if evidence.transactionRef then original, originalReason = findTransaction(evidence.transactionRef) end
-  if evidence.transactionRef and not original then return nil, originalReason or "ORIGINAL_TRANSACTION_NOT_FOUND" end
+  local original = evidence.transactionRef and findTransaction(evidence.transactionRef) or nil
   local targetPlayer = bounded(options.playerName or options.correctPlayer or options.targetPlayer, 80)
   local targetItem = bounded(options.itemLink or options.itemName or options.item, 180)
   local targetItemID = tonumber(options.itemID or options.itemId or options.correctItemID or options.targetItemID)
@@ -943,116 +1101,97 @@ local function targetCorrectionDetails(request, options)
   }
 end
 
--- Legacy balance mutations remain available while the guild is still using
--- the local ledger. Once V2 authority is enforced, however, a correction must
--- not fall through to one or more ledger.adjust writes while the canonical
--- operation route is disabled or unavailable.
-local function legacyCorrectionAllowed()
-  if not Dibs.Governance or type(Dibs.Governance.IsV2Enforced) ~= "function"
-    or Dibs.Governance.IsV2Enforced() ~= true then
-    return true
+local function operationLedgerForTransaction(transaction)
+  local transactionId = transaction and transaction.transactionId
+  if type(transactionId) ~= "string" or transactionId == "" then return nil end
+  local db = Dibs.GetDB and Dibs.GetDB() or {}
+  local found
+  for ledgerId, ledger in pairs(db.ledgers or {}) do
+    if ledger.transactions and ledger.transactions[transactionId] then
+      if found and found ~= ledgerId then return nil end
+      found = ledgerId
+    end
   end
-  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true then
-    return false, "CANONICAL_DISPUTE_OPERATIONS_DISABLED"
+  if not found and db.ledger and db.ledger.transactions and db.ledger.transactions[transactionId] then
+    found = "guild-primary"
   end
-  if not Dibs.Ledger or type(Dibs.Ledger.CommitDisputeOperation) ~= "function"
-    or not Dibs.Governance or type(Dibs.Governance.CreateDisputeProposal) ~= "function"
-    or type(Dibs.Governance.AcceptDisputeProposal) ~= "function" then
-    return false, "CANONICAL_OPERATION_PATH_UNAVAILABLE"
-  end
-  return true
+  return found
 end
 
-local function applyCanonicalTargetCorrection(request, actor, options, details, reason, key)
-  if not details.playerChanged or not details.transferAmount or not details.oldPlayer or not details.targetPlayer then
-    return nil, "CANONICAL_TARGET_TRANSFER_REQUIRED"
+local function submitCanonicalDisputeOperation(request, actor, reason, operationType, original, evidenceId, entries)
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true or not Dibs.Ledger
+    or type(Dibs.Ledger.CommitDisputeOperation) ~= "function"
+    or type(Dibs.Ledger.BuildDisputeOperation) ~= "function"
+    or not Dibs.Governance or type(Dibs.Governance.CreateDisputeOperationProposal) ~= "function"
+    or not Dibs.ProtectedActions or type(Dibs.ProtectedActions.Execute) ~= "function" then
+    return nil, "CANONICAL_OPERATION_WRITES_DISABLED"
   end
-  local ledgerId = request.attachedContext and request.attachedContext.ledgerId
-    or (details.original and details.original.ledgerId)
-    or (Dibs.Ledger.GetActiveLedgerId and Dibs.Ledger.GetActiveLedgerId()) or "guild-primary"
   local actorSnapshot, actorReason = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(actor)
-  local oldMember = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(details.oldPlayer)
-  local targetMember = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(details.targetPlayer)
-  if not actorSnapshot or not oldMember or not targetMember then
-    return nil, actorReason or "INVALID_OPERATION_MEMBER"
+  if not actorSnapshot then return nil, actorReason or "PROPOSER_NOT_AUTHORIZED" end
+  local ledgerId = original and operationLedgerForTransaction(original) or nil
+  if original and not ledgerId then return nil, "LEDGER_NOT_FOUND" end
+  if not original then
+    ledgerId = request.ledgerId or "guild-primary"
+    if not (Dibs.Governance and Dibs.Governance.IsLedgerApproved and Dibs.Governance.IsLedgerApproved(ledgerId)) then
+      return nil, "LEDGER_NOT_APPROVED"
+    end
   end
-  local seasonId = request.attachedContext and request.attachedContext.seasonId
-    or request.seasonId or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId())
-  local amount = math.abs(tonumber(details.transferAmount) or 0)
-  if amount == 0 or type(seasonId) ~= "string" or seasonId == "" then return nil, "INVALID_TRANSFER_AMOUNT" end
-  local evidenceId = details.evidence.evidenceId or false
-  local originalId = details.original and details.original.transactionId or details.evidence.transactionRef or false
-  local proposal, proposalReason = Dibs.Governance.CreateDisputeProposal(actor, {
-    operationType = "DISPUTE_TARGET_TRANSFER", ledgerId = ledgerId,
-    requestId = request.requestId, requestRevision = request.revision,
-    evidenceId = evidenceId, originalTransactionId = originalId, reason = reason,
-    signedEntries = {
-      {
-        memberKey = oldMember.memberKey, seasonId = seasonId,
-        actionType = "DIB_ADMIN_ADJUSTMENT", quantityDelta = amount,
-      },
-      {
-        memberKey = targetMember.memberKey, seasonId = seasonId,
-        actionType = "DIB_ADMIN_ADJUSTMENT", quantityDelta = -amount,
-      },
-    },
-  })
-  if not proposal then return nil, proposalReason or "INVALID_OPERATION" end
-  local accepted, acceptanceStatus = Dibs.Governance.AcceptDisputeProposal(actor, proposal.proposalId)
-  if not accepted or acceptanceStatus ~= "ACCEPTED_IN_SESSION" then
-    return nil, acceptanceStatus or "CANONICAL_OPERATION_REJECTED"
-  end
-  local operation = proposal.operation
-  local operationId = operation.operationId
-  local transactionIds = { operation.signedEntries[1].transactionId, operation.signedEntries[2].transactionId }
-  local evidence = details.evidence
-  if details.itemChanged then
-    evidence.originalItemID = evidence.originalItemID or evidence.itemID
-    evidence.originalItem = evidence.originalItem or evidence.item
-    if details.targetItemID then evidence.itemID = details.targetItemID end
-    if details.targetItem then evidence.item = details.targetItem end
-  end
-  evidence.originalWinner = evidence.originalWinner or evidence.winner
-  evidence.winner = details.targetPlayer
-  request.targetCorrection = {
-    correctedPlayer = details.targetPlayer,
-    correctedItemID = details.itemChanged and details.targetItemID or nil,
-    correctedItem = details.itemChanged and details.targetItem or nil,
-    originalPlayer = details.oldPlayer,
-    originalItemID = details.itemChanged and (evidence.originalItemID or evidence.itemID) or nil,
-    originalItem = details.itemChanged and (evidence.originalItem or evidence.item) or nil,
-    transactionIds = copy(transactionIds),
+  local operation = {
+    schemaVersion = 1, operationType = operationType, guildKey = Dibs.GetGuildKey(), ledgerId = ledgerId,
+    requestId = request.requestId, requestRevision = tonumber(request.revision),
+    evidenceId = evidenceId or false, originalTransactionId = original and original.transactionId or false,
+    actor = actorSnapshot, reason = reason, timestamp = now(), signedEntries = entries or {},
   }
-  local previous = request.status
-  request.status = Disputes.STATUSES.RESOLVED
-  request.correctionTransactionId = transactionIds[1]
-  request.correctionRevision = operation.requestRevision
-  request.resolution = {
-    action = Disputes.ACTIONS.CORRECT_TARGET, actorId = identity(actor) or localIdentity(),
-    createdAt = now(), reason = reason, changedBalance = true,
-    transactionIds = copy(transactionIds), targetCorrection = copy(request.targetCorrection),
+  -- Probe the writer's read-only runtime gates before allocating or persisting
+  -- any proposal IDs. The scope-only payload is intentionally invalid: the current
+  -- writer may reject it at schema validation (UNSUPPORTED_OPERATION_VERSION)
+  -- before it reaches the general INVALID_OPERATION validation result.
+  local probe = Dibs.Ledger.CommitDisputeOperation({ actor = actor, ledgerId = ledgerId }, { ledgerId = ledgerId })
+  if type(probe) ~= "table" or (probe.reasonCode ~= "INVALID_OPERATION"
+    and probe.reasonCode ~= "UNSUPPORTED_OPERATION_VERSION") then
+    return nil, type(probe) == "table" and probe.reasonCode or "OPERATION_READINESS_UNKNOWN"
+  end
+  local proposal, proposalReason = Dibs.Governance.CreateDisputeOperationProposal(operation)
+  if not proposal then return nil, proposalReason or "OPERATION_PROPOSAL_REJECTED" end
+  local result = Dibs.ProtectedActions.Execute("ledger.operation", actor, { proposalId = proposal.proposalId })
+  local value = result and result.value
+  if not result or result.ok ~= true or (type(value) == "table" and value.accepted == false) then
+    if Dibs.Ledger.ClassifyCanonicalRecovery then
+      local recovery = Dibs.Ledger.ClassifyCanonicalRecovery(ledgerId)
+      if recovery and recovery.classification ~= "VALID" then return nil, "PROJECTION_INCOMPLETE" end
+    end
+    return nil, (value and value.reasonCode) or (result and (result.reasonCode or result.code or result.diagnostic))
+      or "CANONICAL_OPERATION_REJECTED"
+  end
+  return value, nil, proposal
+end
+
+local function operationEntry(operationId, index, transactionId, memberName, seasonId, actionType, delta,
+  guildKey, ledgerId, request, evidenceId, originalTransactionId)
+  local member = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(memberName)
+  if not member then return nil end
+  return {
+    operationId = operationId, entryIndex = index, transactionId = transactionId,
+    guildKey = guildKey, ledgerId = ledgerId, memberKey = member.memberKey, seasonId = seasonId,
+    actionType = actionType, quantityDelta = delta, evidenceId = evidenceId or false,
+    originalTransactionId = originalTransactionId or false, requestId = request.requestId,
+    requestRevision = request.revision,
   }
-  local state = ensureState()
-  state.corrections[key] = { transactions = copy(transactionIds), changedBalance = true, operationId = operationId }
-  audit(request, Disputes.ACTIONS.CORRECT_TARGET, actor, previous, request.status, reason, {
-    correctedPlayer = details.targetPlayer, correctedItemID = details.targetItemID,
-    correctedItem = details.targetItem, originalPlayer = details.oldPlayer,
-    transferTransactions = copy(transactionIds), canonicalOperationId = operationId,
-    canonicalProposalId = proposal.proposalId,
-  })
-  return { ok = true, request = copy(request), transactions = copy(transactionIds), changedBalance = true,
-    canonicalOperation = copy(accepted), proposalId = proposal.proposalId }
 end
 
 local function applyTargetCorrection(request, action, actor, options)
-  local allowed, gateReason = legacyCorrectionAllowed()
-  if not allowed then return nil, gateReason end
   options = type(options) == "table" and options or {}
   if options.confirmed ~= true and options.confirmation ~= true then return nil, "CONFIRMATION_REQUIRED" end
   local reason = requireReason(options)
   if not reason then return nil, "REASON_REQUIRED" end
+  if not Dibs.Ledger.IsDisputeOperationTransportEnabled() then return nil, "FEATURE_DISABLED" end
   local details, detailReason = targetCorrectionDetails(request, options)
   if not details then return nil, detailReason end
+  if Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED ~= true
+    or not Dibs.Ledger
+    or type(Dibs.Ledger.CommitDisputeOperation) ~= "function" then
+    return nil, "FEATURE_DISABLED"
+  end
 
   local key = table.concat({
     request.requestId,
@@ -1062,9 +1201,6 @@ local function applyTargetCorrection(request, action, actor, options)
     tostring(details.targetItemID or ""),
     tostring(details.targetItem or ""),
   }, "|")
-  if Dibs.Governance and Dibs.Governance.IsV2Enforced and Dibs.Governance.IsV2Enforced() == true then
-    return applyCanonicalTargetCorrection(request, actor, options, details, reason, key)
-  end
   local state = ensureState()
   local existing = state.corrections[key]
   if existing then
@@ -1077,49 +1213,27 @@ local function applyTargetCorrection(request, action, actor, options)
     }
   end
 
-  local transactionIds = {}
-  if details.playerChanged and details.transferAmount and details.oldPlayer and details.targetPlayer then
-    if not Dibs.ProtectedActions or type(Dibs.ProtectedActions.Execute) ~= "function" then return nil, "PROTECTED_ACTION_UNAVAILABLE" end
-    local common = {
-      amount = details.transferAmount,
-      source = "dispute-center",
-      seasonId = request.attachedContext and request.attachedContext.seasonId
-        or request.seasonId
-        or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()),
-      reviewRequestId = request.requestId,
-      evidenceId = details.evidence.evidenceId,
-      originalTransactionId = details.original and details.original.transactionId or details.evidence.transactionRef,
-      correctionKey = key,
-      confirmation = true,
-      itemID = details.targetItemID or details.evidence.itemID,
-      itemLink = details.targetItem or details.evidence.item,
-    }
-    local reversePayload = copy(common)
-    reversePayload.playerName = details.oldPlayer
-    reversePayload.amount = -details.transferAmount
-    reversePayload.reason = "Review " .. request.requestId .. ": return delta from incorrect player - " .. reason
-    local reverse = Dibs.ProtectedActions.Execute("ledger.adjust", actor, reversePayload)
-    if not reverse or reverse.ok ~= true or not reverse.value then
-      return nil, reverse and (reverse.reasonCode or reverse.diagnostic) or "TARGET_TRANSFER_FAILED"
-    end
-    table.insert(transactionIds, reverse.value.transactionId)
-
-    local applyPayload = copy(common)
-    applyPayload.playerName = details.targetPlayer
-    applyPayload.reason = "Review " .. request.requestId .. ": apply delta to corrected player - " .. reason
-    local applied = Dibs.ProtectedActions.Execute("ledger.adjust", actor, applyPayload)
-    if not applied or applied.ok ~= true or not applied.value then
-      -- Restore the original balance if the second append is rejected.  This
-      -- keeps a failed transfer from silently leaving the old player short.
-      local rollback = copy(common)
-      rollback.playerName = details.oldPlayer
-      rollback.amount = details.transferAmount
-      rollback.reason = "Review " .. request.requestId .. ": rollback incomplete target correction"
-      rollback.correctionKey = key .. ":rollback"
-      Dibs.ProtectedActions.Execute("ledger.adjust", actor, rollback)
-      return nil, applied and (applied.reasonCode or applied.diagnostic) or "TARGET_TRANSFER_FAILED"
-    end
-    table.insert(transactionIds, applied.value.transactionId)
+  local transactionIds, operationType, entries = {}, "DISPUTE_ATTRIBUTION_RESOLUTION", {}
+  local balanceTransfer = details.playerChanged and details.transferAmount and details.oldPlayer and details.targetPlayer
+  if balanceTransfer then
+    if not details.original or not details.original.seasonId then return nil, "ORIGINAL_TRANSACTION_REQUIRED" end
+    local ledgerId = operationLedgerForTransaction(details.original)
+    if not ledgerId then return nil, "LEDGER_NOT_FOUND" end
+    local originalId = details.original.transactionId
+    local evidenceId = details.evidence.evidenceId or false
+    local first = operationEntry(nil, nil, nil, details.oldPlayer, details.original.seasonId,
+      "DIB_ADMIN_ADJUSTMENT", -details.transferAmount, Dibs.GetGuildKey(), ledgerId, request, evidenceId, originalId)
+    local second = operationEntry(nil, nil, nil, details.targetPlayer, details.original.seasonId,
+      "DIB_ADMIN_ADJUSTMENT", details.transferAmount, Dibs.GetGuildKey(), ledgerId, request, evidenceId, originalId)
+    if not first or not second then return nil, "TARGET_TRANSFER_IDENTITY_REQUIRED" end
+    entries, operationType = { first, second }, "DISPUTE_TARGET_TRANSFER"
+  end
+  local commit, operationReason = submitCanonicalDisputeOperation(request, actor, reason, operationType,
+    balanceTransfer and details.original or nil, details.evidence.evidenceId, entries)
+  if not commit then return nil, operationReason end
+  local committedOperation = commit.operation
+  for _, entry in ipairs(committedOperation and committedOperation.signedEntries or {}) do
+    transactionIds[#transactionIds + 1] = entry.transactionId
   end
 
   local evidence = details.evidence
@@ -1144,6 +1258,7 @@ local function applyTargetCorrection(request, action, actor, options)
   }
   local previous = request.status
   request.status = Disputes.STATUSES.RESOLVED
+  request.correctionRevision = tonumber(request.revision)
   if #transactionIds > 0 then request.correctionTransactionId = transactionIds[1] end
   request.resolution = {
     action = action,
@@ -1175,21 +1290,13 @@ local function applyTargetCorrection(request, action, actor, options)
 end
 
 local function applyCorrection(request, action, actor, options)
-  local allowed, gateReason = legacyCorrectionAllowed()
-  if not allowed then return nil, gateReason end
   options = type(options) == "table" and options or {}
   if options.confirmed ~= true and options.confirmation ~= true then return nil, "CONFIRMATION_REQUIRED" end
   local reason = requireReason(options)
   if not reason then return nil, "REASON_REQUIRED" end
+  if not Dibs.Ledger.IsDisputeOperationTransportEnabled() then return nil, "FEATURE_DISABLED" end
   local details, detailReason = correctionDetails(request, action, options)
   if not details then return nil, detailReason end
-  -- A recorded debit can only be corrected when its immutable source row is
-  -- present. A missing-debit report is the legacy exception: it appends the
-  -- omitted award and therefore has no ledger row to cite.
-  if action == Disputes.ACTIONS.CORRECT_BALANCE and request.category ~= "missing_debit"
-    and not details.original then
-    return nil, "ORIGINAL_TRANSACTION_REQUIRED"
-  end
   local evidence = details.evidence
   local key = table.concat({ request.requestId, tostring(evidence.evidenceId or "unknown"), action, tostring(details.amount) }, "|")
   local state = ensureState()
@@ -1202,43 +1309,46 @@ local function applyCorrection(request, action, actor, options)
       end
     end
   end
-  if not Dibs.ProtectedActions or type(Dibs.ProtectedActions.Execute) ~= "function" then return nil, "PROTECTED_ACTION_UNAVAILABLE" end
-  local payload = {
-    playerName = canonicalRequestPlayerName(request),
-    amount = details.amount,
-    reason = "Review " .. request.requestId .. ": " .. reason,
-    source = "dispute-center",
-    seasonId = request.attachedContext and request.attachedContext.seasonId
-      or request.seasonId
-      or (Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId()),
-    reviewRequestId = request.requestId,
-    evidenceId = evidence.evidenceId,
-    originalTransactionId = details.original and details.original.transactionId or evidence.transactionRef,
-    correctionKey = key,
-    confirmation = true,
-    itemID = evidence.itemID,
-    itemLink = evidence.item,
-    awardRef = nil,
+  if not details.original or not details.original.seasonId then return nil, "ORIGINAL_TRANSACTION_REQUIRED" end
+  local member = Dibs.Identity and Dibs.Identity.CreateSnapshot and Dibs.Identity.CreateSnapshot(canonicalRequestPlayerName(request))
+  if not member then return nil, "PROPOSER_NOT_AUTHORIZED" end
+  local ledgerId = operationLedgerForTransaction(details.original)
+  if not ledgerId then return nil, "LEDGER_NOT_FOUND" end
+  local actionType, delta
+  if details.ledgerAction == "ledger.use" then actionType, delta = "DIB_USED", -math.abs(details.amount)
+  elseif details.ledgerAction == "ledger.refund" then actionType, delta = "DIB_REFUNDED", math.abs(details.amount)
+  elseif details.ledgerAction == "ledger.adjust" then actionType, delta = "DIB_ADMIN_ADJUSTMENT", details.amount end
+  if not actionType or not delta or delta == 0 then return nil, "INVALID_OPERATION" end
+  local entry = {
+    guildKey = Dibs.GetGuildKey(), ledgerId = ledgerId, memberKey = member.memberKey,
+    seasonId = details.original.seasonId, actionType = actionType, quantityDelta = delta,
+    evidenceId = evidence.evidenceId or false, originalTransactionId = details.original.transactionId,
+    requestId = request.requestId, requestRevision = request.revision,
   }
-  local result = Dibs.ProtectedActions.Execute(details.ledgerAction, actor, payload)
-  if not result or result.ok ~= true then return nil, result and (result.reasonCode or result.diagnostic) or "CORRECTION_REJECTED" end
-  local transaction = result.value
-  if not transaction then return nil, "CORRECTION_REJECTED" end
-  state.corrections[key] = transaction.transactionId
+  local commit, operationReason = submitCanonicalDisputeOperation(request, actor, reason,
+    "DISPUTE_BALANCE_CORRECTION", details.original, evidence.evidenceId, { entry })
+  if not commit then return nil, operationReason end
+  local transactionId = commit.operation and commit.operation.signedEntries[1]
+    and commit.operation.signedEntries[1].transactionId
+  local ledger = Dibs.GetDB().ledgers and Dibs.GetDB().ledgers[ledgerId]
+  local transaction = ledger and ledger.transactions and ledger.transactions[transactionId]
+  if not transaction then return nil, "PROJECTION_INCOMPLETE" end
+  state.corrections[key] = transactionId
   local previous = request.status
   request.status = Disputes.STATUSES.RESOLVED
-  request.correctionTransactionId = transaction.transactionId
+  request.correctionRevision = tonumber(request.revision)
+  request.correctionTransactionId = transactionId
   request.resolution = {
     action = action,
     actorId = identity(actor) or localIdentity(),
     createdAt = now(),
     reason = reason,
     changedBalance = true,
-    transactionId = transaction.transactionId,
+    transactionId = transactionId,
   }
   audit(request, action, actor, previous, request.status, reason, {
-    affectedTransaction = transaction.transactionId,
-    originalTransaction = payload.originalTransactionId,
+    affectedTransaction = transactionId,
+    originalTransaction = details.original.transactionId,
     correctionKey = key,
   })
   return { ok = true, request = copy(request), transaction = copy(transaction), changedBalance = true }
@@ -1293,7 +1403,9 @@ function Disputes.Resolve(requestId, action, options, actor)
   if action == Disputes.ACTIONS.NO_CORRECTION then
     local explanation = requireReason(options)
     if not explanation then return nil, "REASON_REQUIRED" end
-    return finishWithoutCorrection(request, action, actor, Disputes.STATUSES.RESOLVED, explanation)
+    local result = finishWithoutCorrection(request, action, actor, Disputes.STATUSES.RESOLVED, explanation)
+    result.outcome = "ATTRIBUTION_ONLY"
+    return result
   end
   if action == "under_review" then
     local explanation = requireReason(options) or "Officer started review."
@@ -1565,186 +1677,12 @@ function Disputes.BuildReport(requestId, scope, actor)
   return table.concat(lines, "\n")
 end
 
--- Read-only inventory of legacy correction-shaped rows.  Legacy fields are
--- evidence for review only: a correction key by itself never proves that a
--- correction was accepted.  Scan the selected ledger's rows and compare IDs
--- against all retained ledgers to make duplicate placement visible.
-function Disputes.BuildLegacyCorrectionReport(ledgerId, dbOverride)
-  local db = type(dbOverride) == "table" and dbOverride
-    or (Dibs.GetDB and Dibs.GetDB() or _G.DibsDB)
-  if type(db) ~= "table" or type(db.ledgers) ~= "table" then
-    return { readOnly = true, ledgerId = ledgerId, entries = {}, reasonCode = "LEDGER_STATE_UNAVAILABLE" }
-  end
-  local targetId = type(ledgerId) == "string" and ledgerId or db.activeLedgerId or "guild-primary"
-  local target = db.ledgers[targetId] or (targetId == "guild-primary" and db.ledger) or nil
-  if type(target) ~= "table" or type(target.transactions) ~= "table" then
-    return { readOnly = true, ledgerId = targetId, entries = {}, reasonCode = "LEDGER_NOT_FOUND" }
-  end
-
-  local transactionLocations = {}
-  for id, ledger in pairs(db.ledgers) do
-    for transactionId, transaction in pairs(type(ledger) == "table" and type(ledger.transactions) == "table" and ledger.transactions or {}) do
-      if type(transaction) == "table" then
-        local key = tostring(transactionId)
-        local locations = transactionLocations[key] or {}
-        locations[#locations + 1] = { ledgerId = tostring(id), transaction = transaction }
-        transactionLocations[key] = locations
-      end
-    end
-  end
-
-  local originalLocations = {}
-  for id, ledger in pairs(db.ledgers) do
-    for transactionId, transaction in pairs(type(ledger) == "table" and type(ledger.transactions) == "table" and ledger.transactions or {}) do
-      if type(transaction) == "table" then
-        local key = tostring(transactionId)
-        local locations = originalLocations[key] or {}
-        locations[#locations + 1] = { ledgerId = tostring(id), transaction = transaction }
-        originalLocations[key] = locations
-      end
-    end
-  end
-
-  local entries = {}
-  for transactionId, transaction in pairs(target.transactions) do
-    if type(transaction) == "table" then
-      local correctionKey = type(transaction.correctionKey) == "string" and transaction.correctionKey or nil
-      local originalId = type(transaction.originalTransactionId) == "string" and transaction.originalTransactionId or nil
-      local requestId = transaction.reviewRequestId or transaction.disputeRequestId or transaction.requestId
-      local rollbackCandidate = correctionKey ~= nil and correctionKey:sub(-9) == ":rollback"
-      local correctionType = transaction.type == "DIB_REFUNDED" or transaction.type == "DIB_REVOKED"
-        or transaction.type == "DIB_ADMIN_ADJUSTMENT"
-      -- Ordinary DIB_USED award rows are not correction candidates.  A local
-      -- only candidate must carry a correction-specific source or reason.
-      local sourceText = string.lower(tostring(transaction.source or transaction.actionType or ""))
-      local reasonText = string.lower(tostring(transaction.reason or ""))
-      local localCorrectionMarker = sourceText:find("correction", 1, true) ~= nil
-        or reasonText:find("correction", 1, true) ~= nil
-      local isCandidate = rollbackCandidate or originalId ~= nil or correctionKey ~= nil
-        or requestId ~= nil or correctionType or localCorrectionMarker
-      if isCandidate then
-        local duplicateLocations = transactionLocations[tostring(transactionId)] or {}
-        local originalMatches = originalId and originalLocations[originalId] or nil
-        local classification, reasonCode
-        if #duplicateLocations > 1 then
-          classification, reasonCode = "AMBIGUOUS", "TRANSACTION_ID_IN_MULTIPLE_LEDGERS"
-        elseif rollbackCandidate then
-          classification, reasonCode = "UNVERIFIABLE", "ROLLBACK_MARKER_IS_NOT_ACCEPTANCE_PROOF"
-        elseif originalId and originalMatches and #originalMatches == 1 then
-          if requestId ~= nil and tostring(requestId) ~= "" then
-            classification, reasonCode = "COMPLETE", "ORIGINAL_AND_REQUEST_REFERENCES_PRESENT"
-          else
-            classification, reasonCode = "PARTIAL", "REQUEST_REFERENCE_MISSING"
-          end
-        elseif originalId then
-          classification, reasonCode = "PARTIAL", "ORIGINAL_TRANSACTION_NOT_FOUND"
-        elseif correctionKey ~= nil then
-          classification, reasonCode = "UNVERIFIABLE", "CORRECTION_KEY_IS_NOT_PROOF"
-        elseif requestId ~= nil then
-          classification, reasonCode = "PARTIAL", "ORIGINAL_TRANSACTION_REFERENCE_MISSING"
-        else
-          classification, reasonCode = "LOCAL_ONLY", "NO_CANONICAL_ORIGINAL_LINK"
-        end
-
-        local canonical = type(target.canonical) == "table" and target.canonical or {}
-        local canonicalPosition = type(canonical.transactionIndex) == "table"
-          and canonical.transactionIndex[tostring(transactionId)] or nil
-        entries[tostring(transactionId)] = {
-          transactionId = tostring(transactionId),
-          ledgerId = targetId,
-          classification = classification,
-          reasonCode = reasonCode,
-          originalTransactionId = originalId,
-          requestId = requestId and tostring(requestId) or nil,
-          correctionKey = correctionKey,
-          evidenceId = transaction.evidenceId,
-          awardRef = transaction.awardRef,
-          operationId = transaction.operationId,
-          canonicalPosition = canonicalPosition,
-          canonicalBacked = canonicalPosition ~= nil,
-          rollbackCandidate = rollbackCandidate == true,
-          amount = tonumber(transaction.amount or transaction.quantityDelta),
-          transactionType = transaction.type,
-        }
-      end
-    end
-  end
-  return { readOnly = true, ledgerId = targetId, entries = entries }
-end
-
 function Disputes.GetCounts(actor)
   local list, reason = Disputes.ListRequests(actor, {})
   if reason and #list == 0 then return {}, reason end
   local counts = {}
   for _, request in ipairs(list) do counts[request.status] = (counts[request.status] or 0) + 1 end
   return counts
-end
-
--- The operation-state projection is recoverable metadata. Canonical ledger
--- commits remain the source of truth; this routine only replaces the derived
--- map after every matching commit has been inspected successfully.
-function Disputes.ReconstructOperationStates(ledgerId)
-  local db = Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
-  local ledgers = type(db.ledgers) == "table" and db.ledgers or {}
-  local ledger = ledgers[ledgerId] or (ledgerId == "guild-primary" and db.ledger or nil)
-  if type(ledger) ~= "table" or type(ledger.canonical) ~= "table"
-    or type(ledger.canonical.commits) ~= "table" then
-    return { rebuilt = false, reasonCode = "LEDGER_NOT_FOUND" }
-  end
-  local disputes = type(db.disputes) == "table" and db.disputes or nil
-  if not disputes or type(disputes.requests) ~= "table" then
-    return { rebuilt = false, reasonCode = "DISPUTE_STATE_UNAVAILABLE" }
-  end
-
-  local commits = {}
-  for position, commit in pairs(ledger.canonical.commits) do
-    if type(commit) == "table" and commit.recordClass == "LEDGER_OPERATION_COMMIT" then
-      if type(commit.operation) ~= "table" or type(commit.operation.operationId) ~= "string"
-        or type(commit.operation.requestId) ~= "string" or type(commit.operation.signedEntries) ~= "table" then
-        return { rebuilt = false, reasonCode = "CANONICAL_OPERATION_INVALID" }
-      end
-      commits[#commits + 1] = { position = position, commit = commit }
-    end
-  end
-  table.sort(commits, function(a, b)
-    local ae, as = tostring(a.position):match("^(%d+):(%d+)$")
-    local be, bs = tostring(b.position):match("^(%d+):(%d+)$")
-    ae, as, be, bs = tonumber(ae) or 0, tonumber(as) or 0, tonumber(be) or 0, tonumber(bs) or 0
-    if ae == be then return as < bs end
-    return ae < be
-  end)
-
-  local states = {}
-  for _, item in ipairs(commits) do
-    local commit, operation = item.commit, item.commit.operation
-    local request = disputes.requests[operation.requestId]
-    local linked = type(request) == "table" and request.guildScope == currentScope()
-      and tonumber(request.correctionRevision) == tonumber(operation.requestRevision)
-      and tonumber(request.revision) == tonumber(operation.requestRevision) + 1
-      and type(operation.signedEntries[1]) == "table"
-      and request.correctionTransactionId == operation.signedEntries[1].transactionId
-    local entryIds = {}
-    for _, entry in ipairs(operation.signedEntries) do
-      if type(entry) ~= "table" or type(entry.transactionId) ~= "string" then
-        return { rebuilt = false, reasonCode = "CANONICAL_OPERATION_ENTRY_INVALID" }
-      end
-      entryIds[#entryIds + 1] = entry.transactionId
-    end
-    states[operation.requestId] = {
-      requestId = operation.requestId,
-      requestRevision = operation.requestRevision,
-      operationId = operation.operationId,
-      ledgerId = commit.ledgerId or ledgerId,
-      payloadHash = operation.payloadHash,
-      commitPosition = item.position,
-      entryTransactionIds = entryIds,
-      status = linked and "ACCEPTED" or "UNLINKED",
-      linked = linked == true,
-      reasonCode = linked and nil or "OPERATION_REVISION_MISMATCH",
-    }
-  end
-  disputes.operationStates = states
-  return { rebuilt = true, reasonCode = "OPERATION_STATES_RECONSTRUCTED", states = states, operationCount = #commits }
 end
 
 function Disputes.IsOfficer(actor)

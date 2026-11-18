@@ -18,7 +18,6 @@ Dibs.Ace3 = Dibs.Ace3 or {}
 
 local Adapter = Dibs.Ace3
 Adapter.handlers = Adapter.handlers or { events = {}, comms = {} }
-local eventCallbacks, eventRegistered = {}, {}
 
 local function getLibrary(name)
   if _G.LibStub == nil then return nil end
@@ -208,40 +207,27 @@ end
 ---@param callback DibsEventCallback Handler invoked for the event.
 ---@return boolean registered
 function Adapter.RegisterEvent(event, callback)
-  if type(event) ~= "string" or type(callback) ~= "function"
-    or not Adapter.libs.event or type(aceRegisterEvent) ~= "function" then return false end
-
-  local callbacks = eventCallbacks[event]
-  if not callbacks then callbacks = {}; eventCallbacks[event] = callbacks end
-  for _, existing in ipairs(callbacks) do
-    if existing == callback then return true end
-  end
-  callbacks[#callbacks + 1] = callback
-  if eventRegistered[event] then return true end
-
-  local dispatcher = Adapter.handlers.events[event]
-  if type(dispatcher) ~= "function" then
-    dispatcher = function(ownerOrEvent, receivedEvent, ...)
-      local eventName = type(receivedEvent) == "string" and receivedEvent or ownerOrEvent
-      local current = eventCallbacks[eventName]
-      if type(current) ~= "table" then return end
-      for index = 1, #current do
-        current[index](eventName, ...)
+  if not Adapter.libs.event or type(aceRegisterEvent) ~= "function" then return false end
+  if type(event) ~= "string" or type(callback) ~= "function" then return false end
+  Adapter.handlers.eventListeners = Adapter.handlers.eventListeners or {}
+  local listeners = Adapter.handlers.eventListeners[event]
+  if not listeners then
+    listeners = {}
+    local function dispatch(receivedEvent, ...)
+      local firstError
+      for index = 1, #listeners do
+        local ok, reason = pcall(listeners[index], receivedEvent, ...)
+        if not ok and firstError == nil then firstError = reason end
       end
+      if firstError ~= nil then error(firstError) end
     end
-    Adapter.handlers.events[event] = dispatcher
+    local ok, registered = pcall(aceRegisterEvent, Adapter, event, dispatch)
+    if not ok or registered == false then return false end
+    Adapter.handlers.eventListeners[event] = listeners
+    Adapter.handlers.events[event] = dispatch
   end
-  local ok = pcall(aceRegisterEvent, Adapter, event, dispatcher)
-  if not ok then
-    for index = #callbacks, 1, -1 do
-      if callbacks[index] == callback then table.remove(callbacks, index); break end
-    end
-    if #callbacks == 0 then
-      eventCallbacks[event], Adapter.handlers.events[event] = nil, nil
-    end
-    return false
-  end
-  eventRegistered[event] = true
+  for _, listener in ipairs(listeners) do if listener == callback then return true end end
+  listeners[#listeners + 1] = callback
   return true
 end
 

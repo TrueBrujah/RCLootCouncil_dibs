@@ -209,7 +209,7 @@ function Installation.GetStatus(actor, dbOverride)
   local incompleteSources = baselineSummary.incompleteSources == true
   local baselinePresent = baselineSummary.baselinePresent == true
   local legacyStartedAt = Dibs.UIRenderStats and Dibs.UIRenderStats.Begin and Dibs.UIRenderStats.Begin()
-  local hasRealLegacyData, _, detectedPreDibCount, activeLedgerId, resolvedGuildDB, sourceReadability = detectRealLegacyData(statusDB)
+  local hasRealLegacyData, detectedLedgerCount, detectedPreDibCount, activeLedgerId, resolvedGuildDB, sourceReadability = detectRealLegacyData(statusDB)
   if Dibs.UIRenderStats and Dibs.UIRenderStats.Record then
     Dibs.UIRenderStats.Record("Installation data", "legacy-data-detection", legacyStartedAt)
   end
@@ -230,7 +230,7 @@ function Installation.GetStatus(actor, dbOverride)
       end
     end
   end
-  if not sourceReadability.ledgerReadable or (hasLedgerHistory and not ledgerSourceFound) then
+  if not sourceReadability.ledgerReadable or (detectedLedgerCount > 0 and not ledgerSourceFound) then
     missingScanSources[#missingScanSources + 1] = "ledger"
   end
   if not sourceReadability.preDibsReadable or (detectedPreDibCount > 0 and not predibsSourceFound) then

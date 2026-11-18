@@ -62,6 +62,15 @@ Expected automated coverage:
 7. If the client does not expose sufficient evidence, verify that the UI reports manual-only or unavailable detection and that `/dibs vault` remains available.
 8. Record the exact client build, observed event/callback behavior, and any missing item/reset evidence in the Retail validation evidence file.
 
+### Capture repair validation — 2026-11-15
+
+- Automated: **93/93** across 14 Great Vault suites under Fengari, Lua 5.4.6 and native Lua 5.1.5. Independent capture/UI QA: **27/27** on each runtime. Native Lua 5.1 source compilation: **108/108**. This is automated evidence only; T051/T052 remain open.
+- Before claiming, open PlayerUI → Great Vault and check the capture state. If guild policy disables Pre-Dibs, capture must say disabled while historical records remain visible. An unsupported client must say unavailable.
+- Open the real Vault and verify the readable equipment-choice count, including an option bundled with a keystone/supplement. Merely opening it must create no acquisition.
+- Select and actually claim an equipment reward. Verify its exact item, date, difficulty and automatic confirmation appear in PlayerUI without reopening the page. Check the last result and unchanged Dibs balance. A failed identification must show a reason and leave manual `/dibs vault` available.
+- Repeat with delayed item data when possible, then reload to check deduplication. Record any mismatch rather than marking the Retail gate passed.
+- Previously missed claims are not reconstructed from current inventory or offered rewards; use the existing manual/review workflow for known historical acquisitions.
+
 ## Two-client guild synchronization
 
 1. Prepare Client A and Client B in the same guild with valid roster visibility.

@@ -25,7 +25,8 @@ describe("B12b page cleanup contracts", function()
   end)
 
   it("keeps eligibility and Debug presentation authorization-aware", function()
-    local _, player = loader.load({ wow = { guildLeader = false, guildRankIndices = { [1] = 3 } } })
+    local _, player = loader.load({ wow = { guildLeader = false,
+      guildMembers = { "GuildMaster-Realm", "Tester-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 } } })
     local hidden = player.OfficerUI.GetEligibilityProjection(player.GetCurrentSeasonId())
     assert_true(hidden.hidden)
     assert_false(player.DeveloperUI.GetProjection().visible)

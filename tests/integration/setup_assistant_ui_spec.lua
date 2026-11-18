@@ -1,7 +1,21 @@
-local loader = require("helpers.load_addon")
+local addonLoader = require("helpers.load_addon")
+-- These cases isolate readiness guidance inside already available configuration
+-- pages. Real fresh/partial navigation is covered by the progressive setup suites.
+local loader = setmetatable({ load = function(options)
+  local environment, dibs = addonLoader.load(options)
+  dibs.Wizard.GetNavigationAccess = function()
+    local routes = {}
+    for _, route in ipairs({ "wizard", "setup", "guildSetup", "installation", "settings", "seasons", "ranks",
+      "lootTypes", "eligibility", "preDibs", "announcements", "integration", "sync", "diagnostics", "overview", "automaticDibs", "seasonalRoster" }) do
+      routes[route] = true
+    end
+    return { foundationReady = true, routes = routes, dependencies = {} }
+  end
+  return environment, dibs
+end }, { __index = addonLoader })
 
 describe("First installation assistant UI", function()
-  it("mounts the setup route as one Officer-owned page", function()
+  it("mounts the readiness route as one Officer-owned page after foundation setup", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
     local frame = dibs.OfficerUI.CreateWindow("setup")
     assert_equal("setup", frame.selectedRoute)
@@ -21,10 +35,16 @@ describe("First installation assistant UI", function()
     }
 
     local function latestWidget(predicate)
-      for index = #(_G.__dibsAceWidgets or {}), 1, -1 do
-        local widget = _G.__dibsAceWidgets[index]
-        if predicate(widget) then return widget end
+      -- Creation order includes released pooled widgets from earlier pages.
+      -- Search the currently mounted page instead of accepting stale controls.
+      local function find(widget)
+        for index = #(widget and widget.children or {}), 1, -1 do
+          local found = find(widget.children[index])
+          if found then return found end
+        end
+        if widget and predicate(widget) then return widget end
       end
+      return find(_G.DibsOfficerFrame and _G.DibsOfficerFrame.contentHost)
     end
 
     it("gives every setup check and wizard step specific English and French instructions", function()
@@ -82,10 +102,18 @@ describe("First installation assistant UI", function()
             assert_true(#issue.nextAction > 30)
           end
           local section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)
-          assert_not_nil(section)
+          assert_not_nil(section, route .. " must show guidance on the currently mounted page")
+          if route == "lootTypes" then
+            frame.lootRulesResize(500)
+            section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)
+            assert_not_nil(section, "Loot Rules guidance must survive a responsive content rebuild")
+          end
           if route == "integration" or route == "lootTypes" or route == "settings"
             or route == "ranks" or route == "preDibs" or route == "announcements" then
-            assert_equal("ScrollFrame", section.parent.kind, route)
+            local viewport = section.parent
+            while viewport and viewport.kind ~= "ScrollFrame" do viewport = viewport.parent end
+            assert_not_nil(viewport, route .. " guidance must remain inside the current scrolling viewport")
+            assert_equal("ScrollFrame", viewport.kind, route)
           end
         end
       end
@@ -145,18 +173,34 @@ describe("First installation assistant UI", function()
       dibs.SetupAssistant.Evaluate = function()
         return { checks = { { id = "sync_state", state = "degraded", reasonCode = "SYNC_BEHIND" } } }
       end
-      -- Allocation guidance is derived from the automatic-allocation page's
-      -- already-built rows; rendering it must not run the full wizard again.
-      dibs.OfficerUI.BuildAutomaticAllocationDetails = function()
-        return { rows = { { difference = 1, actionable = true, plainPlayerName = "Member-Realm", rankName = "Member" } } }
+      dibs.Wizard.GetTurnkeyStatus = function()
+        return { verification = {
+          { id = "allocationReconciliation", severity = "WARNING", title = "Allocation reconciliation",
+            route = "automaticDibs", explanation = "A member needs allocation.",
+            nextAction = dibs.SetupAssistant.GetGuidance("allocationReconciliation") },
+        } }
       end
       local frame = dibs.OfficerUI.CreateWindow("sync")
       local section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)
       assert_equal(frame.syncTablePage.header, section.parent)
+      dibs.Wizard.GetTurnkeyStatus = function() error("Allocation navigation must not run the full Wizard") end
+      dibs.SetupAssistant.Evaluate = function() error("Allocation guidance must not evaluate global readiness") end
       frame:ActivateRoute("automaticDibs")
       section = latestWidget(function(widget) return widget.title == dibs.L.SETUP_HELP_TITLE end)
       assert_equal(frame.automaticDibsTablePage.header, section.parent)
       assert_equal("allocationReconciliation", frame.setupGuidanceIssues[1].id)
+      assert_equal("seasonalRoster", frame.setupGuidanceIssues[1].correctionRoute)
+      assert_equal(dibs.L.SEASONAL_ROSTER_RECONCILIATION_DEFERRED, frame.setupGuidanceIssues[1].nextAction)
+      local action = latestWidget(function(widget)
+        return widget.kind == "Button" and widget.text == dibs.L.OFFICER_NAV_SEASONAL_ROSTER_LABEL
+      end)
+      assert_not_nil(action)
+      action.callbacks.OnClick(action, "OnClick")
+      assert_equal("seasonalRoster", frame.mountedPage)
+      dibs.SeasonalRoster.HasConfiguredSeason = function() return true end
+      frame:ActivateRoute("automaticDibs")
+      assert_equal("INFO", frame.setupGuidanceIssues[1].severity)
+      assert_equal(dibs.L.SEASONAL_ROSTER_RECONCILE_HELP, frame.setupGuidanceIssues[1].nextAction)
     end)
 
     it("enables hover on labels and restores pooled mouse and script state on release", function()

@@ -15,11 +15,12 @@ describe("B12b targeted page cleanup", function()
     assert_equal(1, #empty.lines)
     assert_equal("No pre-Dibs for this season.", empty.lines[1])
 
+    -- The mock assigns rank 0 to the first roster member unless it is
+    -- overridden, which would make this supposed player a Guild Master.
     local _, player = loader.load({ wow = {
       guildLeader = false,
-      playerName = "Player-Realm",
-      guildMembers = { "Tester-Realm", "Player-Realm" },
-      guildRankIndices = { 0, 3 },
+      guildMembers = { "Tester-Realm" },
+      guildRankIndices = { [1] = 3 },
     } })
     local denied = player.OfficerUI.GetPagedView("players", player.GetCurrentSeasonId(), 1, 8)
     assert_equal("Players", denied.title)

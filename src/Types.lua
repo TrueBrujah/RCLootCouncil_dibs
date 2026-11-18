@@ -220,6 +220,7 @@ runtime state or changing addon load order.
 
 ---@class Dibs
 ---@field currentGuildKey string|nil Active guild scope cache.
+---@field canonicalOperationRecoveryStatus table|nil Verified startup recovery result scoped to guild and ledger.
 ---@field Midnight table|nil Optional UI compatibility surface.
 ---@field Debug table|nil Optional developer diagnostics surface.
 ---@field SetupAssistant table|nil Transient first-installation assistant surface.
