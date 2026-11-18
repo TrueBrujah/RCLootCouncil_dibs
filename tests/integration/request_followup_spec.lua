@@ -24,10 +24,10 @@ local function enableLifecycleCanonical(dibs)
 end
 
 describe("Request follow-up and retained lifecycle", function()
-  local function setup()
+  local function setup(category)
     local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true,
       guildMembers = { "Tester-Realm", "Officer-Realm", "Player-Realm" }, guildRankIndices = { 0, 1, 3 } } })
-    local request = dibs.Disputes.CreateReport(fixtures.report("other", { note = "Original dossier" }))
+    local request = dibs.Disputes.CreateReport(fixtures.report(category or "other", { note = "Original dossier" }))
     return dibs, request
   end
 
@@ -177,7 +177,7 @@ describe("Request follow-up and retained lifecycle", function()
     guild.disputes.requests[request.requestId].revision = nil
     _, dibs = loader.load({ withAce3 = true, savedVariables = saved })
     local restored = dibs.Disputes.GetRequest(request.requestId, nil)
-    assert_equal(2, dibs.GetDB().disputes.version)
+    assert_equal(3, dibs.GetDB().disputes.version)
     assert_equal("Open", restored.status)
     assert_equal(request.evidence[1].evidenceId, restored.evidence[1].evidenceId)
     assert_equal(1, #restored.timeline)

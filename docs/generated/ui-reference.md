@@ -33,7 +33,7 @@ Category: `ledger` | Module: `ProtectedActions` | Audience: gm, officer
 
 **English:** Guild Master and authorized Officers can adjust a member's current-season balance. Each change records actor, target, reason, previous balance, and resulting balance in audit history.
 **Francais:** Le maitre de guilde et les officiers autorises peuvent ajuster le solde de la saison pour un membre. L'historique conserve l'auteur, la cible, la raison et les soldes avant/apres.
-Source: `src/modules/ProtectedActions.lua:281` (`executeLedgerAdjust`)
+Source: `src/modules/ProtectedActions.lua:283` (`executeLedgerAdjust`)
 
 ## Adjustment reason (`ledger.adjust.reason`)
 

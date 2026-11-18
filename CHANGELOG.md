@@ -2,6 +2,14 @@
 
 ## Unreleased — 0.8.12 working candidate
 
+- (2026-11-17) Integrate dev's additive schema-8 migration, bounded Fengari CI,
+  package-name sanitization and honest candidate manifests. Bind pending canonical
+  proposals to their authority epoch/coordinator and refuse stale acceptance/retry;
+  preserve the actual Ledger refusal code through protected use. Replace placeholder
+  proposal checks with real persisted-store tests. Final merged suites: 2,189/2,189
+  each on Lua 5.1.5 and Lua 5.4, focused Fengari 186/186, Pester 47/47. Canonical
+  corrections remain disabled pending the documented implementation and Retail gates.
+
 - (2026-11-17) Restore the missing historical collection/proposal fixes from the
   approved implementation, and harden malformed scopes and legacy proposal updates.
   Announce coordinator closures immediately and require the actual predecessor

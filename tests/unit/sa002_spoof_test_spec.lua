@@ -68,4 +68,15 @@ describe("SA-002: Direct API actor spoofing", function()
     assert_not_nil(current)
     assert_false(supplied == current)
   end)
+
+  it("rejects a protected grant that supplies another GM identity", function()
+    local dibs = load(true, "ActualGM-Realm")
+    local before = #dibs.Ledger.GetAllTransactions()
+    local result = dibs.ProtectedActions.Execute("ledger.grant", "FakeGM-Realm", {
+      playerName = "Target-Realm", amount = 5, reason = "Test", source = "spoof-test",
+      seasonId = dibs.GetCurrentSeasonId(),
+    })
+    assert_false(result.ok)
+    assert_equal(before, #dibs.Ledger.GetAllTransactions())
+  end)
 end)

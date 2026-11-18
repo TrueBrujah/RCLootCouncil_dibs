@@ -31,6 +31,7 @@ local function setup(options)
   options = options or {}
   local _, dibs = loader.load({ withAce3 = true, wow = {
     guildLeader = options.guildLeader ~= false,
+    playerName = options.guildLeader == false and "Officer-Realm" or "Tester-Realm",
     guildMembers = { "Tester-Realm", "Officer-Realm", "Player-Realm" },
     guildRankIndices = { 0, 1, 3 },
   } })
@@ -145,25 +146,21 @@ describe("RF-0013 partial legacy discovery is not treated as complete", function
     -- An officer (not the GM) is the actor for this case.
     local result = dibs.Installation.Initialize("Officer-Realm", {})
     assert_not_nil(result, "the officer initialization returned no result")
-    -- The documented contract says the officer path must not claim a proposal
-    -- it never created. Either the call reports that no proposal exists, or
-    -- it fails explicitly; it must not report a successful proposal.
-    if result.ok == true then
-      local proposals = dibs.MultiLedger.GetProposals and dibs.MultiLedger.GetProposals() or {}
-      local created = 0
-      for _, proposal in ipairs(proposals) do created = created + 1 end
-      assert_true(created > 0,
-        "the officer path reported a created proposal but no proposal object exists")
-    end
+    assert_true(result.ok, "the officer setup failed: " .. tostring(result.reasonCode))
+    assert_equal("PROPOSAL_CREATED", result.reasonCode)
+    local proposal = dibs.MultiLedger.GetProposal(result.proposalId)
+    assert_not_nil(proposal, "the officer path reported success without a persisted proposal")
   end)
 
   it("D. an unreadable source is reported as unknown, not as an empty source", function()
     local dibs = setup()
     seedLedger(dibs, 2)
     local originalGetHistory = dibs.PreDibs.GetHistory
+    local originalGetHistoryCount = dibs.PreDibs.GetHistoryCount
     -- A read failure must not be converted into "no Pre-Dibs data", and it
     -- must not propagate out of the status projection.
     dibs.PreDibs.GetHistory = function() error("synthetic read failure") end
+    dibs.PreDibs.GetHistoryCount = function() error("synthetic count failure") end
 
     local ok, status = pcall(dibs.Installation.GetStatus, nil)
     assert_true(ok, "the status projection propagated a read failure: " .. tostring(status))
@@ -176,6 +173,7 @@ describe("RF-0013 partial legacy discovery is not treated as complete", function
       "an unreadable Pre-Dibs source produced no blocker; it was treated as empty")
 
     dibs.PreDibs.GetHistory = originalGetHistory
+    dibs.PreDibs.GetHistoryCount = originalGetHistoryCount
   end)
 
   it("E. the detection scope matches the collection scope", function()

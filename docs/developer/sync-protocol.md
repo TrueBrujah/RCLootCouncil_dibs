@@ -178,6 +178,19 @@ award proposals sent to the coordinator, recovery packages, orphaned evidence,
 and explicit sync probes. These exceptions preserve the existing ownership or
 recipient checks; they do not carry shared revision state.
 
+Canonical dispute proposals use a separate, default-off
+`LEDGER_OPERATION_PROPOSAL` detail transfer over `WHISPER` to the active
+coordinator. The coordinator verifies the current roster role, proposer
+identity, guild, ledger epoch, request revision, and complete operation before
+persisting the proposal. `LEDGER_OPERATION_PROPOSAL_ACK` only confirms that
+the coordinator received and stored that proposal; it never accepts or commits
+the correction. The proposer retains the same IDs and retries an unacknowledged
+proposal at the bounded retry interval. Only the verified coordinator's
+explicit acceptance may create a `LEDGER_OPERATION_COMMIT` on the GUILD route.
+The proposal capability and operation protocol version are independent of the
+general SyncV2 envelope version. Old clients do not receive a correction by
+fallback or award-proposal conversion.
+
 Before queuing a V2 `WHISPER`, the transport resolves the target against the
 current guild roster, verifies the roster reports the member online, and sends
 the full `Name-Realm` address, with realm spaces removed. Short names are

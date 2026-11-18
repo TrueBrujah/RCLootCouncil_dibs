@@ -53,7 +53,13 @@ describe("B05b fenced authority and recovery", function()
     local wrong = authority(dibs, "Officer-Realm", 8, { kind = "NORMAL_HANDOFF", parentClosure = closure, parentClosureHash = "wrong" })
     assert_false(dibs.Governance.Change(nil, { future = { authority = wrong } }))
     local next = authority(dibs, "Officer-Realm", 8, { kind = "NORMAL_HANDOFF", parentClosure = closure, parentClosureHash = closure.closureHash })
-    assert_true(dibs.Governance.Change(nil, { future = { authority = next } }))
+    local adopted, reason = dibs.Governance.Change(nil, { future = { authority = next } })
+    if not adopted then
+      local codes = {}
+      for _, entry in ipairs(dibs.Sync.GetSyncBehindReasons()) do codes[#codes + 1] = entry.code end
+      reason = tostring(reason) .. " (" .. table.concat(codes, ",") .. ")"
+    end
+    assert_true(adopted, tostring(reason))
     assert_equal("ACTIVE", dibs.Governance.GetAuthorityState().state)
     assert_equal(8, dibs.Governance.GetAuthorityState().ledgerEpoch)
   end)
@@ -84,6 +90,7 @@ describe("B05b fenced authority and recovery", function()
           seasonId = season
         })
         assert_false(result.ok, "Operation should fail when coordinator unavailable")
+        assert_equal("COORDINATOR_UNAVAILABLE", result.reasonCode)
         assert_equal("COORDINATOR_UNAVAILABLE", result.diagnostic)
         assert_equal(before, dibs.Ledger.GetBalance("Player-Realm", season))
         local proposals = dibs.Governance.GetAwardProposals()

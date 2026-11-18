@@ -1,5 +1,38 @@
 # RCLootCouncil_Dibs — Persistent Project Checkpoint
 
+## Commit et synchronisation avec dev — 2026-11-17
+
+- Autorisation utilisateur explicite : commit, synchronisation et PR vers `dev`.
+  Commit du lot local : `24ef5ad`. Intégration de `origin/dev` à `52e9419`, avec
+  résolution des conflits et préservation des corrections du candidat 0.8.12.
+  Les réglages locaux de VS Code et la suppression locale du skill restent hors
+  commit. Pas de fusion de PR, tag, release, installation WoW ou reset réel.
+- Changements indépendants de dev conservés : migration additive guild 7→8 /
+  disputes 2→3 et ses tests représentatifs, CI Fengari par lots, noms de package
+  sûrs pour les branches contenant `/`, références stables 0.8.11 et manifeste
+  qui ne déclare plus des validations non exécutées.
+- Governance/ProtectedActions : une proposition conserve son epoch et son
+  coordinateur; retry/acceptation refusés si cette autorité change. Le protected
+  `ledger.use` restitue le vrai code de refus du Ledger. T014 ne repose plus sur
+  quatre assertions vides : six tests passent par le vrai store (identités après
+  reload, retry, lectures détachées, bornes, autorité périmée). Le contrat actuel
+  de proposition reste le seul propriétaire; le transport/ACK de l'ancien contrat
+  n'est pas réintroduit comme second chemin. T048 reste explicitement ouvert.
+- Qualification finale sur fichiers figés : **2 189 PASS / 0 FAIL, 274 fichiers,
+  sur chacun de Lua 5.1.5 et Lua 5.4**; **186/186 sur 18 suites ciblées Fengari**;
+  **47/47 Pester**; compilation Lua 5.1 **112/112**; préflight addon **121 fichiers**;
+  docs **29 concepts, 0 erreur, 10 avertissements hérités**, huit sorties générées
+  identiques sous PowerShell 5.1/7. Contrôle whitespace hors vendors PASS.
+- Manifeste des 447 fichiers source/test validés, SHA-256 :
+  `E6111A2DDD8BE58CF452D6D7A3E82B7639AF9DD40F27F7A3439695C7CEEFCE49`.
+  Audit guard : **exit 1, 238 différences applicatives, zéro différence protégée**.
+  Baseline conservée, SHA-256
+  `226B67846909BA10FC59C12F6D6F59ED8EA7920115AEEEBFD26D6212284E3871`.
+  Les octets du vendor approuvé sont conservés lors du staging.
+- Restent les observations Retail et les matrices 026 T047–T050, dont le relais
+  typé des propositions et l'autorité de récupération externe vierge. Les deux
+  verrous canoniques source restent false. Aucun résultat hors jeu ne certifie WoW.
+
 ## Reprise des 190 échecs automatisés — 2026-11-17
 
 - Demande : corriger les échecs restants, sans nouvelle approbation pour le

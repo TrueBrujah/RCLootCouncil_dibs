@@ -52,7 +52,7 @@ Source: [src/modules/Installation.lua:463](../../src/modules/Installation.lua#L4
 
 Scope: `guild-season` | Audit: `true` | Reason required: `true`
 Permission: `ledger.adjust`
-Source: [src/modules/ProtectedActions.lua:281](../../src/modules/ProtectedActions.lua#L281) - `executeLedgerAdjust`
+Source: [src/modules/ProtectedActions.lua:283](../../src/modules/ProtectedActions.lua#L283) - `executeLedgerAdjust`
 
 ## Adjustment reason
 

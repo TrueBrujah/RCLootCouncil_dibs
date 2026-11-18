@@ -22,9 +22,13 @@ describe("ProtectedActions routing", function()
       return { status = "RESOLVED", displayName = name, memberKey = "proposer-key", role = proposerRole }
     end
     dibs.GetGuildKey = function() return "guild-key" end
+    dibs.Governance.GetAuthorityState = function()
+      return { state = "ACTIVE", ledgerEpoch = 7, coordinator = { memberKey = "coordinator-key" } }
+    end
     dibs.Governance.GetDisputeOperationProposal = function()
       return {
         proposalId = "proposal-1", status = "PENDING",
+        ledgerEpoch = 7, coordinator = { memberKey = "coordinator-key" },
         operation = {
           guildKey = "guild-key", ledgerId = "guild-primary", requestId = "request-1",
           requestRevision = 1, operationId = "operation-1",

@@ -30,7 +30,7 @@ describe("RF-0014 security verification matrix", function()
     local dibs = setup()
     linkCharacters(dibs, "Plain-Realm", "Officer-Realm")
     local request, reason = dibs.CharacterEligibility.RequestMainChange({
-      oldMainId = "Plain-Realm", newMainId = "Officer-Realm", reason = "unauthorized",
+      oldMainId = "Tester-Realm", newMainId = "Officer-Realm", reason = "unauthorized",
     }, "Plain-Realm")
     -- The request itself is a proposal from the player; what matters is that
     -- the approval is refused for a non-admin.

@@ -35,7 +35,8 @@ jobs:
             exit 1
           fi
           short_sha="${GITHUB_SHA:0:7}"
-          package_name="RCLootCouncil_dibs-${version}-${GITHUB_REF_NAME}-${short_sha}"
+          safe_ref_name="${GITHUB_REF_NAME//\//-}"
+          package_name="RCLootCouncil_dibs-${version}-${safe_ref_name}-${short_sha}"
           {
             echo "version=$version"
             echo "package_name=$package_name"

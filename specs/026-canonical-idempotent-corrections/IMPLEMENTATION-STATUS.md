@@ -10,7 +10,19 @@ T047/T048 remain subject to their full acceptance evidence, T049 recovery is
 partial and T050 depends on it. External recovery on a fresh installation remains
 Feature 007 T036. Release flags remain disabled; Retail is not certified.
 
-Latest repair evidence (2026-11-17): full native Lua 5.1.5 and Lua 5.4 suites
+Latest dev-integration qualification (2026-11-17): **2,189/2,189 on 274 files under
+each native Lua 5.1.5 and Lua 5.4**, focused Fengari **186/186 on 18 suites**, and
+Pester **47/47**. The approved additive schema-8 migration and representative
+history-preservation tests are retained. Pending operation proposals now bind
+their epoch/coordinator and fail closed when that authority changes; six actual
+proposal-store cases replace T014's former placeholder assertions. The current
+proposal-ID-only protected path remains authoritative. Reconciling the earlier
+proposal/ACK wire contract is still T048 work, not a second writer or a completed
+transport claim. Release gates remain closed and T047–T050 remain open.
+Audit guard: 238 application differences, zero protected differences, exit 1;
+baseline unchanged. Other preflight/doc/compilation results below remain valid.
+
+Earlier repair evidence (2026-11-17): full native Lua 5.1.5 and Lua 5.4 suites
 each pass **2,181/2,181 across 274 files**; focused Fengari passes **767/767 across
 65 files**. The private-delivery fixture's last Lua 5.1 loader mismatch is fixed,
 with its 17 cases rechecked under all three runtimes. Missing historical-report

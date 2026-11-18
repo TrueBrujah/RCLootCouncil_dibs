@@ -27,7 +27,7 @@ describe("Great Vault migration", function()
     for _, transaction in pairs(dibs.GetDB().ledger.transactions or {}) do
       assert_true(transaction.actionType ~= "DIB_USED")
     end
-    assert_equal(7, dibs.GetDB().version)
+    assert_equal(8, dibs.GetDB().version)
     assert_not_nil(record.migration)
   end)
 

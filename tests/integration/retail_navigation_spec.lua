@@ -329,7 +329,7 @@ describe("Retail Officer navigation lifecycle", function()
     assert_false(containsText(frame.contentHost, "Target season"))
   end)
 
-  it("lays out Requests and History during their first TreeGroup selection", function()
+  it("lays out Requests and History in the content host during their first TreeGroup selection", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow("overview")
     local layoutCalls = 0

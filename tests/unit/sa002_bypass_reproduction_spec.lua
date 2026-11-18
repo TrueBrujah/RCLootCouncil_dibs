@@ -270,7 +270,7 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
     local count2 = #dibs.Ledger.GetAllTransactions()
     assert_equal(count1, count2, "No new transaction should be created")
     
-    print("S002-11: Replay correctly rejected - no duplicates created")
+    print("S002-11: Replay is idempotent - no duplicates created")
   end)
 
   it("S002-12: Failed operation leaves persistent state unchanged", function()

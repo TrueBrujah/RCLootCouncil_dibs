@@ -37,9 +37,8 @@ describe("ProtectedActions ledger.operation", function()
 
   it("denies ledger.operation when feature is disabled", function()
     local dibs = setup()
-    local settings = dibs.GetLocalSettings()
     dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = false
-    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operationId = "op-1" })
+    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operation = {} })
     assert_equal(false, result.ok)
     assert_equal("FEATURE_DISABLED", result.reasonCode)
   end)
@@ -74,7 +73,7 @@ describe("ProtectedActions ledger.operation", function()
     }, withAce3 = true })
     dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
 
-    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operationId = "op-1" })
+    local result = dibs.ProtectedActions.Execute("ledger.operation", nil, { operation = { operationId = "op-1" } })
     assert_equal(false, result.ok)
     assert_equal(false, result.decision.allowed)
   end)

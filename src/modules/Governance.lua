@@ -882,6 +882,9 @@ function Governance.CreateDisputeOperationProposal(intent)
     if type(existing) == "table" and existing.operation.requestId == intent.requestId
       and existing.operation.requestRevision == intent.requestRevision then
       if existing.intentHash == intentHash and canonicalText(existing.intentContent) == canonicalText(intentContent) then
+        if existing.ledgerEpoch ~= authority.ledgerEpoch or type(existing.coordinator) ~= "table"
+          or type(authority.coordinator) ~= "table"
+          or existing.coordinator.memberKey ~= authority.coordinator.memberKey then return nil, "STALE_AUTHORITY" end
         return copy(existing), "IDEMPOTENT_PROPOSAL"
       end
       if existing.status == "COMMITTED" then return nil, "DISPUTE_REVISION_ALREADY_CORRECTED" end
@@ -910,6 +913,7 @@ function Governance.CreateDisputeOperationProposal(intent)
   local proposal = {
     schema = 1, recordClass = "LEDGER_OPERATION_PROPOSAL", proposalId = proposalId,
     intentHash = intentHash, intentContent = intentContent, operation = copy(built),
+    ledgerEpoch = authority.ledgerEpoch, coordinator = copy(authority.coordinator),
     status = "PENDING", relayAttempts = 0, createdAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
   }
   operationProposals[proposalId] = proposal

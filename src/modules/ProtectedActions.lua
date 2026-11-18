@@ -257,7 +257,9 @@ local function executeLedgerUse(actor, payload, decision)
     return reject(decision, text("PROTECTED_ACTION_UNAVAILABLE", "Required module unavailable."))
   end
   local tx, reason = Dibs.Ledger.Use(payload and payload.playerName, payload and payload.amount, payload and payload.reason, payload and payload.source, payload and payload.seasonId, buildAudit("ledger.use", actor, payload or {}, decision))
-  return buildResult(tx ~= nil, tx, decision, tx and nil or reason)
+  local result = buildResult(tx ~= nil, tx, decision, reason)
+  if not tx and reason then result.reasonCode = reason end
+  return result
 end
 
 local function executeLedgerRefund(actor, payload, decision)
@@ -325,6 +327,13 @@ local function executeLedgerOperation(actor, payload, decision)
   if not proposer or proposer.status ~= "RESOLVED" or proposer.memberKey ~= operation.actor.memberKey
     or (proposer.role ~= "gm" and proposer.role ~= "officer") then
     return rejectOperation("PROPOSER_NOT_AUTHORIZED")
+  end
+  local authority = Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  if type(authority) ~= "table" or authority.state ~= "ACTIVE"
+    or type(authority.coordinator) ~= "table" or type(proposal.coordinator) ~= "table"
+    or proposal.ledgerEpoch ~= authority.ledgerEpoch
+    or proposal.coordinator.memberKey ~= authority.coordinator.memberKey then
+    return rejectOperation("STALE_AUTHORITY")
   end
   if not Dibs.Ledger or type(Dibs.Ledger.CommitDisputeOperation) ~= "function" then
     return rejectOperation("CANONICAL_OPERATION_UNAVAILABLE")
