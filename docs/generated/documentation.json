@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "addonVersion": "0.8.12",
+  "addonVersion": "0.9.0",
   "concepts": [
     {
       "id": "guild.ledger.status",

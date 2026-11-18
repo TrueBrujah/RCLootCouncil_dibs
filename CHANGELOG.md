@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased — 0.8.12 working candidate
+## Unreleased — 0.9.0 working candidate
+
+- (2026-11-18) Renumber the unreleased 0.8.12 working candidate to 0.9.0 at the
+  user's request. Align runtime/TOC metadata, current guides and candidate notes.
+  This version-only change adds no SavedVariables or protocol migration, does not
+  enable canonical corrections, and does not certify the pending performance,
+  recovery or Retail gates. Existing 0.8.12 installation evidence remains historical.
+  The existing major/minor synchronization rule requires 0.9.x peers: clients
+  advertising 0.8.x must update together before participating in the new family.
 
 - (2026-11-17) Integrate dev's additive schema-8 migration, bounded Fengari CI,
   package-name sanitization and honest candidate manifests. Bind pending canonical

@@ -4,6 +4,13 @@ Feature: `026-canonical-idempotent-corrections`
 ## Current Phase: Canonical readiness, recovery and release validation
 Status: **PARTIAL IMPLEMENTATION — RECOVERY AND RELEASE GATES OPEN**
 
+Candidate metadata is **0.9.0 as of 2026-11-18**, explicitly requested by the user;
+this is not release acceptance or canonical activation. Full native Lua 5.1.5 and
+Lua 5.4 qualification is now **2,190/2,190 across 274 files each**, with one new
+previous-minor-family refusal test; focused Fengari version/gate checks pass 25/25.
+Peers advertising 0.8.x require an update under the existing compatibility policy.
+No additional data/protocol migration is introduced. Retail and T047–T050 stay open.
+
 Current source of truth: [tasks.md](./tasks.md), convergence T046–T050, and the
 [project checkpoint](../../docs/ai/CHECKPOINT.md). T046 readiness is implemented;
 T047/T048 remain subject to their full acceptance evidence, T049 recovery is

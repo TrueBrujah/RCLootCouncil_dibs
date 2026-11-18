@@ -9,7 +9,7 @@ missing Retail captures, not available images or validation evidence.
 
 ## Purpose and limits
 
-### Replying to an Officer — 0.8.12 candidate
+### Replying to an Officer — 0.9.0 candidate
 
 When a reviewer needs information about your report, My Dibs offers “Reply to an
 Officer” after the balance summary. It opens your own dossier without sending a
@@ -64,7 +64,7 @@ loot voting and award finalization.
 
 ## Guild Loot Rules
 
-On DIBS 0.8.x, the Guild Master explicitly adopts the guild's Loot Rules and
+In DIBS, the Guild Master explicitly adopts the guild's Loot Rules and
 publishes later changes. Verified Officers can edit a local draft and apply the
 Dibs preset, but only the GM can adopt or publish guild-wide rules. Local legacy
 values are not guild authority. Raid Readiness reports one of these states:
@@ -78,8 +78,8 @@ values are not guild authority. Raid Readiness reports one of these states:
 - `GUILD_LOOT_RULES_INCOMPATIBLE`: update DIBS before relying on shared rules;
 - `UNAVAILABLE`: supported loot types could not be loaded.
 
-Guild synchronization requires the 0.8.x family on both sides. Clients on
-0.7.x must update to 0.8.x before they can synchronize with the guild.
+Guild synchronization for this candidate requires the 0.9.x family on both sides.
+Clients on 0.8.x or older must update to 0.9.x before synchronizing with these peers.
 
 ## Rank allocations
 
@@ -171,7 +171,7 @@ to **OfficerUI > Vault Review**; delivery is not necessarily immediate.
 Transfers respect owner identity and Officer review permissions. Past claims
 that were never recorded are not recovered automatically. Real player-to-Officer
 validation remains pending: use the
-[0.8.12 Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md).
+[current Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md).
 
 When Retail does not expose all the required evidence, use:
 

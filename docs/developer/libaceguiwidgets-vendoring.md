@@ -73,6 +73,9 @@ still require runtime verification. The widget's Today and Clear buttons are
 English; no public localization API or reliable external configuration was
 identified. These two buttons alone are an approved temporary exception for the
 unpublished 0.8.12 development build, without further library modifications.
+The working candidate was renumbered to 0.9.0 on 2026-11-18 with the same approved
+bundle and hashes. This does not establish release adoption or Retail validation
+of that temporary exception.
 The exception does not cover any other text or Dibs components, and does not
 approve a stable release. Dibs-authored text remains localized in `src/locales/`.
 

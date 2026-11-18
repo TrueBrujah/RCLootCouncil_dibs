@@ -74,7 +74,7 @@ Dibs.DebugLogs.maxEntries = Dibs.DebugLogs.maxEntries or 300
 
 Dibs.ADDON_NAME = addonName or "RCLootCouncil_dibs"
 Dibs.MODULE_NAME = "RCLootCouncil_dibs"
-Dibs.VERSION = "0.8.12"
+Dibs.VERSION = "0.9.0"
 -- RF-0012 dispute corrections stay closed in release builds until the
 -- canonical multi-entry operation path has passed its Retail validation.
 Dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = false

@@ -5,12 +5,16 @@
 ## Addon version compatibility
 
 V2 envelopes include `addonVersion`. Clients are compatible only when their
-semantic-version `major.minor` family matches. The 0.8.x family carries the
-rank-reconciliation transaction and proposal contract; 0.7.x peers are rejected with
+semantic-version `major.minor` family matches. The unreleased candidate now uses
+the 0.9.x family; peers advertising 0.8.x or older are rejected with
 `ADDON_UPDATE_REQUIRED` before any sync payload is applied. The last verified
 mismatch is retained for Officer UI, Loot Rules readiness, and the debug
 report. A legacy peer that does not send `addonVersion` remains observable as
 unknown rather than being treated as a compatible claim.
+
+The 2026-11-18 renumbering adds no protocol or SavedVariables migration. The
+rank-reconciliation transaction/proposal contracts introduced in 0.8.x remain;
+the existing compatibility rule requires a coordinated client update to 0.9.x.
 
 The existing `SEASON_CATALOG` entity carries the versioned
 `guildConfiguration.guildLootRules` schema-v1 snapshot. It includes one

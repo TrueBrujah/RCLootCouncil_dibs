@@ -9,7 +9,7 @@ manquantes ; ils ne constituent pas une validation du client actuel.
 
 ## A quoi sert Dibs ?
 
-### Consolidation de la gestion — candidat 0.8.12
+### Consolidation de la gestion — candidat 0.9.0
 
 Le tableau de bord présente d’abord l’état des services et une prochaine action,
 puis l’activité et les statistiques. « Saison disponible » décrit la disponibilité
@@ -25,7 +25,7 @@ Les sauvegardes locales partagent les fichiers SavedVariables : conserver une
 copie indépendante avant nettoyage. La récupération externe vierge n’est pas
 encore un parcours complet autorisé. Vérifications Retail : N16–N18.
 
-### Première installation et menus progressifs — candidat 0.8.12
+### Première installation et menus progressifs — candidat 0.9.0
 
 Une nouvelle installation montre uniquement **Guided Setup**. Choisissez un
 profil, examinez les changements puis configurez la fondation de guilde avec les
@@ -285,7 +285,7 @@ indique un snapshot valide ; `GUILD_LOOT_RULES_NOT_CONFIGURED` et
 `GUILD_LOOT_RULES_SYNC_BEHIND` conserve le dernier snapshot recu pendant la
 reprise ; `GUILD_LOOT_RULES_INCOMPATIBLE` exige une mise a jour ; `UNAVAILABLE`
 signifie que la source dynamique des types n'a pas pu etre chargee. SyncV2
-refuse les clients 0.7.x face a la famille 0.8.x. Demandez leur mise a jour au
+refuse les pairs annoncant 0.8.x ou plus ancien face a la famille 0.9.x. Demandez leur mise a jour au
 lieu de compenser en modifiant les valeurs locales.
 
 Le dry-run permet de tester un objet, un joueur, une reponse et un statut de finalisation sans modifier le ledger :
@@ -540,7 +540,7 @@ personnage sans guilde conserve son propre scope local.
 
 La reception n'est pas necessairement instantanee et doit encore etre validee
 avec deux clients Retail. Utilisez la
-[liste des tests Retail 0.8.12](../audits/0.8.12-TESTS-RETAIL-FR.md)
+[liste des tests Retail du candidat](../audits/0.8.12-TESTS-RETAIL-FR.md)
 pour verifier le trajet joueur vers officier et le rattrapage apres reconnexion.
 
 _Capture Retail en attente : revue Officer du Grand Coffre —
@@ -734,6 +734,6 @@ Actualisez un apercu perime. Une dependance de synchronisation manquante
 conserve l'ancienne saison courante. La desactivation garde l'historique en
 lecture seule et bloque les ecritures. Les validations Retail restent
 distinctes des tests automatises : voir la [matrice de validation](../../specs/029-seasonal-raid-roster/quickstart.md).
-La [liste des tests Retail 0.8.12](../audits/0.8.12-TESTS-RETAIL-FR.md)
+La [liste des tests Retail du candidat](../audits/0.8.12-TESTS-RETAIL-FR.md)
 regroupe les verifications a effectuer en jeu; T053 reste ouverte jusqu'a une
 validation reelle a deux clients.

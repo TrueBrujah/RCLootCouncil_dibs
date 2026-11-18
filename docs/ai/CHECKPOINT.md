@@ -1,5 +1,30 @@
 # RCLootCouncil_Dibs — Persistent Project Checkpoint
 
+## Candidat 0.9.0 — 2026-11-18
+
+- Décision utilisateur explicite : passer le candidat de travail 0.8.12 à
+  **0.9.0**. Numéro aligné dans Core/TOC, README, guides FR/EN, notes du candidat
+  et documentation générée. Stable publiée toujours indiquée 0.8.11. Aucun tag,
+  publication, fusion vers dev/main ou nouveau déploiement WoW.
+- La règle de compatibilité major/minor existante reste inchangée : un pair
+  annonçant 0.8.11/0.8.12 est refusé par 0.9.x avec `ADDON_UPDATE_REQUIRED`, sans
+  effet sur le ledger. Les variations patch/dev de la famille 0.9.x restent
+  acceptées. Mettre à jour les clients ensemble. Aucun changement de schéma de
+  données ou de format du protocole n'est ajouté par ce renumérotage.
+- Les preuves d'installation 0.8.12 restent historiques dans la fiche Retail,
+  dont le nom de fichier est conservé pour les liens existants; sa campagne
+  courante est explicitement 0.9.0. Les verrous canoniques restent false et les
+  tâches 026 T041/T042/T043/T047–T050 ne sont pas closes par le numéro de version.
+- Validation : suites complètes **2 190 PASS / 0 FAIL sur 274 fichiers, sous chacun
+  de Lua 5.1.5 et Lua 5.4**; **25/25 sur trois suites ciblées Fengari** (compatibilité,
+  verrouillage et candidat); compilation **112/112 Lua 5.1**; préflight addon
+  **121 fichiers**; documentation Check PASS, Pester documentation **26/26**, sorties
+  PowerShell 5.1/7 **8/8 MATCH**, whitespace PASS. Aucun fichier vendor modifié.
+- Les optimisations identifiées lors de la revue performance restent à faire :
+  vérification périodique de navigation joueur, coût de récupération au démarrage
+  et construction complète du rapport historique. Les essais Retail et la
+  récupération externe vierge restent distincts. Pas de certification runtime.
+
 ## Commit et synchronisation avec dev — 2026-11-17
 
 - Autorisation utilisateur explicite : commit, synchronisation et PR vers `dev`.

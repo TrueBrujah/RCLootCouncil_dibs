@@ -1,14 +1,18 @@
 # RCLootCouncil_dibs
 
-Development compatibility baseline: **0.8.x**. Latest published stable release:
-**0.8.11**. The source declares **0.8.12** (working candidate).
+Development compatibility family: **0.9.x**. Latest published stable release:
+**0.8.11**. The source declares **0.9.0** (unreleased working candidate).
 
 The current candidate includes seasonal roster activation/reconciliation and
 Great Vault capture repairs. Real-client validation remains pending; use the
-[0.8.12 Retail test checklist (French)](docs/audits/0.8.12-TESTS-RETAIL-FR.md)
+[current Retail test checklist (French)](docs/audits/0.8.12-TESTS-RETAIL-FR.md)
 and the [current change notes](CHANGELOG.md). An earlier 0.8.12 installation
 may not contain these repairs. Canonical dispute correction writes
 remain disabled with outstanding implementation/recovery work.
+
+The existing synchronization policy requires matching major/minor addon versions:
+0.9.x clients reject peers advertising 0.8.x with an update-required diagnostic.
+Coordinate the guild's client update; renumbering adds no data or protocol migration.
 
 [![Package addon](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml/badge.svg)](https://github.com/TrueBrujah/RCLootCouncil_dibs/actions/workflows/package-addon.yml)
 
@@ -25,8 +29,8 @@ guild Dibs ledger, reservations, permissions, and audit history.
 - Development builds are published from the `dev` branch and its GitHub Actions artifacts.
 
 Each release includes a WoW-ready ZIP and a SHA-256 checksum. Version 0.8.11 is
-the latest stable publication. Development builds use the 0.8.x compatibility
-family and reject 0.7.x peers until they update. These guides describe the
+the latest stable publication. This working candidate uses the 0.9.x compatibility
+family and rejects peers advertising 0.8.x or older until they update. These guides describe the
 current source, not proof that every feature has passed Retail validation.
 The [v0.8.0 checklist](B12_Release_Candidate_Checklist.md) and
 [v0.8.0 evidence](docs/audits/DIBS_0.8.0_Release_Candidate_Evidence.md) are

@@ -1,6 +1,6 @@
-RCLootCouncil_dibs 0.8.12
+RCLootCouncil_dibs 0.9.0
 
-Working candidate updated 2026-11-15; not a publication or completed Retail certification.
+Working candidate renumbered from 0.8.12 on 2026-11-18; not a publication or completed Retail certification.
 
 Highlights
 - Adds seasonal raid roster drafts, player registration, Officer review, and a read-only public roster.
@@ -15,6 +15,8 @@ Highlights
 - Preserves deleted-ledger tombstones through restore/import and prevents presentation profiles from changing guild authority.
 
 Compatibility and current limits
+- Renumbering to 0.9.0 adds no data/protocol migration and does not activate canonical corrections. Performance, recovery and Retail qualification remain open.
+- Synchronization already requires matching major/minor addon versions. Peers advertising 0.8.x must update to 0.9.x; coordinate the guild's client update.
 - Existing ledger and historical records are preserved. The seasonal roster uses an additive SavedVariables subtree.
 - Seasonal roster synchronization uses Guild chat and requires clients to support the seasonal roster capability.
 - Activation is available through the reviewed preview, reason and explicit confirmation by the authorized accounting coordinator. A preview alone allocates nothing.

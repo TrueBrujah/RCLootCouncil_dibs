@@ -8,7 +8,7 @@ Navigation labels are localized, and disabled modules can hide their pages.
 Screenshot paths marked pending identify missing Retail captures, not delivered
 images or proof of current-client validation.
 
-### Operational consolidation — 0.8.12 candidate
+### Operational consolidation — 0.9.0 candidate
 
 The dashboard shows service state and a contextual next action before activity and
 statistics. “Season available” is a data-availability statement, not a guarantee of
@@ -24,7 +24,7 @@ authority decision. Actual Retail interaction remains unverified (N16–N18).
 
 ## Purpose and limits
 
-### Progressive setup — 0.8.12 candidate
+### Progressive setup — 0.9.0 candidate
 
 A fresh guild installation exposes only **Guided Setup**. Choose a profile,
 review changes and configure the guild foundation with the required permissions;
@@ -253,7 +253,7 @@ and `LOCAL_LEGACY_ONLY` are not guild-wide readiness;
 `GUILD_LOOT_RULES_SYNC_BEHIND` keeps the last received snapshot effective while
 recovery proceeds; `GUILD_LOOT_RULES_INCOMPATIBLE` requires updating DIBS;
 `UNAVAILABLE` means the dynamic option source could not be loaded. SyncV2
-rejects 0.7.x peers from the 0.8.x compatibility family. Ask affected members
+rejects peers advertising 0.8.x or older from this candidate's 0.9.x family. Ask affected members
 to update rather than changing local settings to compensate.
 
 In **Announcements**, **Enable public announcements** and **Enable officer
@@ -484,7 +484,7 @@ unguilded character keeps its own local ownership scope.
 
 Delivery is not necessarily immediate and still requires a real two-client
 Retail validation. Use the
-[0.8.12 Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md)
+[current Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md)
 to check player-to-Officer delivery and catch-up after reconnecting.
 
 _Pending Retail capture: Officer Vault Review —
@@ -656,5 +656,5 @@ Missing sync dependencies keep the prior season current until validation
 completes. Disabling the module preserves its read-only history and blocks
 mutations. Offline automated tests do not replace the two-client Retail checks
 in the [feature validation matrix](../../specs/029-seasonal-raid-roster/quickstart.md).
-The [0.8.12 Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md)
+The [current Retail test checklist (French)](../audits/0.8.12-TESTS-RETAIL-FR.md)
 collects the in-game checks; T053 stays open until real two-client validation.

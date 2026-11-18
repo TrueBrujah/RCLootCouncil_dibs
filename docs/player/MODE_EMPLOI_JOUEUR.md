@@ -9,7 +9,7 @@ inventorient des images Retail manquantes, pas des preuves de validation.
 
 ## A quoi sert Dibs ?
 
-### Répondre à un officier — candidat 0.8.12
+### Répondre à un officier — candidat 0.9.0
 
 Quand un officier attend des informations sur votre signalement, Mes Dibs propose
 « Répondre à un officier » après le résumé du solde. Le raccourci ouvre votre dossier;
@@ -85,7 +85,7 @@ finalisation du butin.
 
 ## Regles de butin de guilde
 
-Avec DIBS 0.8.x, le maitre de guilde adopte explicitement les regles de butin
+Dans DIBS, le maitre de guilde adopte explicitement les regles de butin
 de guilde et publie leurs modifications. Les officiers verifies peuvent
 modifier un brouillon local et appliquer le preset Dibs, mais seul le GM peut
 adopter ou publier les regles de guilde. Les anciennes valeurs locales ne
@@ -101,8 +101,8 @@ constituent pas une autorite de guilde. Raid Readiness distingue les etats suiva
 	regles partagees ;
 - `UNAVAILABLE` : les types de butin pris en charge n'ont pas pu etre charges.
 
-La synchronisation exige la famille 0.8.x des deux cotes. Les clients en
-0.7.x doivent passer en 0.8.x pour se synchroniser avec la guilde.
+La synchronisation de ce candidat exige la famille 0.9.x des deux cotes. Les
+clients en 0.8.x ou plus anciens doivent passer en 0.9.x pour rejoindre ces pairs.
 
 ## Allocations par rang
 
@@ -208,7 +208,7 @@ necessairement instantanement chez les officiers. La transmission respecte
 l'identite du proprietaire et les autorisations de revue des officiers.
 Les anciens retraits jamais enregistres ne sont pas recuperes automatiquement.
 La validation reelle joueur vers officier reste en attente : suivez la
-[liste des tests Retail 0.8.12](../audits/0.8.12-TESTS-RETAIL-FR.md).
+[liste des tests Retail du candidat](../audits/0.8.12-TESTS-RETAIL-FR.md).
 
 Les filtres de l'historique du Grand Coffre portent sur l'objet, la source, le
 statut et les dates enregistres. Les dates `YYYY-MM-DD` sont inclusives. Une
