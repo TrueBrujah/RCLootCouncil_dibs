@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 local function hasEntry(tree, value)
   for _, entry in ipairs(tree or {}) do

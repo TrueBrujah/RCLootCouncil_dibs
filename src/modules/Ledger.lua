@@ -872,7 +872,66 @@ end
 -- RF-0012 canonical dispute operations. These helpers deliberately keep the
 -- immutable intent separate from the persisted canonical commit.
 local DISPUTE_OPERATION_WRITES_ENABLED = false
-local operationReadinessProbe
+local function operationReadinessProbe(operation)
+  if type(operation) ~= "table" then return false, "INVALID_OPERATION" end
+  if not isApprovedLedger(operation.ledgerId) then return false, "LEDGER_NOT_APPROVED" end
+  if not v2Enforced() then return false, "V2_ENFORCED_REQUIRED" end
+  local recovery = Dibs.canonicalOperationRecoveryStatus
+  if operation.ledgerId ~= "guild-primary" then
+    recovery = Dibs.canonicalOperationRecoveryStatuses and Dibs.canonicalOperationRecoveryStatuses[operation.ledgerId]
+  end
+  if type(recovery) ~= "table" or recovery.rebuilt ~= true
+    or recovery.ledgerId ~= operation.ledgerId or recovery.guildKey ~= Dibs.GetGuildKey() then
+    return false, "CANONICAL_RECOVERY_UNAVAILABLE"
+  end
+  local authorityState = authority()
+  if not authorityState or authorityState.state ~= "ACTIVE" or type(authorityState.coordinator) ~= "table" then
+    return false, "COORDINATOR_UNAVAILABLE"
+  end
+  local identity = Dibs.Identity
+  if not identity or type(identity.CreateSnapshot) ~= "function" then return false, "IDENTITY_UNAVAILABLE" end
+  local coordinator, coordinatorReason = identity.CreateSnapshot(authorityState.coordinator.displayName)
+  if not coordinator or coordinator.memberKey ~= authorityState.coordinator.memberKey then
+    return false, coordinatorReason or "CURRENT_COORDINATOR_REQUIRED"
+  end
+  local sync = Dibs.Sync
+  if not sync or type(sync.GetStatusSummary) ~= "function" or type(identity.GetRosterSnapshot) ~= "function" then
+    return false, "SYNC_UNAVAILABLE"
+  end
+  local status = sync.GetStatusSummary()
+  if not status or status.state == "SYNC_UNAVAILABLE" then return false, "SYNC_UNAVAILABLE" end
+  if status.syncBehind then return false, "SYNC_BEHIND" end
+  if status.protocolState ~= "V2_ENFORCED" then return false, "V2_ENFORCED_REQUIRED" end
+  local current = Ledger.ClassifyCanonicalRecovery(operation.ledgerId)
+  if not current or current.classification ~= "VALID" then
+    return false, current and current.reasonCode or "CANONICAL_STATE_NOT_READY"
+  end
+  local db = Dibs.GetDB()
+  local ledger = db.ledgers and db.ledgers[operation.ledgerId]
+  local canonical = ledger and ledger.canonical
+  if not canonical or (canonical.epoch ~= nil and canonical.epoch ~= authorityState.ledgerEpoch) then
+    return false, "STALE_EPOCH"
+  end
+  -- Read persisted protocol advertisements and the verified roster directly.
+  -- UI peer projections also initialize digest subtrees and are not a read-only
+  -- acceptance guard. Offline peers are checked when they reconnect.
+  local localMember = identity.CreateSnapshot(Dibs.GetPlayerName())
+  local roster = identity.GetRosterSnapshot()
+  if not localMember or type(roster) ~= "table" then return false, "IDENTITY_UNAVAILABLE" end
+  local peers = db.sync and db.sync.v2 and db.sync.v2.peers or {}
+  for _, row in ipairs(roster) do
+    local peer = peers[row.memberKey]
+    if row.memberKey ~= localMember.memberKey and row.online == true and peer then
+      local protocol = peer.protocol
+      if not protocol or protocol.major ~= 2 or not protocol.capabilities
+        or protocol.capabilities.ledgerOperationCommit ~= true
+        or protocol.operationProtocolVersion ~= 1 or protocol.operationSchemaVersion ~= 1 then
+        return false, "OPERATION_PEER_INCOMPATIBLE"
+      end
+    end
+  end
+  return true
+end
 local operationFailureProbe
 local DISPUTE_OPERATION_TYPES = {
   DISPUTE_BALANCE_CORRECTION = 1,
@@ -1932,7 +1991,7 @@ function Ledger.GetPendingDibReservations(playerName, seasonId, ledgerId)
     local proposalType = proposal.type or "AWARD"
     if player and seasonalAccountingKey(player.memberKey, targetSeason) == seasonalAccountingKey(memberKey, targetSeason)
       and (proposalType == "AWARD" or proposalType == "DIB_USED")
-      and proposal.status ~= "COMMITTED" and (not proposal.seasonId or proposal.seasonId == targetSeason) then
+      and proposal.status == "PENDING_RECONCILIATION" and (not proposal.seasonId or proposal.seasonId == targetSeason) then
       local proposalId = proposal.proposalId
       if not proposalId or not seen[proposalId] then
         if inLedger(proposal) then reserved = reserved + math.abs(tonumber(proposal.amount) or 1) end
@@ -2061,7 +2120,7 @@ local function playerHistorySummaryForLedger(ledger, playerName, memberKey, targ
     and Dibs.Identity.CanonicalMemberKey(playerName))
   memberKey = memberKey or normalizeLegacyPlayerKey(playerName or Dibs.GetPlayerName())
   local state = ledger.playerStates[targetSeason] and ledger.playerStates[targetSeason][memberKey]
-  local key = table.concat({ tostring(ledger.id or ledgerId or ""), tostring(targetSeason or ""), memberKey }, "|")
+  local key = table.concat({ tostring(ledger.id or ""), tostring(targetSeason or ""), memberKey }, "|")
   local revision = state and playerStateProjectionRevisions[state] or 0
   local ledgerRevision = ledgerDataRevisions[ledger.id] or 0
   local cached = playerHistorySummaries[key]

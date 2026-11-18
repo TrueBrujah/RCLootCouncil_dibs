@@ -206,6 +206,84 @@ local function captureFollower(follower, world)
 end
 
 describe("RF-0012 SyncV2 canonical operation protocol", function()
+  for _, cutAfterRows in ipairs({ 0, 1, 2 }) do
+    it("recovers a serialized receiver interruption after " .. cutAfterRows .. " projected rows without double application", function()
+      local world = newWorld()
+      local coordinator = world:Load("Coordinator-Realm")
+      local dibs = coordinator.dibs
+      local seasonId = dibs.GetCurrentSeasonId()
+      local operationId = "receiver-cut-" .. tostring(cutAfterRows)
+      local original = assert(dibs.Ledger.AddTransaction(fixtures.transaction(coordinator.name, seasonId, {
+        transactionId = operationId .. "-original",
+      }), "guild-primary"))
+      local request = assert(dibs.Disputes.CreateReport({ category = "wrong_item_player", transactionRef = original.transactionId }))
+      world:ActivateV2()
+      local follower = world:Load("Player-Realm", world:Snapshot(coordinator))
+      local before = captureAccountingState(follower.dibs, world.names, seasonId)
+      local actor = assert(dibs.Identity.CreateSnapshot(coordinator.name))
+      local recipient = assert(dibs.Identity.CreateSnapshot("Player-Realm"))
+      local evidenceId = request.evidence[1].evidenceId or false
+      local entries = {}
+      for index, memberKey in ipairs({ actor.memberKey, recipient.memberKey }) do
+        entries[index] = {
+          operationId = operationId, entryIndex = index, transactionId = operationId .. "-e" .. index,
+          guildKey = dibs.GetGuildKey(), ledgerId = "guild-primary", memberKey = memberKey,
+          seasonId = seasonId, actionType = "DIB_ADMIN_ADJUSTMENT", quantityDelta = index == 1 and 1 or -1,
+          evidenceId = evidenceId, originalTransactionId = original.transactionId,
+          requestId = request.requestId, requestRevision = request.revision,
+        }
+      end
+      local operation = assert(dibs.Ledger.BuildDisputeOperation({
+        schemaVersion = 1, operationId = operationId, operationType = "DISPUTE_TARGET_TRANSFER",
+        guildKey = dibs.GetGuildKey(), ledgerId = "guild-primary", requestId = request.requestId,
+        requestRevision = request.revision, evidenceId = evidenceId, originalTransactionId = original.transactionId,
+        actor = actor, reason = "Interrupted receiver regression", timestamp = 1700000000, signedEntries = entries,
+      }))
+      openOperationTransportGate(dibs)
+      openOperationTransportGate(follower.dibs)
+      world:TakePackets()
+      local receiver = follower.dibs.Ledger.ApplyDisputeOperationCommit
+      local seamIndex, append
+      for index = 1, 64 do
+        local name, value = debug.getupvalue(receiver, index)
+        if not name then break end
+        if name == "appendValidated" then seamIndex, append = index, value; break end
+      end
+      assert_not_nil(seamIndex)
+      local rows = 0
+      debug.setupvalue(receiver, seamIndex, function(...)
+        if rows == cutAfterRows then error("intentional receiver cut") end
+        rows = rows + 1
+        local result = append(...)
+        if cutAfterRows == 2 and rows == 2 then error("intentional receiver cut") end
+        return result
+      end)
+      local accepted = dibs.Ledger.CommitDisputeOperation({ actor = coordinator.name, ledgerId = "guild-primary" }, operation)
+      assert_true(accepted.accepted, tostring(accepted.reasonCode))
+      local delivered, failure = pcall(function() world:Pump() end)
+      debug.setupvalue(receiver, seamIndex, append)
+      assert_false(delivered)
+      assert_true(tostring(failure):find("intentional receiver cut", 1, true) ~= nil)
+      local interrupted = world:Snapshot(follower)
+      world:TakePackets()
+      world.clients["Player-Realm"] = nil -- Drop the interrupted process; retain only its serialized SavedVariables.
+      local restarted = world:Load("Player-Realm", interrupted)
+      assert_true(restarted.dibs.canonicalOperationRecoveryStatus.rebuilt)
+      local recovered = captureAccountingState(restarted.dibs, world.names, seasonId)
+      assert_equal(accepted.value.commitHash, recovered.canonical.rootHash)
+      assert_equal(accepted.value.sequence + 1, recovered.canonical.nextSeq)
+      assert_equal(before.balances[coordinator.name] + 1, recovered.balances[coordinator.name])
+      assert_equal(before.balances["Player-Realm"] - 1, recovered.balances["Player-Realm"])
+      assert_not_nil(restarted.dibs.GetDB().disputes.operationStates[operationId])
+      openOperationTransportGate(restarted.dibs)
+      world:TakePackets()
+      assert_true(dibs.Sync.SendDisputeOperationCommit(accepted.value))
+      world:Pump()
+      assert_true(clients.DeepEqual(recovered, captureAccountingState(restarted.dibs, world.names, seasonId)),
+        "replay changed the recovered balances, identifiers, sequence or root")
+    end)
+  end
+
   it("advertises the ledger operation capability with an independent version", function()
     local world = newWorld()
     local coordinator = world:ActivateV2()

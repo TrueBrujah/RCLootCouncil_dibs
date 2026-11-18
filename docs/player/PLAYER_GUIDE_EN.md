@@ -9,6 +9,23 @@ missing Retail captures, not available images or validation evidence.
 
 ## Purpose and limits
 
+### Replying to an Officer — 0.8.12 candidate
+
+When a reviewer needs information about your report, My Dibs offers “Reply to an
+Officer” after the balance summary. It opens your own dossier without sending a
+reply or changing Dibs. Receipt confirms delivery to an authorized reviewer, not
+approval, a balance correction or reception by every guild member. Retail layout
+and interaction remain to be checked.
+
+### Initial guild setup
+
+If only **Guild setup** is visible, your Guild Master or an Officer needs to
+complete the required Guided Setup steps. Pages appear as their configuration
+becomes available. Seasonal registration can open before accounting activation.
+Category names and descriptions come from your guild's published catalog; a
+requested path does not automatically award an approved status, and the form
+does not impose a progression weekday.
+
 Dibs is a guild-controlled, seasonal loot-priority ledger. It displays your
 balance, stores Pre-Dib requests, and records a debit when an eligible finalized
 award passes the configured checks.
@@ -228,6 +245,18 @@ duplicated. In `ENCOUNTER` mode, the matching raid context is required. In
 _Pending Retail capture: Player Pre-Dib action —
 `docs/assets/guides/screenshots/en/player/player-loot-action.png`._
 
+### Your essentials in My Dibs
+
+The summary shows **Dibs remaining** first, then season allocation and Dibs used.
+Active Pre-Dibs stay ahead of character management.
+
+Open **Manage Main / alts** only when needed; **Hide Main / alts** folds the controls
+without sending a request or losing the selected character. A declaration still
+requires Officer approval. Active probation remains visible near the balance even
+with these controls folded, and its end is shown as a readable date. Folding does
+not change accounting. Navigation, Main/Alt actions and submission feedback have
+English/French labels; rules and probation duration are unchanged.
+
 ### Request statuses
 
 - `pending`: created but not confirmed;
@@ -247,7 +276,8 @@ reservations, which stay on **My Dibs** (active, won, and past Pre-Dibs).
 Report only your own issue and evidence. In the Player window,
 open **Reports**: **Report a problem** lets you pick
 a problem type (for example a wrong debit or wrong item/player), optionally the
-related ledger entry, and a note. History details also offer **Report a problem
+related ledger entry, and a note. Left-click a **History** entry to open its
+details; right-click still offers **View details**. Details offer **Report a problem
 with this entry**, which preselects that entry. A report never changes your
 balance; an officer reviews it and records any correction. Saving a report is not
 proof that an officer received it: details show **Queued**, **Sent; awaiting
@@ -326,8 +356,10 @@ state; ask a GM or Officer to verify the setup.
 
 Select the season in **Seasonal Raid Roster** and read its published raid rules.
 While registration is open, submit or edit your own character, specializations,
-roles and requested path. The Core progression path is a request; Core Raider
-status requires a separate Officer decision. Registration never changes Dibs.
+roles and requested path. If the season offers several unified raid categories,
+choose Normal, Heroic or Mythic from its published choices. The Core progression
+path is a request; Core Raider status requires a separate Officer decision.
+Registration never changes Dibs.
 
 Declare Main/Alt relationships explicitly and request Main changes through the
 season form. An Officer reviews these requests. An approved Main change starts

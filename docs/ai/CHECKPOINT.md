@@ -1,7 +1,399 @@
 # RCLootCouncil_Dibs — Persistent Project Checkpoint
 
-## État courant — 2026-11-15
+## Reprise des 190 échecs automatisés — 2026-11-17
 
+- Demande : corriger les échecs restants, sans nouvelle approbation pour le
+  travail ordinaire. Mode CHANGE, spécifications existantes conservées. Aucun
+  commit/push, bump, publication ou nouveau déploiement; le candidat installé
+  décrit plus bas ne contient pas ces sources.
+- Suites complètes Lua 5.1.5 et Lua 5.4 : **2 181 PASS / 0 FAIL chacune,
+  274 fichiers**. Les 190 échecs
+  du checkpoint précédent sont traités; **12 cas supplémentaires** couvrent
+  rapport, états après reload, langue FR, propositions invalides et scan partiel.
+  Fengari : **767 PASS / 0 FAIL sur 65 fichiers ciblés**, pas une suite complète.
+  La dernière passe 5.1 a aussi exposé un `load(string)` incompatible dans le
+  simulateur de livraison privée : chargement adapté via `loadstring`/`setfenv`,
+  environnement vide conservé, puis **17/17** sur les trois runtimes et nouvelle
+  suite complète 5.1 verte. Les sources addon sont restées figées pendant ces
+  passes. Empreinte du manifeste source SHA-256 :
+  `AB0BAE11A096D815EF17E610D361940C05B039AD0E109A436074FA266B1AE13E`.
+- Réintégration ciblée des deltas approuvés de `d0728ef` pour
+  HistoricalBaseline, Installation et MultiLedger, après lecture du diff et de
+  RF-0013 : collecte paginée persistante, refus des sources incomplètes,
+  propositions et approbations vérifiées. Corrections supplémentaires : scopes
+  non denses refusés sans écriture, validation avant adoption d'une proposition
+  ancienne, identifiant de liaison conservé, aucune collecte incomplète masquée
+  par une collecte complète. Le statut Installation utilise son vrai indicateur
+  de données ledger, pas un global inexistant. Pas de modification des vendors.
+- Governance annonce immédiatement la clôture du coordinateur; adoption du
+  successeur seulement sur epoch/séquence/racine correspondant à la chaîne
+  locale. La récupération du registre en cours peut résoudre son propre retard;
+  tous les autres retards restent bloquants. RF-0035/RF-0043 et RF-0044 validés
+  ensemble; les fixtures B05b/B06 fournissent désormais une clôture réelle.
+- Disputes/OfficerUI/locales : rapport historique en lecture seule, accessible
+  depuis Diagnostics, cinq classes distinctes, pagination 20 lignes et refus
+  pour un membre. Les débits ordinaires ne deviennent pas des corrections.
+  Résultats de correction visibles en EN/FR; le détail distingue acceptation en
+  session, observation exacte après reload, projection manquante, retard et
+  incompatibilité. La clôture sans correction reste une décision non comptable.
+- ProtectedActions refuse les opérations canoniques fermées avant d'interpréter
+  une proposition; les contrôles d'autorité restent actifs dans le candidat
+  isolé ouvert. Les tests de corrections avancées passent par les vrais intents,
+  propositions et commits; aucun retour au chemin `ledger.use` historique.
+  Les deux verrous source restent **false**. Readiness refuse les intégrations
+  dégradées; Wizard montre le blocage obligatoire avant un avertissement optionnel.
+- Tests d'interface : fixture de guilde configurée explicite, fondation et
+  publication réelles, reload sous le rôle testé. Le chargeur par défaut garde
+  l'installation vierge et les tests de progression restent actifs. Pas de
+  relâchement des guards pour ouvrir artificiellement des pages. Snapshot de
+  roster partagé pour les rangs et navigation réutilisée lors de la sélection.
+  Ledger ne lit plus le global indéfini `ledgerId` pour son cache de résumé.
+- Contrôles déjà terminés : compilation Lua 5.1 **112/112**, préflight addon
+  **121 fichiers**, empreintes approuvées **7/7**, génération/check docs PASS
+  (**29 concepts, 0 erreur, 10 avertissements hérités**), comparaison PowerShell
+  5.1/7 des huit fichiers générés **8/8 MATCH**, diff-check PASS. Les diagnostics
+  IDE de champs dynamiques et annotations `@doc` restent; aucun global indéfini
+  détecté dans les trois fichiers revérifiés Installation/Ledger/OfficerUI.
+- Audit guard exécuté : **exit 1, 234 différences applicatives, zéro différence
+  de bibliothèque protégée**. Ce résultat n'est pas un PASS global d'intégrité;
+  il inclut le travail déjà présent dans la branche. Baseline non remplacée.
+  T066 de 012, T031 de 017 et T016/T029/T030/T040 de 026 clos pour leur périmètre
+  hors jeu; T047–T050 de 026 restent ouverts pour leur matrice complète.
+- À reprendre : déploiement puis campagne Retail N02/N07 et N20–N22; T026/T030
+  Retail 017 restent ouverts. Les exigences de release 026 et la décision
+  d'autorité de récupération externe vierge (007 T036 / 026 T049) restent
+  distinctes de la suite automatisée désormais verte. Aucun essai WoW inventé.
+
+## Régressions corrigées et tâches restantes — 2026-11-17
+
+- Autorisation : corriger les problèmes puis identifier les autres tâches, sans
+  redemander les opérations ordinaires. Aucun commit/push/publication, installation
+  supplémentaire ou changement de version. **Les sources corrigées ci-dessous
+  diffèrent du candidat installé dans la section suivante.**
+- Roster : initialiser la révision de fixture par le service réel; créer un vrai
+  historique pour la route désactivée et vérifier l'état vide dirigé vers Wizard.
+  Deux échecs reproduits avant correction; slice roster/navigation **42/42**.
+  Préconditions de tests corrigées, aucune règle roster/chronologie changée.
+- Pre-Dibs : Core, LootPipeline, PlayerUI et EncounterJournal délèguent au service
+  public et ne se rabattent plus sur le créateur interne. L'absence du service ne
+  contourne pas la politique. PreDibs refuse une même identité de demande dans un
+  autre ledger avant toute initialisation du store revendiqué; source historique,
+  erreurs de ledger non approuvé et données existantes conservées. Quatre cas
+  de scope couvrent les deux sens et les deux chemins Sync avec hashes avant/après;
+  deux cas supplémentaires protègent le tagging paresseux des anciennes demandes
+  non étiquetées quand le store secondaire a un alias dans `root.requests`.
+- Réservations : Governance/Ledger/SyncV2 excluent les propositions terminales
+  des totaux en attente. Libérations optionnelles séparément hashées dans le
+  digest existant, pagination commune, autorité acteur/coordinateur et scope
+  immuable vérifiés avant application; tombstones bornées conservées après reload
+  et perte de message, sans rediffusion des libérations reçues. **17 nouveaux cas**
+  couvrent refus atomiques, sept champs immuables, arrays invalides, réordonnancement,
+  nouvelle réservation après déconnexion et pagination. L'ancien champ `records`
+  reste PENDING-only; anciens émetteurs acceptés, convergence des anciens récepteurs
+  non revendiquée. Capacité `awardReservationReleases` annoncée. Contrat/plan 017
+  alignés avant implémentation; aucune écriture comptable ou gate release ajoutée.
+- Fixture guild-active-ledger réalignée sur le vrai statut `PENDING_RECONCILIATION`,
+  avec cas terminaux exclus et attentes de partition inchangées; aucun service
+  rendu permissif pour faire réussir ce test.
+- Validation finale : **383/383 sur 36 suites sous Lua 5.1.5 et Fengari**.
+  Suite globale Lua 5.4 : **1 979 PASS / 190 FAIL, 274 fichiers**, comparée au
+  relevé frais initial **1 934 / 209, 273 fichiers** : **19 échecs retirés,
+  zéro nouveau nom d'échec** et 26 nouveaux cas. Lua 5.1.5 : **112/112 sources**
+  compilées. Compilateur reconstruit sous `%TEMP%/dibs-lua51-validation-20261117`
+  depuis [Lua 5.1.5 officiel](https://www.lua.org/ftp/), SHA-256 vérifié, sans
+  toucher aux bibliothèques du dépôt. Pas de suite globale 5.1/Fengari dans ce lot.
+- Documentation régénérée via le script existant : huit fichiers, Check PASS;
+  29 concepts, zéro erreur et dix avertissements hérités. Graphe addon **121 fichiers**;
+  sept empreintes du calendrier approuvé inchangées; diff-check PASS. Diagnostics
+  IDE non globalement propres : champs dynamiques et annotations @doc restent,
+  ainsi que le global `ledgerId` déjà signalé dans Ledger. Les tests modifiés et
+  Core/SyncV2/Governance/LootPipeline/EncounterJournal sont sans diagnostic au contrôle.
+- Suivi : 002 T058, 020 T042, 029 T067 et 017 T029 terminées hors jeu; 017 T030
+  et [Retail N20/N21](../audits/0.8.12-TESTS-RETAIL-FR.md) ouverts. Les 190 échecs
+  globaux ne sont pas clos par ce lot. N19/T053, T026 Retail et gates 026 inchangées.
+- Tâches admissibles suivantes : **012 T066** (qualifier/adapter les fixtures UI
+  post-setup sans contourner les guards réels); **026 T016/T029/T030/T040 rouvertes**
+  (helpers d'issues/opérations et rapport historique absents du code courant,
+  anciennes mentions PASS conservées comme historiques); **017 T031** (qualifier
+  handoff/epoch et convergence RF-0035/RF-0043). RF-0013 collecte/propositions,
+  RF-0042 C13 de récupération contradictoire et les autres familles globales
+  restent à qualifier. La décision humaine d'autorité pour récupération externe
+  vierge reste en attente et ne bloque que son périmètre dépendant.
+
+## Installation du candidat Retail — 2026-11-17
+
+- Reprise autorisée par l'utilisateur depuis la campagne Retail. Installation via
+  [deploy.ps1](../../scripts/deploy.ps1), version 0.8.12, build `41623970f2b3-dirty`.
+  Aucun changement du code applicatif, commit, push ou publication dans ce lot.
+- Précontrôle sources/installé : **121 fichiers requis**; comparaison de livraison :
+  **150/150 fichiers** (SHA-256, TOC comparé hors métadonnée de build ajoutée).
+- Validation fraîche : **45/45 sur quatre suites sous Lua 5.4** (bornes des dates,
+  brouillon guidé service/UI, capture du coffre); compilation **63/63 fichiers Lua
+  applicatifs**, hors bibliothèques tierces. Lua 5.1 et suite globale non relancés;
+  leurs limites précédentes restent applicables.
+- WoW était ouvert pendant la copie. **Redémarrage complet non observé**; aucun
+  résultat Retail ajouté. Suite : quitter complètement WoW, relancer, noter le
+  build chargé, reprendre N02 puis N07 de la [campagne](../audits/0.8.12-TESTS-RETAIL-FR.md).
+  V01–V05 restent prioritaires avant une prise de récompense disponible.
+
+## Bornes des dates d’inscription — 2026-11-16
+
+- Décisions utilisateur : ouverture strictement avant le début de saison;
+  clôture au plus tard à la fin de saison si les deux fins sont définies.
+  [FR-058](../../specs/029-seasonal-raid-roster/spec.md) et T066 mis à jour.
+- Fichiers : [SeasonalRoster](../../src/modules/SeasonalRoster.lua),
+  [Wizard](../../src/modules/Wizard.lua), [OfficerUI](../../src/ui/OfficerUI.lua),
+  locales FR/EN, contrat/plan/tâches 029, changelog et campagne Retail N19.
+  Validation stricte de création, sauvegarde de brouillon et publication;
+  comparaison des timestamps complets, fins facultatives et fins égales permises.
+  Mode historique du validateur inchangé, sans migration ni réécriture des hashes,
+  révisions ou reçus d’opérations. Les refus ne consomment pas d’opération.
+- [Régressions dédiées](../../tests/integration/seasonal_roster_date_boundaries_spec.lua) :
+  **8/8 sous Lua 5.4.6, Lua 5.1.5 et Fengari** : bornes, atomicité des refus,
+  prévalidation de l’assistant avant initialisation, messages FR/EN, sync
+  historique authentifiée et rejeu d’un reçu créé avant cette règle.
+- Sélection élargie de 21 fichiers : **239 réussis / 2 échecs sous les trois
+  runtimes**, avant ajout des deux derniers cas dédiés. Les deux échecs
+  se reproduisent sous Lua 5.4 avec le nouveau contrôle de chronologie neutralisé
+  uniquement en mémoire : `characterEligibility.revision` absent dans une fixture
+  de sync, et attente de route roster sur un état d’installation qui ouvre wizard.
+  Ils ne sont pas déclarés corrigés. Compilation Lua 5.1 : **112/112**;
+  documentation générée vérifiée (29 concepts, 0 erreur, 10 avertissements
+  historiques), `git diff --check` réussi.
+- Limite de portée : le cycle existant ferme toujours les inscriptions au début
+  de saison. Ce lot valide les dates configurées et ne change pas les transitions
+  ni les règles d’inscription après activation. N19 reste NON TESTÉ en jeu;
+  T053 reste ouvert. Aucun commit, installation ou publication.
+
+## Consolidation architecture/UX/sécurité — 2026-11-16
+
+- Autorisation explicite : « ok implante la » pour la [proposition](../audits/0.8.12-PROPOSITIONS-ARCHITECTURE-UX-SECURITE-FR.md).
+  Les modifications préexistantes sont conservées. Aucun nouveau rôle, critère de
+  distribution ou droit de mutation; version 0.8.12 inchangée. Aucun commit, push,
+  déploiement, installation ou publication.
+- UI : nouveau [OfficerDashboard](../../src/ui/OfficerDashboard.lua), chargé dans
+  le TOC et le loader de test avant OfficerUI. Le contrôleur fournit la projection
+  autorisée; aucune dépendance inverse vers OfficerUI. Phases de profilage conservées.
+  Services et prochaine action avant activité/statistiques; distinction entre saison
+  disponible, récupération bloquée et vérification inconnue. RC absent est facultatif.
+  Dashboard et décisions importantes localisés FR/EN; « Clore sans correction »
+  décrit l’effet nul sur les soldes et conserve les gates canoniques.
+- Joueur : [PlayerUI](../../src/ui/PlayerUI.lua) affiche après le solde un raccourci
+  vers son propre dossier lorsqu’un Officer attend une réponse. Aucun envoi ni
+  mutation comptable au clic de navigation. Portée d’ACK explicitée; [DataUI](../../src/ui/DataUI.lua)
+  rappelle qu’un snapshot local partage les SavedVariables et exige une copie indépendante.
+- Récupération : [Core](../../src/Core.lua) vérifie aussi les ledgers secondaires
+  approuvés/archivés, avec résultats runtime liés à guilde/ledger et alias primaire
+  compatible. [Disputes](../../src/modules/Disputes.lua) préserve les états des autres
+  ledgers. Un conflit d’identité d’opération est détecté **avant** toute réparation
+  de projection; le test vérifie l’état métier intégral inchangé au refus.
+  [Ledger](../../src/modules/Ledger.lua) utilise le résultat scoped approprié,
+  sans repli d’un statut primaire inconnu vers un succès en cache.
+- Régressions : démarrage d’un historique secondaire non vide; réception SyncV2
+  sérialisée interrompue avant la première ligne, entre les deux lignes et avant
+  l’index final, puis redémarrage/reconstruction/rejeu avec oracles de soldes,
+  identifiants, séquence et racine. Les gates privées sont ouvertes seulement dans
+  les fixtures; les constantes de release restent fermées.
+- Fixtures corrigées : rang membre explicite et vrais prérequis de navigation pour
+  recherche/éligibilité; titres History localisés; cas follow-up utilisant une vraie
+  transaction d’origine et autorité canonique, sans assouplir les services. Les sept
+  [scénarios spoof](../../tests/unit/sa002_spoof_test_spec.lua) ont maintenant des
+  assertions. Les anciens harness SA-002 roster/bypass non sélectionnés ne sont
+  pas utilisés comme preuve d’acceptation de sécurité. Ancien rapport 026 qualifié
+  explicitement d’historique et partiel.
+- Validation ciblée finale : **334/334 sur 31 suites**, sous **Lua 5.4.6, Lua 5.1.5
+  natif et Fengari**; retest final UI Fengari **97/97 sur cinq suites**. Compilation
+  **112/112** sous Lua 5.1.5; graphe de livraison **121 fichiers**. Documentation
+  régénérée puis Check PASS : **29 concepts, zéro erreur, dix avertissements hérités**.
+  Diff-check PASS. IDE : nouveau renderer, OfficerUI, DataUI et Disputes sans erreur
+  au contrôle; diagnostics de typage dynamique/@doc et un global existant dans Ledger
+  restent signalés ailleurs. Ne pas présenter l’IDE global comme propre.
+- **Suite globale native Lua 5.1.5 : 1 914 PASS / 221 FAIL sur 272 fichiers**.
+  Ce résultat est frais, distinct de l’ancienne baseline 1 811/134. Les échecs
+  comprennent des scénarios sans fondation qui attendent des pages opérationnelles,
+  des actions qui attendent des corrections malgré la gate fermée et des API
+  historiques absentes (BuildLegacyCorrectionReport/DescribeCorrectionOutcome).
+  Pas de qualification exhaustive ni d’attribution de tous ces échecs à une cause
+  préexistante. La sélection ciblée verte ne clôture pas les gates globales 026/029.
+- Garde historique final : **exit 1, 209 écarts applicatifs, zéro écart protégé**;
+  baseline historique inchangée. Ce n’est pas un PASS d’intégrité globale. Aucun
+  contenu de bibliothèque tiers modifié. Les nouveaux écarts concernent les chemins
+  de consolidation, sans recapture ou restauration automatique.
+- Documents alignés : spécification/plan/tâches 011, tâches 022, plan/tâches/quickstart
+  et statut 026, guides joueur/Officer FR/EN, changelog, dépendances et documentation
+  générée. [Retail N16–N18](../audits/0.8.12-TESTS-RETAIL-FR.md) ajoutés **NON TESTÉS**;
+  les autres observations Retail restent ouvertes. Checklists 011 : 18/18; 026 :
+  23/23 (qualité de spécification seulement). Hooks SpecKit avant/après : aucun déclaré.
+- **Décision bloquant uniquement la récupération externe vierge (007 T036)** :
+  checksum de contenu sans authentification de l’auteur. Question présentée via
+  outil asynchrone : confirmation par pair autorisé avec même chaîne canonique
+  (recommandation), ou adoption exceptionnelle par GM après revue explicite.
+  Aucune réponse reçue à ce checkpoint; aucune adoption ni contournement d’import.
+  Documenter le choix dans les contrats avant le code dépendant.
+- Suite admissible : qualifier les échecs globaux par contrat/fixture sans modifier
+  les règles pour les faire passer, poursuivre les acceptations restantes 026,
+  puis observer les matrices Retail dans un environnement autorisé. T049/T050
+  restent ouvertes globalement; ne pas annoncer toute la proposition terminée.
+
+## Lot joueur et readiness canonique — 2026-11-16 (validation ciblée terminée)
+
+- Approbation explicite recueillie pour 026 : restaurer uniquement la référence
+  historique `b59a3f3:docs/code-audit/BASELINE.json` puis ajouter les sept empreintes
+  LibAceGUIWidgets **v0.12.0** déjà approuvées et consignées dans son registre.
+  Conserver toutes les empreintes historiques; aucune recapture, aucun changement
+  interne de bibliothèque et aucune acceptation automatique des autres écarts.
+  L'agent doit vérifier l'intégrité avant de reprendre T046/T049. La première
+  tentative n'avait changé que le relevé de blocage dans les tâches 026.
+- Lot indépendant My Dibs terminé hors jeu dans [PlayerUI](../../src/ui/PlayerUI.lua) :
+  Dibs restants avant allocation/utilisation, Pre-Dibs actifs avant Main/Alt.
+  Contrôles Main/Alt repliés par défaut, résumé complet chargé seulement à l'ouverture,
+  sélection conservée au pliage et nettoyée à la fermeture de fenêtre. Probation active
+  toujours visible avec date de fin lisible; inactive masquée. Services de déclaration,
+  approbation et comptabilité inchangés, sans migration. Navigation et commandes
+  d'identité/feedback localisés dans [enUS](../../src/locales/enUS.lua) et
+  [frFR](../../src/locales/frFR.lua), identifiants de routes conservés.
+- Validation finale : **65/65 sur quatre suites sous Fengari et Lua 5.4.6 natif**,
+  [RF0019](../../tests/integration/rf0019_player_eligibility_surface_spec.lua),
+  [B11 Player](../../tests/integration/b11_player_ui_spec.lua),
+  [seasonal completion](../../tests/integration/seasonal_roster_completion_ui_spec.lua)
+  et [eligibility](../../tests/unit/character_eligibility_spec.lua). Fixture RF0019
+  remise en contexte de guilde configurée pour franchir les guards; ce double UI
+  ne prouve pas la readiness canonique. Nouveaux comportements en échec avant code;
+  assertion d'ordre du résumé B11 corrigée sans modifier les règles pour passer.
+- Guides Player FR/EN, changelog et [Retail N15](../audits/0.8.12-TESTS-RETAIL-FR.md)
+  actualisés. Documentation régénérée et **Check PASS : 29 concepts, zéro erreur,
+  dix avertissements hérités**; diff-check PASS. IDE : locales/tests sans erreur;
+  avertissements de typage des modules dynamiques Dibs et annotations @doc toujours
+  présents dans PlayerUI, sans erreur de syntaxe rapportée. Ne pas prétendre un IDE
+  global propre. Lua 5.1, suite globale et Retail non exécutés; N15 reste NON TESTÉ.
+- Résultat canonique reçu du même agent `e683276b-0ff2-4cfc-b322-395b13c9f7d0` :
+  **026 T046 clôturée**, T049 toujours ouverte et partielle. Modifications dans
+  [Core](../../src/Core.lua), [Types](../../src/Types.lua),
+  [Ledger](../../src/modules/Ledger.lua), [Disputes](../../src/modules/Disputes.lua),
+  deux suites existantes, tâches 026 et baseline approuvée. Core refuse une
+  récupération non table et lie le résultat au guildKey/guild-primary. Readiness
+  réelle : récupération et scope, autorité/coordinateur, transport, V2, retard,
+  intégrité/epoch et capacités des pairs connus en ligne, sans projections UI.
+  Reprise primaire et réception non-coordinateur prouvées sur historique non vide
+  legacy/award/correction; identités, hashes, séquence/root et soldes préservés.
+  Gate release inchangée et désactivée; aucune readiness de publication revendiquée.
+- Agent : **77/77 sur six suites canoniques**, Fengari et Lua 5.4.6. Parent :
+  **142/142 sur dix suites intégrées** (six canoniques + quatre Player/eligibility),
+  sous les mêmes moteurs, après réception du résultat. Suites canoniques :
+  ledger_operation, ledger_operation_commit, canonical_dispute_operation,
+  ledger_operation_recovery, persistence_recovery et canonical_dispute_sync.
+  [Quickstart 026](../../specs/026-canonical-idempotent-corrections/quickstart.md)
+  et changelog alignés; documentation régénérée/vérifiée après intégration.
+- Baseline historique préservée avec exactement sept empreintes protégées approuvées
+  ajoutées. Guard final rapporté par l'agent : **exit 1, 206 écarts applicatifs,
+  aucun protégé**, sans recapture. Ce n'est pas un PASS; ne pas masquer les écarts.
+  T049 reste ouverte : startup secondaire/multi-ledger, fault cuts sur commits reçus,
+  matrice complète de récupération entre clients indépendants. Lua 5.1, Retail et
+  suite globale non exécutés. Dashboard et libellé de résolution restent les petits
+  lots design admissibles suivants; Markdown riche/fuseaux et deux échecs Officer
+  hérités inchangés. Aucun commit, push, installation, publication ou déploiement;
+  version inchangée.
+
+## Catégories unifiées et historique joueur convivial — 2026-11-16
+
+- Approbation utilisateur : catégories d'inscription = difficultés Normal/Heroic/Mythic
+  pour les nouvelles saisons et brouillons explicitement sauvegardés. Saisons
+  publiées, catalogues historiques et inscriptions existantes non migrés. Un seul
+  groupe de choix dans [OfficerUI](../../src/ui/OfficerUI.lua), sauvegarde obligatoire
+  avant ouverture si les choix ont changé; [PlayerUI](../../src/ui/PlayerUI.lua)
+  propose les catégories publiées compatibles sans changer voie demandée ni revue.
+  029 FR-056–057, plan/contrat, guides et changelog alignés; T064/T065 cochées pour
+  l'implémentation hors jeu. Preuves saisonnières conservées : **153/153 sur 15 suites,
+  sous Fengari et Lua 5.4.6 natif**. [Retail N13](../audits/0.8.12-TESTS-RETAIL-FR.md)
+  NON TESTÉ; T053 reste ouverte.
+- Revue designer read-only `df7f5976-81c2-4e23-a0e0-ecd202813764` reçue : History
+  au clic gauche; solde My Dibs avant les déclarations; états Dashboard avant les
+  statistiques; libellé explicite de résolution sans correction; navigation localisée.
+  Seul le premier petit lot a été implémenté : clic gauche et menu clic droit ouvrent
+  les mêmes détails History; aide au survol et commande localisées EN/FR, signalement
+  existant présélectionné. Pas de mutation comptable ni nouvelle permission.
+- Validation finale History : **30/30 sur deux suites, sous Fengari et Lua 5.4.6
+  natif** ([report UI](../../tests/integration/player_report_problem_ui_spec.lua) et
+  [B11 Player](../../tests/integration/b11_player_ui_spec.lua)). Consultation sans
+  demande créée, solde/historique conservés, clic droit maintenu. Les cas EN/FR sont
+  séparés; l'échec initial concernait l'assertion d'aide : AddHeading fournit une
+  infobulle, pas du texte inline. La fixture vérifie désormais sa description
+  réellement transmise. L'hypothèse de cache de fenêtre n'était pas la cause.
+- La suite [unified history](../../tests/integration/unified_history_search_spec.lua)
+  reste **3 PASS / 2 FAIL**, cas Officer aux lignes 197 et 232. Mêmes échecs reproduits
+  sous Lua natif en retirant en mémoire le nouveau clic gauche/helper History, sans
+  toucher aux fichiers, puis avec le code courant. Ils préexistent à ce petit lot;
+  pas de correction hors périmètre ni de succès de suite globale revendiqué.
+- Guides Player, changelog et [Retail N14](../audits/0.8.12-TESTS-RETAIL-FR.md)
+  mis à jour. Documentation régénérée puis **Check PASS : 29 concepts, zéro erreur,
+  dix avertissements hérités**. Diff-check PASS; contrôle IDE des fichiers History,
+  test et locales sans erreur au dernier appel, sans garantie globale.
+- Aucun commit, push, installation, publication ou déploiement dans ces lots.
+  Version 0.8.12 inchangée; changements préexistants conservés. Retail, Lua 5.1 et
+  suite globale non exécutés. Markdown riche et fuseaux/DST restent différés.
+  Prochain lot substantiel : **026 T046 readiness non stubée**, avant T047–T050;
+  aucune tâche canonique fermée ou implémentée par ce lot. Les autres améliorations
+  designer restent à faire, sans prétendre que la refonte globale est terminée.
+
+## Refonte saisonnière implémentée et vérifiée hors jeu — 2026-11-16
+
+- L'utilisateur a approuvé la refonte conviviale après revue designer : formulaire
+  commun, essentiels visibles, facultatif repliable sans perte, saison sélectionnée
+  prioritaire, création/historique/catalogue explicites. Implémentation dans
+  [OfficerUI](../../src/ui/OfficerUI.lua), locales EN/FR et quatre suites UI.
+  Aucun changement métier, bibliothèque, schéma ou moteur de fuseaux. Approbation
+  documentée dans [029 FR-053–055](../../specs/029-seasonal-raid-roster/spec.md) et
+  [021 FR-037](../../specs/021-turnkey-guided-setup/spec.md); 029 T061–T063 et
+  021 T038 cochées pour l'implémentation automatisée. Guides et changelog alignés;
+  [Retail N08–N12](../audits/0.8.12-TESTS-RETAIL-FR.md) restent NON TESTÉS.
+- Agent `c234cf3b-7dfb-46b4-9101-d57004a743fe` : cinq nouvelles régressions UI,
+  résumés et saisies conservés au pliage, erreurs dévoilées, sauvegarde périmée
+  rejetée sans écrasement; rechargement explicite. Les états des sections sont
+  locaux et non persistés, seuls les champs du brouillon guidé utilisent la reprise
+  existante. Rapport agent **165/165 sur 12 suites Fengari**; ce n'est pas une QA
+  indépendante. Parent : **186/186 sur 15 suites, sous Fengari et Lua 5.4.6 natif**,
+  diff-check PASS. Inclut service/contrat/reprise/navigation, éditeurs saisonniers,
+  publication/activation et rafraîchissement/silence des notifications.
+- Documentation générée : premier Check a détecté quatre références périmées
+  après le déplacement de lignes UI. Régénération par le script existant, puis
+  **Check PASS : 29 concepts, zéro erreur, dix avertissements hérités**; références
+  [générées](../generated/) à jour. Diff-check final PASS.
+- Diagnostics IDE : locales sans erreur; OfficerUI conserve des diagnostics de
+  namespace, annotations `@doc` et inférences. Aucun zéro diagnostic revendiqué.
+  Native 5.1.5 non relancé : aucun binaire trouvé dans les chemins précédemment
+  retenus (sources temporaires vidées). Rendu Retail, combat/taint, dimensions et
+  deux clients non testés; suite globale non relancée. Version 0.8.12 inchangée.
+- Suite de tâches après refonte : convergence du lot 021 déjà implémenté.
+  [Wizard](../../src/modules/Wizard.lua) vérifié pour projection ordonnée,
+  reprise locale bornée/isolation guilde et résultats réels; [PlayerUI](../../src/ui/PlayerUI.lua)
+  et [options RC](../../src/integrations/RCLootCouncilOptions.lua) vérifiés pour
+  rafraîchissement visible conditionnel et silence limité aux appels guidés.
+  Tests correspondants verts dans le lot 186/186 : T034–T036 cochées. T037 reste
+  partielle (5.1, QA indépendante et observations Retail manquantes).
+- Avant refonte : fermeture de table corrigée dans
+  [guided_setup_resume_spec](../../tests/integration/guided_setup_resume_spec.lua).
+  Fengari **37/37 sur quatre suites** (seasonal_roster_status,
+  seasonal_roster_schedule_editor, guided_setup_resume,
+  guided_setup_season_draft_ui); diff-check PASS. Ne pas attribuer ces résultats à
+  la nouvelle refonte. Suite globale et Retail non relancés.
+- Prochain lot substantiel admissible : 026 T046, premier prérequis canonique
+  avant T047–T050 et la récupération externe 007. Aucun travail canonique commencé
+  par cette refonte; ne pas fermer ces tâches ni contourner leurs dépendances.
+  Aucune publication/installation/déploiement effectué, changements préexistants
+  préservés. Les gates Retail 021 T037/029 T053 restent ouvertes.
+
+## État antérieur — 2026-11-15
+
+- Suite du parcours approuvé par l'utilisateur, **021 T031–T033 terminées** : Configure propose la préparation facultative d'un vrai brouillon de saison pour les profils progression/standard, avec nom, dates saison/inscriptions, catégories et horaires/règles facultatifs. Le même clic Apply délègue à `SeasonalRoster.CreateSeason` après fondation adoptée, avec ID stable; champs invalides bloqués avant toute mutation, aperçu incomplet explicite, bouton d'ouverture du roster après succès. Les saisons existantes et modules désactivés sont préservés, Custom reste manuel; aucune publication/activation/allocation implicite, aucun contrat recovery T049 ou quota Sync changé. Texte de fondation corrigé pour distinguer bootstrap technique et préparation de saison.
+- Périmètres de ce complément : `wizard_season_service` — [Wizard](../../src/modules/Wizard.lua) et [18 tests service](../../tests/integration/guided_setup_season_draft_spec.lua); parent — [OfficerUI](../../src/ui/OfficerUI.lua), locales EN/FR, spécification/plan/contrat/tâches et guides; `wizard_season_ui_tests` — [10 tests UI](../../tests/integration/guided_setup_season_draft_ui_spec.lua); `qa_wizard_season` — revue indépendante et huit scénarios supplémentaires temporaires, sans écriture source. **290/290 sur 18 suites sous Fengari, Lua 5.4.6 et Lua 5.1.5 natif; QA 80/80 sur chaque moteur** (28 nouveaux cas + 8 QA + 44 régressions). Compilation **111/111**, doc Generate/Check PASS (29 concepts, zéro erreur, dix avertissements hérités), graphe addon **120 fichiers PASS**, diff-check PASS. Diagnostics IDE de namespace/types/annotations toujours présents; suite globale non réexécutée.
+- Captures Retail utilisateur : Officer limité à Guided Setup et PlayerUI en attente observés; **N01 PARTIEL**, pas de preuve de contexte membre distinct ni raccourcis directs. Profil progression sélectionné observé, application non confirmée. Nouveau **N07 NON TESTÉ** pour préparation du brouillon; rendu/calendrier/scroll réel et Sync multiclient non validés. T053 et autres gates en jeu restent ouvertes. Aucun commit/push/publication/déploiement pour ce complément. Prochaine étape : redéployer, redémarrer WoW, tester Configure → préparation de saison → Apply → ouvrir le roster, puis poursuivre N02–N07.
+
+- Lot UI approuvé pendant les tests Retail — **021 T025–T030 et 029 T058–T060 implémentées** : première installation Officer limitée à Guided Setup; menus et routes directes/alias/ancien onglet masqués selon les prérequis réels. [Wizard](../../src/modules/Wizard.lua) fournit une projection sans flag persisté; les éditeurs restent accessibles après la fondation, les opérations Dibs demandent saison/rangs publiés/ledger prêt, sans rendre RC ou les modules facultatifs obligatoires. Le parcours personnalisé réutilise le vrai contrôle Initialize dans le Wizard. [PlayerUI](../../src/ui/PlayerUI.lua) affiche une attente publique sans commandes admin; `rosterConfigured` ouvre l'inscription avant activation comptable. Historique/migration préservés; aucun changement des contrats ledger, gouvernance, recovery T049, identifiants persistés ou quota Sync.
+- [OfficerUI](../../src/ui/OfficerUI.lua) : horaires création/modification par lignes jour nommé + HH:MM, sept entrées maximum selon le service existant, durée/fuseau historiques conservés; libellés joueur fondés sur le catalogue publié, aucune règle universelle jeudi/Officer-Core. L'aide contextuelle effacée par `Clear(scroll)` au rebuild Loot Rules a été déplacée après l'effacement; les aides restent dans le viewport courant. Automatic Dibs renvoie vers le roster saisonnier avec un conseil léger, sans scan global readiness/Wizard. Les deux anciens échecs de contextual help étaient reproduits aussi avec l'OfficerUI de HEAD; ils sont maintenant corrigés.
+- Preuves finales de ce lot : **262/262 tests sur 16 fichiers, chacun sous Fengari, Lua 5.4.6 et Lua 5.1.5 natif**; compilation **111/111**; doc Generate/Check PASS (zéro erreur, dix clés d'aide héritées orphelines), graphe addon **120 fichiers requis PASS**, diff-check PASS. Les anciens tests de pages UI utilisent maintenant des fixtures de guilde explicitement configurée; les nouveaux tests conservent de véritables états neuf/partiel et le vrai clic Initialize. Pas de bypass global ni d'assertions supprimées. QA indépendante **45/45 sur les trois runtimes** (30 nouveaux scénarios et 15 cas contextuels); aucun blocage confirmé. L'IDE signale encore les annotations `@doc`, champs de namespace Dibs et inférences de retours déjà incomplètes : ne pas revendiquer zéro diagnostic IDE. La suite globale entière n'a pas été réexécutée.
+- Coordination : explorer read-only `open_tasks_independence`; worker `setup_navigation_service` (projection Wizard, fixtures guidées/navigation, puis aide contextuelle); worker `roster_neutral_language` (PlayerUI, langue par guilde et fixtures); parent (OfficerUI, éditeur horaires, locales, intégration/docs); QA distincte `qa_0812_test_docs`. La première QA `qa_data_stabilization` a atteint sa limite sans valider ce lot et a été remplacée. [Fiche Retail N01–N06](../audits/0.8.12-TESTS-RETAIL-FR.md) ajoutée et guides FR/EN alignés; N01 est maintenant PARTIEL sur captures utilisateur, les autres contrôles restent NON TESTÉS, T053 et autres gates en jeu restent ouvertes. Aucun commit, push, publication, déploiement ou nettoyage réel ajouté dans ce lot. Prochaine étape : déployer les sources corrigées, redémarrer WoW et exécuter N01–N06 avant de poursuivre la campagne coffre/saisons.
+- Incident Retail calendrier : l'utilisateur signale trois occurrences des avertissements `embeds.xml:10/11`. Diagnostic réel : les deux Lua LibAceGUIWidgets et leurs cinq ressources/licences étaient absents du dépôt actif et donc du jeu. Le bundle exact v0.12.0 déjà approuvé dans le worktree de consolidation a été réintégré (sept SHA-256 conformes au [registre](../developer/libaceguiwidgets-vendoring.md)); aucun nouveau patch tiers. `.gitattributes` préserve ses octets. [Précontrôle](../../scripts/Test-DibsAddonFiles.ps1) branché avant toute copie dans `deploy.ps1` et avant packaging CI : références TOC/XML et ressources obligatoires. Tests PowerShell **10/10 PASS**, dont reproduction des absences, échec avant modification de l'installation et intégrité des sept fichiers; **111/111 sources compilent sous Lua 5.1.5**, les deux Lua tiers également vérifiés explicitement; graphe livré **120 fichiers requis PASS**. Aucun redéploiement réel ni retest Retail effectué par l'agent pour ce correctif; retest documenté NON TESTÉ. L'ancien ZIP temporaire `7d3294ac` était lui aussi incomplet pour le calendrier : ne plus l'utiliser; sa vérification antérieure ne couvrait pas le graphe de chargement. Redéployer depuis les sources corrigées, redémarrer WoW puis retester le chargement et le calendrier. Aucun nouveau commit/push/publication pour ce lot.
+- Nettoyage local demandé : nouveau [Reset-DibsInstallation.ps1](../../scripts/Reset-DibsInstallation.ps1), aperçu par défaut et suppression uniquement avec `-Apply`, WoW fermé. Cible exacte : addon Dibs et SavedVariables `.lua`/`.lua.bak` compte/personnage de ce Retail, tous comptes; sauvegarde externe avec manifeste et SHA-256 vérifiés avant suppression, refus des jonctions/chemins hors périmètre et des fichiers modifiés pendant la copie. RCLootCouncil/autres addons/réglages partagés préservés; les données de guilde distantes ne sont pas effacées. [Tests PowerShell](../../tests/powershell/Reset-DibsInstallation.Tests.ps1) **11/11 PASS sous Windows PowerShell 5.1/Pester 3.4**, dont un processus isolé utilisant les vraies copies/suppressions sur fixtures temporaires (inventaire processus WoW simulé). Aperçu seul exécuté sur le Retail réel : **152 fichiers listés, code 0, aucune modification**. Aucun nettoyage réel exécuté; procédure ajoutée à la fiche Retail. Aucun nouveau commit pour ce lot.
 - Consolidation locale autorisée par l'utilisateur : documentation et commit du candidat courant pendant ses tests. L'utilisateur confirme avoir exécuté [deploy.ps1](../../scripts/deploy.ps1) lui-même; cette déclaration de déploiement ne constitue ni une vérification indépendante des fichiers installés ni un résultat Retail. Aucun résultat en jeu n'a encore été communiqué. T053, les autres gates Retail et les tâches canoniques encore ouvertes restent inchangées; aucun push, tag ou publication autorisé. La suppression locale de `.github/skills/speckit-bug-assess/SKILL.md`, sans lien établi avec le candidat, est exclue du commit et préservée dans le dossier de travail. Les modifications des autres worktrees ne font pas partie du commit de ce dépôt.
 - Contrôles de consolidation réexécutés : compilation native Lua 5.1.5 **109/109 PASS** et documentation `Check` **PASS**, zéro erreur/dix avertissements de clés d'aide héritées, fichiers générés à jour. Les preuves comportementales ci-dessous sont conservées; aucune nouvelle exécution de la suite globale ni validation Retail revendiquée par ce commit.
 - Demande de procédure exécutée : [AGENTS actif](../../AGENTS.md), [AGENTS de consolidation](../../../RCLootCouncil_dibs-consolidation-v0812/AGENTS.md), [instructions UI actives](../../.github/instructions/ui.instructions.md) et la copie UI explicitement citée sous `C:/Users/yc58/OneDrive/Documents/GitHub/RCLootCouncil_dibs/.github/instructions/ui.instructions.md` relus/ajustés. Une approbation couvre les opérations ordinaires du périmètre; intégration exacte des versions approuvées, délégation globalement autorisée, packages temporaires et refactorisation ciblée complète ne nécessitent pas de nouveau consentement par lot. Ledger, permissions/isolation, préservation du travail, revues métier, véritables suppressions/publications/déploiements restent protégés. Le détail Today/Clear est renvoyé au registre existant de consolidation. Aucune configuration personnelle/modèle ni quota fournisseur modifié.

@@ -81,6 +81,33 @@ describe("RF-0028 no route creates a public Pre-Dib while the public route is cl
       "the Adventure Guide route wrote a request although public pre-dibs are disabled")
   end)
 
+  it("never falls back to the internal creator when the public service is unavailable", function()
+    local dibs = setup()
+    dibs.GetDB().settings.allowPublicPreDibs = true
+    dibs.PreDibs.CreatePublic = nil
+    local internalCalls = 0
+    dibs.PreDibs.Create = function() internalCalls = internalCalls + 1; error("public policy bypass") end
+    local request, reason = dibs.LootPipeline.RequestDibFromContext({ itemID = 12345 })
+    assert_nil(request)
+    assert_equal("PREDIB_UNAVAILABLE", reason)
+    dibs.HandleSlashCommand("pre 12345 TestItem")
+    dibs.LootPipeline = nil
+    assert_nil(dibs.PlayerUI.SubmitPreDib("12345"))
+    assert_nil(dibs.EncounterJournal.SubmitPreDib(12345, "Item 12345"))
+    assert_equal(0, internalCalls)
+    assert_equal(0, storedRequestCount(dibs))
+  end)
+
+  it("enforces public policy in UI and Adventure Guide fallbacks without the loot pipeline", function()
+    local dibs = setup()
+    dibs.LootPipeline = nil
+    assert_nil(dibs.PlayerUI.SubmitPreDib("12345"))
+    local request, reason = dibs.EncounterJournal.SubmitPreDib(12345, "Item 12345")
+    assert_nil(request)
+    assert_equal("PUBLIC_PRE_DIBS_DISABLED", reason)
+    assert_equal(0, storedRequestCount(dibs))
+  end)
+
   it("still creates a request on every route when public pre-dibs are enabled", function()
     local _, dibs = loader.load({ withAce3 = true, wow = { playerName = "Tester-Realm", guildLeader = true } })
     assert_true(dibs.PreDibs.IsPublicEnabled())

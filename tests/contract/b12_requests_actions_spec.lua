@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 local function setup()
   return loader.load({
@@ -100,11 +100,9 @@ describe("B12 request action contracts", function()
     dibs.Ledger.Use = originalUse
     dibs.Ledger.Refund = originalRefund
     dibs.Ledger.AdminAdjust = originalAdjust
-    assert_true(corrected.ok, correctionReason)
-    assert_equal(1, #protectedCalls)
-    assert_equal("ledger.use", protectedCalls[1].actionId)
-    assert_equal(true, protectedCalls[1].payload.confirmation)
-    assert_equal("dispute-center", protectedCalls[1].payload.source)
+    assert_nil(corrected)
+    assert_equal("FEATURE_DISABLED", correctionReason)
+    assert_equal(0, #protectedCalls)
     assert_equal(0, ledgerCalls)
   end)
 
@@ -121,7 +119,7 @@ describe("B12 request action contracts", function()
     local frame = dibs.OfficerUI.CreateWindow()
     assert_true(frame.OpenRequestDetail(request))
     assert_not_nil(findWidget(frame.requestDetailRoot, "Button", "Ask for information"))
-    assert_not_nil(findWidget(frame.requestDetailRoot, "Button", "Resolve"))
+    assert_not_nil(findWidget(frame.requestDetailRoot, "Button", dibs.L.REQUEST_RESOLVE_NO_CORRECTION))
     assert_not_nil(findWidget(frame.requestDetailRoot, "Button", "Reject"))
     assert_nil(findWidget(frame.requestDetailRoot, "Button", "Correct player / item"))
 

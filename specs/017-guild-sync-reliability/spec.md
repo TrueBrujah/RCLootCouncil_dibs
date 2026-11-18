@@ -78,6 +78,10 @@ Guild Masters and officers need a way to notice, without guesswork, when guild-w
 - **FR-009**: The system MUST report a detectable, distinguishable status when two guild members' addon versions cannot understand each other's synchronization messages, so the mismatch can be diagnosed rather than appearing as a silent no-op.
 - **FR-010**: None of the above MUST weaken existing rules that the Dibs ledger is append-only and that only authorized guild roles may create balance-affecting events.
 - **FR-011**: When a finalized DIB award is awaiting coordinator commit, the system MUST announce a minimal reservation to guild clients, subtract it from available Dibs without changing the canonical ledger, and remove it when the matching canonical commit is applied. Retries or duplicate announcements MUST NOT reserve or debit the same award twice.
+  Terminal-state repair clarification (2026-11-17): a rejected or stale proposal
+  no longer represents an awaiting award and MUST release its reservation without
+  any accounting effect. Upgraded peers retain verified, bounded release evidence
+  for reordering and reconnection under the existing sync-message contract.
 
 ### Key Entities
 

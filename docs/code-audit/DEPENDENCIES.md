@@ -1,5 +1,32 @@
 # Dependances et flux Lua / WoW
 
+## Dashboard extrait — 16 novembre 2026
+
+[OfficerUI](../../src/ui/OfficerUI.lua) conserve la projection autorisée et transmet
+son résultat à [OfficerDashboard](../../src/ui/OfficerDashboard.lua), chargé avant
+le contrôleur. Le renderer compose uniquement les composants Midnight/AceGUI et
+les actions de navigation du frame; il n’appelle pas OfficerUI et ne devient pas
+une autorité métier. Les phases de profilage et les routes restent compatibles.
+La récupération au démarrage parcourt les ledgers approuvés/archivés et conserve
+des résultats runtime séparés par guilde/ledger; la reconstruction Disputes préserve
+les projections des autres ledgers. Aucun contenu de bibliothèque modifié.
+
+## Calendrier embarqué rétabli — 15 novembre 2026
+
+- Erreur Retail réelle : `embeds.xml` référençait les deux fichiers Lua de
+  LibAceGUIWidgets alors que le bundle était absent du dépôt actif et du jeu.
+  Une compilation du code Dibs ne détectait pas cette omission de livraison.
+- Les sept fichiers du sous-ensemble v0.12.0 déjà approuvé ont été copiés sans
+  changement depuis le worktree de consolidation, y compris les adaptations
+  de chemins préexistantes. Aucun nouveau patch tiers. Version, provenance,
+  licences et SHA-256 : [registre](../developer/libaceguiwidgets-vendoring.md).
+  L'attribut Git `-text` conserve les octets approuvés de ce seul bundle.
+- [Contrôle de livraison](../../scripts/Test-DibsAddonFiles.ps1) : parcours du
+  TOC et des inclusions XML, vérification des ressources/licences du calendrier,
+  refus des chemins sortant de l'addon. Exécuté avant la copie locale et avant
+  le packaging CI. Test de non-régression reproduisant les deux absences et
+  vérification des sept empreintes; rendu réel et coexistence restent à retester.
+
 ## Transport de sauvegarde intégré — 15 novembre 2026
 
 - [BackupTransport](../../src/modules/BackupTransport.lua) préfère les capacités

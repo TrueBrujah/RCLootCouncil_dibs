@@ -838,6 +838,7 @@ describe("Officer loot type controls", function()
   it("shares dynamic types and draft changes with RC options without bulk presets", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     dibs.RCLootCouncil.SetDibEnabledForType("TOKEN", false)
     local frame = dibs.OfficerUI.CreateWindow()
     frame.SelectTab("lootTypes")
@@ -866,6 +867,7 @@ describe("Player and officer option visibility", function()
     rc.Getdb = function() return profile end
     rc.ConfigTableChanged = function() end
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     local options = dibs.RCOptions.GetOptionsTable()
     local integration = options.args.dibsSettings.args.officer.args.integration
     local buttonCount = profile.buttons.default.numButtons
@@ -943,6 +945,7 @@ describe("Player and officer option visibility", function()
   it("keeps every Officer navigation page populated after switching tabs", function()
     local rc = loader.makeRCLootCouncil({ optionsFrame = {} })
     local _, dibs = loader.load({ wow = { guildLeader = true }, rclootcouncil = rc, withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     local frame = dibs.OfficerUI.CreateWindow()
     local pages = { "overview", "disputes", "reconciliation", "seasons", "ranks", "settings", "preDibs", "eligibility", "announcements", "developer", "integration", "debug" }
     for _, page in ipairs(pages) do

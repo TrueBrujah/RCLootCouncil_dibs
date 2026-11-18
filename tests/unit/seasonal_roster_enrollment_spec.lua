@@ -17,6 +17,34 @@ local function adoptPolicy(dibs)
 end
 
 describe("seasonal raid enrollment", function()
+  it("registers an explicitly selected unified raid category without granting approval", function()
+    local _, gm = loader.load({ withAce3 = true, wow = { playerName = guild[1], guildLeader = true,
+      guildMembers = guild, guildRankIndices = ranks } })
+    adoptPolicy(gm)
+    local now = gm.GetTimestamp()
+    local created = gm.SeasonalRoster.CreateSeason({ name = "Unified season", startAt = now + 10000,
+      registrationStartAt = now - 10, categories = { "HEROIC", "MYTHIC" },
+      raidDifficulties = { "HEROIC", "MYTHIC" }, categoryCatalog = {
+        { id = "HEROIC", name = "Heroic", active = true },
+        { id = "MYTHIC", name = "Mythic", active = true },
+      } }, "create-unified-enrollment", guild[1])
+    assert_true(created.ok, tostring(created.code))
+    local opened = gm.SeasonalRoster.SetRegistrationState(created.value, "OPEN", created.revision,
+      "open-unified-enrollment", "Open signup", guild[1])
+    assert_true(opened.ok, tostring(opened.code))
+    local _, player = loader.load({ withAce3 = true, savedVariables = gm.DeepCopy(_G.RCLootCouncil_dibsDB),
+      wow = { playerName = guild[3], guildLeader = false, guildMembers = guild, guildRankIndices = ranks } })
+    local saved = player.SeasonalRoster.UpsertOwnEnrollment(created.value,
+      Fixtures.enrollment({ categoryId = "MYTHIC", requestedPath = "STANDARD" }), 0, "enroll-unified-mythic")
+    assert_true(saved.ok, tostring(saved.code))
+    local own = player.SeasonalRoster.GetOwnEnrollment(created.value)
+    assert_equal("MYTHIC", own.categoryId)
+    assert_equal("Mythic", own.categoryName)
+    assert_equal("STANDARD", own.requestedPath)
+    assert_equal("PENDING_REVIEW", own.status)
+    assert_equal(0, player.SeasonalRoster.GetPublicRosterPage(created.value, {}).total)
+  end)
+
   it("keeps signup pending until an Officer approves it and snapshots the requested path", function()
     local _, gm = loader.load({ withAce3 = true, wow = { playerName = guild[1], guildLeader = true,
       guildMembers = guild, guildRankIndices = ranks } })

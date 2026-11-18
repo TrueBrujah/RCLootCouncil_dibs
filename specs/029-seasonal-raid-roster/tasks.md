@@ -89,7 +89,7 @@ description: "Implementation tasks for the unified seasonal raid lifecycle"
 
 ## Phase 8: User Story 6 — Requested path, Core decision and season rules (P1)
 
-**Independent test**: A signup requests Thursday Core progression but remains Raider/candidate until a manual audited promotion; edits to published rules/policy preserve prior versions.
+**Independent test**: A signup requests the guild-configured progression path but remains a candidate until a manual audited promotion; edits to published rules/policy preserve prior versions and impose no universal raid weekday.
 
 - [x] T034 [P] [US6] Test AotC-to-Raider mapping, requested-path separation, policy revision snapshots and manual-only promotion in `tests/unit/seasonal_roster_status_spec.lua`.
 - [x] T035 [P] [US6] Test public rules visibility and officer-only editing/version history in `tests/integration/seasonal_roster_officer_ui_spec.lua` and `tests/integration/seasonal_roster_public_ui_spec.lua`.
@@ -177,7 +177,68 @@ Deliver an end-to-end MVP with draft season, signup, officer approval, read-only
 - [x] T056 [P] Add local, received-catalog and legacy-selection regression cases proving a roster season in DRAFT never becomes the current active ledger season through catalog publication, archive fallback, `GetCurrent`, or `season.set`. **Validated 2026-11-15:** six safety cases plus the SyncV2 transfer edge pass; independent QA confirms the archive-pointer fix. See `tests/integration/season_draft_selection_safety_spec.lua`.
 - [x] T057 Preserve draft/inactive state through catalog synchronization and refuse explicit or implicit selection of a draft; retain the atomic activation manifest as the only path that makes a roster draft Active. **Validated 2026-11-15:** real bounded SyncV2 `TRANSFER_BEGIN/CHUNK/END` applies an archive-only catalog with `currentSeasonId=nil`; the receiver clears the archived pointer and does not select the included inactive draft. Draft/catalog suites pass 17/17 under Fengari and Lua 5.1.5; independent QA confirms the path. Retail validation remains separate under T053.
 
+## Approved season presentation redesign — 2026-11-16
+
+- [x] T061 Share the organization of Guided Setup, season creation and draft
+  editing in `src/ui/OfficerUI.lua`; compact required fields and summarize
+  expandable optional sections without dropping inputs or changing contracts.
+- [x] T062 Prioritize selected-season actions; make new-season creation, revision
+  history and technical catalog explicitly accessible; localize concise labels and
+  preserve publication/activation guards in `src/ui/OfficerUI.lua` and locales.
+- [x] T063 Validate folding/reopening, hidden-field errors, retained drafts and
+  navigation through focused UI regressions; update guides and Retail checks.
+  **2026-11-16: five new UI cases; integrated 186/186 on 15 suites under Fengari
+  and native Lua 5.4.6; diff-check PASS.** Native 5.1.5 not re-executed in this lot.
+  Automated layout doubles do not close T053 or certify actual client rendering.
+
+Dependencies: T061 and T062 share the Officer renderer and must be integrated
+serially; T063 depends on both. No schema, rules library or DST engine is added.
+
+## Approved unified registration categories — 2026-11-16
+
+- [x] T064 Replace duplicate signup/difficulty controls with one required
+  Normal/Heroic/Mythic selector in shared new/draft forms and Guided Setup;
+  map selected IDs to both compatible fields and preserve historical descriptors.
+  **2026-11-16: shared forms and player selection implemented; 153/153 across
+  15 suites under Fengari and native Lua 5.4.6.**
+- [x] T065 Retain published legacy catalogs and registrations; remove the
+  competing draft catalog editor and require saving the displayed selection before
+  publication. Cover direct creation, edits, empty choices and local reload;
+  update FR/EN guides and Retail checks. Depends on T064.
+  **2026-11-16: UI publication guard, legacy preservation, player submission and
+  local resume regressions pass in the same 153/153 slice. Guides aligned; N13
+  documented NON TESTÉ. This completes offline implementation, not T053/Retail.**
+
+## Approved registration date boundaries — 2026-11-16
+
+- [x] T066 Enforce FR-058 chronology on new/draft writes and publication, localize
+  shared-form errors and validate Guided Setup before initialization. Preserve
+  historical sync and operation receipts; test boundary dates, rejected-write
+  atomicity, optional ends and UI/setup preflight. Record an unexecuted Retail check.
+  **8/8 dedicated cases on Lua 5.4.6, Lua 5.1.5 and Fengari; source compilation
+  112/112. Expanded 21-file selection: 239 passed, 2 failed on all three
+  runtimes; the same two failures reproduce with chronology checks disabled
+  in memory (nil eligibility revision; disabled-history route expects roster
+  instead of wizard). N19 and T053 remain unexecuted/open.**
+
+## Regression fixture repair — 2026-11-17
+
+- [x] T067 Initialize the identity-generation fixture through
+  `CharacterEligibility.GetRevision` before increasing it, and give the disabled
+  Officer history test real saved history in `seasonal_roster_sync_spec.lua` and
+  `seasonal_roster_feature_gate_spec.lua`. Assert that the empty disabled state
+  still routes to Guided Setup and browsing preserves stored history. Initial
+  reproduction: **22 passed / 2 failed**; repaired roster/navigation slice:
+  **42/42**. Consolidated **383/383 on 36 suites under Lua 5.1.5 and Fengari**.
+  Production roster/chronology rules unchanged; T053 and N19 remain open.
+
 ## Automated completion checkpoint — 2026-11-15
+
+### Approved interface simplification — 2026-11-15
+
+- [x] T058 Replace numeric schedule strings in create/edit forms with a shared day/time row editor, preserving the service schema and per-entry metadata; add behavioral UI tests. **Five schedule cases and combined UI/service regressions pass on three runtimes.**
+- [x] T059 Use published guild category labels/descriptions in PlayerUI and neutral progression labels in both UIs; remove universal Thursday/Officer-Core assertions without changing approval semantics; test custom guild catalogs. **Eight player language/navigation cases pass on three runtimes.**
+- [x] T060 Run focused multi-runtime suites and independent QA; document new Retail checks without closing T053. **262/262 combined tests on Fengari/Lua 5.4.6/native 5.1.5; independent new-slice QA 30/30 on each; source compilation 111/111. N01–N06 remain NON TESTÉ, T053 remains open.**
 
 - Focused Lua/Fengari and native Lua 5.1.5 selection: **87 passed, 0 failed (13 files) in each runtime**, including activation failure injection/replay, compact-manifest round-trip under the unchanged wire quota, oversized-identity precommit refusal, reconciliation/stale preview/spent balance, 30- and 60-person cohorts plus 900 unrelated guild characters, real-byte SyncV2 convergence/recovery, UI, module gating and 20/60/500/1,000 projection budgets. Exact commands and timing evidence are in `quickstart.md`.
 - Offline Lua 5.1.5 compilation: **108 addon source files passed**, using the project compilation script and an explicit compiler path. Retail two-client validation remains unchecked under T053.

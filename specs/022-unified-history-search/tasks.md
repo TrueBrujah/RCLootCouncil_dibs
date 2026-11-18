@@ -125,3 +125,7 @@ Each task uses `- [ ] T### [P?] [Story?] Description with file path`. `[P]` mark
 2. Add Officer coverage source by source without replacing existing authorization or RCLootCouncil preview flows.
 3. Finish with consistent result/error states and bounded ordering/pagination across the covered pages.
 4. Validate automated tests first, then perform Retail manual checks where the client exposes the relevant saved history metadata.
+
+## Approved regression-fixture correction — 2026-11-16
+
+- [x] T023 Set explicit ordinary-member roster ranks in the authorization regression and establish published setup prerequisites before exercising Officer Vault filters. Keep a real fresh-install route refusal case. Do not weaken production guards. Approved consolidation P14. Search and real guided-navigation suites pass in the 334-test three-runtime slice.

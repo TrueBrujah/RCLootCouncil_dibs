@@ -2036,10 +2036,10 @@ function Dibs.HandleSlashCommand(msg)
     local itemName = table.concat(args, " ", 3)
     local payloadName = itemName ~= "" and itemName or "Item " .. tostring(itemID)
     local request, reason
-    if Dibs.PreDibs and Dibs.PreDibs.CreatePublic and Dibs.PreDibs.IsPublicEnabled and Dibs.PreDibs.IsPublicEnabled() then
+    if Dibs.PreDibs and Dibs.PreDibs.CreatePublic then
       request, reason = Dibs.PreDibs.CreatePublic(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId(), "slash")
     else
-      request = Dibs.PreDibs.Create(Dibs.GetPlayerName(), itemID, payloadName, Dibs.GetCurrentSeasonId())
+      reason = "PREDIB_UNAVAILABLE"
     end
 
     if request then
@@ -2520,19 +2520,32 @@ function Dibs.Initialize()
   -- or act on them. The Disputes recovery routine first verifies the complete
   -- canonical history and only rebuilds the explicitly recoverable projection
   -- and index classifications; conflicting history is left untouched.
-  if Dibs.Disputes and type(Dibs.Disputes.ReconstructOperationStates) == "function" then
-    local recoveryOk, recovery = pcall(Dibs.Disputes.ReconstructOperationStates, "guild-primary")
-    Dibs.canonicalOperationRecoveryStatus = recoveryOk and recovery or {
-      rebuilt = false, reasonCode = "CANONICAL_RECOVERY_FAILED",
-    }
-    if not recoveryOk and Dibs.Debug then
-      Dibs.Debug("canonical dispute recovery failed", tostring(recovery))
+  local recoveryDB = Dibs.GetDB()
+  local recoveryLedgerIds = { "guild-primary" }
+  for ledgerId, ledger in pairs(recoveryDB.ledgers or {}) do
+    if ledgerId ~= "guild-primary" and type(ledgerId) == "string" and type(ledger) == "table"
+      and (ledger.status == "APPROVED" or ledger.status == "ARCHIVED") then
+      recoveryLedgerIds[#recoveryLedgerIds + 1] = ledgerId
     end
-  else
-    Dibs.canonicalOperationRecoveryStatus = {
-      rebuilt = false, reasonCode = "CANONICAL_RECOVERY_UNAVAILABLE",
-    }
   end
+  table.sort(recoveryLedgerIds)
+  Dibs.canonicalOperationRecoveryStatuses = {}
+  for _, ledgerId in ipairs(recoveryLedgerIds) do
+    local recovery
+    if Dibs.Disputes and type(Dibs.Disputes.ReconstructOperationStates) == "function" then
+      local recoveryOk, result = pcall(Dibs.Disputes.ReconstructOperationStates, ledgerId)
+      recovery = recoveryOk and type(result) == "table" and result or {
+        rebuilt = false, reasonCode = "CANONICAL_RECOVERY_FAILED",
+      }
+      if not recoveryOk and Dibs.Debug then Dibs.Debug("canonical dispute recovery failed", tostring(result)) end
+    else
+      recovery = { rebuilt = false, reasonCode = "CANONICAL_RECOVERY_UNAVAILABLE" }
+    end
+    recovery.ledgerId, recovery.guildKey = ledgerId, Dibs.GetGuildKey()
+    Dibs.canonicalOperationRecoveryStatuses[ledgerId] = recovery
+  end
+  -- Preserve the primary diagnostic API; secondary ledgers have their own scope.
+  Dibs.canonicalOperationRecoveryStatus = Dibs.canonicalOperationRecoveryStatuses["guild-primary"]
 
   if Dibs.Seasons and Dibs.Seasons.GetOrCreateDefault then
     Dibs.Seasons.GetOrCreateDefault()

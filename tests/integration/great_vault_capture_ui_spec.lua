@@ -1,6 +1,13 @@
 local loader = require("helpers.load_addon")
 
 local function capturePage(dibs)
+  -- Capture diagnostics are exercised in an established guild. Setup visibility
+  -- has separate tests and must not prevent these page-specific assertions.
+  dibs.Wizard.GetNavigationAccess = function()
+    return { firstInstall = false, foundationReady = true, preservedHistory = true,
+      dependencies = { seasonConfigured = true, rosterConfigured = true, ranksPublished = true, ledgerReady = true },
+      routes = { disputes = true, seasonalRoster = true, vault = true } }
+  end
   local labels, rows = {}, nil
   local addLabel, addTable = dibs.AceGUI.AddLabel, dibs.AceGUI.AddTable
   dibs.AceGUI.AddLabel = function(shell, parent, text, fullWidth)

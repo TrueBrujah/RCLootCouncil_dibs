@@ -131,6 +131,8 @@ describe("Guild Loot Rules normalization", function()
     assert_true(changed, tostring(reason))
     assert_equal(false, officer.GetDB().settings.dibAllowedTypes.TOKEN)
 
+    dibs = load()
+    setSupportedKeys(dibs, { TOKEN = "Curio" })
     changed, reason = dibs.LootRules.SetDraftValue("TOKEN", "adventureGuide", false)
     assert_true(changed, tostring(reason))
     assert_equal(false, dibs.GetDB().settings.dibAllowedTypes.TOKEN)
@@ -151,10 +153,10 @@ describe("Guild Loot Rules normalization", function()
     local dibs = load()
     setSupportedKeys(dibs, { TOKEN = "Curio" })
     assert_equal(false, dibs.LootRules.HasDraftChanges())
-    dibs.Permissions.IsGM = function() return true end
     assert_true(dibs.LootRules.SetDraftValue("TOKEN", "adventureGuide", false))
     assert_equal(false, dibs.LootRules.HasDraftChanges())
     dibs.Seasons.GetCatalogState = function() return { catalogRevision = 1 } end
+    dibs.Seasons.GetCatalogRevision = function() return 1 end
     dibs.Seasons.GetCatalogRecord = function()
       return { guildConfiguration = { guildLootRules = {
         schemaVersion = 1,

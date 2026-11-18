@@ -3,6 +3,13 @@ local loader = require("helpers.load_addon")
 local function load(locale)
   local _, dibs = loader.load({ withAce3 = true, wow = { locale = locale or "enUS", guildLeader = true,
     guildMembers = { "Tester-Realm", "Player-Realm" }, guildRankIndices = { [1] = 0, [2] = 3 } } })
+  -- These service-boundary UI cases exercise an already configured guild.
+  -- Fresh/partial route gating has its own real-state navigation suites.
+  dibs.Wizard.GetNavigationAccess = function()
+    return { foundationReady = true, preservedHistory = true,
+      routes = { wizard = true, seasonalRoster = true, vault = true, history = true },
+      dependencies = { seasonConfigured = true, rosterConfigured = true, ranksPublished = true, ledgerReady = true } }
+  end
   return dibs
 end
 
@@ -313,10 +320,14 @@ describe("Seasonal roster completion UI", function()
     dibs.OfficerUI.RenderSeasonConfiguration({}, {}, view, seasons[1], seasons)
     view.seasonalRosterChangeReason = "Reviewed calendar"
     controls.edits[dibs.L.SEASONAL_ROSTER_NAME]("Edited season")
-    controls.buttons[dibs.L.SEASONAL_ROSTER_SAVE_DATES]()
+    controls.checks[dibs.L.SEASONAL_ROSTER_DIFFICULTY_NORMAL](true)
+    controls.buttons[dibs.L.SEASONAL_ROSTER_SAVE_CONFIGURATION]()
     assert_equal(dibs.L.SEASONAL_ROSTER_DRAFT_SAVED, view.seasonalRosterMessage)
     assert_equal(active, dibs.GetCurrentSeasonId())
-    assert_equal("Edited season", dibs.SeasonalRoster.ListSeasons()[1].name)
+    local updated = dibs.SeasonalRoster.ListSeasons()[1]
+    assert_equal("Edited season", updated.name)
+    assert_equal("NORMAL", updated.categories[1])
+    assert_equal("NORMAL", updated.raidDifficulties[1])
     _G.date, _G.time = originalDate, originalTime
   end)
 
@@ -350,4 +361,197 @@ describe("Seasonal roster completion UI", function()
     assert_false(view.seasonLegacyConfirmed)
     assert_equal(5, preview.resultingPersonBalance)
   end)
+  it("preserves a local form across remote revisions and requires explicit reload", function()
+    local dibs = load()
+    local originalDate, originalTime = _G.date, _G.time
+    register_reset(function() _G.date, _G.time = originalDate, originalTime end)
+    _G.date, _G.time = os.date, os.time
+    local controls, view = capture(dibs), frame()
+    local season = { seasonId = "local-edit", revision = 1, name = "Saved name", categories = { "RAIDER" },
+      categoryCatalog = { { id = "RAIDER", name = "Veteran", description = "Retained identity", active = true,
+        order = 3, version = 2 } }, raidRules = "Saved rules", raidSchedule = {}, raidDifficulties = {},
+      lifecycle = { seasonStatus = "DRAFT" } }
+    dibs.OfficerUI.RenderSeasonConfiguration({}, {}, view, season)
+    view.seasonConfig.name = "Unsaved local name"
+    view.seasonConfig.raidRules = "Unsaved local rules"
+    season.revision, season.name = 2, "Remote name"
+    dibs.OfficerUI.RenderSeasonConfiguration({}, {}, view, season)
+    assert_equal("Unsaved local name", view.seasonConfig.name)
+    assert_equal("Unsaved local rules", view.seasonConfig.raidRules)
+    assert_equal(1, view.seasonConfig.revision)
+    view.seasonConfig.seasonalRosterNewStartDate = "2026-05-10"
+    view.seasonConfig.seasonalRosterNewRegistrationStartDate = "2026-05-01"
+    view.seasonalRosterChangeReason = "Local review"
+    controls.checks[dibs.L.SEASONAL_ROSTER_DIFFICULTY_NORMAL](true)
+    local saves = 0
+    dibs.SeasonalRoster.UpdateDraft = function(id, patch, expectedRevision)
+      saves = saves + 1
+      assert_equal("local-edit", id)
+      assert_equal("Unsaved local name", patch.name)
+      assert_equal(1, expectedRevision)
+      return { ok = false, code = "STALE_REVISION" }
+    end
+    controls.buttons[dibs.L.SEASONAL_ROSTER_SAVE_CONFIGURATION]()
+    assert_equal(1, saves)
+    assert_equal("Unsaved local rules", view.seasonConfig.raidRules)
+    assert_equal(1, view.seasonConfig.revision)
+
+    controls.buttons[dibs.L.SEASONAL_ROSTER_RELOAD_CONFIGURATION]()
+    dibs.OfficerUI.RenderSeasonConfiguration({}, {}, view, season)
+    assert_equal("Remote name", view.seasonConfig.name)
+    assert_equal(2, view.seasonConfig.revision)
+  end)
+
+  it("retains catalog metadata and inactive historical identities in the shared form", function()
+    local dibs = load()
+    local originalDate, originalTime = _G.date, _G.time
+    register_reset(function() _G.date, _G.time = originalDate, originalTime end)
+    _G.date, _G.time = os.date, os.time
+    local state = { name = "Configured season", categories = "MYTHIC", raidRules = "Rules", scheduleRows = {},
+      raidDifficulties = {}, timeZone = "UTC", seasonalRosterNewStartDate = "2026-05-10",
+      seasonalRosterNewRegistrationStartDate = "2026-05-01", categoryCatalog = {
+        { id = "MYTHIC", name = "Veteran", description = "Retained identity", active = true, order = 3, version = 2 },
+        { id = "CASUAL", name = "Social", active = true, order = 4, version = 1 } } }
+    local input = dibs.OfficerUI.BuildSeasonFormInput(state)
+    assert_not_nil(input)
+    assert_equal("MYTHIC", input.categories[1])
+    assert_equal("MYTHIC", input.raidDifficulties[1])
+    assert_equal("Veteran", input.categoryCatalog[1].name)
+    assert_equal("Retained identity", input.categoryCatalog[1].description)
+    assert_equal(2, input.categoryCatalog[1].version)
+    assert_false(input.categoryCatalog[2].active)
+    assert_true(state.categoryCatalog[2].active)
+  end)
+
+  it("requires an explicit supported choice when editing a legacy custom draft", function()
+    local dibs = load()
+    local controls, view = capture(dibs), frame()
+    local season = { seasonId = "legacy-draft", revision = 1, name = "Legacy draft", categories = { "RAIDER" },
+      categoryCatalog = { { id = "RAIDER", name = "Raid Team", active = true, version = 2 } },
+      raidDifficulties = {}, lifecycle = { seasonStatus = "DRAFT" } }
+    dibs.OfficerUI.RenderSeasonConfiguration({}, {}, view, season)
+    assert_nil(controls.edits[dibs.L.SEASONAL_ROSTER_CATEGORIES])
+    local input, reason = dibs.OfficerUI.BuildSeasonFormInput(view.seasonConfig)
+    assert_nil(input)
+    assert_equal(dibs.L.SEASONAL_ROSTER_CATEGORY_REQUIRED, reason)
+    assert_equal("RAIDER", season.categories[1])
+    assert_true(season.categoryCatalog[1].active)
+    controls.checks[dibs.L.SEASONAL_ROSTER_DIFFICULTY_HEROIC](true)
+    local originalDate, originalTime = _G.date, _G.time
+    register_reset(function() _G.date, _G.time = originalDate, originalTime end)
+    _G.date, _G.time = os.date, os.time
+    view.seasonConfig.seasonalRosterNewStartDate = "2026-05-10"
+    view.seasonConfig.seasonalRosterNewRegistrationStartDate = "2026-05-01"
+    local saved
+    dibs.SeasonalRoster.UpdateDraft = function(id, patch, revision)
+      saved = patch
+      assert_equal(season.seasonId, id); assert_equal(1, revision)
+      return { ok = true }
+    end
+    controls.buttons[dibs.L.SEASONAL_ROSTER_SAVE_CONFIGURATION]()
+    assert_not_nil(saved)
+    assert_equal("HEROIC", saved.categories[1])
+    assert_equal("HEROIC", saved.raidDifficulties[1])
+    assert_equal("RAIDER", saved.categoryCatalog[2].id)
+    assert_equal(2, saved.categoryCatalog[2].version)
+    assert_false(saved.categoryCatalog[2].active)
+    assert_true(season.categoryCatalog[1].active)
+  end)
+
+  it("creates a direct draft with the same signup categories and difficulties", function()
+    local dibs = load()
+    local originalDate, originalTime = _G.date, _G.time
+    register_reset(function() _G.date, _G.time = originalDate, originalTime end)
+    _G.date, _G.time = os.date, os.time
+    local controls, view = capture(dibs), frame()
+    dibs.OfficerUI.RenderNewSeasonForm({}, {}, view)
+    assert_nil(controls.edits[dibs.L.SEASONAL_ROSTER_CATEGORIES])
+    view.seasonalRosterNewForm.name = "Direct draft"
+    view.seasonalRosterNewForm.seasonalRosterNewStartDate = "2026-05-10"
+    view.seasonalRosterNewForm.seasonalRosterNewRegistrationStartDate = "2026-05-01"
+    controls.checks[dibs.L.SEASONAL_ROSTER_DIFFICULTY_MYTHIC](false)
+    local created
+    dibs.SeasonalRoster.CreateSeason = function(input)
+      created = input; return { ok = true, value = "direct-draft" }
+    end
+    controls.buttons[dibs.L.SEASONAL_ROSTER_CREATE]()
+    assert_equal("DRAFT", created.registrationState)
+    assert_equal(1, #created.categories)
+    assert_equal("HEROIC", created.categories[1])
+    assert_equal("HEROIC", created.raidDifficulties[1])
+    assert_equal(dibs.L.SEASONAL_ROSTER_DIFFICULTY_HEROIC, created.categoryCatalog[1].name)
+  end)
+
+  it("blocks draft publication until its displayed choices are saved and hides the competing catalog", function()
+    local dibs = load()
+    local season = { seasonId = "publish-draft", revision = 1, name = "Draft", categories = { "RAIDER" },
+      categoryCatalog = { { id = "RAIDER", name = "Raid Team", active = true } },
+      raidDifficulties = {}, registrationState = "DRAFT", raidRules = "Rules",
+      lifecycle = { seasonStatus = "DRAFT", registrationStatus = "DRAFT" } }
+    dibs.SeasonalRoster.ListSeasons = function() return { season } end
+    local controls = capture(dibs)
+    local calls = 0
+    dibs.SeasonalRoster.SetRegistrationState = function() calls = calls + 1; return { ok = true } end
+    local window = dibs.OfficerUI.CreateWindow("seasonalRoster")
+    assert_nil(controls.buttons[(dibs.L.SEASONAL_ROSTER_SHOW_SECTION or "Edit") .. " — "
+      .. dibs.L.SEASONAL_ROSTER_TECHNICAL_CATALOG])
+    controls.buttons[dibs.L.SEASONAL_ROSTER_OPEN]()
+    assert_equal(0, calls)
+    assert_equal(dibs.L.SEASONAL_ROSTER_SAVE_CATEGORIES_FIRST, window.seasonalRosterMessage)
+    season.categories, season.raidDifficulties = { "HEROIC" }, { "HEROIC" }
+    window.seasonConfig = nil
+    window:Refresh()
+    controls.checks[dibs.L.SEASONAL_ROSTER_DIFFICULTY_NORMAL](true)
+    controls.buttons[dibs.L.SEASONAL_ROSTER_OPEN]()
+    assert_equal(0, calls)
+    controls.checks[dibs.L.SEASONAL_ROSTER_DIFFICULTY_NORMAL](false)
+    controls.buttons[dibs.L.SEASONAL_ROSTER_OPEN]()
+    assert_equal(1, calls)
+  end)
+
+  it("preserves published custom categories and existing registrations when viewing management", function()
+    local dibs = load()
+    local season = { seasonId = "published", revision = 3, name = "Published", categories = { "RAIDER" },
+      categoryCatalog = { { id = "RAIDER", name = "Raid Team", active = true, version = 2 } },
+      raidDifficulties = { "MYTHIC" }, registrationState = "OPEN", raidRules = "Rules",
+      lifecycle = { seasonStatus = "REGISTRATION_OPEN", registrationStatus = "OPEN" } }
+    local enrollment = { enrollmentId = "existing", character = "Player-Realm", categoryId = "RAIDER",
+      categoryName = "Raid Team", categoryVersion = 2, revision = 4, primarySpec = "balance", roles = {} }
+    dibs.SeasonalRoster.ListSeasons = function() return { season } end
+    dibs.SeasonalRoster.GetOfficerEnrollments = function() return { enrollment } end
+    local controls = capture(dibs)
+    local window = dibs.OfficerUI.CreateWindow("seasonalRoster")
+    assert_nil(window.seasonConfig)
+    assert_nil(controls.checks[dibs.L.SEASONAL_ROSTER_DIFFICULTY_MYTHIC])
+    assert_not_nil(controls.buttons[(dibs.L.SEASONAL_ROSTER_SHOW_SECTION or "Edit") .. " — "
+      .. dibs.L.SEASONAL_ROSTER_TECHNICAL_CATALOG])
+    assert_equal("RAIDER", season.categories[1])
+    assert_equal("MYTHIC", season.raidDifficulties[1])
+    assert_equal("Raid Team", season.categoryCatalog[1].name)
+    assert_true(season.categoryCatalog[1].active)
+    assert_equal(3, season.revision)
+    assert_equal("RAIDER", enrollment.categoryId)
+    assert_equal(2, enrollment.categoryVersion)
+    assert_equal(4, enrollment.revision)
+  end)
+
+  it("opens creation only by explicit navigation and retains its unfinished input", function()
+    local dibs = load()
+    local window = dibs.OfficerUI.CreateWindow("seasonalRoster")
+    window:ActivateRoute("seasonalRoster")
+    assert_nil(window.seasonalRosterCreateButton)
+    local toggle = window.seasonalRosterNewSeasonButton
+    toggle.callbacks.OnClick(toggle, "OnClick")
+    assert_not_nil(window.seasonalRosterCreateButton)
+    local draft = window.seasonalRosterNewForm
+    draft.nameControl.callbacks.OnTextChanged(draft.nameControl, "OnTextChanged", "Unfinished local season")
+    toggle = window.seasonalRosterNewSeasonButton
+    toggle.callbacks.OnClick(toggle, "OnClick")
+    assert_nil(window.seasonalRosterCreateButton)
+    toggle = window.seasonalRosterNewSeasonButton
+    toggle.callbacks.OnClick(toggle, "OnClick")
+    assert_equal("Unfinished local season", window.seasonalRosterNewForm.name)
+    assert_equal(0, #dibs.SeasonalRoster.ListSeasons())
+  end)
+
 end)

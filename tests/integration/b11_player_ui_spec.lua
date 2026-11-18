@@ -3,7 +3,16 @@ local loader = require("helpers.load_addon")
 local function setup(options)
   options = options or {}
   options.withAce3 = true
-  return loader.load(options)
+  local environment, dibs = loader.load(options)
+  -- These page behavior tests model an already configured guild. Fresh-install
+  -- visibility is covered independently by seasonal_roster_guild_language_spec.
+  dibs.Seasons.GetCatalogState()
+  dibs.Wizard.GetNavigationAccess = function()
+    return { firstInstall = false, foundationReady = true, preservedHistory = true,
+      dependencies = { seasonConfigured = true, rosterConfigured = true, ranksPublished = true, ledgerReady = true },
+      routes = { disputes = true, seasonalRoster = true, vault = true } }
+  end
+  return environment, dibs
 end
 
 local function containsForbiddenValue(value, forbidden)
@@ -21,6 +30,26 @@ local function containsForbiddenValue(value, forbidden)
 end
 
 describe("B11c Player UI", function()
+  it("offers the owner a localized reply shortcut without changing accounting", function()
+    for _, locale in ipairs({ "enUS", "frFR" }) do
+      local _, dibs = setup({ wow = { locale = locale, guildLeader = true } })
+      local request = assert(dibs.Disputes.CreateReport({ category = "other", note = "Player reply regression" }))
+      assert_not_nil(dibs.Disputes.AskForInformation(request.requestId, "Which raid?"))
+      local before = #dibs.Ledger.GetAllTransactions()
+      local frame = dibs.PlayerUI.CreateWindow()
+      frame.SelectTab("my-dibs")
+      local reply
+      for _, widget in ipairs(_G.__dibsAceWidgets or {}) do
+        if widget.kind == "Button" and widget.text == dibs.L.PLAYER_REPLY_REQUIRED then reply = widget end
+      end
+      assert_not_nil(reply)
+      reply.callbacks.OnClick(reply, "OnClick")
+      assert_equal("requests", frame.playerTab)
+      assert_equal(request.requestId, frame.selectedDisputeRequestId)
+      assert_equal(before, #dibs.Ledger.GetAllTransactions())
+    end
+  end)
+
   it("keeps the balance in the Player window instead of echoing it to chat", function()
     local _, dibs = setup()
     for index = #(_G.__dibsMessages or {}), 1, -1 do _G.__dibsMessages[index] = nil end
@@ -618,12 +647,13 @@ describe("B11c Player UI", function()
         date = "2026-09-27", item = "Midnight Blade", action = "SEASON_ALLOCATION",
         result = "Rank allocation reconciliation", balanceImpact = 2,
       } }
+      view.balance, view.seasonAllocation, view.seasonUsed = 80, 100, 20
       return view
     end
     local capturedTables = {}
     local originalAddTable = dibs.AceGUI.AddTable
     dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, rowActions, options)
-      capturedTables[#capturedTables + 1] = { columns = columns, options = options }
+      capturedTables[#capturedTables + 1] = { columns = columns, rows = rows, options = options }
       return originalAddTable(shell, parent, columns, rows, height, rowActions, options)
     end
 
@@ -632,7 +662,12 @@ describe("B11c Player UI", function()
     frame:Refresh()
     local balanceOptions
     for _, tableInfo in ipairs(capturedTables) do
-      if tableInfo.columns[1].title == "Season allocation" then balanceOptions = tableInfo.options end
+      if tableInfo.columns[1].title == "Dibs remaining" then
+        balanceOptions = tableInfo.options
+        assert_equal("80", tableInfo.rows[1][1], "remaining balance should lead the overview")
+        assert_equal("100", tableInfo.rows[1][2])
+        assert_equal("20", tableInfo.rows[1][3])
+      end
     end
     assert_not_nil(balanceOptions)
     assert_equal(false, balanceOptions.allowTableSort)
@@ -902,9 +937,10 @@ describe("B11c Player UI", function()
     frame.SelectTab("my-dibs")
     local metricTable = tables[1]
     assert_equal(3, #metricTable.columns)
-    assert_equal("5", metricTable.rows[1][1])
-    assert_equal("2", metricTable.rows[1][2])
-    assert_equal("3", metricTable.rows[1][3])
+    assert_equal("Dibs remaining", metricTable.columns[1].title)
+    assert_equal("3", metricTable.rows[1][1])
+    assert_equal("5", metricTable.rows[1][2])
+    assert_equal("2", metricTable.rows[1][3])
     for _, column in ipairs(metricTable.columns) do assert_equal("CENTER", column.align) end
     local activeTable, wonTable
     for _, tableInfo in ipairs(tables) do

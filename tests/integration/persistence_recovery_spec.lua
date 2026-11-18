@@ -269,6 +269,16 @@ describe("SavedVariables validation and recovery", function()
     assert_equal("CANONICAL_RECOVERY_UNAVAILABLE", dibs.canonicalOperationRecoveryStatus.reasonCode)
   end)
 
+  it("fails closed when startup recovery returns no verifiable result", function()
+    local _, dibs = loader.load({ savedVariables = currentRoot(), skipInitialize = true })
+    dibs.Disputes.ReconstructOperationStates = function() return nil end
+    assert_true(dibs.Initialize())
+    assert_false(dibs.canonicalOperationRecoveryStatus.rebuilt)
+    assert_equal("CANONICAL_RECOVERY_FAILED", dibs.canonicalOperationRecoveryStatus.reasonCode)
+    assert_equal("guild-primary", dibs.canonicalOperationRecoveryStatus.ledgerId)
+    assert_equal(dibs.GetGuildKey(), dibs.canonicalOperationRecoveryStatus.guildKey)
+  end)
+
   it("records successful validation of an empty canonical history at startup", function()
     local _, dibs = loader.load({ savedVariables = currentRoot(), skipInitialize = true })
     local canonical = assert(dibs.Ledger.GetCanonicalState("guild-primary"))

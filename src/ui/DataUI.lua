@@ -245,6 +245,8 @@ local function addBackups(shell, parent)
   gui.AddHeading(shell, parent, "Safety backups", helpText.UI_HELP_BACKUPS)
   gui.AddLabel(shell, parent, helpText.DATA_BACKUP_LOCAL_STORAGE
     or "These snapshots are stored locally. Select a backup to export its retained historical package; Import / Export captures current data.", true)
+  gui.AddLabel(shell, parent, helpText.DATA_BACKUP_INDEPENDENT_COPY
+    or "Local snapshots are in the same SavedVariables as the addon data. Keep an independent copy outside these files before cleanup or recovery.", true)
   addDatabaseSummary(gui, shell, parent)
   showStatus(gui, shell, parent)
   local controls = addStack(gui, shell, parent, "Create a backup", "Choose which Dibs data should be captured before a restore or import.")

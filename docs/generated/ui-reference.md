@@ -9,7 +9,7 @@ Category: `setup` | Module: `Installation` | Audience: developer, gm, officer
 
 **English:** Shows whether the shared guild ledger needs setup, historical review, or recovery, or is active. Initialization remains a Guild Master-authorized action.
 **Francais:** Indique si le registre partage doit etre configure, si les donnees historiques doivent etre examinees, s'il faut une recuperation ou s'il est actif. Son initialisation exige l'autorite du maitre de guilde.
-Source: `src/modules/Installation.lua:150` (`Installation.GetStatus`)
+Source: `src/modules/Installation.lua:155` (`Installation.GetStatus`)
 
 ## Dibs season (`guild.season`)
 
@@ -25,7 +25,7 @@ Category: `setup` | Module: `Installation` | Audience: developer, gm
 
 **English:** Guild Master workflow for Guild Configuration: review existing Dibs data and activate this guild's shared Dibs ledger. Opening this page does not initialize it.
 **Francais:** Parcours du maitre de guilde pour la configuration de guilde : examinez les donnees Dibs existantes et activez le registre partage de cette guilde. Ouvrir cette page ne l'initialise pas.
-Source: `src/modules/Installation.lua:408` (`Installation.Initialize`)
+Source: `src/modules/Installation.lua:463` (`Installation.Initialize`)
 
 ## Manual Dibs Adjustment (`ledger.adjust`)
 
@@ -41,7 +41,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer
 
 **English:** The recorded explanation for this action. Administrative changes require a meaningful reason.
 **Francais:** Explication conservee avec cette action. Les changements administratifs exigent une raison pertinente.
-Source: `src/modules/Ledger.lua:1704` (`Ledger.AdminAdjust`)
+Source: `src/modules/Ledger.lua:1763` (`Ledger.AdminAdjust`)
 
 ## Dibs audit history (`ledger.audit.history`)
 
@@ -49,7 +49,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer, player
 
 **English:** Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
-Source: `src/modules/Ledger.lua:2364` (`Ledger.GetHistory`)
+Source: `src/modules/Ledger.lua:2423` (`Ledger.GetHistory`)
 
 ## Dib Balance (`ledger.balance`)
 
@@ -57,7 +57,7 @@ Category: `ledger` | Module: `Ledger` | Audience: gm, officer, player
 
 **English:** Your available Dibs are scoped to this guild and season. A qualifying finalized award or authorized adjustment changes the balance.
 **Francais:** Vos Dibs disponibles sont propres a cette guilde et a cette saison. Un gain eligible finalise ou un ajustement autorise modifie le solde.
-Source: `src/modules/Ledger.lua:1811` (`Ledger.PrepareSeasonAllocationBatch`)
+Source: `src/modules/Ledger.lua:1870` (`Ledger.PrepareSeasonAllocationBatch`)
 
 ## Loot eligibility (`loot.eligibility`)
 
@@ -65,7 +65,7 @@ Category: `governance` | Module: `OfficerUI` | Audience: gm, officer, player
 
 **English:** Shows whether a loot category may use Dibs under the active guild policy, and why a category is blocked or needs review.
 **Francais:** Indique si une categorie de butin peut utiliser les Dibs selon la politique active, et pourquoi elle est bloquee ou a verifier.
-Source: `src/ui/OfficerUI.lua:978` (`Dibs.OfficerUI.GetEligibilityProjection`)
+Source: `src/ui/OfficerUI.lua:1451` (`Dibs.OfficerUI.GetEligibilityProjection`)
 
 ## Request audit timeline (`officer.audit.timeline`)
 
@@ -73,7 +73,7 @@ Category: `ledger` | Module: `Disputes` | Audience: gm, officer, player
 
 **English:** Shows recorded dates, actions, and available reasons. Older events are evidence, not editable balance controls.
 **Francais:** Affiche les dates, actions et raisons disponibles. Les anciens evenements sont des preuves, pas des soldes modifiables.
-Source: `src/modules/Disputes.lua:1541` (`Disputes.GetTimeline`)
+Source: `src/modules/Disputes.lua:1630` (`Disputes.GetTimeline`)
 
 ## Officer review requests (`officer.review.requests`)
 
@@ -81,7 +81,7 @@ Category: `ledger` | Module: `Disputes` | Audience: gm, officer
 
 **English:** Shows player reports and their attached Dibs or RCLootCouncil evidence. Opening a request is read-only; Officer resolutions retain an audit reason.
 **Francais:** Affiche les signalements des joueurs et leurs preuves Dibs ou RCLootCouncil. Ouvrir une demande est en lecture seule; les decisions des officiers conservent une raison d'audit.
-Source: `src/modules/Disputes.lua:738` (`Disputes.ListForOfficer`)
+Source: `src/modules/Disputes.lua:827` (`Disputes.ListForOfficer`)
 
 ## Player raid readiness (`player.readiness`)
 
@@ -97,7 +97,7 @@ Category: `setup` | Module: `PlayerUI` | Audience: player
 
 **English:** Explains whether your personal Dibs information is available. If features are limited or unavailable, retry later or contact an Officer; RCLootCouncil is optional and Standalone mode can remain available.
 **Francais:** Indique si vos informations Dibs personnelles sont disponibles. Si certaines fonctions sont limitees ou indisponibles, reessayez plus tard ou contactez un officier; RCLootCouncil est optionnel et le mode Standalone peut rester disponible.
-Source: `src/ui/PlayerUI.lua:651` (`Dibs.PlayerUI.GetStatusPresentation`)
+Source: `src/ui/PlayerUI.lua:660` (`Dibs.PlayerUI.GetStatusPresentation`)
 
 ## Announcement channels (`predibs.announcement.channels`)
 
@@ -105,7 +105,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer
 
 **English:** Choose destinations for public Pre-Dib notices and Officer-only notices. Availability depends on this character joining the configured channel; test it before live use.
 **Francais:** Choisissez les destinations des annonces publiques Pre-Dib et des avis reserves aux officiers. Ce personnage doit rejoindre le canal configure; testez-le avant utilisation.
-Source: `src/modules/PreDibs.lua:627` (`Dibs.PreDibs.GetAnnouncementSettings`)
+Source: `src/modules/PreDibs.lua:651` (`Dibs.PreDibs.GetAnnouncementSettings`)
 
 ## Encounter Mode (`predibs.encounter.mode`)
 
@@ -113,7 +113,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer, player
 
 **English:** Controls when players may submit a Pre-Dib. Encounter mode requires the matching raid and difficulty context; Wild Open may allow requests outside the raid under guild policy.
 **Francais:** Determine quand les joueurs peuvent envoyer un Pre-Dib. Le mode Encounter exige le raid et la difficulte correspondants; Wild Open peut autoriser les demandes hors raid selon la politique de guilde.
-Source: `src/modules/PreDibs.lua:605` (`Dibs.PreDibs.ValidatePublicRequest`)
+Source: `src/modules/PreDibs.lua:629` (`Dibs.PreDibs.ValidatePublicRequest`)
 
 ## Pre-Dib Request (`predibs.request`)
 
@@ -121,7 +121,7 @@ Category: `predibs` | Module: `PreDibs` | Audience: gm, officer, player
 
 **English:** A Pre-Dib records your interest in eligible loot. It does not award an item or spend a Dib; that happens only after a qualifying award is finalized.
 **Francais:** Un Pre-Dib indique votre interet pour un butin eligible. Il n'attribue pas l'objet et ne depense pas de Dib; cela arrive seulement apres un gain eligible finalise.
-Source: `src/modules/PreDibs.lua:790` (`Dibs.PreDibs.CreatePublic`)
+Source: `src/modules/PreDibs.lua:814` (`Dibs.PreDibs.CreatePublic`)
 
 ## Rank Allocation (`rank.allocation`)
 
@@ -169,7 +169,7 @@ Category: `setup` | Module: `Installation` | Audience: developer, gm, officer
 
 **English:** Review detected historical Dibs entries before the Guild Master initializes the shared ledger. Keep uncertain evidence unresolved until it is understood.
 **Francais:** Examinez les entrees Dibs historiques detectees avant que le maitre de guilde initialise le registre partage. Laissez les preuves incertaines sans decision.
-Source: `src/modules/Installation.lua:309` (`Installation.GetReconciliationView`)
+Source: `src/modules/Installation.lua:346` (`Installation.GetReconciliationView`)
 
 ## Coordinator (`sync.coordinator`)
 
@@ -177,7 +177,7 @@ Category: `governance` | Module: `Governance` | Audience: developer, gm, officer
 
 **English:** The authorized Dibs client that applies canonical guild-ledger updates. It is normally selected during Guild Configuration.
 **Francais:** Client Dibs autorise a appliquer les mises a jour canoniques du registre de guilde. Il est normalement choisi pendant la configuration.
-Source: `src/modules/Governance.lua:535` (`Governance.GetAuthorityState`)
+Source: `src/modules/Governance.lua:549` (`Governance.GetAuthorityState`)
 
 ## Resynchronize guild (`sync.guild.recovery`)
 
@@ -228,7 +228,7 @@ Category: `synchronization` | Module: `SyncV2` | Audience: gm, officer, player
 **English:** Rechecks every recorded reason, clears those already resolved, then requests the missing data from online peers. Keep an up-to-date Officer online while it runs.
 **Francais:** Reverifie chaque raison enregistree, efface celles deja resolues, puis demande les donnees manquantes aux pairs en ligne. Gardez un Officier a jour en ligne pendant l'operation.
 **Technical reference:** Synchronization page: Fix synchronization and Verify again locally; Repair peer or Resynchronize guild (GM/Officer). Force clear only resets a local indicator.
-Source: `src/modules/SyncV2.lua:3917` (`Sync.RequestResync`)
+Source: `src/modules/SyncV2.lua:4019` (`Sync.RequestResync`)
 
 ## Synchronization (`sync.status`)
 

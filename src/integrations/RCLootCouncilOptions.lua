@@ -764,24 +764,24 @@ function Dibs.RCOptions.GetSupportedLootRuleTypeValues()
   return getSupportedLootRuleTypeValues()
 end
 
-local function setDibTypeEnabled(typeKey, enabled)
+local function setDibTypeEnabled(typeKey, enabled, options)
   if not canEditDibsSettings() then
-    setStatus("Only the guild master or an officer may change Dibs settings.")
-    return false
+    setStatus("Only the guild master or an officer may change Dibs settings.", options)
+    return false, "GUILD_ADMIN_REQUIRED"
   end
   local semanticKey = canonicalSemanticTypeKey(typeKey)
   if semanticKey == nil then
-    setStatus("This RCLootCouncil item family is not eligible for Dibs.")
+    setStatus("This RCLootCouncil item family is not eligible for Dibs.", options)
     return false, "PERSONAL_ITEM_TYPE"
   end
   typeKey = semanticKey
   if Dibs.RCLootCouncil and Dibs.RCLootCouncil.SetDibEnabledForType then
     local ok, reason = Dibs.RCLootCouncil.SetDibEnabledForType(typeKey, enabled == true)
-    if ok == nil then setStatus("Unable to change Loot Rules draft: " .. tostring(reason)) end
+    if ok == nil then setStatus("Unable to change Loot Rules draft: " .. tostring(reason), options) end
     return ok == true, reason
   elseif Dibs.LootRules and Dibs.LootRules.SetDraftValue then
     local ok, reason = Dibs.LootRules.SetDraftValue(typeKey, "adventureGuide", enabled == true)
-    if not ok then setStatus("Unable to change Loot Rules draft: " .. tostring(reason)) end
+    if not ok then setStatus("Unable to change Loot Rules draft: " .. tostring(reason), options) end
     return ok == true, reason
   else
     getDibTypeSettings()[tostring(typeKey)] = enabled == true
@@ -844,26 +844,26 @@ local function refreshDibButtonProjection()
   return false, false
 end
 
-local function applyDibSemanticTemplate(templateKey)
+local function applyDibSemanticTemplate(templateKey, options)
   if not canEditDibsSettings() then
-    setStatus("Only the guild master or an officer may change Dibs settings.")
+    setStatus("Only the guild master or an officer may change Dibs settings.", options)
     return false, "GUILD_ADMIN_REQUIRED"
   end
   local template = DIBS_SEMANTIC_TEMPLATES[templateKey]
   if not template then
-    setStatus("Unknown Dibs semantic template.")
+    setStatus("Unknown Dibs semantic template.", options)
     return false, "UNKNOWN_DIBS_SEMANTIC_TEMPLATE"
   end
 
   for _, key in ipairs(DIBS_SEMANTIC_TEMPLATE_KEYS) do
     local enabled = template.enabled[key] == true
-    local ok, reason = setDibTypeEnabled(key, enabled)
+    local ok, reason = setDibTypeEnabled(key, enabled, options)
     if not ok then
-      setStatus(reason or ("Unable to apply template to " .. tostring(key) .. "."))
+      setStatus(reason or ("Unable to apply template to " .. tostring(key) .. "."), options)
       return false, reason or "DIBS_SEMANTIC_TEMPLATE_APPLY_FAILED"
     end
   end
-  setStatus("DIB semantic template applied: " .. template.label .. ".")
+  setStatus("DIB semantic template applied: " .. template.label .. ".", options)
   return true
 end
 
@@ -872,8 +872,8 @@ end
 -- not rewrite RCLootCouncil's existing response text, colours or ordering;
 -- the projection only adds/reuses the dedicated DIB entry in sets that the
 -- Master Looter already configured.
-local function applyInstallationPreset(templateKey)
-  local applied, reason = applyDibSemanticTemplate(templateKey)
+local function applyInstallationPreset(templateKey, options)
+  local applied, reason = applyDibSemanticTemplate(templateKey, options)
   if not applied then
     return false, reason or "DIBS_SEMANTIC_TEMPLATE_APPLY_FAILED"
   end
@@ -882,12 +882,12 @@ local function applyInstallationPreset(templateKey)
   if available then
     setStatus((templateKey == "progression" and "Curio + Tier Set" or "Standard loot") ..
       " preset applied; the Dibs button is prepared in the configured RCLootCouncil sets." ..
-      (changed == true and "" or " Existing button configuration was already ready."))
+      (changed == true and "" or " Existing button configuration was already ready."), options)
     return true
   end
 
   setStatus((templateKey == "progression" and "Curio + Tier Set" or "Standard loot") ..
-    " preset applied. RCLootCouncil is unavailable, so Dibs will use its standalone controls.")
+    " preset applied. RCLootCouncil is unavailable, so Dibs will use its standalone controls.", options)
   return true
 end
 
@@ -1131,10 +1131,10 @@ getState = function()
   return Dibs.RCOptions.state
 end
 
-setStatus = function(message)
+setStatus = function(message, options)
   local state = getState()
   state.status = tostring(message or "")
-  if Dibs.Message then
+  if Dibs.Message and not (type(options) == "table" and options.silent == true) then
     Dibs.Message(state.status)
   end
 end

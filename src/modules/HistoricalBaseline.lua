@@ -11,7 +11,7 @@ local Dibs = _G.Dibs
 Dibs.HistoricalBaseline = Dibs.HistoricalBaseline or {}
 local M = Dibs.HistoricalBaseline
 
-local SCHEMA, MAX_EVIDENCE, MAX_SOURCES, MAX_DECISIONS, MAX_AUDIT, MAX_DEPTH = 1, 500, 50, 500, 50, 8
+local SCHEMA, BATCH_SIZE, MAX_EVIDENCE_PER_CYCLE, MAX_SOURCES, MAX_DECISIONS, MAX_AUDIT, MAX_DEPTH = 1, 500, 5000, 50, 500, 50, 8
 local DECISIONS = { INCLUDE = true, EXCLUDE = true, COMPENSATING_ADJUSTMENT = true, DEFER = true }
 local SOURCE_TYPES = { LEDGER_TRANSACTION = true, PREDIB_REQUEST = true, MIGRATION_HISTORY = true, DIBS_RECONCILIATION = true }
 
@@ -63,7 +63,7 @@ end
 local function defaultState()
   return {
     schema = SCHEMA, status = "LEGACY_PREPARED", evidence = {}, sources = {}, findings = {}, decisions = {},
-    activeDecisionByEvidence = {}, baseline = nil, recoveries = {}, auditLog = {},
+    activeDecisionByEvidence = {}, baseline = nil, recoveries = {}, auditLog = {}, collectionProgress = {},
   }
 end
 local function ensure(db)
@@ -72,7 +72,7 @@ local function ensure(db)
   local state = db.legacyBaseline
   if state.schema ~= SCHEMA then state.schema = SCHEMA end
   if state.status ~= "LEGACY_PREPARED" and state.status ~= "BASELINE_APPROVED" then state.status = "LEGACY_PREPARED" end
-  for _, key in ipairs({ "evidence", "sources", "findings", "decisions", "activeDecisionByEvidence", "recoveries", "auditLog" }) do
+  for _, key in ipairs({ "evidence", "sources", "findings", "decisions", "activeDecisionByEvidence", "recoveries", "auditLog", "collectionProgress" }) do
     if type(state[key]) ~= "table" then state[key] = {} end
   end
   if state.baseline ~= nil and type(state.baseline) ~= "table" then state.baseline = nil end
@@ -251,9 +251,8 @@ local function collectInto(state, sourceInput, records, strict)
     if not evidence then return nil, reason end
     normalized[#normalized + 1] = evidence
   end
-  local newCount = 0
-  for _, evidence in ipairs(normalized) do if not state.evidence[evidence.evidenceId] then newCount = newCount + 1 end end
-  if count(state.evidence) + newCount > MAX_EVIDENCE then return nil, "EVIDENCE_LIMIT_EXCEEDED" end
+  -- Retained evidence is append-only. The local collector bounds work by
+  -- BATCH_SIZE and MAX_EVIDENCE_PER_CYCLE instead of truncating old history.
   if not existingSource then
     existingSource = copy(source); existingSource.evidenceIds = {}; state.sources[source.sourceId] = existingSource
   end
@@ -348,6 +347,19 @@ local function incompleteSources(state)
   return false
 end
 
+local function incompleteCollectionReason(state)
+  for sourceId, progress in pairs(state.collectionProgress or {}) do
+    if type(progress) == "table" and progress.state ~= "COMPLETE" then
+      local reason = "INCOMPLETE_EVIDENCE_SOURCE_IN_PROGRESS:" .. tostring(sourceId)
+      if progress.state == "ERROR" and trim(progress.lastReason) then
+        reason = reason .. ":" .. trim(progress.lastReason)
+      end
+      return reason
+    end
+  end
+  return nil
+end
+
 function M.GetState() return copy(ensure()) end
 function M.GetEvidence() return sortedValues(ensure().evidence) end
 function M.GetFindings() return sortedValues(ensure().findings) end
@@ -361,17 +373,31 @@ end
 -- made repeated readiness checks scale with the historical record.
 function M.GetInstallationSummary(db)
   local state = ensure(db)
-  local openFindings, incompleteSources = 0, false
+  local openFindings, hasIncompleteSources, sourceSummary = 0, false, {}
   for _, finding in pairs(state.findings) do
     if finding.status == "OPEN" then openFindings = openFindings + 1 end
   end
   for _, source in pairs(state.sources) do
-    if source.complete == false then incompleteSources = true; break end
+    if source.complete == false then hasIncompleteSources = true; break end
+  end
+  for sourceId, source in pairs(state.sources) do
+    if type(source) == "table" then
+      sourceSummary[sourceId] = {
+        sourceType = source.sourceType, complete = source.complete == true,
+        evidenceCount = #(source.evidenceIds or {}),
+      }
+    end
+  end
+  local incompleteProgress = 0
+  for _, progress in pairs(state.collectionProgress) do
+    if type(progress) == "table" and progress.state ~= "COMPLETE" then incompleteProgress = incompleteProgress + 1 end
   end
   return {
     evidenceCount = count(state.evidence),
     openFindings = openFindings,
-    incompleteSources = incompleteSources,
+    incompleteSources = hasIncompleteSources or incompleteProgress > 0,
+    collectionProgress = copy(state.collectionProgress),
+    sources = sourceSummary,
     baselinePresent = state.baseline ~= nil,
     baselineHash = state.baseline and state.baseline.legacyBaselineHash or nil,
   }
@@ -392,6 +418,7 @@ end
 
 -- Evidence collection is local and attributable, but does not grant canonical status.
 function M.CollectEvidence(actor, source, records)
+  if type(records) ~= "table" or #records > BATCH_SIZE then return nil, "EVIDENCE_BATCH_LIMIT_EXCEEDED" end
   local snapshot, reason = localSnapshot(actor, false, false)
   if not snapshot then return nil, reason end
   local state = ensure()
@@ -406,27 +433,131 @@ function M.CollectEvidence(actor, source, records)
 end
 
 -- Collects the local Dibs-owned history only. RCLootCouncil history is deliberately excluded.
+local function collectLocalSource(actorSnapshot, source, records, cycleBudget)
+  local sourceId = source.sourceId
+  local state = ensure()
+  local sourceFingerprint = hash(records)
+  if not sourceFingerprint then return nil, "EVIDENCE_SOURCE_FINGERPRINT_FAILED", 0 end
+  local previous = state.collectionProgress[sourceId]
+  local cursor, restartReason = 0, nil
+  if type(previous) == "table" and previous.sourceFingerprint == sourceFingerprint then
+    cursor = math.max(0, math.min(#records, tonumber(previous.cursor) or 0))
+  elseif type(previous) == "table" then
+    restartReason = "EVIDENCE_SOURCE_CHANGED"
+  end
+  local budget, processed = math.max(0, tonumber(cycleBudget) or 0), 0
+
+  if type(previous) == "table" and previous.sourceFingerprint == sourceFingerprint
+    and previous.state == "COMPLETE" and cursor == #records then
+    local existing = state.sources[sourceId]
+    return existing and copy(existing.evidenceIds or {}) or {}, nil, 0
+  end
+
+  local function saveProgress(nextState, progress)
+    nextState.collectionProgress[sourceId] = progress
+    local storedSource = nextState.sources[sourceId]
+    if storedSource then storedSource.complete = progress.state == "COMPLETE" end
+    nextState.status, nextState.baseline = "LEGACY_PREPARED", nil
+    Dibs.GetDB().legacyBaseline = nextState
+  end
+
+  if cursor == #records then
+    saveProgress(copy(state), {
+      cursor = cursor, sourceFingerprint = sourceFingerprint, totalSeen = #records,
+      state = "COMPLETE", updatedAt = now(),
+    })
+  else
+    while cursor < #records and processed < budget do
+      local batchEnd = math.min(#records, cursor + BATCH_SIZE, cursor + budget - processed)
+      local batch = {}
+      for index = cursor + 1, batchEnd do batch[#batch + 1] = records[index] end
+      local staged = copy(ensure())
+      local added, failure = collectInto(staged, source, batch)
+      if not added then
+        local progress = {
+          cursor = cursor, sourceFingerprint = sourceFingerprint, totalSeen = cursor,
+          state = "ERROR", lastReason = failure or "EVIDENCE_COLLECTION_FAILED", updatedAt = now(),
+        }
+        saveProgress(copy(ensure()), progress)
+        return nil, progress.lastReason, processed
+      end
+      cursor, processed = batchEnd, processed + #batch
+      local complete = cursor >= #records
+      local progress = {
+        cursor = cursor, sourceFingerprint = sourceFingerprint, totalSeen = cursor,
+        state = complete and "COMPLETE" or "INCOMPLETE", updatedAt = now(),
+      }
+      if restartReason then progress.lastReason = restartReason end
+      staged.collectionProgress[sourceId] = progress
+      local storedSource = staged.sources[sourceId]
+      if storedSource then storedSource.complete = complete end
+      boundedInsert(staged.auditLog, {
+        action = "EVIDENCE_COLLECTION_BATCH", actor = copy(actorSnapshot), sourceId = sourceId,
+        cursor = cursor, batchSize = #batch, state = progress.state, timestamp = now(),
+      }, MAX_AUDIT)
+      staged.status, staged.baseline = "LEGACY_PREPARED", nil
+      Dibs.GetDB().legacyBaseline = staged
+    end
+    if cursor < #records then
+      saveProgress(copy(ensure()), {
+        cursor = cursor, sourceFingerprint = sourceFingerprint, totalSeen = cursor,
+        state = "INCOMPLETE", updatedAt = now(), lastReason = restartReason,
+      })
+    end
+  end
+  local committed = ensure().sources[sourceId]
+  return committed and copy(committed.evidenceIds or {}) or {}, nil, processed
+end
+
+function M.GetCollectionProgress(sourceId, db)
+  local progress = ensure(db).collectionProgress
+  if sourceId ~= nil then
+    local value = progress[tostring(sourceId)]
+    return value and { [tostring(sourceId)] = copy(value) } or {}
+  end
+  return copy(progress)
+end
+
 function M.CollectLocalEvidence(actor, sourceId)
+  local snapshot, snapshotReason = localSnapshot(actor, false, false)
+  if not snapshot then return nil, snapshotReason end
   local db = Dibs.GetDB()
   local preDibs = db.preDibs or {}
   local ledgerRecords, requestRecords = {}, {}
-  local transactions = Dibs.Ledger and Dibs.Ledger.GetAllTransactions
-    and Dibs.Ledger.GetAllTransactions("guild-primary") or {}
-  local requests = Dibs.PreDibs and Dibs.PreDibs.GetHistory
-    and Dibs.PreDibs.GetHistory("guild-primary") or preDibs.requests or {}
-  for _, record in ipairs(transactions) do
-    local id = record.transactionId
-    ledgerRecords[#ledgerRecords + 1] = { originalId = id, record = copy(record) }
+  if not Dibs.Ledger or type(Dibs.Ledger.GetAllTransactions) ~= "function" then
+    return nil, "LEDGER_SOURCE_UNAVAILABLE"
   end
-  for _, record in ipairs(requests) do requestRecords[#requestRecords + 1] = { originalId = record.requestId, record = copy(record) } end
+  local ledgerRead, transactions = pcall(Dibs.Ledger.GetAllTransactions, "guild-primary")
+  if not ledgerRead or type(transactions) ~= "table" then return nil, "LEDGER_SOURCE_READ_FAILED" end
+  local requests
+  if Dibs.PreDibs and type(Dibs.PreDibs.GetHistory) == "function" then
+    local predibsRead, value = pcall(Dibs.PreDibs.GetHistory, "guild-primary")
+    if not predibsRead or type(value) ~= "table" then return nil, "PREDIBS_SOURCE_READ_FAILED" end
+    requests = value
+  elseif type(preDibs.requests) == "table" then
+    requests = preDibs.requests
+  else
+    return nil, "PREDIBS_SOURCE_UNAVAILABLE"
+  end
+  for _, record in ipairs(transactions) do
+    ledgerRecords[#ledgerRecords + 1] = { originalId = record.transactionId, record = copy(record) }
+  end
+  for _, record in ipairs(requests) do
+    requestRecords[#requestRecords + 1] = { originalId = record.requestId, record = copy(record) }
+  end
   table.sort(ledgerRecords, function(a, b) return tostring(a.originalId) < tostring(b.originalId) end)
   table.sort(requestRecords, function(a, b) return tostring(a.originalId) < tostring(b.originalId) end)
-  local client = Dibs.GetPlayerName()
-  local first, reason = M.CollectEvidence(actor, { sourceId = (sourceId or "local") .. ":ledger", sourceClient = client,
-    sourceType = "LEDGER_TRANSACTION", sourceVersion = db.version, guildKey = Dibs.GetGuildKey(), complete = true }, ledgerRecords)
+  local client, budget = Dibs.GetPlayerName(), MAX_EVIDENCE_PER_CYCLE
+  local first, reason, consumed = collectLocalSource(snapshot, {
+    sourceId = (sourceId or "local") .. ":ledger", sourceClient = client,
+    sourceType = "LEDGER_TRANSACTION", sourceVersion = db.version, guildKey = Dibs.GetGuildKey(), complete = true,
+  }, ledgerRecords, budget)
   if not first then return nil, reason end
-  local second, requestReason = M.CollectEvidence(actor, { sourceId = (sourceId or "local") .. ":predibs", sourceClient = client,
-    sourceType = "PREDIB_REQUEST", sourceVersion = db.version, guildKey = Dibs.GetGuildKey(), complete = true }, requestRecords)
+  budget = math.max(0, budget - (consumed or 0))
+  local second, requestReason = collectLocalSource(snapshot, {
+    sourceId = (sourceId or "local") .. ":predibs", sourceClient = client,
+    sourceType = "PREDIB_REQUEST", sourceVersion = db.version, guildKey = Dibs.GetGuildKey(), complete = true,
+  }, requestRecords, budget)
   if not second then return nil, requestReason end
   return { ledger = first, preDibs = second }
 end
@@ -478,6 +609,8 @@ function M.FinalizeBaseline(actor, options)
   local snapshot, reason = localSnapshot(actor, true, false)
   if not snapshot then return nil, reason end
   local state = ensure()
+  local collectionReason = incompleteCollectionReason(state)
+  if collectionReason then return nil, collectionReason end
   if incompleteSources(state) and options.acknowledgeIncompleteEvidence ~= true then return nil, "INCOMPLETE_EVIDENCE_ACKNOWLEDGEMENT_REQUIRED" end
   local baseline, baselineReason = buildBaseline(state)
   if not baseline then return nil, baselineReason end
@@ -518,11 +651,21 @@ end
 function M.StageRecoveryPackage(package, context)
   local valid, reason = validateRecoveryPackage(package, context)
   if not valid then return nil, reason end
-  local staged = copy(ensure())
+  local current = ensure()
+  local staged = copy(current)
   for _, sourcePackage in ipairs(package.evidenceSources) do
     if type(sourcePackage) ~= "table" then return nil, "INCOMPLETE_RECOVERY_PACKAGE" end
     local added, collectReason = collectInto(staged, sourcePackage.source, sourcePackage.records, true)
     if not added then return nil, collectReason end
+  end
+  local priorConflicts = {}
+  for findingId, finding in pairs(current.findings) do
+    if finding.kind == "LEGACY_ID_CONTENT_CONFLICT" then priorConflicts[findingId] = true end
+  end
+  for findingId, finding in pairs(staged.findings) do
+    if finding.kind == "LEGACY_ID_CONTENT_CONFLICT" and not priorConflicts[findingId] then
+      return nil, "CONTRADICTORY_RECOVERY_EVIDENCE"
+    end
   end
   staged.status, staged.baseline = "LEGACY_PREPARED", nil
   return { package = copy(package), packageHash = package.contentHash, stagedState = staged }

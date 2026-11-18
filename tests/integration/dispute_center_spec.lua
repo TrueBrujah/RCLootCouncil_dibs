@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 local fixtures = require("helpers.dispute_fixtures")
 
 describe("Dispute center", function()
@@ -67,24 +67,24 @@ describe("Dispute center", function()
     assert_equal("Open", dibs.Disputes.GetRequest(request.requestId, "Tester-Realm").status)
   end)
 
-  it("corrects a missing debit through one linked append-only transaction", function()
+  it("refuses an accounting correction without an original transaction even in a candidate with its gate open", function()
     local dibs = setup({ guildLeader = true })
     local request, requestReason = dibs.Disputes.CreateReport(fixtures.report("missing debit"))
     assert_not_nil(request, tostring(requestReason))
     local before = #dibs.Ledger.GetHistory("Tester-Realm")
+    require("helpers.canonical_writer").enable(dibs)
     local result, reason = dibs.Disputes.CorrectBalance(request.requestId, { confirmed = true, reason = "Confirmed missing award" }, "Other-Realm")
     assert_true(result == nil)
     assert_equal("GUILD_ADMIN_REQUIRED", reason)
-    local officerResult = dibs.Disputes.CorrectBalance(request.requestId, { confirmed = true, reason = "Confirmed missing award" }, nil)
-    assert_true(officerResult.ok)
-    assert_true(officerResult.changedBalance)
-    assert_equal("Resolved", officerResult.request.status)
-    assert_equal(request.requestId, officerResult.transaction.reviewRequestId)
-    assert_equal(before + 1, #dibs.Ledger.GetHistory("Tester-Realm"))
+    local officerResult, officerReason = dibs.Disputes.CorrectBalance(request.requestId, { confirmed = true, reason = "Confirmed missing award" }, nil)
+    assert_nil(officerResult)
+    assert_equal("ORIGINAL_TRANSACTION_REQUIRED", officerReason)
+    assert_equal(before, #dibs.Ledger.GetHistory("Tester-Realm"))
     local replay, replayReason = dibs.Disputes.CorrectBalance(request.requestId, { confirmed = true, reason = "Confirmed missing award" }, nil)
     assert_nil(replay)
-    assert_equal("REQUEST_ALREADY_RESOLVED", replayReason)
-    assert_equal(before + 1, #dibs.Ledger.GetHistory("Tester-Realm"))
+    assert_equal("ORIGINAL_TRANSACTION_REQUIRED", replayReason)
+    assert_equal("Open", dibs.Disputes.GetRequest(request.requestId).status)
+    assert_equal(before, #dibs.Ledger.GetHistory("Tester-Realm"))
   end)
 
   it("keeps the Officer queue private and exposes only safe owner views", function()
@@ -286,6 +286,7 @@ describe("Dispute center", function()
       itemID = 19019,
       itemLink = "|Hitem:19019::::::::::::|h[Old Item]|h|r",
     }))
+    require("helpers.canonical_writer").activate(dibs)
     local oldBalance = dibs.Ledger.GetBalance("Tester-Realm", season.id)
     local newBalance = dibs.Ledger.GetBalance("Recipient-Realm", season.id)
     local request, requestReason = dibs.Disputes.CreateReport({
@@ -317,27 +318,42 @@ describe("Dispute center", function()
     assert_equal("REQUEST_ALREADY_RESOLVED", replayReason)
   end)
 
-  it("routes advanced corrections through protected ledger actions", function()
+  it("routes advanced corrections through one canonical operation per request", function()
     local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+    local seasonId = dibs.GetCurrentSeasonId()
+    local originals = {}
+    assert_not_nil(dibs.Ledger.Grant("Tester-Realm", 5, "Correction fixture allocation", "test", seasonId))
     for _, action in ipairs({ "refund", "revoke", "historical_import", "adjustment" }) do
-      local request = dibs.Disputes.CreateReport(fixtures.report("other", { note = action }))
+      originals[action] = assert(dibs.Ledger.AddTransaction(fixtures.transaction("Tester-Realm", seasonId, {
+        transactionId = "advanced-original-" .. action, awardRef = "advanced-award-" .. action,
+        amount = action == "revoke" and 1 or -1,
+        type = action == "revoke" and "DIB_GRANTED" or "DIB_USED",
+      })))
+    end
+    require("helpers.canonical_writer").activate(dibs)
+    for _, action in ipairs({ "refund", "revoke", "historical_import", "adjustment" }) do
+      local request = dibs.Disputes.CreateReport(fixtures.report("other", { note = action,
+        transactionRef = originals[action].transactionId }))
+      local before = dibs.Ledger.GetCanonicalState("guild-primary").nextSeq
       local result, reason = dibs.Disputes.Resolve(request.requestId, action, { amount = 1, confirmed = true, reason = "Audited " .. action }, nil)
       assert_true(result and result.ok, tostring(action) .. ": " .. tostring(reason))
       assert_true(result.changedBalance)
       assert_equal("Resolved", result.request.status)
+      assert_equal(before + 1, dibs.Ledger.GetCanonicalState("guild-primary").nextSeq)
+      assert_equal(originals[action].amount, dibs.GetDB().ledgers["guild-primary"].transactions[originals[action].transactionId].amount)
     end
   end)
 
-  it("canonicalizes a short player name before an accounting correction", function()
+  it("requires a provable original even when a short player name resolves", function()
     local dibs, season = setup({ guildLeader = true, guildMembers = { "Tester-Realm", "Huudada-Durotan" } })
     local request = dibs.Disputes.CreateReport({ category = "wrong_debit", note = "short name correction" })
     request.player.name = "Huudada"
+    require("helpers.canonical_writer").enable(dibs)
     local result, reason = dibs.Disputes.Resolve(request.requestId, "adjustment", {
       amount = 2, confirmed = true, reason = "Canonical identity test",
     }, nil)
-    assert_true(result and result.ok, tostring(reason))
-    local history = dibs.Ledger.GetHistory("Huudada-Durotan", season.id)
-    assert_equal(2, history[#history].amount)
-    assert_equal("Huudada-Durotan", history[#history].playerName)
+    assert_nil(result)
+    assert_equal("ORIGINAL_TRANSACTION_REQUIRED", reason)
+    assert_equal(0, #dibs.Ledger.GetHistory("Huudada-Durotan", season.id))
   end)
 end)

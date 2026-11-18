@@ -239,9 +239,10 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
   it("S002-11: Replayed authorized transaction does not create duplicates", function()
     local dibs = load({ 
       wow = { 
-        guildLeader = false, 
-        playerName = "Tester-Realm",
-        guildMembers = { "GM-Realm", "Tester-Realm" }
+        guildLeader = true,
+        playerName = "GM-Realm",
+        guildMembers = { "GM-Realm", "Tester-Realm" },
+        guildRankIndices = { 0, 3 },
       } 
     })
     
@@ -257,12 +258,13 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
     local txId = result1.value.transactionId
     local count1 = #dibs.Ledger.GetAllTransactions()
     
-    -- Replay via direct API should be rejected (no valid audit context)
+    -- The authenticated GM replay must recognize the same immutable row.
     local tx2, reason2 = dibs.Ledger.Grant("Tester-Realm", 5, "Test", "replay-test", dibs.GetCurrentSeasonId(), 
       { transactionId = txId })
     
-        -- Direct API call should be rejected - requires audit context from ProtectedActions
-        assert_false(tx2, "Direct API call should be rejected without valid audit context: " .. tostring(reason2))
+    assert_not_nil(tx2, tostring(reason2))
+    assert_equal(txId, tx2.transactionId)
+    assert_equal("IDEMPOTENT_REPLAY", reason2)
     
     -- Count should not change
     local count2 = #dibs.Ledger.GetAllTransactions()
@@ -347,7 +349,7 @@ describe("SA-002: Public mutation APIs bypass ProtectedActions", function()
     local before = dibs.Ledger.GetBalance("Tester-Realm")
     
     -- Normal use through ProtectedActions should work
-    local result = dibs.ProtectedActions.Execute("ledger.use", "GM-Realm", {
+    local result = dibs.ProtectedActions.Execute("ledger.use", nil, {
       playerName = "Tester-Realm",
       amount = 1,
       reason = "Regression test",

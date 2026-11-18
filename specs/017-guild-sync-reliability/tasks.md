@@ -76,6 +76,34 @@
 
 ## Dependencies
 
+- [x] T029 Repair terminal reservation counting, release digests and retained
+  tombstones in Governance/Ledger/SyncV2; preserve the pending wire contract and
+  accounting history. Validate rejection/staleness, receiver authority and scope,
+  atomic refusal, replay/reordering, reconnection and bounded pagination with
+  RF-0031/RF-0034/RF-0036 and the existing proposal relay suites. Authorized bug
+  repair 2026-11-17. Implemented with 17 new integrity cases and existing release,
+  relay, reordering/reconnection coverage; consolidated **383/383 on 36 suites
+  under Lua 5.1.5 and Fengari**, compilation **112/112 under Lua 5.1.5**. No
+  accounting journal, protocol-major, quota or release-gate change; T030 remains open.
+- [ ] T030 Observe terminal release and reconnection on two upgraded Retail
+  clients; record available and accounting balances separately. Older clients
+  ignoring optional releases do not establish convergence. Depends on T029;
+  does not replace T026's simultaneous-raid acceptance.
+- [x] T031 Reproduce and qualify RF-0035/RF-0043 coordinator-handoff failures in
+  `tests/integration/rf0035_coordinator_handoff_spec.lua` and
+  `tests/integration/rf0043_four_client_global_scenario_spec.lua`; verify actual
+  epoch/sequence/authority dependencies before correcting Governance/SyncV2.
+  Restore existing rejection/convergence rules without relaxing readiness,
+  accepting a closed epoch or adding a second writer. The reservation slice fixes
+  one RF-0043 failure.
+  - Completed 2026-11-17: Governance sends the closure immediately; successor
+    acceptance checks the actual local predecessor epoch/sequence/root. Recovery
+    may resolve only its own authority-detail gap, while other gaps remain blocking.
+    RF-0035/RF-0043 converge in the full independent-client scenario and RF-0044
+    retains the strict readiness checks. B05b/B06 now supply genuine compatible
+    peers and canonical closure state. Full Lua 5.4: 2,181 passed, zero failed.
+    T026/T030 still require Retail observations.
+
 - Phase 2 (Foundational) blocks all user story phases (Phases 3–5).
 - Phase 3 (US1), Phase 4 (US2), and Phase 5 (US3) are independent of each other and may be implemented/tested in any order once Phase 2 is done; priority order (P1 → P2 → P3) is recommended for incremental delivery.
 - Phase 6 (Polish) depends on all selected user-story phases being complete.

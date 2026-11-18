@@ -61,6 +61,7 @@ local TOC_FILES = {
   "ui/LogsUI.lua",
   "ui/DataUI.lua",
   "ui/PlayerUI.lua",
+  "ui/OfficerDashboard.lua",
   "ui/OfficerUI.lua",
   "ui/MinimapButton.lua",
   "integrations/RCLootCouncilOptions.lua",

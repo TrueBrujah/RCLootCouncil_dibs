@@ -19,7 +19,10 @@ end
 local function createOpenSeason(dibs)
   local now = dibs.GetTimestamp()
   local created = dibs.SeasonalRoster.CreateSeason({ name = "Status season", startAt = now + 10000,
-    registrationStartAt = now - 10, raidRules = "Current rules", promotionPolicy = "Manual review." },
+    registrationStartAt = now - 10, raidRules = "Current rules", promotionPolicy = "Manual review.",
+    raidDifficulties = { "NORMAL", "MYTHIC" },
+    raidSchedule = { { weekday = 3, startTime = "19:00", durationMinutes = 150,
+      timeZone = "America/Toronto", difficulty = "HEROIC" } } },
     "status-season-create", GM)
   assert_true(created.ok, tostring(created.code))
   local opened = dibs.SeasonalRoster.SetRegistrationState(created.value, "OPEN", created.revision,
@@ -53,12 +56,21 @@ describe("seasonal roster statuses and policy", function()
     assert_equal(revision + 1, season.currentRevision)
     assert_equal("Current rules", season.revisions[tostring(revision)].raidRules)
     assert_equal("Manual review.", season.revisions[tostring(revision)].promotionPolicy)
+    assert_equal("NORMAL", season.revisions[tostring(revision)].raidDifficulties[1])
+    assert_equal("MYTHIC", season.revisions[tostring(revision)].raidDifficulties[2])
+    assert_equal("HEROIC", season.revisions[tostring(revision)].raidSchedule[1].difficulty)
     assert_equal("Updated raid rules", season.revisions[tostring(edited.revision)].raidRules)
+    assert_equal("NORMAL", season.revisions[tostring(edited.revision)].raidDifficulties[1])
+    assert_equal("MYTHIC", season.revisions[tostring(edited.revision)].raidDifficulties[2])
+    assert_equal("HEROIC", season.revisions[tostring(edited.revision)].raidSchedule[1].difficulty)
     assert_equal("Three reviewed progression nights.", season.revisions[tostring(edited.revision)].promotionPolicy)
     assert_equal(2, season.revisions[tostring(edited.revision)].rulesRevision)
     local publicSeason = dibs.SeasonalRoster.ListSeasons()[1]
     assert_equal(2, publicSeason.rulesRevision)
     assert_equal("Updated raid rules", publicSeason.raidRules)
+    assert_equal("NORMAL", publicSeason.raidDifficulties[1])
+    assert_equal("MYTHIC", publicSeason.raidDifficulties[2])
+    assert_equal("HEROIC", publicSeason.raidSchedule[1].difficulty)
 
     local stale = dibs.SeasonalRoster.PublishSeasonPolicy(seasonId, { raidRules = "Stale" }, revision,
       "publish-policy-stale", "Stale edit", GM)

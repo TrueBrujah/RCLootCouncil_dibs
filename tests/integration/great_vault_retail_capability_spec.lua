@@ -387,6 +387,7 @@ describe("Great Vault Retail capability", function()
 
   it("refreshes pending and failed diagnostics and displays the claimed item in the open Player Vault page", function()
     local _, dibs = loader.load({ withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     local claim, loot, complete = installRetail(dibs)
     local rows, labels = nil, {}
     local addTable, addLabel = dibs.AceGUI.AddTable, dibs.AceGUI.AddLabel

@@ -516,7 +516,9 @@ describe("committed season activation convergence", function()
       state.generation = (state.generation or 0) + 500
       return state
     end
-    target.dibs.GetDB().characterEligibility.revision = target.dibs.GetDB().characterEligibility.revision + 100
+    local identityRevision = target.dibs.CharacterEligibility.GetRevision()
+    target.dibs.GetDB().characterEligibility.revision = identityRevision + 100
+    assert_equal(identityRevision + 100, target.dibs.CharacterEligibility.GetRevision())
     local ok, reason = transfer(target, "SEASON_ACTIVATION", bundle.seasonId, bundle.manifest, GM, "portable-manifest")
     assert_true(ok, tostring(reason))
     assert_equal(bundle.seasonId, target.dibs.GetCurrentSeasonId())

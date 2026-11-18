@@ -187,3 +187,34 @@ Task: "Add semantic UI and correction-navigation tests in tests/integration/guid
 3. **Correction UX**: True blockers are red and directly actionable.
 4. **Advanced mode**: Existing specialized controls remain reachable.
 5. **Polish**: Guides, compatibility suites, and Retail checklist.
+
+## Approved progressive setup — 2026-11-15
+
+- [x] T025 Add read-only navigation prerequisites in `Wizard.GetNavigationAccess`, preserving migration/history and optional integrations; test fresh, partial, ready and legacy states.
+- [x] T026 Apply the route set to Officer menus, default/stale/direct routes and refresh after setup changes; only Guided Setup on a fresh installation.
+- [x] T027 Show safe setup waiting in PlayerUI without exposing administrative reports or mutations; preserve applicable personal history on upgrade.
+- [x] T028 Run focused multi-runtime regressions and independent QA for visibility, permissions, existing installations and configuration reachability. **262/262 on 16 suites under Fengari, Lua 5.4.6 and native 5.1.5; independent main-slice QA 30/30 under each.**
+- [x] T029 Update guides/checkpoint and add Retail tests; keep real-client layout/navigation validation explicitly open until reported. **N01–N06 added; N01 later partially observed through user screenshots, remaining live checks open.**
+- [x] T030 Preserve contextual help in the current configuration viewport after rebuild/resize and route allocation guidance to Seasonal Roster without global readiness/Wizard scans. **Focused 15/15, independent QA 15/15 and combined 262/262 on all three runtimes.**
+
+## Approved inline season preparation — 2026-11-15
+
+- [x] T031 Extend profile preview/apply with optional validated season-draft orchestration through existing SeasonalRoster service; preserve disabled/existing/custom states, foundation gates and retry safety. **18 new service cases, all three runtimes.**
+- [x] T032 Add the optional inline form to Configure using shared date/time and raid-night controls, accurate foundation copy and retained validation errors; no guild rules inferred. **10 new UI cases, all three runtimes.**
+- [x] T033 Run focused behavior/regression tests on Fengari, Lua 5.4.6 and native Lua 5.1.5, compile and obtain independent QA; update guides/checkpoint and Retail tests without closing live gates. **290/290 on 18 suites and independent QA 80/80 per runtime (28 new, 8 additional QA, 44 regressions); compilation 111/111; doc and load-file preflight PASS. Retail N07 NON TESTÉ.**
+
+## Approved resumable guided completion — 2026-11-15
+
+- [x] T034 Add ordered next-action projection, truthful successful action results and bounded guild-isolated local resume data with regression tests. **Existing implementation verified on 2026-11-16: ordered/guild-isolated service and reload/error tests pass in the 186-case slice on Fengari and native Lua 5.4.6.**
+- [x] T035 Render one next action by default, explicit technical details, return-to-setup correction flow, saved form values and in-addon colored feedback; retain all service gates. **Verified with actual window/reload/correction tests; season redesign preserves these paths and fixes adoption success feedback.**
+- [x] T036 Refresh already-open PlayerUI after prerequisite changes and silence redundant guided preset notices without affecting direct options callers; add targeted behavior tests. **Visible/throttled access refresh and silent/direct-call regressions pass in the same slice.**
+- [ ] T037 Run multi-runtime regression and independent QA, update guides/checkpoint and record new Retail observations and remaining checks. **Partial on 2026-11-16: 186/186 on 15 suites under Fengari and native Lua 5.4.6; docs aligned. Native Lua 5.1.5 not re-executed (retained tooling absent), no new independent QA or Retail observation; N08–N12 remain NON TESTÉS.**
+
+## Approved season presentation redesign — 2026-11-16
+
+- [x] T038 Use the common essential-first season form in Configure, summarized
+  optional sections with retained input/error disclosure, compact profile details
+  and localized result labels. **Five new UI regressions across inline preparation
+  and season management; integrated 186/186 slice on Fengari and Lua 5.4.6.**
+  Retail layout and actual combat/protection checks remain open under T037/T053.
+  No new persisted business flags, Markdown library or timezone conversion.

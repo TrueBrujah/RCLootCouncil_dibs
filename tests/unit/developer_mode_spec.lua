@@ -94,6 +94,7 @@ describe("Developer mode", function()
 
   it("reports sandbox state through dev status and keeps navigation hidden while inactive", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
+    require("helpers.configured_addon").configure(dibs)
     dibs.HandleSlashCommand("dev status")
     local status = dibs.DeveloperSandbox.GetStatus()
     assert_false(status.developerMode)

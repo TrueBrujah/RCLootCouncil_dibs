@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 local function framePoint(frame, pointName)
   for _, point in ipairs(frame and frame._points or {}) do

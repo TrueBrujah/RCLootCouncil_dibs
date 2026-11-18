@@ -75,6 +75,36 @@ git diff --check
 
 ## Retail checks
 
+Progressive setup validation on 2026-11-15: **262/262 tests on 16 integration
+suites** under Fengari, Lua 5.4.6 and native Lua 5.1.5. Independent review of the
+four new suites: **30/30 under all three runtimes**, plus an independent **15/15**
+contextual-help regression check under each (45 distinct QA cases). Full source compilation:
+**111/111 Lua 5.1.5**. Documentation Generate/Check and addon load-file preflight
+pass. These are targeted results, not a new full-repository test run or Retail
+certification. The earlier global red baseline remains historical evidence.
+
+- New progressive setup scenarios are recorded in
+  [N01–N07](../../docs/audits/0.8.12-TESTS-RETAIL-FR.md): N01 is partially observed
+  in user screenshots; remaining checks are **NON TESTÉ**. Fresh startup only Guided
+  Setup, safe member waiting, custom foundation initialization, gradual route
+  availability, guild-neutral text and named schedule controls. Existing history
+  and correction access must remain available on upgrades.
+- Focused new coverage: `guided_setup_navigation_access_spec.lua`,
+  `guided_setup_officer_navigation_spec.lua`, `seasonal_roster_guild_language_spec.lua`
+  and `seasonal_roster_schedule_editor_spec.lua`, in `tests/integration/`.
+  Existing Wizard, installation, PlayerUI and Officer navigation suites remain
+  relevant, with explicit configured-guild fixtures for isolated page tests.
+
+Inline season preparation follow-up: **290/290 on 18 integration suites under
+each runtime**, adding `guided_setup_season_draft_spec.lua` (18 cases) and
+`guided_setup_season_draft_ui_spec.lua` (10 cases) to the prior selection.
+Independent QA: **80/80 per runtime**, including those 28 new cases, eight
+additional temporary QA scenarios and 44 Wizard/navigation regressions. Source
+compilation stays **111/111 Lua 5.1.5**, documentation has zero errors (ten legacy
+orphan help warnings), and addon load preflight covers 120 required files.
+Test the optional form, real calendar, narrow scrolling and repeat application
+under N07 after redeployment; no Retail certification or full-suite claim.
+
 - Confirm the shared Midnight shell remains stable at narrow and wide window sizes.
 - Confirm red, warning, success, and optional states remain distinguishable without
   relying only on color.

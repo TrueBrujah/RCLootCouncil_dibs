@@ -115,8 +115,11 @@ describe("Turnkey Guided Setup contract", function()
     assert_equal("choose", dibs.Wizard.GetCurrentStage())
     assert_equal("verify", dibs.Wizard.SetCurrentStage("verify"))
     assert_equal("broad", dibs.Wizard.SetSelectedProfileId("broad"))
-    assert_equal("verify", _G.RCLootCouncil_dibsLocalDB.settings.turnkeyWizardStage)
-    assert_equal("broad", _G.RCLootCouncil_dibsLocalDB.settings.turnkeyWizardProfileId)
+    local progress = _G.RCLootCouncil_dibsLocalDB.settings.turnkeySetupProgressByGuild[dibs.GetGuildKey()]
+    assert_equal("verify", progress.stage)
+    assert_equal("broad", progress.profileId)
+    assert_equal("verify", dibs.Wizard.GetCurrentStage())
+    assert_equal("broad", dibs.Wizard.GetSelectedProfileId())
     local guildDb = _G.RCLootCouncil_dibsDB.guilds and _G.RCLootCouncil_dibsDB.guilds["realm:testguild"]
     assert_true(guildDb == nil or guildDb.settings == nil or guildDb.settings.turnkeyWizardStage == nil)
   end)

@@ -134,6 +134,7 @@ describe("Dispute center integrity", function()
 
   it("B10 refuses a correction whose original transaction is missing", function()
     local dibs = setup()
+    require("helpers.canonical_writer").enable(dibs)
     local request = assert(dibs.Disputes.CreateReport(fixtures.report("wrong_debit")))
     local result, reason = dibs.Disputes.CorrectBalance(request.requestId,
       { amount = 1, confirmed = true, reason = "correction", actor = "Tester-Realm" }, "Tester-Realm")

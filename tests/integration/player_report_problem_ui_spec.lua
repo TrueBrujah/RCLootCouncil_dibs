@@ -18,10 +18,16 @@ local function byKind(kind, field, value)
 end
 
 describe("Player Requests problem report", function()
-  local function setup()
-    local _, dibs = loader.load({ wow = { guildLeader = true }, withAce3 = true })
+  local function setup(locale)
+    local _, dibs = loader.load({ wow = { guildLeader = true, locale = locale }, withAce3 = true })
     local season = dibs.Seasons.GetCurrent()
     local tx = dibs.Ledger.AddTransaction(fixtures.transaction("Tester-Realm", season.id, { transactionId = "tx-report-ui" }))
+    dibs.Seasons.GetCatalogState()
+    dibs.Wizard.GetNavigationAccess = function()
+      return { firstInstall = false, foundationReady = true, preservedHistory = true,
+        dependencies = { seasonConfigured = true, rosterConfigured = true, ranksPublished = true, ledgerReady = true },
+        routes = { disputes = true, seasonalRoster = true, vault = true } }
+    end
     return dibs, season, tx
   end
 
@@ -105,17 +111,35 @@ describe("Player Requests problem report", function()
   end)
 
   it("opens the report form preselected from a History entry", function()
-    local dibs, _, tx = setup()
+    local dibs, season, tx = setup()
+    local historyTable
+    local addTable = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+      for _, row in ipairs(rows or {}) do
+        if row.entry and row.entry.transactionId == tx.transactionId then
+          historyTable = { row = row, options = options }
+        end
+      end
+      return addTable(shell, parent, columns, rows, height, actions, options)
+    end
     local frame = dibs.PlayerUI.CreateWindow()
     frame.SelectTab("history")
-    local entry
-    for _, candidate in ipairs(dibs.PlayerUI.GetViewModel().history or {}) do
-      if candidate.transactionId == tx.transactionId then entry = candidate end
-    end
-    assert_not_nil(entry)
-    frame.historyDetail = entry
-    frame:Refresh()
+    assert_not_nil(historyTable)
+    assert_nil(frame.historyDetail)
+    local balanceBefore = dibs.Ledger.GetBalance("Tester-Realm", season.id)
+    local historyBefore = #dibs.Ledger.GetHistory("Tester-Realm", season.id)
+    local row, options = historyTable.row, historyTable.options
+    assert_not_nil(options.onRowClick)
+    options.onRowClick({})
+    assert_nil(frame.historyDetail)
+    options.onRowClick(row)
+    assert_equal(row.entry, frame.historyDetail)
     assert_not_nil(frame.historyReportButton)
+    options.contextMenu(row)[1].callback()
+    assert_equal(row.entry, frame.historyDetail)
+    assert_equal(balanceBefore, dibs.Ledger.GetBalance("Tester-Realm", season.id))
+    assert_equal(historyBefore, #dibs.Ledger.GetHistory("Tester-Realm", season.id))
+    assert_equal(0, #dibs.Disputes.ListForPlayer("Tester-Realm"))
     frame.historyReportButton.callbacks.OnClick(frame.historyReportButton, "OnClick")
     assert_equal("requests", frame.playerTab)
     assert_nil(frame.historyDetail)
@@ -123,4 +147,35 @@ describe("Player Requests problem report", function()
     assert_not_nil(transaction)
     assert_equal(tx.transactionId, transaction.value)
   end)
+
+  for _, case in ipairs({
+    { locale = "enUS", detail = "View details", hint = "Click an entry" },
+    { locale = "frFR", detail = "Voir les détails", hint = "Cliquez sur une ligne" },
+  }) do
+    it("localizes the History primary interaction in " .. case.locale, function()
+      local dibs, _, tx = setup(case.locale)
+      local historyTable, historyHint
+      local addHeading = dibs.AceGUI.AddHeading
+      dibs.AceGUI.AddHeading = function(shell, parent, title, description)
+        if title == (dibs.L.PLAYER_NAV_HISTORY or "History") then historyHint = description end
+        return addHeading(shell, parent, title, description)
+      end
+      local addTable = dibs.AceGUI.AddTable
+      dibs.AceGUI.AddTable = function(shell, parent, columns, rows, height, actions, options)
+        for _, row in ipairs(rows or {}) do
+          if row.entry and row.entry.transactionId == tx.transactionId then
+            historyTable = { row = row, options = options }
+          end
+        end
+        return addTable(shell, parent, columns, rows, height, actions, options)
+      end
+      local frame = dibs.PlayerUI.CreateWindow()
+      frame.SelectTab("history")
+      assert_not_nil(historyTable)
+      local menu = historyTable.options.contextMenu(historyTable.row)
+      assert_not_nil(menu)
+      assert_equal(case.detail, menu[1].text)
+      assert_true(tostring(historyHint or ""):find(case.hint, 1, true) ~= nil)
+    end)
+  end
 end)

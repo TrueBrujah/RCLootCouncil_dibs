@@ -8,9 +8,50 @@ Make one canonical raid season the owner of its registration window, rules and p
 
 ## Technical Context
 
+**Approved date validation (2026-11-16)**: Enforce FR-058 for creation, explicit
+draft saves and registration publication. Reuse the season-input validator in
+the shared form and Guided Setup, with an explicit strict chronology mode;
+historical schema validation and sync remain compatible. Compare timestamps,
+allow equal end dates and optional ends, and retain existing lifecycle closure
+and idempotent receipts. Test rejected writes for complete state preservation,
+UI localization, setup preflight, exact boundaries and historical sync.
+
 **Language/Version**: Lua supported by WoW Retail; addon restrictions apply.
 **Primary Dependencies**: Existing Dibs modules, Ace3/AceGUI, SyncV2, CharacterEligibility, Permissions, FeatureRegistry, and the append-only Ledger. RCLootCouncil remains optional.
+
+**Date entry dependency**: The Officer date editor already references `LAGW-DatePicker`.
+Restore the exact approved embedded subset of LibAceGUIWidgets v0.12.0 (LibStub
+minor 50) recorded in the consolidation worktree, including its existing three
+asset-path adaptations, assets and licenses. Do not edit the third-party code or
+choose a new version. Preserve the current text-entry fallback. The local
+[vendoring record](../../docs/developer/libaceguiwidgets-vendoring.md) records the
+approved bytes; deployment and package checks must reject missing TOC/XML files
+and missing library assets before creating a misleading successful candidate.
+Retail calendar rendering and LibStub coexistence remain runtime checks.
 **Storage**: Guild-scoped SavedVariables; additive, versioned schema and migrations.
+
+**Approved UI refinement (2026-11-15)**: Create/edit schedule forms share named
+weekday and HH:MM controls; preserve existing duration/time-zone metadata and the
+seven-entry service bound. Display published guild category names/descriptions
+and neutral progression language. Persisted IDs, manual approval, grants,
+activation manifests and Sync limits stay unchanged. Officer and Player navigation
+use the progressive setup projection documented in Feature 021; registration
+must remain available before accounting activation, and upgrade history stays
+accessible. Automated behavioral checks and a separate QA review precede the
+N01–N06 Retail campaign; no manual gate is closed by offline tests.
+**Unified categories approval (2026-11-16)**: In new/draft forms, reuse the existing
+three difficulty checkboxes as the sole signup-category selector. Supply identical
+`categories` and `raidDifficulties` lists to existing create/update APIs; build the
+catalog from those choices while retaining removed historical descriptors inactive.
+Keep Guided Setup local persistence compatible with its existing fields. Hide the
+competing technical catalog editor only for drafts; require a saved selection before
+UI publication. PlayerUI offers a single-category dropdown only while registration
+is open and multiple supported categories match the published difficulty list;
+legacy custom catalogs keep their existing reviewed-status workflow. Published
+seasons, enrollment records, optional nightly difficulty, wire schema and domain
+APIs remain unchanged. Validate creation, edits, reload, empty selection, player
+selection/submission and published legacy preservation with the existing Lua doubles.
+
 **Testing**: Existing Lua unit/integration harness (Fengari); two-client Retail validation for live authority, sync and UI.
 **Target Platform**: WoW Retail addon sandbox, offline-capable and synchronized through addon messages.
 **Project Type**: WoW addon feature across data services, UI, permissions, sync, localization, docs, tests.

@@ -2,9 +2,31 @@ local loader = require("helpers.load_addon")
 
 local function setup(options)
   options = options or {}
+  local freshInstallation = options.freshInstallation == true
+  options.freshInstallation = nil
   options.withAce3 = true
   options.wow = options.wow or { guildLeader = true }
   local _, dibs = loader.load(options)
+  if not freshInstallation then
+    -- This suite isolates mounting, layout and role checks with setup already
+    -- complete. Real first-install/dependency transitions are exercised by
+    -- guided_setup_navigation_access_spec and guided_setup_officer_navigation_spec.
+    -- Mock only this read-only dependency projection, never Officer authority
+    -- or module enforcement, and explicitly enumerate the supported routes.
+    dibs.Wizard.GetNavigationAccess = function()
+      local routes = {}
+      for _, route in ipairs({ "wizard", "overview", "setup", "guildSetup", "installation", "seasonalRoster",
+        "automaticDibs", "dibsAdmin", "history", "statistics", "disputes", "preDibRequests", "pendingAwards",
+        "vault", "seasons", "ranks", "lootTypes", "eligibility", "preDibs", "announcements", "integration",
+        "independentRaid", "settings", "modules", "sync", "diagnostics", "developer", "debug", "reconciliation" }) do
+        routes[route] = true
+      end
+      return { firstInstall = false, foundationReady = true, preservedHistory = false,
+        routes = routes, sections = {}, dependencies = {
+          seasonConfigured = true, ranksPublished = true, ledgerReady = true, rosterConfigured = false,
+        } }
+    end
+  end
   return dibs
 end
 
@@ -311,8 +333,10 @@ describe("Retail Officer navigation lifecycle", function()
     local dibs = setup()
     local frame = dibs.OfficerUI.CreateWindow("overview")
     local layoutCalls = 0
-    local originalDoLayout = frame.aceTabs.DoLayout
-    frame.aceTabs.DoLayout = function(self)
+    -- The mounted content host is the layout boundary; the navigation tree is
+    -- deliberately not reflowed for every page selection.
+    local originalDoLayout = frame.contentHost.DoLayout
+    frame.contentHost.DoLayout = function(self)
       layoutCalls = layoutCalls + 1
       if originalDoLayout then originalDoLayout(self) end
     end
@@ -339,10 +363,10 @@ describe("Retail Officer navigation lifecycle", function()
     assert_true(containsText(reopened.contentHost, "Officer review requests"))
   end)
 
-  it("opens Requests immediately after a fresh addon load", function()
-    local dibs = setup()
+  it("redirects Requests to Guided Setup immediately after a fresh addon load", function()
+    local dibs = setup({ freshInstallation = true })
     local frame = dibs.OfficerUI.CreateWindow("requests")
-    assert_equal("disputes", frame.mountedPage)
+    assert_equal("wizard", frame.mountedPage)
     assert_true(#(frame.contentHost.children[1].children or {}) > 0)
   end)
 

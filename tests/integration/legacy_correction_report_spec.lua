@@ -101,6 +101,7 @@ describe("RF-0012 legacy correction reconciliation fixtures", function()
     local correction = addLegacyRow(dibs, "guild-primary", "legacy-local-only-correction", {
       amount = -1,
       type = "DIB_USED",
+      source = "legacy_correction",
     })
     local report = dibs.Disputes.BuildLegacyCorrectionReport("guild-primary")
     local entry = report.entries and report.entries[correction.transactionId]
@@ -133,6 +134,63 @@ describe("RF-0012 legacy correction reconciliation fixtures", function()
     local entry = report.entries and report.entries[rollback.transactionId]
     assert_not_nil(entry, "the rollback candidate was not reported")
     assert_true(entry.rollbackCandidate, "the rollback candidate was not identified")
+  end)
+
+  it("does not mistake an ordinary award debit for a historical correction", function()
+    local dibs = setup()
+    addLegacyRow(dibs, "guild-primary", "ordinary-award", { amount = -1, type = "DIB_USED" })
+    assert_nil(dibs.Disputes.BuildLegacyCorrectionReport("guild-primary").entries["ordinary-award"])
+  end)
+
+  it("keeps missing request references distinct from complete references", function()
+    local dibs = setup()
+    addLegacyRow(dibs, "guild-primary", "partial-original")
+    addLegacyRow(dibs, "guild-primary", "missing-request", {
+      originalTransactionId = "partial-original", correctionKey = "known-link",
+    })
+    local entry = dibs.Disputes.BuildLegacyCorrectionReport("guild-primary").entries["missing-request"]
+    assert_equal("PARTIAL", entry.classification)
+    assert_equal("REQUEST_REFERENCE_MISSING", entry.reasonCode)
+  end)
+
+  it("denies the officer inventory to a member and preserves the guild state", function()
+    local _, dibs = loader.load({ wow = { guildLeader = false, guildRankIndices = { 3 } } })
+    local before = dibs.DeepCopy(dibs.GetDB())
+    local report, reason = dibs.Disputes.BuildLegacyCorrectionReport("guild-primary")
+    assert_nil(report)
+    assert_equal("OFFICER_REQUIRED", reason)
+    assert_true(sameValue(before, dibs.GetDB()))
+    assert_nil(dibs.OfficerUI.OpenHistoricalCorrectionReport("guild-primary"))
+  end)
+
+  it("renders an inspectable report with bounded pages and no mutation controls", function()
+    local dibs = setup()
+    for index = 1, 21 do
+      addLegacyRow(dibs, "guild-primary", string.format("legacy-%02d", index), { correctionKey = "key-" .. index })
+    end
+    local before = dibs.DeepCopy(dibs.GetDB())
+    local tables = {}
+    local addTable = dibs.AceGUI.AddTable
+    dibs.AceGUI.AddTable = function(shell, parent, columns, rows, ...)
+      tables[#tables + 1] = rows
+      return addTable(shell, parent, columns, rows, ...)
+    end
+    local shell = assert(dibs.OfficerUI.OpenHistoricalCorrectionReport("guild-primary"))
+    assert_equal(20, #tables[1])
+    local nextPage
+    local function inspect(widget)
+      if widget.kind == "Button" then
+        assert_true(widget.text == dibs.L.DISPUTE_REPORT_NEXT or widget.text == dibs.L.DISPUTE_REPORT_PREVIOUS)
+        if widget.text == dibs.L.DISPUTE_REPORT_NEXT then nextPage = widget end
+      end
+      for _, child in ipairs(widget.children or {}) do inspect(child) end
+    end
+    inspect(shell.window)
+    assert_not_nil(nextPage)
+    nextPage.callbacks.OnClick(nextPage)
+    assert_equal(1, #tables[2])
+    assert_equal("legacy-21", tables[2][1][1])
+    assert_true(sameValue(before, dibs.GetDB()))
   end)
 
   it("leaves every ledger, row, request, sequence, and root unchanged", function()

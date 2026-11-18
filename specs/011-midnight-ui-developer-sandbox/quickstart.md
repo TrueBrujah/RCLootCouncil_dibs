@@ -11,6 +11,15 @@
 
 ## Automated verification
 
+Approved consolidation (2026-11-16): the targeted UI/security/recovery slice passes
+334/334 across 31 suites under Fengari, native Lua 5.4.6 and native Lua 5.1.5;
+112 source files compile under Lua 5.1 and the addon load graph verifies 121 files.
+New checks cover truthful dashboard states, service-before-statistics order,
+localized no-correction/reply actions and retained authority boundaries. Native
+5.1 validation also caught and fixed nil formatting in historical enrollment UI.
+These are targeted results, not the full suite below. Retail N16–N18 and the
+existing combat/layout/privacy scenarios remain NON TESTÉ.
+
 Run the full Lua suite from the repository root:
 
 ```powershell

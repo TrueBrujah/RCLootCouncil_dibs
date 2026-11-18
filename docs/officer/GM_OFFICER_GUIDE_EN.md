@@ -8,7 +8,60 @@ Navigation labels are localized, and disabled modules can hide their pages.
 Screenshot paths marked pending identify missing Retail captures, not delivered
 images or proof of current-client validation.
 
+### Operational consolidation — 0.8.12 candidate
+
+The dashboard shows service state and a contextual next action before activity and
+statistics. “Season available” is a data-availability statement, not a guarantee of
+accounting integrity. Recovery diagnostics remain separate from authorized history
+reads. Missing optional RCLootCouncil integration does not globally block standalone Dibs.
+
+“Close without correction” describes a conclusion without changing Dibs balances.
+Its existing canonical prerequisites still apply; the release gate remains closed
+in this candidate. Delivery receipt is neither approval nor confirmation of guild-wide
+convergence. Local backup snapshots share the addon’s SavedVariables files: keep an
+independent copy before cleanup. Fresh external canonical recovery still awaits its
+authority decision. Actual Retail interaction remains unverified (N16–N18).
+
 ## Purpose and limits
+
+### Progressive setup — 0.8.12 candidate
+
+A fresh guild installation exposes only **Guided Setup**. Choose a profile,
+review changes and configure the guild foundation with the required permissions;
+the custom profile also exposes foundation setup inside the wizard. Configuration
+tools then appear, followed by operational pages when their own season,
+published rank-rule and ledger prerequisites are satisfied. A wizard stage click
+or bootstrap season does not complete setup. Optional integrations remain optional.
+
+Upgrades retain historical review and repair workflows. Members see a public
+waiting page until guild setup permits their sections; enrollment is available
+before season activation. Published category names and descriptions belong to your
+guild, without a fixed progression weekday or universal Officer/Core assertion.
+Add raid nights with a named day and clock input instead of protocol syntax.
+
+Season preparation uses the same organization in **Configure**, direct creation
+and draft editing: name, required dates and one **Normal / Heroic / Mythic**
+checkbox group first. These choices are both raid difficulties and player signup
+categories; select at least one. After registration opens, players can choose one
+of these categories when multiple choices are available; requested path and Officer
+review remain separate. Optional nights, end dates, rules and
+supplementary settings use expandable sections with summaries. Collapsing a section
+retains its inputs; a validation error opens the relevant section. Save the chosen
+categories before opening a draft's registration. Published custom categories and
+existing registrations remain unchanged; the technical catalog is available only
+for already-published seasons. Historical descriptors removed from a draft are
+retained inactive, not deleted.
+
+In **Configure**, progression and standard profiles can also prepare a raid-season
+draft. Select **Prepare a raid-season draft with this setup**, enter its name,
+season/registration dates, categories and optional raid nights/rules, then use
+**Apply this setup** once. The form is optional and does not guess your guild's
+raid nights, promotion rules or allocations. Invalid input stays on Configure.
+The result links to Seasonal Roster for review; publishing, opening registration
+and activating remain explicit steps. Existing raid seasons are preserved, and a
+disabled Seasonal Roster module is not enabled by this action.
+
+Real-client checks: [N01–N12](../audits/0.8.12-TESTS-RETAIL-FR.md).
 
 Dibs provides a seasonal ledger, Pre-Dib requests, eligibility checks, and
 private audit evidence around guild loot. RCLootCouncil is optional and, when
@@ -567,6 +620,14 @@ Check **System > Modules**. Stored data is retained and should return after
 reactivation; stale windows and direct routes should fail closed.
 
 ## Seasonal roster workflow
+
+The page prioritizes the selected season and its actions. **New season** opens the
+creation form; revision history and the category/status catalog remain explicitly
+accessible. Closing these sections does not delete existing data. **Save configuration**
+does not publish or activate the season. Remote revisions never silently replace
+local input: stale saves are rejected and reloading is explicit. Collapsed-section
+state belongs to the current UI; persistence across client reloads applies only to
+the existing saved Guided Setup draft.
 
 1. Enable the seasonal roster in **System > Modules**, then create a season
    draft with its start and registration-opening dates. Optional closing/end

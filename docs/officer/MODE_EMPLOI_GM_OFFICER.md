@@ -9,6 +9,41 @@ manquantes ; ils ne constituent pas une validation du client actuel.
 
 ## A quoi sert Dibs ?
 
+### Consolidation de la gestion — candidat 0.8.12
+
+Le tableau de bord présente d’abord l’état des services et une prochaine action,
+puis l’activité et les statistiques. « Saison disponible » décrit la disponibilité
+des données, pas une certification de leur intégrité comptable. Une récupération
+nécessaire renvoie vers le diagnostic; l’historique reste accessible selon vos droits.
+RCLootCouncil reste facultatif et sa seule absence ne bloque pas Dibs autonome.
+
+« Clore sans correction » annonce une conclusion sans changement de solde. Cette
+action garde les prérequis canoniques et peut rester refusée dans ce candidat,
+dont les flags de release ne sont pas ouverts. Une proposition envoyée ou un accusé
+de réception ne prouve pas l’application d’une correction chez tous les membres.
+Les sauvegardes locales partagent les fichiers SavedVariables : conserver une
+copie indépendante avant nettoyage. La récupération externe vierge n’est pas
+encore un parcours complet autorisé. Vérifications Retail : N16–N18.
+
+### Première installation et menus progressifs — candidat 0.8.12
+
+Une nouvelle installation montre uniquement **Guided Setup**. Choisissez un
+profil, examinez les changements puis configurez la fondation de guilde avec les
+droits requis. Le profil personnalisé permet aussi de préparer cette fondation
+dans l'assistant. Les outils de configuration apparaissent ensuite; les pages
+opérationnelles attendent leurs propres prérequis (saison configurée, règles de
+rang publiées, ledger prêt). Un simple changement d'étape ou la saison comptable
+initiale ne termine pas le setup. Les intégrations facultatives restent facultatives.
+
+Les anciennes données et parcours de réparation restent disponibles lors d'une
+mise à niveau. Les membres voient un message d'attente lorsque la guilde n'est pas
+prête; leurs inscriptions deviennent accessibles avant l'activation de la saison.
+Les règles et noms de statuts publiés appartiennent à votre guilde : aucun jeudi
+de progression ni lien de statut Officer/Core n'est imposé par le formulaire.
+Pour les horaires, ajoutez une soirée, choisissez le jour et saisissez l'heure.
+
+Contrôles en jeu de ce nouveau parcours : [N01–N07](../audits/0.8.12-TESTS-RETAIL-FR.md).
+
 Dibs fournit un ledger saisonnier, des demandes Pre-Dib, des controles
 d'eligibilite et des preuves d'audit autour du butin de guilde. RCLootCouncil
 reste optionnel et, lorsqu'il est installe, reste l'interface de vote et de
@@ -32,6 +67,30 @@ Important :
 - Raid Leader, Raid Assistant ou membre du conseil ne suffisent pas a donner les droits Dibs ;
 - une identite inconnue ou impossible a verifier est refusee ;
 - les transactions existantes ne sont jamais reecrites silencieusement.
+
+La préparation de saison suit une organisation commune dans **Configurer**, la
+création et l'édition : nom, dates indispensables et un seul groupe de cases
+**Normal / Heroic / Mythic** en premier. Ces choix définissent à la fois les
+catégories proposées aux joueurs et les difficultés; au moins un choix est requis.
+À l'ouverture des inscriptions, le joueur choisit l'une de ces catégories s'il y
+en a plusieurs; le parcours demandé et la revue Officer restent distincts. Les soirées facultatives, dates de
+fin, règlement et paramètres complémentaires passent par des sections repliables
+avec résumé. Replier une section ne supprime pas sa saisie; une erreur doit ouvrir
+la section à corriger. Enregistrez ces choix avant d'ouvrir les inscriptions du
+brouillon. Les catégories personnalisées des saisons publiées et les inscriptions
+existantes restent inchangées; le catalogue technique reste accessible uniquement
+pour les saisons déjà publiées. Les anciens descripteurs retirés d'un brouillon
+sont conservés inactifs, jamais supprimés.
+
+Dans **Configurer**, les profils progression et standard peuvent aussi préparer
+un brouillon de saison de raid. Cochez **Préparer un brouillon de saison avec cette
+configuration**, renseignez nom, dates saison/inscriptions, catégories et soirées
+ou règles facultatives, puis **Appliquer cette configuration** une seule fois.
+La saisie est facultative; aucun jour de raid, critère de promotion ou montant
+Dibs n'est deviné. Une saisie invalide reste dans Configurer. Le résultat propose
+d'ouvrir le roster saisonnier : publication, ouverture des inscriptions et
+activation restent explicites. Les saisons existantes sont conservées; un module
+de roster désactivé ne sera pas activé par ce parcours.
 
 ## 2. Premiere configuration
 
@@ -641,6 +700,15 @@ La preuve historique est incomplete ou ambigue. Ne confirmez pas sans verifier
 l'identite, l'objet, le gagnant, la date, la reponse et la raison.
 
 ## Cycle du roster saisonnier
+
+La page affiche d'abord la saison sélectionnée et ses actions. **Nouvelle saison**
+ouvre le formulaire de création; l'historique et le catalogue de catégories/statuts
+restent accessibles par des contrôles explicites. Fermer ces sections ne supprime
+pas les données existantes. **Enregistrer la configuration** ne publie ni n'active
+la saison. Une révision distante ne remplace pas silencieusement la saisie locale :
+une sauvegarde périmée est refusée, et le rechargement est une action explicite.
+Les états repliés sont locaux à l'affichage; la reprise après rechargement du client
+utilise uniquement la persistance déjà prévue du brouillon Guided Setup.
 
 1. Activez le module dans **System > Modules**. Creez un brouillon avec le debut
    de saison et d'inscription, puis revisez regles, statuts, criteres manuels

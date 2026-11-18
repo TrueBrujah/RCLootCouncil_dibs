@@ -14,6 +14,7 @@ describe("ProtectedActions routing", function()
     local _, dibs = loader.load({ wow = { guildLeader = true } })
     local accepted = 0
     local proposerRole = "member"
+    dibs.Ledger.IsDisputeOperationTransportEnabled = function() return true end
     dibs.Permissions.Evaluate = function(actionId)
       return { allowed = actionId == "ledger.operation", actionId = actionId }
     end

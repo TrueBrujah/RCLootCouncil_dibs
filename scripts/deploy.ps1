@@ -22,6 +22,9 @@ if (-not (Test-Path -LiteralPath $sourcePath -PathType Container)) {
     exit 1
 }
 
+# Fail before touching the installed addon when an embedded file is absent.
+& (Join-Path $PSScriptRoot 'Test-DibsAddonFiles.ps1') -SourcePath $sourcePath
+
 New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
 
 Write-Output "Syncing files: $sourcePath -> $TargetPath"

@@ -9,6 +9,23 @@ inventorient des images Retail manquantes, pas des preuves de validation.
 
 ## A quoi sert Dibs ?
 
+### Répondre à un officier — candidat 0.8.12
+
+Quand un officier attend des informations sur votre signalement, Mes Dibs propose
+« Répondre à un officier » après le résumé du solde. Le raccourci ouvre votre dossier;
+il n’envoie aucune réponse et ne change pas vos Dibs à lui seul. Une réception
+confirmée signifie livraison à un responsable autorisé, pas acceptation de la
+demande, correction du solde ou réception par toute la guilde. Rendu Retail à vérifier.
+
+### Configuration initiale de la guilde
+
+Si vous ne voyez que « Configuration de guilde », le maître de guilde ou un
+officier doit terminer les étapes requises de Guided Setup. Les pages apparaissent
+ensuite selon leur configuration. Une inscription saisonnière peut être ouverte
+avant l'activation comptable; les noms et descriptions de statuts proviennent du
+catalogue publié par votre guilde. Une voie demandée n'accorde pas automatiquement
+un statut approuvé. Aucun jour de progression n'est imposé par le formulaire.
+
 Dibs est un registre saisonnier de priorite de butin gere par la guilde. Il
 affiche votre solde, conserve les demandes Pre-Dib et ajoute un debit lorsqu'un
 gain eligible est valide.
@@ -271,7 +288,19 @@ _Capture Retail en attente : action Pre-Dib ou Drop-Dib —
 
 ## 4. Gerer ses demandes
 
-Dans **My Dibs** (Pre-Dibs actifs, Pre-Dibs gagnes et Pre-Dibs passes), vous pouvez :
+Dans **Mes Dibs** (**My Dibs** sur le client EN), le résumé affiche d'abord vos
+**Dibs restants**, puis les Dibs de saison et les Dibs utilisés. Les Pre-Dibs actifs
+restent devant la gestion des personnages.
+
+**Gérer mon Main et mes alts** ouvre les contrôles uniquement au besoin; **Masquer
+Main et alts** les replie sans envoyer de demande ni perdre le personnage choisi.
+Une déclaration reste soumise à l'approbation d'un officier. Une probation active
+reste visible près du solde même lorsque les contrôles sont repliés; sa fin est
+présentée comme une date, pas comme un nombre technique. Le pliage n'enregistre
+aucun changement comptable. Navigation, commandes Main/Alt et retours d'envoi
+sont disponibles en FR/EN; aucun règlement ni délai de probation ne change.
+
+Dans cette page (Pre-Dibs actifs, Pre-Dibs gagnés et Pre-Dibs passés), vous pouvez :
 
 - consulter le statut d'une demande ;
 - annuler votre propre demande active ;
@@ -342,7 +371,7 @@ Avec RCLootCouncil, le Master Looter finalise le gain. Dibs enregistre ensuite l
 
 ## 6. Signaler un probleme
 
-Ouvrez **Signalements** dans la fenetre Joueur, ou utilisez `/dibs requests`, puis remplissez **Signaler un probleme** : type de probleme (par exemple debit incorrect ou objet/joueur incorrect), entree du registre concernee si possible, et note. Depuis **Historique**, les details d'une entree proposent aussi **Signaler un probleme sur cette operation**, qui preselectionne la transaction. Vos signalements apparaissent ensuite dans **Mes demandes de revision**.
+Ouvrez **Signalements** dans la fenetre Joueur, ou utilisez `/dibs requests`, puis remplissez **Signaler un probleme** : type de probleme (par exemple debit incorrect ou objet/joueur incorrect), entree du registre concernee si possible, et note. Dans **Historique**, un clic gauche sur une ligne ouvre ses details; le clic droit conserve **Voir les details**. Les details proposent **Signaler un probleme sur cette operation**, qui preselectionne la transaction. Vos signalements apparaissent ensuite dans **Mes demandes de revision**.
 
 Ajoutez si possible :
 
@@ -405,9 +434,10 @@ pas de contourner l'etat ; demandez une verification GM/Officer.
 
 Selectionnez la saison et lisez ses regles publiees. Pendant les inscriptions,
 vous pouvez soumettre ou modifier votre personnage, ses specialisations, ses
-roles et la voie demandee. Demander la progression Core ne donne pas le statut
-Core Raider : une decision distincte GM/Officer est necessaire. L'inscription
-ne change jamais vos Dibs.
+roles et la voie demandee. Si la saison propose plusieurs categories de raid
+unifiees, choisissez Normal, Heroic ou Mythic parmi ses choix publies. Demander
+la progression Core ne donne pas le statut Core Raider : une decision distincte
+GM/Officer est necessaire. L'inscription ne change jamais vos Dibs.
 
 Declarez explicitement les relations Main/Alt et demandez les changements de
 Main dans le formulaire de saison. Une approbation commence une probation Dibs

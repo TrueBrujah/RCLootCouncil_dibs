@@ -492,3 +492,13 @@ modal dialogs, and high-contrast presentation hints.
 - Adding a second visual theme for an external UI addon.
 - Replacing B08 combat-safe scheduling or taking ownership of RC-protected controls.
 - Implementing planning artifacts beyond this specification in the specify phase.
+
+## Approved operational consolidation — 2026-11-16
+
+The user approved implementation of the [consolidation proposal](../../docs/audits/0.8.12-PROPOSITIONS-ARCHITECTURE-UX-SECURITE-FR.md). This extends the existing presentation work, not production authority or accounting rules.
+
+- **FR-044**: Dashboard MUST distinguish season availability from verified persistence/recovery health, show unknown diagnostics explicitly, and put service state and actionable work before statistics. Missing coordinator availability MUST NOT hide authorized historical reads.
+- **FR-045**: Administrative actions MUST state their actual effect. Resolving without an accounting correction MUST be labelled explicitly in FR/EN; a proposal or send acknowledgment MUST NOT be presented as an accepted correction.
+- **FR-046**: Dashboard, request delivery and data-recovery help MUST reuse existing services and shared widgets. Personal data remains role-scoped; draft folding and consultation MUST have no accounting effect. Existing seasonal forms, routes and business guards remain authoritative.
+- **FR-047**: Dashboard presentation MAY be extracted to a dedicated renderer receiving its already-authorized projection. The existing OfficerUI API remains compatible; the renderer MUST NOT depend on OfficerUI, define authority, scan ledgers, or mutate business data. Existing profiling phases and bounded lists remain available.
+- **FR-048**: Critical actions, states and recovery explanations MUST be localized in FR/EN. Technical details remain explicitly accessible; colors MUST have accompanying text. Candidate identity and manual Retail observations remain separate from automated acceptance.

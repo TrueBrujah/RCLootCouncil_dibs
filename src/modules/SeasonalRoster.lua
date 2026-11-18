@@ -25,6 +25,7 @@ local MAX_CATEGORY_NAME_LENGTH = 60
 local MAX_RAID_RULES_LENGTH = 8000
 local MAX_PROMOTION_POLICY_LENGTH = 4000
 local VALID_REGISTRATION_STATES = { DRAFT = true, OPEN = true, CLOSED = true }
+local VALID_RAID_DIFFICULTIES = { NORMAL = true, HEROIC = true, MYTHIC = true }
 local VALID_LIFECYCLE_STATES = {
   DRAFT = true, REGISTRATION_OPEN = true, REVIEW = true, READY = true,
   ACTIVE = true, COMPLETED = true, ARCHIVED = true,
@@ -427,6 +428,7 @@ function Roster.ListSeasons()
         registrationStartAt = record.registrationStartAt, registrationEndAt = record.registrationEndAt,
         lifecycle = seasonLifecycle(record),
         raidSchedule = Dibs.DeepCopy(record.raidSchedule or {}),
+        raidDifficulties = Dibs.DeepCopy(record.raidDifficulties or {}),
         noRankPolicy = Dibs.DeepCopy(record.noRankPolicy or { mode = "UNCONFIGURED" }),
         identitySeasonId = record.identitySeasonId }
     end
@@ -1175,7 +1177,17 @@ function Roster.ApplyLegacyBalanceCorrection(seasonId, character, expectedPrevie
     preview = updatedPreview, previewReason = updatedReason }
 end
 
-function Roster.ValidateSeasonInput(input)
+local function registrationWindowError(input)
+  if input.registrationStartAt and input.startAt and input.registrationStartAt >= input.startAt then
+    return "REGISTRATION_MUST_PRECEDE_SEASON"
+  end
+  if input.registrationEndAt and input.endAt and input.registrationEndAt > input.endAt then
+    return "REGISTRATION_EXCEEDS_SEASON_END"
+  end
+end
+
+-- Strict chronology applies to new/draft writes, not immutable historical sync.
+function Roster.ValidateSeasonInput(input, enforceRegistrationWindow)
   if type(input) ~= "table" then return false, "INVALID_INPUT" end
   local name = type(input.name) == "string" and input.name:match("^%s*(.-)%s*$") or nil
   if not name or name == "" or #name > MAX_NAME_LENGTH then return false, "INVALID_INPUT" end
@@ -1217,6 +1229,24 @@ function Roster.ValidateSeasonInput(input)
   end
   local categoryCatalog, categories, categoryReason = normalizeCategoryCatalog(input.categoryCatalog, input.categories)
   if not categoryCatalog then return false, categoryReason end
+  local raidDifficulties, seenDifficulties = {}, {}
+  if input.raidDifficulties ~= nil then
+    if type(input.raidDifficulties) ~= "table" then return false, "INVALID_INPUT" end
+    local count = 0
+    for key in pairs(input.raidDifficulties) do
+      if type(key) ~= "number" or key < 1 or key > 3 or key ~= math.floor(key) then return false, "INVALID_INPUT" end
+      count = count + 1
+    end
+    if count ~= #input.raidDifficulties then return false, "INVALID_INPUT" end
+    for index = 1, count do
+      if input.raidDifficulties[index] == nil then return false, "INVALID_INPUT" end
+    end
+    for _, difficulty in ipairs(input.raidDifficulties) do
+      if not VALID_RAID_DIFFICULTIES[difficulty] or seenDifficulties[difficulty] then return false, "INVALID_INPUT" end
+      seenDifficulties[difficulty] = true
+      raidDifficulties[#raidDifficulties + 1] = difficulty
+    end
+  end
   -- identitySeasonId is accepted only for imported legacy records. Newly
   -- created seasons use their canonical seasonId for every domain.
   local identitySeasonId = input.identitySeasonId
@@ -1234,6 +1264,10 @@ function Roster.ValidateSeasonInput(input)
     or (registrationStartAt and registrationEndAt and registrationEndAt < registrationStartAt) then
     return false, "INVALID_INPUT"
   end
+  if enforceRegistrationWindow == true then
+    local windowReason = registrationWindowError(input)
+    if windowReason then return false, windowReason end
+  end
   local raidSchedule, scheduleKeys = {}, {}
   if input.raidSchedule ~= nil then
     if type(input.raidSchedule) ~= "table" then return false, "INVALID_INPUT" end
@@ -1248,6 +1282,11 @@ function Roster.ValidateSeasonInput(input)
       local weekday, timeText = entry.weekday, entry.startTime
       local duration = entry.durationMinutes == nil and 180 or entry.durationMinutes
       local timezone = entry.timeZone == nil and "" or entry.timeZone
+      local difficulty = entry.difficulty
+      if difficulty == "" then difficulty = nil end
+      if difficulty ~= nil and (type(difficulty) ~= "string" or not VALID_RAID_DIFFICULTIES[difficulty]) then
+        return false, "INVALID_INPUT"
+      end
       if not wholeNumber(weekday) or weekday < 1 or weekday > 7
         or type(timeText) ~= "string" or not timeText:match("^%d%d:%d%d$")
         or tonumber(timeText:sub(1, 2)) > 23 or tonumber(timeText:sub(4, 5)) > 59
@@ -1257,7 +1296,7 @@ function Roster.ValidateSeasonInput(input)
       if scheduleKeys[scheduleKey] then return false, "INVALID_INPUT" end
       scheduleKeys[scheduleKey] = true
       raidSchedule[index] = { weekday = weekday, startTime = timeText,
-        durationMinutes = duration, timeZone = timezone }
+        durationMinutes = duration, timeZone = timezone, difficulty = difficulty }
     end
   end
   return true, {
@@ -1274,6 +1313,7 @@ function Roster.ValidateSeasonInput(input)
     startAt = startAt, endAt = endAt,
     registrationStartAt = registrationStartAt, registrationEndAt = registrationEndAt,
     raidSchedule = raidSchedule,
+    raidDifficulties = raidDifficulties,
     noRankPolicy = noRankPolicy,
   }
 end
@@ -1487,6 +1527,8 @@ function Roster.CreateSeason(input, operationId, actor)
     return { ok = false, code = "OPERATION_CONFLICT" }
   end
 
+  local windowReason = registrationWindowError(config)
+  if windowReason then return { ok = false, code = windowReason } end
   local staged = Dibs.DeepCopy(store)
   local seasonId, idReason = nextRecordId(staged, "season")
   if not seasonId then return { ok = false, code = idReason } end
@@ -1506,6 +1548,7 @@ function Roster.CreateSeason(input, operationId, actor)
     startAt = config.startAt, endAt = config.endAt,
     registrationStartAt = config.registrationStartAt, registrationEndAt = config.registrationEndAt,
     raidSchedule = config.raidSchedule,
+    raidDifficulties = config.raidDifficulties,
     noRankPolicy = config.noRankPolicy,
     updatedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(),
     updatedBy = memberKey,
@@ -1564,10 +1607,11 @@ function Roster.UpdateDraft(seasonId, patch, expectedRevision, operationId, reas
     startAt = current.startAt, endAt = current.endAt,
     registrationStartAt = current.registrationStartAt,
     registrationEndAt = current.registrationEndAt, raidSchedule = current.raidSchedule,
+    raidDifficulties = current.raidDifficulties,
     noRankPolicy = current.noRankPolicy,
   }
   local allowedFields = { name = true, description = true, startAt = true, endAt = true,
-    registrationStartAt = true, registrationEndAt = true, raidSchedule = true, raidRules = true,
+    registrationStartAt = true, registrationEndAt = true, raidSchedule = true, raidDifficulties = true, raidRules = true,
     promotionPolicy = true, categoryCatalog = true, categories = true, noRankPolicy = true }
   for key, value in pairs(patch) do
     if not allowedFields[key] then return { ok = false, code = "PATCH_FIELD_FORBIDDEN" } end
@@ -1584,6 +1628,8 @@ function Roster.UpdateDraft(seasonId, patch, expectedRevision, operationId, reas
   if not fingerprint then return { ok = false, code = "HASH_UNAVAILABLE" } end
   local replay = operationReplay(store, operationId, fingerprint)
   if replay then return replay end
+  local windowReason = registrationWindowError(normalized)
+  if windowReason then return { ok = false, code = windowReason } end
   local nextRevision, revisionReason = Roster.NextRevision(currentRevision, expectedRevision)
   if not nextRevision then return { ok = false, code = revisionReason } end
 
@@ -1604,6 +1650,7 @@ function Roster.UpdateDraft(seasonId, patch, expectedRevision, operationId, reas
   record.startAt, record.endAt = normalized.startAt, normalized.endAt
   record.registrationStartAt, record.registrationEndAt = normalized.registrationStartAt, normalized.registrationEndAt
   record.raidSchedule = normalized.raidSchedule
+  record.raidDifficulties = normalized.raidDifficulties
   record.noRankPolicy = normalized.noRankPolicy
   record.updatedAt, record.updatedBy = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time(), authorKey
   record.contentHash = recordHash(record)
@@ -1791,6 +1838,7 @@ function Roster.CopySeasonSettings(sourceSeasonId, targetSeasonId, expectedRevis
     promotionPolicy = sourceConfig.promotionPolicy,
     categoryCatalog = Dibs.DeepCopy(sourceConfig.categoryCatalog or {}),
     raidSchedule = Dibs.DeepCopy(sourceConfig.raidSchedule or {}),
+    raidDifficulties = Dibs.DeepCopy(sourceConfig.raidDifficulties or {}),
     noRankPolicy = Dibs.DeepCopy(sourceConfig.noRankPolicy or { mode = "UNCONFIGURED" }),
   }, expectedRevision, operationId, reason, actor)
 end
@@ -1922,6 +1970,10 @@ function Roster.SetRegistrationState(seasonId, nextState, expectedRevision, oper
     and "ACTIVE" or current.lifecycleState
   local toLifecycle = nextState == "OPEN" and "REGISTRATION_OPEN" or "REVIEW"
   local now = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
+  if nextState == "OPEN" then
+    local windowReason = registrationWindowError(current)
+    if windowReason then return { ok = false, code = windowReason } end
+  end
   local transitionAllowed, transitionReason = Roster.ValidateLifecycleTransition(fromLifecycle, toLifecycle, current, now)
   if not transitionAllowed then return { ok = false, code = transitionReason } end
   if nextState == "OPEN" then
@@ -2311,7 +2363,7 @@ function Roster.ApplySyncRevision(record, sender, transfer)
       identitySeasonId = config.identitySeasonId, startAt = config.startAt,
       endAt = config.endAt, registrationStartAt = config.registrationStartAt,
     registrationEndAt = config.registrationEndAt, raidSchedule = config.raidSchedule,
-    raidRules = config.raidRules })
+    raidDifficulties = config.raidDifficulties, raidRules = config.raidRules })
     if not validInput then return false, "ROSTER_SCHEMA_UNSUPPORTED" end
     if recordHash(record) ~= record.contentHash then return false, "CONTENT_HASH_MISMATCH" end
     local current = season.enrollments and season.enrollments[enrollmentId]
@@ -2410,6 +2462,7 @@ function Roster.ApplySyncRevision(record, sender, transfer)
     identitySeasonId = record.identitySeasonId, startAt = record.startAt,
     endAt = record.endAt, registrationStartAt = record.registrationStartAt,
     registrationEndAt = record.registrationEndAt, raidSchedule = record.raidSchedule,
+    raidDifficulties = record.raidDifficulties,
     noRankPolicy = record.noRankPolicy,
     lifecycleState = record.lifecycleState })
   if not valid or normalizedConfig.identitySeasonId ~= record.identitySeasonId
@@ -2421,6 +2474,8 @@ function Roster.ApplySyncRevision(record, sender, transfer)
     or Dibs.Sync.CalculateContentHash(normalizedConfig.categoryCatalog)
       ~= Dibs.Sync.CalculateContentHash(record.categoryCatalog or normalizedConfig.categoryCatalog)
     or Dibs.Sync.CalculateContentHash(normalizedConfig.raidSchedule) ~= Dibs.Sync.CalculateContentHash(record.raidSchedule or {})
+    or Dibs.Sync.CalculateContentHash(normalizedConfig.raidDifficulties)
+      ~= Dibs.Sync.CalculateContentHash(record.raidDifficulties or {})
     or normalizedConfig.raidRules ~= (record.raidRules or "")
     or normalizedConfig.promotionPolicy ~= (record.promotionPolicy or "")
     or normalizedConfig.rulesRevision ~= (record.rulesRevision or 1) then
@@ -2524,6 +2579,8 @@ function Roster.ApplySyncRevision(record, sender, transfer)
       or record.registrationState ~= "CLOSED"
       or Dibs.Sync.CalculateContentHash(record.raidSchedule or {})
         ~= Dibs.Sync.CalculateContentHash(previousConfig.raidSchedule or {})
+      or Dibs.Sync.CalculateContentHash(record.raidDifficulties or {})
+        ~= Dibs.Sync.CalculateContentHash(previousConfig.raidDifficulties or {})
       or Dibs.Sync.CalculateContentHash(record.categoryCatalog or {})
         ~= Dibs.Sync.CalculateContentHash(previousConfig.categoryCatalog or {})
       or Dibs.Sync.CalculateContentHash(record.categories or {})

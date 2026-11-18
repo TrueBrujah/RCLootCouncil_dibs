@@ -215,6 +215,30 @@ local function readResolvedGuildDB(dbOverride)
   return Dibs.GetDB and Dibs.GetDB() or (_G.DibsDB or {})
 end
 
+-- Check immutable request scope before ensureState can initialize the claimed
+-- ledger. Inspect stored lists directly, including pre-partition legacy data.
+local function requestHasForeignLedger(requestId, ledgerId)
+  if type(requestId) ~= "string" then return false end
+  local root = readResolvedGuildDB().preDibs or {}
+  local legacyRequests = root.requests
+  local function conflicts(requests, storedLedgerId)
+    for _, request in ipairs(type(requests) == "table" and requests or {}) do
+      if type(request) == "table" and request.requestId == requestId
+        and (request.ledgerId or storedLedgerId) ~= ledgerId then
+        return true
+      end
+    end
+    return false
+  end
+  for storedLedgerId, store in pairs(type(root.ledgers) == "table" and root.ledgers or {}) do
+    if type(store) == "table" then
+      if conflicts(store.requests, storedLedgerId) then return true end
+      if store.requests == legacyRequests then legacyRequests = nil end
+    end
+  end
+  return conflicts(legacyRequests, DEFAULT_LEDGER_ID)
+end
+
 local function requireGuildActiveLedger()
   if not (Dibs.MultiLedger and Dibs.MultiLedger.RequireGuildActiveLedger) then return true end
   return Dibs.MultiLedger.RequireGuildActiveLedger()
@@ -946,6 +970,9 @@ function Dibs.PreDibs.UpsertFromSync(incoming, senderName)
   if type(incoming) ~= "table" then return nil, "INVALID_REQUEST" end
   local targetLedgerId = incoming.ledgerId
   if targetLedgerId == nil then targetLedgerId = DEFAULT_LEDGER_ID end
+  if requestHasForeignLedger(incoming.requestId, targetLedgerId) and isApprovedLedger(targetLedgerId) then
+    return nil, "LEDGER_SCOPE_MISMATCH"
+  end
   local store, storeReason = ensureState(targetLedgerId)
   if not store then return nil, storeReason end
   incoming = copy(incoming)
@@ -1010,6 +1037,9 @@ function Dibs.PreDibs.ApplyVerifiedSyncRecord(incoming, senderName, targetLedger
   if ledgerId == nil then ledgerId = DEFAULT_LEDGER_ID end
   if incoming.ledgerId ~= nil and incoming.ledgerId ~= ledgerId then return nil, "LEDGER_SCOPE_MISMATCH" end
   if ledgerId ~= DEFAULT_LEDGER_ID and incoming.ledgerId ~= ledgerId then return nil, "LEDGER_SCOPE_MISMATCH" end
+  if requestHasForeignLedger(incoming.requestId, ledgerId) and isApprovedLedger(ledgerId) then
+    return nil, "LEDGER_SCOPE_MISMATCH"
+  end
   local store, storeReason = ensureState(ledgerId)
   if not store then return nil, storeReason end
   local revision = type(incoming) == "table" and tonumber(incoming.revision) or nil

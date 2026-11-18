@@ -42,7 +42,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 150,
+        "line": 155,
         "symbol": "Installation.GetStatus"
       }
     },
@@ -128,7 +128,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 408,
+        "line": 463,
         "symbol": "Installation.Initialize"
       }
     },
@@ -218,7 +218,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 1704,
+        "line": 1763,
         "symbol": "Ledger.AdminAdjust"
       }
     },
@@ -262,7 +262,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 2364,
+        "line": 2423,
         "symbol": "Ledger.GetHistory"
       }
     },
@@ -306,7 +306,7 @@
       },
       "source": {
         "file": "src/modules/Ledger.lua",
-        "line": 1811,
+        "line": 1870,
         "symbol": "Ledger.PrepareSeasonAllocationBatch"
       }
     },
@@ -350,7 +350,7 @@
       },
       "source": {
         "file": "src/ui/OfficerUI.lua",
-        "line": 978,
+        "line": 1451,
         "symbol": "Dibs.OfficerUI.GetEligibilityProjection"
       }
     },
@@ -394,7 +394,7 @@
       },
       "source": {
         "file": "src/modules/Disputes.lua",
-        "line": 1541,
+        "line": 1630,
         "symbol": "Disputes.GetTimeline"
       }
     },
@@ -437,7 +437,7 @@
       },
       "source": {
         "file": "src/modules/Disputes.lua",
-        "line": 738,
+        "line": 827,
         "symbol": "Disputes.ListForOfficer"
       }
     },
@@ -523,7 +523,7 @@
       },
       "source": {
         "file": "src/ui/PlayerUI.lua",
-        "line": 651,
+        "line": 660,
         "symbol": "Dibs.PlayerUI.GetStatusPresentation"
       }
     },
@@ -566,7 +566,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 627,
+        "line": 651,
         "symbol": "Dibs.PreDibs.GetAnnouncementSettings"
       }
     },
@@ -610,7 +610,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 605,
+        "line": 629,
         "symbol": "Dibs.PreDibs.ValidatePublicRequest"
       }
     },
@@ -654,7 +654,7 @@
       },
       "source": {
         "file": "src/modules/PreDibs.lua",
-        "line": 790,
+        "line": 814,
         "symbol": "Dibs.PreDibs.CreatePublic"
       }
     },
@@ -918,7 +918,7 @@
       },
       "source": {
         "file": "src/modules/Installation.lua",
-        "line": 309,
+        "line": 346,
         "symbol": "Installation.GetReconciliationView"
       }
     },
@@ -962,7 +962,7 @@
       },
       "source": {
         "file": "src/modules/Governance.lua",
-        "line": 535,
+        "line": 549,
         "symbol": "Governance.GetAuthorityState"
       }
     },
@@ -1219,7 +1219,7 @@
       },
       "source": {
         "file": "src/modules/SyncV2.lua",
-        "line": 3917,
+        "line": 4019,
         "symbol": "Sync.RequestResync"
       }
     },

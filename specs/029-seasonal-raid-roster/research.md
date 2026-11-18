@@ -23,7 +23,7 @@
 
 ### Enrollment, participation path, and Core
 
-**Decision**: Record the player's requested participation path separately from the officer-approved seasonal status. A Core Raider request means intent to raid Thursday progression. The player begins as Raider/candidate; promotion to Core Raider is a manual, audited officer decision in the first release. Promotion criteria are configurable and versioned per season.
+**Decision**: Record the player's requested participation path separately from the officer-approved seasonal status. Following the approved 2026-11-15 UI revision, names, descriptions and raid days come from the guild's published season; the initial Thursday/Core Raider example is not universal policy. Persisted path IDs remain compatible. Promotion is still a manual, audited officer decision in the first release; criteria are configurable and versioned per season.
 
 **Rationale**: The client has no trustworthy automatic evidence for punctuality, mechanics, DPS/HPS, or helping guildmates. A manual decision avoids claiming that the addon measured those things. AotC is the requested guild label for Raider, not a separate Core state.
 

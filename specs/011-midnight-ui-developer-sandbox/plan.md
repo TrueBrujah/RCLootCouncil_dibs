@@ -180,3 +180,7 @@ unchanged.
   versioned; local presentation state is not synchronized; role-scoped projections remain.
 - **Release quality**: PASS. Quickstart includes automated, Retail, isolation, and
   regression gates; implementation will require documentation and changelog/version work.
+
+## Approved consolidation implementation — 2026-11-16
+
+Use the existing dashboard/shared Midnight controls for P01–P09/P11/P13–P15 of the approved proposal. First repair search fixtures and add discriminating dashboard/decision tests. Then extract the dashboard renderer to `src/ui/OfficerDashboard.lua`, loaded immediately before OfficerUI and passed an authorized read-only projection; retain the OfficerUI facade and profiler phases. Show service state and contextual navigation actions first, then activity and statistics. Reuse persistence status, existing delivery ACKs and current backup scope controls without polling full readiness or adding another writer. Extend FR/EN strings and the existing Retail campaign. Canonical recovery work remains in Feature 026 and external recovery in Feature 007; their gates and dependencies are not closed by presentation changes.

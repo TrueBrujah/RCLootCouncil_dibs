@@ -39,8 +39,8 @@ local function findWidget(widget, predicate)
   end
 end
 
-local function setup()
-  return loader.load({
+local function setup(fresh)
+  return (fresh and loader or require("helpers.configured_addon")).load({
     wow = { guildLeader = true, guildMembers = { "Tester-Realm", "Officer-Realm" } },
     withAce3 = true,
   })
@@ -585,7 +585,7 @@ describe("B11 Retail UI-004 ownership", function()
   end)
 
   it("keeps public Pre-Dib availability on the legacy fallback before policy adoption", function()
-    local _, dibs = setup()
+    local _, dibs = setup(true)
     local toggle = dibs.RCOptions.GetOptionsTable().args.dibsSettings.args.officer.args.preDibs.args.allowPublicPreDibs
     assert_false(dibs.OperationalPolicy.IsAdopted())
     assert_true(toggle.get())
@@ -595,7 +595,7 @@ describe("B11 Retail UI-004 ownership", function()
   end)
 
   it("updates adopted public Pre-Dib availability through a protected action", function()
-    local _, dibs = setup()
+    local _, dibs = setup(true)
     assert_true(dibs.Governance.AdoptInitial(nil, {
       reason = "Public Pre-Dib authority test",
       officerAuthorityRule = { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 },

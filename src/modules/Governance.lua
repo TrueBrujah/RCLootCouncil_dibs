@@ -254,7 +254,16 @@ local function authorityContent(value, current)
   local normalized = { schema = AUTHORITY_SCHEMA, state = "ACTIVE", coordinator = coordinator, ledgerEpoch = value.ledgerEpoch,
     transition = copy(value.transition), protocolState = requestedProtocol }
   local kind, prior = normalized.transition.kind, current or legacyAuthority()
-  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then return nil, "SYNC_BEHIND" end
+  if Dibs.Sync and Dibs.Sync.IsSyncBehind and Dibs.Sync.IsSyncBehind() then
+    -- Receiving this next governance record must be able to resolve its own
+    -- detail request. Every unrelated gap still prevents an authority change.
+    local reasons = Dibs.Sync.GetSyncBehindReasons and Dibs.Sync.GetSyncBehindReasons() or {}
+    if #reasons == 0 then return nil, "SYNC_BEHIND" end
+    for _, entry in ipairs(reasons) do
+      local code = type(entry) == "table" and entry.code or entry
+      if code ~= "GOVERNANCE_PARENT_MISSING" and code ~= "AUTHORITY_DETAIL_MISSING" then return nil, "SYNC_BEHIND" end
+    end
+  end
   if kind == "INITIAL" then
     if prior.state ~= "LEGACY_LOCAL" or not trim(normalized.transition.baselineHash) or not approvedBaseline(normalized.transition.baselineHash) then return nil, "AUTHORITY_BASELINE_REQUIRED" end
   elseif kind == "NORMAL_HANDOFF" then
@@ -265,6 +274,11 @@ local function authorityContent(value, current)
     if not prior.predecessorClosure or closure.closureHash ~= prior.predecessorClosure.closureHash then return nil, "CLOSURE_CONFLICT" end
     if closure.previousEpoch ~= prior.ledgerEpoch or closure.coordinator.memberKey ~= prior.coordinator.memberKey
       or normalized.ledgerEpoch ~= prior.ledgerEpoch + 1 or normalized.transition.parentClosureHash ~= closure.closureHash then return nil, "HANDOFF_PARENT_MISMATCH" end
+    local canonical = Dibs.Ledger and Dibs.Ledger.GetCanonicalState and Dibs.Ledger.GetCanonicalState("guild-primary")
+    if not canonical or tonumber(canonical.epoch) ~= closure.previousEpoch
+      or (tonumber(canonical.nextSeq) or 1) - 1 ~= closure.finalSeq or canonical.rootHash ~= closure.rootHash then
+      return nil, "SYNC_BEHIND"
+    end
     if requestedProtocol == "V2_ENFORCED" and prior.protocolState ~= "V2_ENFORCED" then return nil, "PROTOCOL_CUTOVER_REQUIRED" end
   elseif kind == "FORCED_RECOVERY" then
     if prior.state ~= "RECOVERY_PENDING" or normalized.ledgerEpoch ~= (prior.ledgerEpoch or 0) + 1 then return nil, "RECOVERY_PENDING_REQUIRED" end
@@ -417,7 +431,7 @@ function Governance.GetSynchronizationSummary()
   local authority = authorityState(state)
   local pendingAwardProposals = 0
   for _, proposal in pairs(authority.proposals) do
-    if type(proposal) == "table" and proposal.status ~= "COMMITTED" then
+    if type(proposal) == "table" and proposal.status == "PENDING_RECONCILIATION" then
       pendingAwardProposals = pendingAwardProposals + 1
     end
   end
@@ -631,6 +645,7 @@ function Governance.BeginHandoff(actor, details)
   authority.state, authority.predecessorClosure = "HANDOFF_CLOSING", closure
   boundedInsert(authority.auditLog, { action = "HANDOFF_CLOSING", actor = actorSnapshot, closureHash = closure.closureHash, timestamp = closure.closedAt }, MAX_AUTHORITY_AUDIT)
   state.authority = authority
+  if Dibs.Sync and Dibs.Sync.SendAuthoritySignal then Dibs.Sync.SendAuthoritySignal() end
   return copy(closure), "HANDOFF_CLOSING"
 end
 
@@ -751,7 +766,7 @@ function Governance.MarkAwardProposalCommitted(proposalId, commit)
   bumpAwardProposalGeneration(proposal)
   proposal.commitHash = type(commit) == "table" and commit.commitHash or proposal.commitHash
   proposal.committedAt = (Dibs.GetTimestamp and Dibs.GetTimestamp()) or time()
-  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then Dibs.Sync.ClearAwardReservation(proposalId, commit) end
+  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then Dibs.Sync.ClearAwardReservation(proposalId, commit, proposal) end
   return true
 end
 
@@ -770,6 +785,12 @@ function Governance.ResolveAwardProposal(proposalId, status, reasonCode)
     action = "AWARD_PROPOSAL_" .. status, proposalId = proposalId,
     reasonCode = proposal.resolutionReason, timestamp = proposal.resolvedAt,
   }, MAX_AUTHORITY_AUDIT)
+  if Dibs.Sync and Dibs.Sync.ClearAwardReservation then
+    Dibs.Sync.ClearAwardReservation(proposalId, nil, proposal)
+  end
+  if Dibs.Sync and Dibs.Sync.AnnounceAwardReservationDigest then
+    Dibs.Sync.AnnounceAwardReservationDigest()
+  end
   return true, status
 end
 

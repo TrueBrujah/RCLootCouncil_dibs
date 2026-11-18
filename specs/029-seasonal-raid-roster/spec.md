@@ -24,7 +24,7 @@
 
 - La saison de raid devient l’unique identité fonctionnelle; roster, règles, allocations de rang, réconciliation, ledger et synchronisation utilisent son même `seasonId`. Les enregistrements peuvent rester dans leurs modules/domaines actuels, mais aucun second identifiant de saison ne doit demander une liaison manuelle.
 - Un GM/officier prépare la saison complète en brouillon. Créer ou modifier un brouillon ne change pas le ledger Dibs actif. Un officier active explicitement la saison après prévisualisation et résolution des blocages.
-- Les inscriptions proposent une voie Core Raider pour signaler l’objectif de participer à la progression du jeudi. Le joueur commence comme Raider/candidat; la promotion réelle en Core Raider est accordée par un GM/officier selon une règle configurée et versionnée pour la saison.
+- Les inscriptions proposent une voie de progression selon les noms et horaires configurés par la guilde. Le joueur commence comme candidat; la promotion réelle est accordée par un GM/officier selon une règle configurée et versionnée pour la saison. Le jeudi et les noms Core Raider/Raider de la demande initiale sont des exemples de guilde, pas des libellés universels.
 - La règle de promotion Core Raider peut être configurée par saison. Le seuil exact et la méthode de suivi des présences restent à décider; la première livraison ne présume pas d’un suivi automatique et permet une décision manuelle auditée.
 - Les règlements de raid visibles par les joueurs et éditables par les GM/officiers sont versionnés par saison. Ils sont distincts des paramètres Dibs que l’addon peut appliquer techniquement.
 - Les allocations Dibs restent configurées par rang de guilde pour chaque saison, conformément à la constitution. Elles ne sont calculées que pour les personnes/personnages approuvés dans le roster de la saison; les statuts Core/Raider ne changent pas à eux seuls les allocations.
@@ -32,6 +32,42 @@
 - Une saison brouillon n’est pas active. L’activation associe le roster approuvé et sa révision aux règles, allocations et ledger du même `seasonId`; un échec ne doit pas laisser un état partiellement actif.
 
 ## User Scenarios & Testing *(mandatory)*
+
+### Approved guild-neutral configuration revision — 2026-11-15
+
+- **FR-051**: Guild-specific raid days, category names and descriptions MUST come
+  from that season's configuration. Thursday, Officer/Core relationships and
+  example guild descriptions MUST NOT be presented as universal guild policy.
+  A requested progression path remains distinct from the audited approved status;
+  this presentation correction does not change promotion or authority contracts.
+- **FR-052**: Raid schedules MUST be entered through named day, time and optional
+  expected-difficulty controls for both new seasons and draft edits, without
+  requiring users to type numeric weekday codes or protocol syntax. A season may
+  select any combination of Normal, Heroic and Mythic through the unified signup
+  category selector specified by FR-056. Previously published custom catalogs
+  remain supported without migration.
+  Each scheduled night may independently specify Normal, Heroic or Mythic, or leave
+  the difficulty unspecified. Existing schedules without difficulty data MUST remain
+  valid. Preserve per-entry duration/time zone, service validation and the seven-entry
+  bound. Adding/editing UI rows must not publish or activate a season.
+
+### Approved season presentation redesign — 2026-11-16
+
+- **FR-053**: Guided preparation, direct creation and draft editing MUST use a
+  consistent organization: essential identity, required dates and unified signup
+  categories/raid difficulties first; optional nights, end dates, rules and
+  supplementary parameters through explicit expandable sections with summaries.
+  Collapsing a section MUST preserve entered values; validation MUST reveal the
+  affected section. Required rules or activation blockers remain visible.
+- **FR-054**: Season management MUST prioritize the selected season and its
+  relevant actions. New-season creation, revision history and technical catalog
+  editing remain explicitly accessible without occupying the initial view in full.
+  Saving configuration, publishing, opening registration and activating MUST remain
+  separate operations with unchanged authority and confirmation requirements.
+- **FR-055**: This redesign removes visual redundancy, not functionality or data.
+  Preserve identifiers, defaults, optional metadata, revision checks and service
+  contracts. It introduces neither Markdown support nor timezone/DST conversion;
+  actual narrow/wide Retail layout remains a separate validation gate.
 
 ### User Story 1 — Un joueur s’inscrit à la saison (Priority: P1)
 
@@ -120,13 +156,13 @@ Comme GM, je veux activer ou désactiver le module depuis System > Modules afin 
 
 ### User Story 6 — Les joueurs choisissent une voie et consultent les règles de saison (Priority: P1)
 
-Comme joueur, je veux lire les règles publiées et indiquer que je vise la progression Core Raider du jeudi; comme officier, je veux pouvoir ajuster ces règles pour chaque saison.
+Comme joueur, je veux lire les règles publiées et indiquer le parcours de progression configuré par ma guilde; comme officier, je veux pouvoir ajuster ces règles pour chaque saison.
 
 **Independent Test**: Publier une révision de règlement et des options d’inscription dans un brouillon, ouvrir les inscriptions, puis vérifier l’affichage côté joueur, la capture de la révision consultée et l’absence de promotion Core automatique.
 
 **Acceptance Scenarios**:
 
-1. **Given** les inscriptions ouvertes, **When** un joueur s’inscrit, **Then** il peut choisir la voie Core Raider (intention de progression du jeudi) ou une autre voie configurée, et comprend que ce choix ne lui accorde pas encore le statut Core.
+1. **Given** les inscriptions ouvertes, **When** un joueur s’inscrit, **Then** il peut choisir la voie de progression ou une autre voie configurée selon les noms publiés par sa guilde, et comprend que ce choix ne lui accorde pas encore le statut correspondant.
 2. **Given** un joueur inscrit sur la voie Core, **When** il consulte le roster, **Then** son état est présenté comme Raider/candidat Core jusqu’à une promotion explicite d’un GM/officier.
 3. **Given** un GM/officier modifie le règlement ou la règle de promotion, **When** il publie la modification, **Then** une nouvelle version saisonnière est créée et les saisons précédentes gardent leur texte et leur règle historiques.
 4. **Given** un critère de promotion sans méthode de mesure automatisée, **When** un officier évalue un candidat, **Then** il peut enregistrer sa décision et son motif sans que l’addon prétende avoir mesuré présence, ponctualité ou performance.
@@ -220,7 +256,7 @@ Comme GM/officier autorisé, je veux comparer l’allocation attendue au ledger 
 - **FR-028**: Le produit MUST fournir des validations de totaux par rôle, classe, type d’armure et catégorie, incluant plusieurs centaines d’inscriptions, des alts liés, des joueurs hors guilde, des inscriptions retirées et des filtres.
 - **FR-029**: Les pages joueur et gestion MUST rester utilisables à différentes tailles de fenêtre; les listes MUST avoir un défilement ou une pagination bornée, et les colonnes et textes MUST rester lisibles sans débordement.
 - **FR-038**: Les règlements visibles aux joueurs MUST être modifiables et versionnés dans la saison, avec date d’effet et auteur. Chaque saison conserve le texte qu’elle a publié; un changement ne modifie pas les saisons antérieures.
-- **FR-039**: La voie « Core Raider » demandée par un joueur MUST être séparée de son statut accordé. Une inscription dans cette voie signifie une intention de progression du jeudi; elle commence comme Raider/candidat et ne devient Core Raider qu’après décision GM/officier.
+- **FR-039**: La voie de progression demandée (`CORE_PROGRESSION`, identifiant compatible conservé) MUST être séparée du statut accordé. Elle exprime une intention de participation selon les règles et horaires de la guilde; un candidat ne reçoit le statut approuvé qu'après décision GM/officier. Aucun jour fixe n'est imposé par le formulaire.
 - **FR-040**: Les règles de promotion Core Raider MUST être configurables et versionnées par saison. La première livraison MUST permettre une évaluation et une promotion manuelles auditables; elle MUST NOT prétendre mesurer automatiquement présence, ponctualité, performance ou aide apportée.
 - **FR-041**: Les règles de raid informatives MUST être distinguées des paramètres que le logiciel applique. L’interface ne MUST NOT annoncer qu’une règle textuelle est imposée si aucun mécanisme vérifiable ne l’applique.
 - **FR-042**: Chaque brouillon MUST posséder une identité saisonnière canonique et des révisions concurrentes contrôlées. Toute inscription, règle, allocation, Main saisonnier et ledger MUST référencer ce même `seasonId`; les objets persistants séparés MUST partager cet identifiant et une révision/empreinte d’activation.
@@ -232,6 +268,45 @@ Comme GM/officier autorisé, je veux comparer l’allocation attendue au ledger 
 - **FR-048**: L’activation MUST garder l’ancien ledger et son historique consultables; les allocations de la nouvelle saison sont établies selon ses règles et son roster approuvé, sans importer silencieusement les soldes de l’ancienne saison.
 - **FR-049**: Une saison MUST suivre les états Brouillon, Inscriptions ouvertes, Révision, Prête, Active, Terminée et Archivée, avec transitions autorisées et historique de l’acteur. L’archive intervient sept jours après la fin de saison, pas sept jours après la fermeture des inscriptions.
 - **FR-050**: La migration des saisons existantes MUST préserver chaque saison Dibs, chaque saison roster, ses inscriptions et ses transactions. Toute ancienne liaison roster→Dibs MUST être conservée comme alias historique; la migration MUST NOT deviner un nouveau lien ni fusionner des soldes.
+
+### Approved unified registration categories — 2026-11-16
+
+- **FR-056**: For new seasons and draft editing, registration categories ARE the
+  supported raid difficulties: Normal, Heroic and Mythic. One group of checkboxes
+  MUST replace the free-text category field and separate difficulty selector in
+  Guided Setup and direct creation/editing. At least one choice is required. Saving
+  MUST supply the same selected identifiers for signup choices and raid difficulties;
+  each raid night retains its independent optional expected difficulty. During open
+  registration, players MUST be able to select one of the published unified raid
+  categories when several choices are offered, without changing requested-path or
+  Officer-approval semantics.
+- **FR-057**: Apply this change only to new seasons and explicitly saved drafts,
+  as confirmed by the user. Published seasons, existing registrations, historical
+  category identities and revisions MUST NOT be migrated or rewritten. A legacy
+  draft with unrecognized categories MUST require an explicit supported selection;
+  opening its form alone MUST NOT modify authoritative data. Historical catalog
+  descriptors remain retained as inactive entries when removed from a draft.
+  The draft UI MUST NOT offer a competing custom-category editor. Before publishing,
+  a legacy or locally edited draft MUST have its displayed selection explicitly saved.
+
+This approval supersedes the independent signup/difficulty setup decision from
+2026-11-15 for new and draft forms only. Existing published custom-catalog workflows
+and the compatible domain APIs remain available; no schema or accounting rule changes.
+
+### Approved registration date boundaries — 2026-11-16
+
+- **FR-058**: New seasons and explicitly saved drafts MUST open registration
+  strictly before the season starts (`registrationStartAt < startAt`), comparing
+  full timestamps. If both end dates are configured, registration MUST close no
+  later than the season ends (`registrationEndAt <= endAt`). End dates remain
+  optional and MUST NOT precede their respective start dates. An omitted
+  registration end MUST NOT allow registration past a configured season end;
+  the existing lifecycle continues to enforce closure. The shared form and
+  Guided Setup MUST validate before writes and provide localized errors; direct
+  service calls and publication of a draft MUST enforce the same boundaries.
+  Historical revisions, dates, hashes, replay receipts, synchronization and
+  ledger transactions MUST NOT be rewritten or rejected solely by this new
+  chronology rule. This refinement does not change lifecycle transitions.
 
 ### Faits de référence et limites de portée
 

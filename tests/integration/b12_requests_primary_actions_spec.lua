@@ -51,7 +51,7 @@ describe("B12 request primary actions", function()
 
     local frame = dibs.OfficerUI.CreateWindow()
     assert_true(frame.OpenRequestDetail(request))
-    local primary = findWidget(frame.requestDetailRoot, "Button", action == "ask_information" and "Ask for information" or action == "no_correction" and "Resolve" or "Reject")
+    local primary = findWidget(frame.requestDetailRoot, "Button", action == "ask_information" and "Ask for information" or action == "no_correction" and dibs.L.REQUEST_RESOLVE_NO_CORRECTION or "Reject")
     assert_not_nil(primary)
     primary.callbacks.OnClick(primary, "OnClick")
 
@@ -61,7 +61,7 @@ describe("B12 request primary actions", function()
     local review = findLatestWidget("Button", "Review")
     assert_not_nil(review)
     review.callbacks.OnClick(review, "OnClick")
-    local confirm = findLatestWidget("Button", confirmLabel)
+    local confirm = findLatestWidget("Button", action == "no_correction" and dibs.L.REQUEST_CONFIRM_NO_CORRECTION or confirmLabel)
     assert_not_nil(confirm)
     confirm.callbacks.OnClick(confirm, "OnClick")
 

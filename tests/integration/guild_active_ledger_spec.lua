@@ -301,12 +301,16 @@ describe("Guild active ledger imposed through operational policy", function()
     local season = dibs.GetCurrentSeasonId()
     dibs.Governance.GetAwardProposals = function()
       return {
-        { proposalId = "p-primary", type = "AWARD", status = "PENDING", amount = 1, seasonId = season,
+        { proposalId = "p-primary", type = "AWARD", status = "PENDING_RECONCILIATION", amount = 1, seasonId = season,
           ledgerId = "guild-primary", playerSnapshot = { memberKey = memberKey } },
-        { proposalId = "p-other", type = "AWARD", status = "PENDING", amount = 2, seasonId = season,
+        { proposalId = "p-other", type = "AWARD", status = "PENDING_RECONCILIATION", amount = 2, seasonId = season,
           ledgerId = other, playerSnapshot = { memberKey = memberKey } },
-        { proposalId = "p-legacy", type = "AWARD", status = "PENDING", amount = 4, seasonId = season,
+        { proposalId = "p-legacy", type = "AWARD", status = "PENDING_RECONCILIATION", amount = 4, seasonId = season,
           playerSnapshot = { memberKey = memberKey } },
+        { proposalId = "p-rejected", type = "AWARD", status = "REJECTED", amount = 20, seasonId = season,
+          ledgerId = other, playerSnapshot = { memberKey = memberKey } },
+        { proposalId = "p-stale", type = "AWARD", status = "STALE", amount = 20, seasonId = season,
+          ledgerId = "guild-primary", playerSnapshot = { memberKey = memberKey } },
       }
     end
     -- Legacy proposals without a ledger count against the active ledger.

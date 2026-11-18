@@ -30,7 +30,13 @@ function M.new()
     _G.time = function() return self.clock end
     dibs.Ace3.Serialize = encode
     dibs.Ace3.Deserialize = function(payload)
-      local chunk = load("return " .. payload, "synthetic request wire", "t", {})
+      local chunk
+      if _VERSION == "Lua 5.1" then
+        chunk = loadstring("return " .. payload, "synthetic request wire")
+        if chunk then setfenv(chunk, {}) end
+      else
+        chunk = load("return " .. payload, "synthetic request wire", "t", {})
+      end
       return chunk and chunk() or nil
     end
     dibs.Ace3.SendComm = function(prefix, envelope, channel, target)

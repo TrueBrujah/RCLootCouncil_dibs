@@ -40,8 +40,15 @@ describe("B05b fenced authority and recovery", function()
 
   it("requires the active coordinator closure and exact parent tuple for normal handoff", function()
     local dibs = load(); activate(dibs)
+    local hello = assert(dibs.Sync.BuildEnvelope({ type = "HELLO" }))
+    hello.senderNameRealm, hello.senderMemberKey = "Coordinator-Realm", "coordinator-realm"
+    assert_true(dibs.Sync.Receive(hello, "Coordinator-Realm", "GUILD"))
+    assert_true(dibs.Governance.EnableV2(nil, { "Coordinator-Realm" }))
+    local canonical = dibs.Ledger.GetCanonicalState("guild-primary")
     assert_nil(dibs.Governance.BeginHandoff("Officer-Realm", { finalSeq = 2, rootHash = "root-7" }))
-    local closure = assert(dibs.Governance.BeginHandoff("Coordinator-Realm", { finalSeq = 2, rootHash = "root-7" }))
+    local closure = assert(dibs.Governance.BeginHandoff("Coordinator-Realm", {
+      finalSeq = canonical.nextSeq - 1, rootHash = canonical.rootHash,
+    }))
     assert_equal("HANDOFF_CLOSING", dibs.Governance.GetAuthorityState().state)
     local wrong = authority(dibs, "Officer-Realm", 8, { kind = "NORMAL_HANDOFF", parentClosure = closure, parentClosureHash = "wrong" })
     assert_false(dibs.Governance.Change(nil, { future = { authority = wrong } }))

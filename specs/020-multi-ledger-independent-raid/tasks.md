@@ -136,6 +136,16 @@
 
 ## Dependencies & Execution Order
 
+- [x] T042 Refuse an existing Pre-Dib request ID claimed in another ledger through
+  both `PreDibs.UpsertFromSync` and `ApplyVerifiedSyncRecord`; inspect existing
+  guild-scoped storage before initializing the claimed store. Preserve the
+  `LEDGER_NOT_APPROVED` contract and all original data. RF-0045 now covers both
+  directions and both paths with full-state hashes; existing ledger-boundary,
+  migration and synchronization suites remain green in **383/383 on 36 suites
+  under Lua 5.1.5 and Fengari**, 2026-11-17. Two additional legacy-alias regressions
+  preserve lazy ledger tagging of untagged records in an aliased secondary store.
+  No new historical request migration.
+
 ### Phase Dependencies
 
 ```text

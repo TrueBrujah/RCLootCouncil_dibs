@@ -536,8 +536,8 @@ function Readiness.CanProcessLiveAward()
   -- A missing raid context or absent optional channel is expected outside a
   -- live session and must not break existing local RC callback tests. The RC
   -- callback itself still performs the final item/winner/identity checks.
-  if result.integrationStatus == "Ready" then return true, result end
-  return true, result
+  if result.integrationStatus == "Unavailable" then return true, result end
+  return result.liveConsumptionAllowed == true, result
 end
 
 local function statusLine(label, value)

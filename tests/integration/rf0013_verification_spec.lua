@@ -22,7 +22,7 @@ local loader = require("helpers.load_addon")
 local function loadActor(playerName, leader, rank, saved)
   local _, dibs = loader.load({ withAce3 = true, savedVariables = saved, wow = {
     playerName = playerName, guildLeader = leader,
-    guildMembers = { "GM-Realm", "Officer-Realm", "Player-Realm" },
+    guildMembers = { leader and playerName or "GM-Realm", "Officer-Realm", "Player-Realm" },
     guildRankIndices = { [1] = 0, [2] = 1, [3] = 4 },
     guildName = "RF0013 Test Guild", guildRealm = "TestRealm",
   } })
@@ -35,7 +35,7 @@ local function seedLedger(dibs, count, prefix)
   for index = 1, count do
     dibs.Ledger.AddTransaction({
       transactionId = string.format("%s-%04d", prefix or "rf0013-verify", index),
-      playerName = "Tester-Realm", amount = 1, type = "DIB_GRANTED",
+      playerName = dibs.GetPlayerName(), amount = 1, type = "DIB_GRANTED",
       reason = "RF-0013 verification row", source = "test",
       seasonId = seasonId, createdAt = 1700000000 + index,
     })

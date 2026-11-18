@@ -63,6 +63,26 @@ loot links, candidate data, or vote details. Receivers deduplicate by
 when the matching canonical `AWARD_COMMIT` is applied. The digest is a
 reservation hint, never a ledger mutation.
 
+### Terminal reservation repair — 2026-11-17
+
+`records` retains its existing PENDING-only shape and content hash. An optional
+`releases` array carries the same minimal identity/scope fields with state
+`RELEASED`, protected by its own `releaseHash`. Pending entries and releases share
+the existing per-page entry budget; each page is validated completely before
+application. Old senders without these optional fields remain accepted. Older
+receivers ignore the extension, so their release convergence is not certified.
+Upgraded HELLO/envelope capabilities advertise `awardReservationReleases=true`;
+an older peer without this capability is not evidence of successful release delivery.
+
+A rejected or stale proposal releases its hold without an accounting write.
+Only its verified officer actor or the current coordinator may originate the
+release. Receivers verify immutable player, actor, season, ledger and amount
+against a known hold, preserve a bounded SavedVariables tombstone even when the
+release arrives first, and never reopen that stable proposal ID from a later
+pending digest. Received releases are not rebroadcast as locally originated
+decisions. Locally originated releases remain in paginated lifecycle digests for
+reconnection catch-up, within the existing bounded retention window.
+
 ## 2. SEASON_CATALOG (new entity type, DIGEST + detail, same shape as OPERATIONAL_POLICY)
 
 **Digest** (`type = "DIGEST"`, channel `GUILD`, sent from `Sync.OnLifecycle`

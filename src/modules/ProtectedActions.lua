@@ -303,6 +303,10 @@ local function executeLedgerOperation(actor, payload, decision)
     rejected.allowed, rejected.reasonCode = false, reason
     return buildResult(false, nil, rejected, reason)
   end
+  if not Dibs.Ledger or not Dibs.Ledger.IsDisputeOperationTransportEnabled
+    or not Dibs.Ledger.IsDisputeOperationTransportEnabled() then
+    return rejectOperation("FEATURE_DISABLED")
+  end
   local proposalId = payload and payload.proposalId
   if type(proposalId) ~= "string" or proposalId == "" or not Dibs.Governance
     or type(Dibs.Governance.GetDisputeOperationProposal) ~= "function" then

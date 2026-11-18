@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 -- Regression for the OfficerUI runtime error:
 --   attempt to call a nil value

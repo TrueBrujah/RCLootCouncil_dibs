@@ -25,6 +25,7 @@ describe("Data backup and transfer recovery boundaries in UI", function()
     end
     dibs.DataUI.Open("backups")
     assert_true(labels[dibs.L.DATA_BACKUP_LOCAL_STORAGE])
+    assert_true(labels[dibs.L.DATA_BACKUP_INDEPENDENT_COPY])
     dibs.DataUI.Open("transfer")
     assert_true(labels[dibs.L.DATA_EXPORT_CURRENT_STATE])
   end)

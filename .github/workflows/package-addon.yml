@@ -41,6 +41,10 @@ jobs:
             echo "package_name=$package_name"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate addon load files and embedded assets
+        shell: pwsh
+        run: ./scripts/Test-DibsAddonFiles.ps1
+
       - name: Build package
         shell: bash
         env:

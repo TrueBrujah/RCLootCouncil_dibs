@@ -228,6 +228,7 @@ describe("opt-in UI render timing", function()
 
   it("counts actual Officer and Player page renders separately", function()
     local _, dibs = loader.load({ withAce3 = true })
+    require("helpers.configured_addon").configure(dibs)
     local timer = _G.debugprofilestop
     register_reset(function() _G.debugprofilestop = timer end)
     local previousChat = _G.DEFAULT_CHAT_FRAME

@@ -2007,9 +2007,6 @@ function Dibs.EncounterJournal.SubmitPreDib(itemID, itemName)
   if Dibs.PreDibs and Dibs.PreDibs.CreatePublic then
     return Dibs.PreDibs.CreatePublic(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, itemID, itemName, Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil, "encounter-journal")
   end
-  if Dibs.PreDibs and Dibs.PreDibs.Create then
-    return Dibs.PreDibs.Create(Dibs.GetPlayerName and Dibs.GetPlayerName() or nil, itemID, itemName, Dibs.GetCurrentSeasonId and Dibs.GetCurrentSeasonId() or nil)
-  end
   return nil, "PREDIB_UNAVAILABLE"
 end
 

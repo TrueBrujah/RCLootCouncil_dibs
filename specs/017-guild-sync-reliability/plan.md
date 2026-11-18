@@ -6,6 +6,13 @@
 
 ## Summary
 
+The authorized 2026-11-17 regression repair restores terminal award-reservation
+release locally and across serialized clients. Preserve ledger history and the
+pending-only wire fields; extend the existing digest with separately hashed,
+bounded optional releases, validate origin/scope before mutation, persist
+tombstones for reordering/reconnection, and do not relay received decisions.
+The detailed compatibility boundary is in [sync-messages](contracts/sync-messages.md).
+
 Guild members reported that seasons created by the GM, Pre-Dibs mode changes, and
 award evidence created by a non-coordinator Master Looter never reach the rest of
 the guild. Investigation found three concrete, independent gaps in the existing

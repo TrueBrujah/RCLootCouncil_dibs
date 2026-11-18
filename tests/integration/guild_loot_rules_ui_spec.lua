@@ -4,17 +4,19 @@ local roster = { "GameMaster-Realm", "Officer-Realm", "Player-Realm" }
 local ranks = { [1] = 0, [2] = 1, [3] = 3 }
 
 local function load(player, saved)
-  return select(2, loader.load({ withAce3 = true, savedVariables = saved, wow = {
+  local dibs = select(2, loader.load({ withAce3 = true, savedVariables = saved, wow = {
     playerName = player, guildLeader = player == "GameMaster-Realm", guildMembers = roster, guildRankIndices = ranks,
   } }))
+  if player == "GameMaster-Realm" then require("helpers.configured_addon").foundation(dibs) end
+  return dibs
 end
 
 local function adoptPolicy(dibs)
-  assert_true(dibs.Governance.AdoptInitial(nil, {
+  if not dibs.Governance.GetCurrentRecord() then assert_true(dibs.Governance.AdoptInitial(nil, {
     reason = "Loot Rules UI test",
     officerAuthorityRule = { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 },
     policyWriterRule = { kind = "CURRENT_ROSTER_RANK", maxRankIndex = 1 },
-  }))
+  })) end
   assert_true(dibs.OperationalPolicy.AdoptInitial(nil, { allowPublicPreDibs = true, preDibModes = {} }, "Loot Rules UI test"))
 end
 

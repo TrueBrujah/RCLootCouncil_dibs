@@ -1,6 +1,28 @@
 local loader = require("helpers.load_addon")
 local fixtures = require("helpers.dispute_fixtures")
 
+-- Lifecycle tests use real authority and canonical commits. Only the existing
+-- private release/readiness seams are opened here; readiness has its own real-
+-- service acceptance suite and production defaults stay closed.
+local function enableLifecycleCanonical(dibs)
+  assert(dibs.Governance.AdoptInitial(nil, { reason = "Lifecycle regression" }))
+  local baseline = assert(dibs.HistoricalBaseline.FinalizeBaseline(nil))
+  local actor = assert(dibs.Identity.CreateSnapshot(dibs.GetPlayerName()))
+  assert(dibs.Governance.Change(nil, { future = { authority = {
+    schema = 1, state = "ACTIVE", coordinator = actor, ledgerEpoch = 7,
+    transition = { kind = "INITIAL", baselineHash = baseline.legacyBaselineHash },
+  } } }))
+  assert(dibs.Governance.EnableV2(nil, { dibs.GetPlayerName() }))
+  assert(dibs.Ledger.GetCanonicalState("guild-primary"))
+  dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
+  for index = 1, 64 do
+    local name = debug.getupvalue(dibs.Ledger.CommitDisputeOperation, index)
+    if not name then break end
+    if name == "DISPUTE_OPERATION_WRITES_ENABLED" then debug.setupvalue(dibs.Ledger.CommitDisputeOperation, index, true) end
+    if name == "operationReadinessProbe" then debug.setupvalue(dibs.Ledger.CommitDisputeOperation, index, function() return true end) end
+  end
+end
+
 describe("Request follow-up and retained lifecycle", function()
   local function setup()
     local _, dibs = loader.load({ withAce3 = true, wow = { guildLeader = true,
@@ -38,8 +60,9 @@ describe("Request follow-up and retained lifecycle", function()
 
   it("retains the original complete dossier through conclusion, close and archive", function()
     local dibs, request = setup()
+    enableLifecycleCanonical(dibs)
     dibs.Disputes.AddOfficerReply(request.requestId, "Searchable public reply")
-    dibs.Disputes.NoCorrection(request.requestId, "Reviewed without correction")
+    assert_not_nil(dibs.Disputes.NoCorrection(request.requestId, "Reviewed without correction"))
     assert_nil(dibs.Disputes.Resolve(request.requestId, "archive", { reason = "Too early" }))
     assert_nil(dibs.Disputes.Resolve(request.requestId, "close", {}))
     assert_true(dibs.Disputes.Resolve(request.requestId, "close", { reason = "Owner informed" }).ok)
@@ -92,6 +115,11 @@ describe("Request follow-up and retained lifecycle", function()
 
   it("checks optimistic revisions and preserves compensation links after archival", function()
     local dibs, request = setup()
+    local original = assert(dibs.Ledger.AddTransaction(fixtures.transaction("Tester-Realm", dibs.GetCurrentSeasonId(), {
+      transactionId = "followup-correction-original",
+    })))
+    request = assert(dibs.Disputes.CreateReport({ category = "wrong_debit", transactionRef = original.transactionId }))
+    enableLifecycleCanonical(dibs)
     local stale, reason = dibs.Disputes.UpdateFollowUp(request.requestId, { expectedRevision = 99 })
     assert_nil(stale); assert_equal("REQUEST_REVISION_CONFLICT", reason)
     local correction = dibs.Disputes.CorrectBalance(request.requestId, { amount = 1, confirmed = true, reason = "Verified correction" })
@@ -157,6 +185,10 @@ describe("Request follow-up and retained lifecycle", function()
 
   it("exposes localized follow-up controls and queues without a new navigation route", function()
     local _, dibs = loader.load({ withAce3 = true, wow = { locale = "frFR", guildLeader = true } })
+    assert_true(dibs.Installation.Initialize(nil).ok)
+    assert_true(dibs.ProtectedActions.Execute("rank.set", nil, {
+      seasonId = dibs.GetCurrentSeasonId(), rankIndex = 0, rankName = "Guild Master", allocation = 10, enabled = true,
+    }).ok)
     local request = dibs.Disputes.CreateReport({ category = "other", note = "Contrôle synthétique" })
     local frame = dibs.OfficerUI.CreateWindow()
     assert_true(frame.OpenRequestDetail(dibs.Disputes.GetRequest(request.requestId, nil)))

@@ -65,12 +65,12 @@ local function replaceUpvalue(fn, name, value)
   error("private Ledger test seam not found: " .. name, 2)
 end
 
-local function enableCanonicalWriter(client)
+local function enableCanonicalWriter(client, realReadiness)
   local writer = client.dibs.Ledger.CommitDisputeOperation
   assert_true(type(writer) == "function", "Ledger.CommitDisputeOperation is not implemented")
-  -- Only this isolated test client replaces the private, fail-closed writer gates.
+  -- Release/test gates remain isolated; readiness is real when requested.
   replaceUpvalue(writer, "DISPUTE_OPERATION_WRITES_ENABLED", true)
-  replaceUpvalue(writer, "operationReadinessProbe", function() return true end)
+  if not realReadiness then replaceUpvalue(writer, "operationReadinessProbe", function() return true end) end
   replaceUpvalue(writer, "operationFailureProbe", function(point)
     local hit, failure = client.failureInjector:Hit(point)
     if hit then return failure end
@@ -80,13 +80,13 @@ local function enableCanonicalWriter(client)
 end
 
 -- Enables the whole canonical correction path in one isolated test client:
--- the private Ledger writer gate, the private runtime readiness probe, and the
--- release flag consulted by the protected boundary. None of these switches
+-- the private Ledger writer gate and the release flag at the protected boundary.
+-- The runtime readiness probe remains real when requested. None of these switches
 -- exist in the production addon as a user or SavedVariables option.
 -- The verified coordinator authority is established separately through
 -- world:ActivateV2().
-local function enableCanonicalCorrectionPath(client)
-  local writer = enableCanonicalWriter(client)
+local function enableCanonicalCorrectionPath(client, realReadiness)
+  local writer = enableCanonicalWriter(client, realReadiness)
   client.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
   return writer
 end
@@ -152,7 +152,7 @@ local function canonicalTransferCase()
   local original, request, seasonId = createTargetCase(client, world)
   world:ActivateV2()
   local activeSeasonId = client.dibs.GetCurrentSeasonId()
-  assert(client.dibs.Ledger.Grant(client.name, 1, "RF-0012 prior canonical award", "test", activeSeasonId))
+  assert(client.dibs.Ledger.RegisterSeasonAllocation(client.name, activeSeasonId, 1, "RF-0012 season allocation"))
   local award = client.dibs.Ledger.CommitDibUse({
     actor = client.name,
     action = "ledger.use",
@@ -297,7 +297,7 @@ describe("RF-0012 canonical dispute operation gate", function()
 
   it("commits both target-transfer legs in one sequence and exact replay is a no-op", function()
     local world, coordinator, original, request, seasonId, operation = canonicalTransferCase()
-    local writer = enableCanonicalCorrectionPath(coordinator)
+    local writer = enableCanonicalCorrectionPath(coordinator, true)
     local ledger = primaryLedger(coordinator)
     local originalRow = clients.DeepCopy(ledger.transactions[original.transactionId])
     local transactionsBefore = #coordinator.dibs.Ledger.GetAllTransactions("guild-primary")
@@ -352,6 +352,115 @@ describe("RF-0012 canonical dispute operation gate", function()
     assert_equal(1, operationCommitCount(primaryLedger(coordinator)))
     assert_true(clients.DeepEqual(afterFirst, world:Snapshot(coordinator)),
       "exact replay changed SavedVariables")
+  end)
+
+  it("uses real readiness for coordinator acceptance and a non-coordinator receiver", function()
+    local world, coordinator, _, _, _, operation = canonicalTransferCase()
+    local player = world:Load(world.names[2], world:Snapshot(coordinator))
+    local writer = enableCanonicalCorrectionPath(coordinator, true)
+    enableCanonicalCorrectionPath(player, true)
+    local result = writer({ actor = coordinator.name }, operation)
+    assert_true(result.accepted, tostring(result.reasonCode))
+    local received = player.dibs.Ledger.ApplyDisputeOperationCommit(result.value, coordinator.name, "guild-primary")
+    assert_true(received.accepted, tostring(received.reasonCode))
+    assertTransferProjected(player, operation, result.value)
+    assert_true(clients.DeepEqual(primaryLedger(coordinator).canonical, primaryLedger(player).canonical))
+  end)
+
+  it("rejects real behind, broken-history, and unknown recovery readiness without accounting effects", function()
+    local cases = {
+      { reason = "SYNC_BEHIND", prepare = function(client) client.dibs.Sync.MarkSyncBehind("LEDGER_GAP") end },
+      { reason = "CANONICAL_ROOT_MISMATCH", prepare = function(client) primaryLedger(client).canonical.rootHash = "broken-root" end },
+      { reason = "CANONICAL_RECOVERY_UNAVAILABLE", prepare = function(client) client.dibs.canonicalOperationRecoveryStatus = nil end },
+      { reason = "CANONICAL_RECOVERY_UNAVAILABLE", prepare = function(client) client.dibs.canonicalOperationRecoveryStatus.guildKey = "other-guild" end },
+    }
+    for _, case in ipairs(cases) do
+      local world, coordinator, _, _, _, operation = canonicalTransferCase()
+      local writer = enableCanonicalCorrectionPath(coordinator, true)
+      case.prepare(coordinator)
+      local before = world:Snapshot(coordinator)
+      local result = writer({ actor = coordinator.name }, operation)
+      assert_false(result.accepted)
+      assert_equal(case.reason, result.reasonCode)
+      assert_true(clients.DeepEqual(before, world:Snapshot(coordinator)), case.reason .. " changed SavedVariables")
+    end
+  end)
+
+  it("requires actual advertised operation capability from known online peers", function()
+    local world, coordinator, _, _, _, operation = canonicalTransferCase()
+    local player = world:Load(world.names[2], world:Snapshot(coordinator))
+    local writer = enableCanonicalCorrectionPath(coordinator, true)
+    local function announce()
+      local hello = assert(player.dibs.Sync.BuildEnvelope({ type = "HELLO" }))
+      assert_true(coordinator.dibs.Sync.Receive(hello, player.name, "GUILD"))
+    end
+    announce()
+    local before = world:Snapshot(coordinator)
+    local refused = writer({ actor = coordinator.name }, operation)
+    assert_false(refused.accepted)
+    assert_equal("OPERATION_PEER_INCOMPATIBLE", refused.reasonCode)
+    assert_true(clients.DeepEqual(before, world:Snapshot(coordinator)))
+    enableCanonicalCorrectionPath(player, true)
+    announce()
+    local result = writer({ actor = coordinator.name }, operation)
+    assert_true(result.accepted, tostring(result.reasonCode))
+  end)
+
+  it("recovers non-empty legacy, award, and correction history at actual startup without double counting", function()
+    local world, coordinator, original, request, seasonId = canonicalTransferCase()
+    enableCanonicalCorrectionPath(coordinator, true)
+    local dibs = coordinator.dibs
+    local activeSeasonId = dibs.GetCurrentSeasonId()
+    local result, reason = dibs.Disputes.Resolve(request.requestId, "correct_target", targetCorrectionOptions(world, request), nil)
+    assert_true(result and result.ok == true, tostring(reason))
+    local ledger = primaryLedger(coordinator)
+    local immutable = clients.DeepCopy(ledger.canonical.commits)
+    local award, correction
+    for _, commit in pairs(immutable) do
+      if commit.recordClass == "AWARD_COMMIT" then award = commit end
+      if commit.recordClass == "LEDGER_OPERATION_COMMIT" then correction = commit end
+    end
+    assert_not_nil(award)
+    assert_not_nil(correction)
+    local originalRow = clients.DeepCopy(ledger.transactions[original.transactionId])
+    local nextSeq, rootHash = ledger.canonical.nextSeq, ledger.canonical.rootHash
+    ledger.transactions["rf0012-prior-canonical-award"] = nil
+    for _, entry in ipairs(correction.operation.signedEntries) do ledger.transactions[entry.transactionId] = nil end
+    ledger.playerStates = {}
+    ledger.canonical.transactionIndex = {}
+    dibs.GetDB().disputes.operationStates = {}
+    local restartedWorld = clients.new()
+    local restarted = restartedWorld:Load(coordinator.name, world:Snapshot(coordinator))
+    local recovered = restarted.dibs
+    local rebuilt = primaryLedger(restarted)
+    assert_true(recovered.canonicalOperationRecoveryStatus.rebuilt, tostring(recovered.canonicalOperationRecoveryStatus.reasonCode))
+    assert_equal("guild-primary", recovered.canonicalOperationRecoveryStatus.ledgerId)
+    assert_equal("VALID", recovered.Ledger.ClassifyCanonicalRecovery("guild-primary").classification)
+    assert_equal(nextSeq, rebuilt.canonical.nextSeq)
+    assert_equal(rootHash, rebuilt.canonical.rootHash)
+    assert_true(clients.DeepEqual(immutable, rebuilt.canonical.commits), "startup changed accepted commits or award hashes")
+    assert_true(clients.DeepEqual(originalRow, rebuilt.transactions[original.transactionId]))
+    assertTransferProjected(restarted, correction.operation, correction)
+    -- Old season: initial allocation 1 - original use 1 + transfer refund 1.
+    assert_equal(1, recovered.Ledger.GetBalance(coordinator.name, seasonId, "guild-primary"))
+    assert_equal(-1, recovered.Ledger.GetBalance(world.names[2], seasonId, "guild-primary"))
+    assert_equal(0, recovered.Ledger.GetBalance(coordinator.name, activeSeasonId, "guild-primary"))
+    assert_equal(1, recovered.Ledger.GetBalance(world.names[2], activeSeasonId, "guild-primary"))
+    local state = recovered.GetDB().disputes.operationStates[correction.operation.operationId]
+    assert_equal("ACCEPTED", state.status)
+    assert_equal(correction.commitHash, state.commitHash)
+    assert_equal(2, #state.entryTransactionIds)
+    local before = restartedWorld:Snapshot(restarted)
+    assert_true(recovered.Initialize())
+    assert_true(recovered.Disputes.ReconstructOperationStates("guild-primary").rebuilt)
+    assert_true(clients.DeepEqual(before, restartedWorld:Snapshot(restarted)), "repeated startup/recovery was not idempotent")
+    local writer = enableCanonicalCorrectionPath(restarted, true)
+    local fresh = assert(recovered.Disputes.CreateReport({ category = "wrong_item_player", transactionRef = "rf0012-prior-canonical-award", note = "after recovery" }))
+    local postRecovery = makeCanonicalTargetTransfer(restarted, rebuilt.transactions["rf0012-prior-canonical-award"], fresh, activeSeasonId, world.names[2])
+    local accepted = writer({ actor = restarted.name }, postRecovery)
+    assert_true(accepted.accepted, tostring(accepted.reasonCode))
+    assert_equal(nextSeq, accepted.value.sequence)
+    assert_equal(rootHash, accepted.value.previousHash)
   end)
 
   it("rejects an invalid second leg and pre-acceptance faults without mutation", function()
@@ -442,18 +551,14 @@ describe("RF-0012 canonical dispute operation gate", function()
     local world, coordinator, _, _, _, operation = canonicalTransferCase()
     local writer = coordinator.dibs.Ledger.CommitDisputeOperation
     replaceUpvalue(writer, "DISPUTE_OPERATION_WRITES_ENABLED", true)
+    replaceUpvalue(writer, "operationReadinessProbe", nil)
     -- Open the isolated release gate so this exercises the runtime readiness
     -- probe itself rather than the earlier release-source default check.
     coordinator.dibs.CANONICAL_OPERATIONS_RELEASE_ENABLED = true
     local before = world:Snapshot(coordinator)
     local result = writer({ actor = coordinator.name }, operation)
     assertBlocked(result)
-    -- T021: the readiness probe now delegates to the shared gate, so the
-    -- refusal carries that gate's explicit diagnostic instead of a generic
-    -- unknown-readiness code. Both are refusals; the state must change nothing.
-    assert_true(result.reasonCode == "OPERATION_READINESS_UNKNOWN"
-      or result.reasonCode == "CANONICAL_DISPUTE_OPERATIONS_DISABLED",
-      "unexpected readiness refusal: " .. tostring(result.reasonCode))
+    assert_equal("OPERATION_READINESS_UNKNOWN", result.reasonCode)
     assert_true(clients.DeepEqual(before, world:Snapshot(coordinator)),
       "unknown runtime readiness changed SavedVariables")
   end)

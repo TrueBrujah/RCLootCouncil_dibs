@@ -109,7 +109,7 @@ A read-only projection combining existing state for User Story 3:
 | `governanceAdopted` | `Dibs.Governance.GetState().status == "GOVERNANCE_ADOPTED"` |
 | `operationalPolicyAdopted` | `Dibs.OperationalPolicy.IsAdopted()` |
 | `seasonCatalogRevision` | local `db.seasonCatalog.policyRevision` |
-| `pendingAwardProposals` | count of local `AwardProposal` records not yet `COMMITTED` |
+| `pendingAwardProposals` | count of local `AwardProposal` records in `PENDING_RECONCILIATION`; terminal states do not reserve Dibs |
 | `lastProtocolMismatch` | most recent `UNSUPPORTED_PROTOCOL_MAJOR` observation (sender + local/remote major), if any, bounded/expiring |
 
 This entity has no independent lifecycle; it is computed on demand for

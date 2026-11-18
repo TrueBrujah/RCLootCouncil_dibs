@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 describe("Officer setup page help cache", function()
   it("reuses setup evaluation while navigating and refreshes it on demand", function()
@@ -14,11 +14,13 @@ describe("Officer setup page help cache", function()
     end
 
     local frame = dibs.OfficerUI.CreateWindow("automaticDibs")
+    assert_equal(0, evaluations)
+    frame:ActivateRoute("settings")
     local afterOpen = evaluations
     assert_true(afterOpen > 0)
+    frame:ActivateRoute("automaticDibs")
     frame:ActivateRoute("settings")
     assert_equal(afterOpen, evaluations)
-
     frame:Refresh()
     assert_equal(afterOpen + 1, evaluations)
   end)

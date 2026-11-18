@@ -1,10 +1,44 @@
 # Implementation Status: Canonical Ledger Operations & Idempotent Dispute Corrections
 Feature: `026-canonical-idempotent-corrections`
 
-## Current Phase: Phase 7 — Polish and cross-cutting validation (T036-T045)
-Status: **IMPLEMENTATION COMPLETE — PENDING RETAIL VALIDATION**
+## Current Phase: Canonical readiness, recovery and release validation
+Status: **PARTIAL IMPLEMENTATION — RECOVERY AND RELEASE GATES OPEN**
 
-## Task Progress
+Current source of truth: [tasks.md](./tasks.md), convergence T046–T050, and the
+[project checkpoint](../../docs/ai/CHECKPOINT.md). T046 readiness is implemented;
+T047/T048 remain subject to their full acceptance evidence, T049 recovery is
+partial and T050 depends on it. External recovery on a fresh installation remains
+Feature 007 T036. Release flags remain disabled; Retail is not certified.
+
+Latest repair evidence (2026-11-17): full native Lua 5.1.5 and Lua 5.4 suites
+each pass **2,181/2,181 across 274 files**; focused Fengari passes **767/767 across
+65 files**. The private-delivery fixture's last Lua 5.1 loader mismatch is fixed,
+with its 17 cases rechecked under all three runtimes. Missing historical-report
+and outcome APIs are restored, with visible read-only report/reload states and
+configured UI fixtures that preserve fresh Guided Setup and authority guards.
+T016/T029/T030/T040 are complete for offline acceptance. T047–T050 remain open for
+the complete phase-exit/recovery matrix; no external fresh-recovery authority is
+implied. Sources have not been redeployed. Both release gates remain false.
+Lua 5.1 compilation: 112/112; addon preflight: 121 files; documentation: 29 concepts,
+zero errors and 10 inherited orphan-help warnings, cross-version output 8/8 MATCH.
+Audit guard: exit 1 with 234 application differences, zero protected-library
+differences; the existing baseline is unchanged. This is not a global integrity
+PASS or Retail certification.
+
+Earlier consolidation evidence (2026-11-16): 334/334 on 31 focused suites under
+Fengari, Lua 5.4.6 and Lua 5.1.5; secondary-ledger and interrupted-receiver recovery
+coverage extended. The fresh **full** Lua 5.1.5 run is **1,914 passed / 221 failed
+across 272 files**, not a globally green result. Failure triage is incomplete and
+includes absent historical-report/outcome APIs and fixtures that do not establish
+current setup/canonical prerequisites. No blanket pre-existing attribution is made.
+That failing full-suite result is superseded by the repair evidence above.
+
+The results and task numbering below are historical evidence from an earlier
+implementation pass. They do not supersede the current convergence tasks or
+constitute a fresh full-suite result. In particular, the older T046 UI fix below
+is not the current T046 canonical-readiness task.
+
+## Historical Task Progress
 - [x] T001-T030: Completed (all of US1, US2, and US3)
 - [x] T031: Completed (Backup, restore, and import fixtures)
 - [x] T032: Completed (Complete canonical operation history serialization)

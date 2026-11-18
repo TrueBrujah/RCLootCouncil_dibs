@@ -608,7 +608,7 @@ function Sync.GetSynchronizationStatus(dbOverride)
     pending = 0
     local proposalsStartedAt = beginPeerStatusTiming()
     local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
-    for _, proposal in ipairs(proposals) do if proposal.status ~= "COMMITTED" then pending = pending + 1 end end
+    for _, proposal in ipairs(proposals) do if proposal.status == "PENDING_RECONCILIATION" then pending = pending + 1 end end
     recordPeerStatusTiming("synchronization-proposals", proposalsStartedAt)
   end
   local mismatchStartedAt = beginPeerStatusTiming()
@@ -1287,7 +1287,7 @@ function Sync.BuildEnvelope(message)
     and Dibs.Ledger.IsDisputeOperationTransportEnabled() == true
     and type(Dibs.Ledger.ApplyDisputeOperationCommit) == "function"
   message.protocol = { major = MAJOR, minor = MINOR, capabilities = { digest = true, guildDetail = true, whisperDetail = true,
-    requestTombstones = true, ledgerDigestOnly = true, ledgerScopedCommits = true,
+    requestTombstones = true, ledgerDigestOnly = true, ledgerScopedCommits = true, awardReservationReleases = true,
     ledgerOperationCommit = operationCommitEnabled,
     authoritySignals = true, requestDelivery = true,
     guildRepair = true, seasonalRoster = true, seasonalAllocationSnapshot = true, seasonalActivationManifest = true },
@@ -2125,26 +2125,59 @@ local function addReservationRecord(records, reservation)
   local current = records[reservation.proposalId]
   local incomingAt, currentAt = tonumber(reservation.updatedAt) or 0, tonumber(current and current.updatedAt) or 0
   if not current or incomingAt > currentAt or (incomingAt == currentAt and reservation.state == "RELEASED") then
-    records[reservation.proposalId] = copy(reservation)
+    records[reservation.proposalId] = {
+      proposalId = reservation.proposalId, playerMemberKey = reservation.playerMemberKey,
+      actorMemberKey = reservation.actorMemberKey, awardRef = reservation.awardRef,
+      evidenceId = reservation.evidenceId, ledgerId = reservation.ledgerId,
+      seasonId = reservation.seasonId, amount = reservation.amount,
+      state = reservation.state, updatedAt = reservation.updatedAt,
+    }
   end
 end
 
+local function mayOriginateReservationRelease(entry)
+  local sender = member(Dibs.GetPlayerName())
+  if not sender or (sender.role ~= "gm" and sender.role ~= "officer") then return false end
+  local authority = Dibs.Governance and Dibs.Governance.GetAuthorityState and Dibs.Governance.GetAuthorityState()
+  return sender.memberKey == entry.actorMemberKey or (authority and authority.state == "ACTIVE"
+    and authority.coordinator and authority.coordinator.memberKey == sender.memberKey) or false
+end
+
 function Sync.BuildAwardReservationDigest()
-  local records = {}
+  local records, releases = {}, {}
   local proposals = Dibs.Governance and Dibs.Governance.GetAwardProposals and Dibs.Governance.GetAwardProposals() or {}
   for _, proposal in ipairs(proposals) do
-    if (proposal.type == "AWARD" or proposal.type == "DIB_USED") and proposal.status ~= "COMMITTED" then
-      addReservationRecord(records, reservationFromProposal(proposal, "PENDING"))
+    if proposal.type == "AWARD" or proposal.type == "DIB_USED" then
+      if proposal.status == "PENDING_RECONCILIATION" then
+        addReservationRecord(records, reservationFromProposal(proposal, "PENDING"))
+      elseif proposal.status == "COMMITTED" or proposal.status == "REJECTED" or proposal.status == "STALE" then
+        local release = reservationFromProposal(proposal, "RELEASED")
+        if release and mayOriginateReservationRelease(release) then addReservationRecord(releases, release) end
+      end
     end
   end
   local state = ensure()
   for _, reservation in pairs(state.awardReservations) do addReservationRecord(records, reservation) end
-  local entries = {}
+  for _, tombstone in pairs(state.awardReservationTombstones) do
+    if tombstone.localRelease == true and mayOriginateReservationRelease(tombstone) then
+      local release = copy(tombstone)
+      release.localRelease = nil
+      addReservationRecord(releases, release)
+    end
+  end
+  for proposalId in pairs(records) do
+    if releases[proposalId] or state.awardReservationTombstones[proposalId] then records[proposalId] = nil end
+  end
+  local entries, released = {}, {}
   for _, reservation in pairs(records) do entries[#entries + 1] = reservation end
+  for _, release in pairs(releases) do released[#released + 1] = release end
   table.sort(entries, function(a, b) return a.proposalId < b.proposalId end)
+  table.sort(released, function(a, b) return a.proposalId < b.proposalId end)
   while #entries > MAX_INDEX do table.remove(entries) end
+  while #released > MAX_INDEX do table.remove(released) end
   return { type = "AWARD_RESERVATION_DIGEST", entityType = "AWARD_RESERVATION", entityId = "pending",
-    revision = #entries, contentHash = hash(entries), records = entries }
+    revision = #entries, contentHash = hash(entries), records = entries,
+    releases = released, releaseHash = hash(released) }
 end
 
 function Sync.GetPendingAwardReservations()
@@ -2161,38 +2194,45 @@ end
 
 function Sync.AnnounceAwardReservationDigest()
   local digest = Sync.BuildAwardReservationDigest()
-  if #digest.records == 0 then return true, "NO_PENDING_AWARD_RESERVATIONS" end
-  local pageCount = math.ceil(#digest.records / AWARD_RESERVATION_PAGE_SIZE)
+  local total = #digest.records + #digest.releases
+  if total == 0 then return true, "NO_PENDING_AWARD_RESERVATIONS" end
+  local pageCount = math.ceil(total / AWARD_RESERVATION_PAGE_SIZE)
   for pageIndex = 1, pageCount do
     local page = copy(digest)
-    page.records = {}
+    page.records, page.releases = {}, {}
     local first = (pageIndex - 1) * AWARD_RESERVATION_PAGE_SIZE + 1
-    local last = math.min(#digest.records, first + AWARD_RESERVATION_PAGE_SIZE - 1)
-    for index = first, last do page.records[#page.records + 1] = digest.records[index] end
+    local last = math.min(total, first + AWARD_RESERVATION_PAGE_SIZE - 1)
+    for index = first, last do
+      if index <= #digest.records then page.records[#page.records + 1] = digest.records[index]
+      else page.releases[#page.releases + 1] = digest.releases[index - #digest.records] end
+    end
     page.revision = pageIndex
     page.entityId = "pending:" .. tostring(pageIndex) .. ":" .. tostring(pageCount)
     page.contentHash = hash(page.records)
+    page.releaseHash = hash(page.releases)
     local sent, reason = Sync.Send(page, "GUILD")
     if not sent then return false, reason end
   end
   return true, digest.contentHash
 end
 
-function Sync.ClearAwardReservation(proposalId, commit)
+function Sync.ClearAwardReservation(proposalId, commit, proposal)
   if type(proposalId) ~= "string" or proposalId == "" then return false end
   local state = ensure()
   local reservation = state.awardReservations[proposalId]
   local transaction = type(commit) == "table" and commit.transaction or nil
-  local tombstone = reservation or {
+  local tombstone = reservation or reservationFromProposal(proposal, "RELEASED") or {
     proposalId = proposalId,
     playerMemberKey = transaction and transaction.memberKey,
     actorMemberKey = type(commit) == "table" and commit.coordinator and commit.coordinator.memberKey,
     seasonId = transaction and transaction.seasonId,
+    ledgerId = transaction and transaction.ledgerId,
     amount = math.abs(tonumber(transaction and transaction.amount) or 1),
   }
   if type(tombstone.playerMemberKey) ~= "string" then return false end
   tombstone = copy(tombstone)
   tombstone.state, tombstone.updatedAt = "RELEASED", time()
+  tombstone.localRelease = mayOriginateReservationRelease(tombstone)
   state.awardReservations[proposalId] = nil
   state.awardReservationTombstones[proposalId] = tombstone
   bumpAwardReservationGeneration(tombstone.playerMemberKey)
@@ -2753,9 +2793,23 @@ function Sync.Receive(message, sender, channel)
   end
   if message.type == "AWARD_RESERVATION_DIGEST" then
     local entries = message.records
+    local releases = message.releases == nil and {} or message.releases
     if resolved.role ~= "gm" and resolved.role ~= "officer" then return false, "RESERVATION_SENDER_AUTHORITY_REQUIRED" end
     if type(entries) ~= "table" or #entries > MAX_INDEX or type(message.contentHash) ~= "string"
       or hash(entries) ~= message.contentHash then return false, "INVALID_AWARD_RESERVATION_DIGEST" end
+    if type(releases) ~= "table" or #entries + #releases > MAX_INDEX
+      or (message.releases ~= nil and (type(message.releaseHash) ~= "string" or hash(releases) ~= message.releaseHash))
+      or (message.releases == nil and message.releaseHash ~= nil) then
+      return false, "INVALID_AWARD_RESERVATION_DIGEST"
+    end
+    local releaseCount = 0
+    for index in pairs(releases) do
+      if type(index) ~= "number" or index < 1 or index > #releases or index ~= math.floor(index) then
+        return false, "INVALID_AWARD_RESERVATION_DIGEST"
+      end
+      releaseCount = releaseCount + 1
+    end
+    if releaseCount ~= #releases then return false, "INVALID_AWARD_RESERVATION_DIGEST" end
     local validated, seen = {}, {}
     for _, entry in ipairs(entries) do
       if type(entry) ~= "table" or type(entry.proposalId) ~= "string" or entry.proposalId == ""
@@ -2777,9 +2831,56 @@ function Sync.Receive(message, sender, channel)
       seen[entry.proposalId] = true
       validated[#validated + 1] = copy(entry)
     end
+    local validatedReleases = {}
+    local authority = #releases > 0 and Dibs.Governance and Dibs.Governance.GetAuthorityState
+      and Dibs.Governance.GetAuthorityState() or nil
+    local senderIsCoordinator = authority and authority.state == "ACTIVE" and authority.coordinator
+      and authority.coordinator.memberKey == resolved.memberKey
+    for _, entry in ipairs(releases) do
+      if type(entry) ~= "table" or type(entry.proposalId) ~= "string" or entry.proposalId == ""
+        or type(entry.playerMemberKey) ~= "string" or type(entry.actorMemberKey) ~= "string"
+        or not finiteInteger(entry.amount) or tonumber(entry.amount) <= 0
+        or type(entry.seasonId) ~= "string" or entry.seasonId == ""
+        or entry.state ~= "RELEASED" or not finiteInteger(entry.updatedAt)
+        or seen[entry.proposalId]
+        or (entry.awardRef ~= nil and type(entry.awardRef) ~= "string")
+        or (entry.evidenceId ~= nil and type(entry.evidenceId) ~= "string")
+        or (entry.ledgerId ~= nil and (type(entry.ledgerId) ~= "string" or entry.ledgerId == "" or #entry.ledgerId > 64)) then
+        return false, "INVALID_AWARD_RESERVATION_DIGEST"
+      end
+      if not member(entry.playerMemberKey) or not member(entry.actorMemberKey) then
+        return false, "INVALID_AWARD_RESERVATION_IDENTITY"
+      end
+      if resolved.memberKey ~= entry.actorMemberKey and not senderIsCoordinator then
+        return false, "RESERVATION_RELEASE_AUTHORITY_REQUIRED"
+      end
+      local existing = state.awardReservations[entry.proposalId] or state.awardReservationTombstones[entry.proposalId]
+      if existing and (existing.playerMemberKey ~= entry.playerMemberKey
+        or existing.actorMemberKey ~= entry.actorMemberKey or existing.seasonId ~= entry.seasonId
+        or tonumber(existing.amount) ~= tonumber(entry.amount)
+        or (existing.ledgerId or "guild-primary") ~= (entry.ledgerId or "guild-primary")
+        or existing.awardRef ~= entry.awardRef or existing.evidenceId ~= entry.evidenceId) then
+        return false, "RESERVATION_RELEASE_SCOPE_MISMATCH"
+      end
+      seen[entry.proposalId] = true
+      local release = copy(entry)
+      release.localRelease = nil
+      validatedReleases[#validatedReleases + 1] = release
+    end
+    for _, release in ipairs(validatedReleases) do
+      local existing, tombstone = state.awardReservations[release.proposalId], state.awardReservationTombstones[release.proposalId]
+      if not tombstone then
+        state.awardReservationTombstones[release.proposalId] = release
+      elseif tonumber(release.updatedAt) > (tonumber(tombstone.updatedAt) or 0) then
+        release.localRelease = tombstone.localRelease
+        state.awardReservationTombstones[release.proposalId] = release
+      end
+      state.awardReservations[release.proposalId] = nil
+      if existing or not tombstone then bumpAwardReservationGeneration(release.playerMemberKey) end
+    end
     for _, entry in ipairs(validated) do
       local tombstone = state.awardReservationTombstones[entry.proposalId]
-      if not tombstone or tonumber(entry.updatedAt) > (tonumber(tombstone.updatedAt) or 0) then
+      if not tombstone then
         if reservationHasCanonicalCommit(entry) then
           Sync.ClearAwardReservation(entry.proposalId)
         else
@@ -2802,6 +2903,7 @@ function Sync.Receive(message, sender, channel)
       end
     end
     boundMap(state.awardReservations, MAX_INDEX)
+    boundMap(state.awardReservationTombstones, MAX_INDEX)
     return true, "AWARD_RESERVATIONS_APPLIED"
   end
   if message.type == "AWARD_PROPOSAL_ACK" then

@@ -1,4 +1,4 @@
-local loader = require("helpers.load_addon")
+local loader = require("helpers.configured_addon")
 
 describe("Officer player-period statistics UI", function()
   it("records CPU-only subphases for the Statistics page when profiling is enabled", function()
